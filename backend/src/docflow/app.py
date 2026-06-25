@@ -17,6 +17,8 @@ from docflow.config.settings import Settings
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
+from docflow.mcp.router import router as mcp_router
+from docflow.mcp.server import configure as configure_mcp
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.types.router import router as types_router
@@ -54,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await open_pool(settings.database_url)
     await apply(pool)
     await seed_bootstrap_admin(pool, settings)
+    configure_mcp(pool)
     app.state.pool = pool
     app.state.settings = settings
     log.info("docflow_started")
@@ -73,6 +76,7 @@ app.include_router(properties_router)
 app.include_router(documents_router)
 app.include_router(blocks_router)
 app.include_router(oidc_router)
+app.include_router(mcp_router)
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:
