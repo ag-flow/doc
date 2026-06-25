@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import asyncpg
+import structlog
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+from docflow.config.settings import Settings
+from docflow.db.apply import apply
+from docflow.db.pool import close_pool, open_pool
+
+log = structlog.get_logger(__name__)
+
+
+def _configure_logging(level: str) -> None:
+    if structlog.is_configured():
+        return
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(format="%(message)s", level=getattr(logging, level))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings = Settings()
+    _configure_logging(settings.log_level)
+    pool = await open_pool(settings.database_url)
+    await apply(pool)
+    app.state.pool = pool
+    app.state.settings = settings
+    log.info("docflow_started")
+    try:
+        yield
+    finally:
+        await close_pool(pool)
+        log.info("docflow_stopped")
+
+
+app = FastAPI(title="docflow", lifespan=lifespan)
+
+
+async def _check_db(pool: asyncpg.Pool) -> int:
+    return await pool.fetchval("SELECT 1")  # type: ignore[no-any-return]
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    try:
+        result = await _check_db(app.state.pool)
+        return JSONResponse({"status": "ok", "db": result == 1})
+    except Exception as exc:
+        log.error("health_check_failed", error=str(exc))
+        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
