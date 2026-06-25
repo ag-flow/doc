@@ -1,0 +1,37 @@
+{
+  "login": {
+    "title": "Connexion",
+    "email": "Email",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "error": "Identifiants invalides"
+  },
+  "nav": {
+    "types": "Types fonctionnels",
+    "documents": "Documents",
+    "logout": "Déconnexion"
+  },
+  "types": {
+    "title": "Types fonctionnels",
+    "create": "Nouveau type",
+    "slug": "Identifiant (slug)",
+    "label": "Libellé",
+    "parent": "Parent",
+    "none": "— aucun —",
+    "delete": "Supprimer",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "confirmDelete": "Supprimer ce type ?"
+  },
+  "documents": {
+    "title": "Documents",
+    "create": "Nouveau document",
+    "titleField": "Titre",
+    "delete": "Supprimer",
+    "noDocuments": "Aucun document"
+  },
+  "error": {
+    "generic": "Une erreur est survenue",
+    "notFound": "Introuvable"
+  }
+}
