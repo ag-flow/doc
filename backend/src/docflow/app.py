@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from docflow.admin.users.router import router as users_router
 from docflow.auth.router import router as auth_router
 from docflow.auth.seed import seed_bootstrap_admin
+from docflow.blocks.router import router as blocks_router
 from docflow.config.settings import Settings
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
@@ -69,6 +70,7 @@ app.include_router(workspaces_router)
 app.include_router(types_router)
 app.include_router(properties_router)
 app.include_router(documents_router)
+app.include_router(blocks_router)
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:
