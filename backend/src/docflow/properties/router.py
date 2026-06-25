@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from docflow.auth.deps import require_admin
 from docflow.properties import service
 from docflow.schemas.auth import AuthUser
+from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
     AllowedValueCreate,
     AllowedValueOut,
@@ -135,3 +136,37 @@ async def delete_value(
     await service.delete_allowed_value(
         request.app.state.pool, ws_slug, type_slug, prop_slug, val_slug
     )
+
+
+# ── Constraints ───────────────────────────────────────────────────────────────
+
+_CSTR = _PROP + "/constraints"
+
+
+@router.get(_CSTR, response_model=list[ConstraintOut])
+async def list_constraints(
+    ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
+) -> list[ConstraintOut]:
+    return await service.list_constraints(request.app.state.pool, ws_slug, type_slug, prop_slug)
+
+
+@router.post(_CSTR, response_model=ConstraintOut, status_code=201)
+async def upsert_constraint(
+    ws_slug: str,
+    type_slug: str,
+    prop_slug: str,
+    body: ConstraintCreate,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> ConstraintOut:
+    return await service.upsert_constraint(
+        request.app.state.pool, ws_slug, type_slug, prop_slug, body
+    )
+
+
+@router.delete(_CSTR + "/{kind}", status_code=204)
+async def delete_constraint(
+    ws_slug: str, type_slug: str, prop_slug: str, kind: str,
+    request: Request, _: AuthUser = _Auth,
+) -> None:
+    await service.delete_constraint(request.app.state.pool, ws_slug, type_slug, prop_slug, kind)

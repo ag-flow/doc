@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
     AllowedValueCreate,
     AllowedValueOut,
@@ -285,3 +286,82 @@ async def delete_allowed_value(
                     status_code=409,
                     detail="valeur utilisée par des documents existants",
                 ) from exc
+
+
+# ── Constraints ───────────────────────────────────────────────────────────────
+
+_TEXT_ONLY_KINDS = frozenset({"min_length", "max_length", "pattern"})
+_INT_ONLY_KINDS = frozenset({"min", "max"})
+
+
+async def list_constraints(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str
+) -> list[ConstraintOut]:
+    async with pool.acquire() as conn:
+        type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+        prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
+        rows = await conn.fetch(
+            "SELECT id, kind, value, message, created_at "
+            "FROM properties_constraints WHERE property_def_ref = $1 ORDER BY kind",
+            prop_id,
+        )
+    return [
+        ConstraintOut(
+            id=r["id"], kind=r["kind"], value=r["value"],
+            message=r["message"], created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+async def upsert_constraint(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str, data: ConstraintCreate
+) -> ConstraintOut:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
+            # I-6 : pattern/min_length/max_length réservés à text ; min/max à int
+            if data.kind in _TEXT_ONLY_KINDS and prop_type != "text":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"contrainte '{data.kind}' réservée aux propriétés de type text",
+                )
+            if data.kind in _INT_ONLY_KINDS and prop_type != "int":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"contrainte '{data.kind}' réservée aux propriétés de type int",
+                )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO properties_constraints (property_def_ref, kind, value, message)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (property_def_ref, kind)
+                DO UPDATE SET value = EXCLUDED.value, message = EXCLUDED.message
+                RETURNING id, kind, value, message, created_at
+                """,
+                prop_id, data.kind, data.value, data.message,
+            )
+    assert row is not None
+    return ConstraintOut(
+        id=row["id"], kind=row["kind"], value=row["value"],
+        message=row["message"], created_at=row["created_at"],
+    )
+
+
+async def delete_constraint(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str, kind: str
+) -> None:
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
+            deleted = await conn.fetchval(
+                "DELETE FROM properties_constraints "
+                "WHERE property_def_ref = $1 AND kind = $2 RETURNING id",
+                prop_id, kind,
+            )
+            if deleted is None:
+                raise HTTPException(
+                    status_code=404, detail=f"contrainte '{kind}' introuvable"
+                )
