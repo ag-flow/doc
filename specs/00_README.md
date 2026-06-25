@@ -19,24 +19,26 @@ Application self-hosted de gestion documentaire et de structures de données **p
 
 - Lire **`CLAUDE.md` (racine) en premier** (autonomie, conventions, DoD).
 - Puis `01_ARCHITECTURE.md`, `02_DATA_MODEL.md`, `03_PITFALLS.md` (contexte transversal — `03` contient des **exigences**).
-- Exécuter les milestones **dans l'ordre** `10_M1` → `19_M9`. Chaque milestone est livrable et testable indépendamment. Ne pas démarrer un milestone sans avoir validé la DoD du précédent.
+- Exécuter les milestones **dans l'ordre** `10_M1` → `19_M10`. Chaque milestone est livrable et testable indépendamment. Ne pas démarrer un milestone sans avoir validé la DoD du précédent.
 - Avant tout code utilisant une lib externe (FastAPI, asyncpg, authlib, SDK MCP…), **consulter Context7** : les API dérivent, le corpus décrit l'intention.
 
 ## Ordre des milestones
 
-| #  | Fichier                       | Contenu                                                                                  | Dépend de |
-| -- | ----------------------------- | ---------------------------------------------------------------------------------------- | --------- |
-| M1 | `10_M1_foundation.md`         | Squelette, config pydantic-settings, pool asyncpg, runner `apply` + `0001_init.sql`, résolveur secrets `${vault://}` | —         |
-| M2 | `11_M2_bootstrap_auth.md`     | Seed bootstrap admin depuis l'env, login local argon2 → JWT, RBAC, garde-fou anti-lock-out | M1        |
-| M3 | `12_M3_types_statuts.md`      | CRUD `functional_type` (hiérarchie, scope workspace), statuts via `properties_defs` restricted_list + `properties_allowed_values` — **surface de l'écran prioritaire** | M1, M2    |
-| M4 | `13_M4_workspaces_docs.md`    | CRUD `workspace`, documents arborescents (parent, contenu md, type)                       | M1, M2    |
-| M5 | `14_M5_props_values.md`       | Propriétés génériques `text`/`int`/`restricted_list`, `constraints` (min/max/pattern + message), `properties_values` sur documents, validation applicative | M3, M4    |
-| M6 | `15_M6_data_blocks.md`        | `data_block` arborescent, contrainte de type **miroir** (epic ⊃ feature), dénormalisation | M3, M4    |
-| M7 | `16_M7_frontend.md`           | Écran admin (login + types & statuts) câblé à l'API, puis arbre documents                 | M2, M3, M4 |
-| M8 | `17_M8_oidc.md`               | Config OIDC saisie par le bootstrap admin, provisioning à la volée, break-glass préservé  | M2        |
-| M9 | `19_M9_mcp.md`                | Serveur MCP exposant le store en lecture/écriture sous RBAC, namespace par workspace      | M3→M6     |
+| #   | Fichier                    | Contenu                                                                                  | Dépend de  |
+| --- | -------------------------- | ---------------------------------------------------------------------------------------- | ---------- |
+| M1  | `10_M1_foundation.md`      | Squelette, config pydantic-settings, pool asyncpg, runner `apply` + `0001_init.sql`, résolveur secrets `${vault://}` | —          |
+| M2  | `11_M2_bootstrap_auth.md`  | Seed bootstrap admin depuis l'env, login local argon2 → JWT, RBAC, garde-fou anti-lock-out | M1         |
+| M3  | `12_M3_workspace.md`       | **Gestion du workspace** (partition racine) : CRUD, slug immuable, archivage gardé. CLI (M1), HTTP (M2), IHM (M2+front) — **prérequis de tout le contenu** | M1 ; HTTP/IHM : M2 |
+| M4  | `13_M4_types_statuts.md`   | CRUD `functional_type` (hiérarchie, scope workspace), statuts via `properties_defs` restricted_list + `properties_allowed_values` | M2, M3     |
+| M5  | `14_M5_documents.md`       | Documents arborescents (parent, contenu md, type, classification fonctionnelle)           | M2, M3     |
+| M6  | `15_M6_props_values.md`    | Propriétés génériques `text`/`int`/`restricted_list`, `constraints` (min/max/pattern + message), `properties_values` sur documents, validation applicative | M4, M5     |
+| M7  | `16_M7_data_blocks.md`     | `data_block` arborescent, contrainte de type **miroir** (epic ⊃ feature), dénormalisation | M4, M5     |
+| M8  | `17_M8_frontend.md`        | App front (login + sélecteur de workspace + écran types & statuts câblé, puis arbre docs) | M2, M3, M4 |
+| M9  | `18_M9_oidc.md`            | Config OIDC saisie par le bootstrap admin, provisioning à la volée, break-glass préservé   | M2         |
+| M10 | `19_M10_mcp.md`            | Serveur MCP exposant le store en lecture/écriture sous RBAC, namespace par workspace       | M4→M7      |
 
-> Les fichiers `11`→`19` sont détaillés **au fur et à mesure** qu'on atteint le milestone (workflow gaté par DoD). `10_M1` est fourni complet pour démarrer.
+> **Note de séquencement.** Le workspace est la partition racine : tout le contenu y est scopé, donc il **précède** les types/statuts. Sa couche données/CLI ne dépend que de M1 (déjà livrée) ; ses faces HTTP et IHM dépendent de M2.
+> Les fichiers `11`→`19` sont détaillés **au fur et à mesure** qu'on atteint le milestone (workflow gaté par DoD). `10_M1` et `12_M3` sont fournis complets.
 
 ## Stack imposée
 

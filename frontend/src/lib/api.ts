@@ -62,6 +62,9 @@ export interface WorkspaceOut {
   slug: string
   label: string
   description: string | null
+  archived_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface DocumentOut {
