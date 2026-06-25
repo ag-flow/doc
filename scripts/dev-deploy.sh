@@ -56,9 +56,8 @@ if [[ ! -f /data/.env ]]; then
 # Généré automatiquement par dev-deploy.sh — NE PAS COMMITTER
 DATABASE_URL=postgresql://docflow:${PG_PASSWORD}@postgres:5432/docflow
 JWT_SECRET=${JWT_SECRET}
-BOOTSTRAP_ADMIN_EMAIL=admin@docflow.local
-BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
-BOOTSTRAP_ADMIN_LABEL=Admin
+ADMIN_EMAIL=admin@docflow.local
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
 LOG_LEVEL=INFO
 EOF
     chmod 600 /data/.env
