@@ -28,7 +28,7 @@ from docflow.workspaces.router import router as workspaces_router
 
 log = structlog.get_logger(__name__)
 
-_STATIC = pathlib.Path(__file__).parent.parent.parent.parent / "static"
+_STATIC = pathlib.Path(__file__).parent.parent.parent / "static"
 
 
 def _configure_logging(level: str) -> None:
