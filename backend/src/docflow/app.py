@@ -17,6 +17,7 @@ from docflow.config.settings import Settings
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
+from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.types.router import router as types_router
 from docflow.workspaces.router import router as workspaces_router
@@ -71,6 +72,7 @@ app.include_router(types_router)
 app.include_router(properties_router)
 app.include_router(documents_router)
 app.include_router(blocks_router)
+app.include_router(oidc_router)
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:
