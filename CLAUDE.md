@@ -58,6 +58,57 @@ cd backend && uv run python -m docflow.db.apply
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
+## Déploiement sur la VM de test
+
+**Machine de test** : `test1` (192.168.10.166, root, clé `~/.ssh/id_ed25519`).
+**Répertoire sur la VM** : `/opt/docflow`.
+
+### Procédure complète (1ère fois)
+
+```bash
+# 1. Commiter et pousser sur dev (depuis le poste de dev)
+git push origin dev
+
+# 2. Se connecter sur la VM
+ssh test1
+
+# 3. Générer une clé SSH dédiée sur la VM (si pas encore fait)
+ssh-keygen -t ed25519 -C "test1-docflow" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+# → donner la clé publique à enregistrer comme Deploy Key GitHub (lecture seule)
+
+# 4. Cloner le repo
+mkdir -p /opt/docflow
+git clone git@github.com:ag-flow/doc.git /opt/docflow
+cd /opt/docflow
+git checkout dev
+
+# 5. Initialiser /data/.env (secrets, jamais commités)
+mkdir -p /data
+cp scripts/.env.example /data/.env
+# Éditer /data/.env : DATABASE_URL, JWT_SECRET, BOOTSTRAP_ADMIN_*
+
+# 6. Créer /data/pg_password.txt (mot de passe Postgres)
+echo "MOT_DE_PASSE_POSTGRES" > /data/pg_password.txt
+chmod 600 /data/pg_password.txt
+
+# 7. Lancer le déploiement
+chmod +x scripts/dev-deploy.sh
+./scripts/dev-deploy.sh dev
+```
+
+### Redéploiement (après chaque push sur dev)
+
+```bash
+ssh test1
+cd /opt/docflow && ./scripts/dev-deploy.sh dev
+```
+
+Le script `scripts/dev-deploy.sh` :
+1. `git pull --ff-only origin dev`
+2. `docker compose build` + `down` + `up -d`
+3. Smoke test `GET /health` (timeout 60 s)
+
 ## Layout du code
 
 ```
