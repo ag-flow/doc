@@ -72,16 +72,18 @@ else
     echo "  ✓ /data/.env existant conservé"
 fi
 
-# ─── 1) Git pull ──────────────────────────────────────────────────────────────
+# ─── 1) Git sync ──────────────────────────────────────────────────────────────
+# reset --hard évite le blocage quand le script se modifie lui-même lors du pull
 if [[ -n "$TARGET_BRANCH" ]]; then
-    echo "==> [1/3] Switch vers ${TARGET_BRANCH} + pull..."
+    echo "==> [1/3] Sync vers ${TARGET_BRANCH}..."
     git fetch origin
     git checkout "$TARGET_BRANCH"
-    git pull --ff-only origin "$TARGET_BRANCH"
+    git reset --hard "origin/${TARGET_BRANCH}"
 else
     CURRENT="$(git branch --show-current)"
-    echo "==> [1/3] Pull (${CURRENT})..."
-    git pull --ff-only
+    echo "==> [1/3] Sync (${CURRENT})..."
+    git fetch origin
+    git reset --hard "origin/${CURRENT}"
 fi
 
 # ─── 2) Build + redémarrage ───────────────────────────────────────────────────
