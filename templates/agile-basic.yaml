@@ -1,0 +1,107 @@
+# templates/agile-basic.yaml
+# Structure clonée dans un workspace par l'import. Idempotent, additif, versionné.
+# Aucun UUID : tout est par slug. L'héritage (inherit/abstract) est résolu À L'IMPORT
+# et n'existe JAMAIS en base — la base ne connaît que des types concrets à plat.
+version: 1
+template: agile-basic
+label: "Projet agile (epic / feature / story / atdd)"
+
+functional_types:
+  # ─── base abstraite : NON matérialisée, sert de socle réutilisable ───
+  - slug: base_statusable
+    abstract: true
+    label: "(base) entité à statut"
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: a_faire
+        allowed_values:
+          - { slug: a_faire,   label: "À faire",   position: 0, color: "#9AA3AF" }
+          - { slug: en_cours,  label: "En cours",  position: 1, color: "#0EA5E9" }
+          - { slug: en_review, label: "En review", position: 2, color: "#F59E0B" }
+          - { slug: done,      label: "Done",      position: 3, color: "#22C55E" }
+
+  # ─── EPIC : hérite la base, mais OVERRIDE 'statut' (remplacement par slug) ───
+  - slug: epic
+    inherit: base_statusable
+    parent: null
+    label: Epic
+    properties:
+      - slug: statut                      # même slug -> remplace entièrement l'hérité
+        label: Statut
+        type: restricted_list
+        required: true
+        default: a_cadrer
+        allowed_values:
+          - { slug: a_cadrer, label: "À cadrer", position: 0, color: "#9AA3AF" }
+          - { slug: cadre,    label: "Cadré",    position: 1, color: "#6366F1" }
+          - { slug: en_cours, label: "En cours", position: 2, color: "#0EA5E9" }
+          - { slug: done,     label: "Done",     position: 3, color: "#22C55E" }
+      - slug: budget_jours
+        label: "Budget (jours)"
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "0", message: "ne peut pas être négatif" }
+          - { kind: max, value: "365" }
+
+  # ─── FEATURE : override 'statut' avec son propre pipeline ───
+  - slug: feature
+    inherit: base_statusable
+    parent: epic
+    label: Feature
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: pret_pour_dev
+        allowed_values:
+          - { slug: pret_pour_dev, label: "Prêt pour dev", position: 0, color: "#6366F1" }
+          - { slug: en_dev,        label: "En dev",        position: 1, color: "#0EA5E9" }
+          - { slug: en_review,     label: "En review",     position: 2, color: "#F59E0B" }
+          - { slug: done,          label: "Done",          position: 3, color: "#22C55E" }
+      - slug: ref_jira
+        label: "Référence Jira"
+        type: text
+        required: false
+        constraints:
+          - { kind: pattern, value: "^[A-Z]+-[0-9]+$", message: "format attendu : PROJ-123" }
+
+  # ─── STORY : enfant de feature, garde le 'statut' hérité de la base ───
+  - slug: story
+    inherit: base_statusable
+    parent: feature
+    label: "User Story"
+    properties:
+      - slug: points
+        label: "Story points"
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "0" }
+          - { kind: max, value: "100" }
+
+  # ─── ATDD : AUSSI enfant de feature (feature a donc 2 types d'enfants) ───
+  - slug: atdd
+    inherit: base_statusable
+    parent: feature
+    label: "Test d'acceptation"
+    properties:
+      - slug: scenario
+        label: Scénario
+        type: text
+        required: true
+
+  # ─── TASK : enfant de story ───────────────────────────────────────────────
+  - slug: task
+    inherit: base_statusable
+    parent: story
+    label: Tâche
+    properties:
+      - slug: assignee
+        label: Assigné à
+        type: text
+        required: false
