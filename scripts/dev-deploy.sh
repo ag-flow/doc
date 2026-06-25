@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # dev-deploy.sh — Redéploiement de docflow sur la VM de test.
 # À exécuter directement sur la VM en root (cd /opt/docflow && ./scripts/dev-deploy.sh).
-# Suppose que /data/.env et /data/pg_password.txt sont déjà initialisés.
 # Idempotent : peut être relancé sans danger.
+# Initialise /data/.env et /data/pg_password.txt s'ils n'existent pas.
 #
 # Usage :
 #   ./scripts/dev-deploy.sh [BRANCH]
@@ -35,6 +35,44 @@ fi
 
 cd "$APP_DIR"
 
+# ─── 0) Initialisation de /data (idempotent) ──────────────────────────────────
+echo "==> [0/3] Vérification de /data..."
+mkdir -p /data
+
+if [[ ! -f /data/pg_password.txt ]]; then
+    echo "  → Génération du mot de passe Postgres..."
+    python3 -c "import secrets; print(secrets.token_hex(24))" > /data/pg_password.txt
+    chmod 600 /data/pg_password.txt
+    echo "  ✓ /data/pg_password.txt créé"
+fi
+
+PG_PASSWORD="$(cat /data/pg_password.txt)"
+
+if [[ ! -f /data/.env ]]; then
+    echo "  → Génération de /data/.env avec des secrets aléatoires (dev)..."
+    JWT_SECRET="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
+    ADMIN_PASSWORD="$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")"
+    cat > /data/.env <<EOF
+# Généré automatiquement par dev-deploy.sh — NE PAS COMMITTER
+DATABASE_URL=postgresql://docflow:${PG_PASSWORD}@postgres:5432/docflow
+JWT_SECRET=${JWT_SECRET}
+BOOTSTRAP_ADMIN_EMAIL=admin@docflow.local
+BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+BOOTSTRAP_ADMIN_LABEL=Admin
+LOG_LEVEL=INFO
+EOF
+    chmod 600 /data/.env
+    echo "  ✓ /data/.env créé"
+    echo ""
+    echo "  ┌─ Identifiants bootstrap admin ────────────────────┐"
+    echo "  │  Email    : admin@docflow.local                   │"
+    echo "  │  Password : ${ADMIN_PASSWORD}  │"
+    echo "  └───────────────────────────────────────────────────┘"
+    echo ""
+else
+    echo "  ✓ /data/.env existant conservé"
+fi
+
 # ─── 1) Git pull ──────────────────────────────────────────────────────────────
 if [[ -n "$TARGET_BRANCH" ]]; then
     echo "==> [1/3] Switch vers ${TARGET_BRANCH} + pull..."
@@ -62,10 +100,10 @@ docker compose -f "$COMPOSE_FILE" ps
 
 # ─── 3) Smoke /health ─────────────────────────────────────────────────────────
 echo ""
-echo "==> [3/3] Smoke /health (timeout 60s)..."
+echo "==> [3/3] Smoke /health (timeout 90s)..."
 SMOKE_OK=0
 ELAPSED=0
-while [[ $ELAPSED -lt 60 ]]; do
+while [[ $ELAPSED -lt 90 ]]; do
     if curl -sf -m 3 "http://localhost:8080/health" &>/dev/null; then
         SMOKE_OK=1; break
     fi
@@ -78,7 +116,7 @@ if [[ $SMOKE_OK -eq 1 ]]; then
     echo "  ✓ docflow opérationnel — http://localhost:8080/health"
 else
     echo "" >&2
-    echo "  ✗ /health ne répond pas après 60s" >&2
+    echo "  ✗ /health ne répond pas après 90s" >&2
     echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
     exit 1
 fi
