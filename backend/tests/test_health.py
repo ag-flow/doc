@@ -9,9 +9,9 @@ import docflow.app
 from docflow.app import app
 
 _BASE_ENV = {
-    "ADMIN_EMAIL": "admin@example.com",
-    "ADMIN_PASSWORD": "s3cr3t",
-    "JWT_SECRET": "jwt_key",
+    "ADMIN_EMAIL": "bootstrap@example.com",
+    "ADMIN_PASSWORD": "bootstrap_pw_123",
+    "JWT_SECRET": "test_jwt_secret_for_m2",
 }
 
 

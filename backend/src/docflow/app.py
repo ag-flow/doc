@@ -9,6 +9,9 @@ import structlog
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from docflow.admin.users.router import router as users_router
+from docflow.auth.router import router as auth_router
+from docflow.auth.seed import seed_bootstrap_admin
 from docflow.config.settings import Settings
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
@@ -44,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
+    await seed_bootstrap_admin(pool, settings)
     app.state.pool = pool
     app.state.settings = settings
     log.info("docflow_started")
@@ -55,6 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(users_router)
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:

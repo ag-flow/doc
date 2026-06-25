@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator, Iterator
 import asyncpg
 import pytest
 
+from docflow.db.apply import apply
+
 _TEST_SCHEMA = "docflow_test"
 
 
@@ -61,8 +63,28 @@ def test_schema_url() -> Iterator[str]:
         loop.close()
 
 
+@pytest.fixture(scope="session")
+def apply_migrations(test_schema_url: str) -> None:
+    """Run migrations once at session level so all tables exist for every test."""
+
+    async def _do() -> None:
+        pool: asyncpg.Pool = await asyncpg.create_pool(  # type: ignore[assignment]
+            dsn=test_schema_url, min_size=1, max_size=1
+        )
+        try:
+            await apply(pool)
+        finally:
+            await pool.close()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_do())
+    finally:
+        loop.close()
+
+
 @pytest.fixture()
-async def db_pool(test_schema_url: str) -> AsyncIterator[asyncpg.Pool]:
+async def db_pool(test_schema_url: str, apply_migrations: None) -> AsyncIterator[asyncpg.Pool]:
     """Function-scoped pool wired to the test schema.
 
     Tables created by apply() land in the test schema and are dropped
@@ -77,3 +99,25 @@ async def db_pool(test_schema_url: str) -> AsyncIterator[asyncpg.Pool]:
         yield pool
     finally:
         await pool.close()
+
+
+@pytest.fixture()
+def clean_admin_users(test_schema_url: str, apply_migrations: None) -> Iterator[None]:
+    """Truncate admin_user (and cascaded tables) before the test that requests this fixture.
+
+    Sync fixture so it works with both sync and async tests.
+    """
+
+    async def _truncate() -> None:
+        conn: asyncpg.Connection = await asyncpg.connect(test_schema_url)
+        try:
+            await conn.execute("TRUNCATE admin_user CASCADE")
+        finally:
+            await conn.close()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_truncate())
+    finally:
+        loop.close()
+    yield
