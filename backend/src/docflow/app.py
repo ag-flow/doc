@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import asyncpg
 import structlog
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
 from docflow.auth.router import router as auth_router
@@ -25,6 +27,8 @@ from docflow.types.router import router as types_router
 from docflow.workspaces.router import router as workspaces_router
 
 log = structlog.get_logger(__name__)
+
+_STATIC = pathlib.Path(__file__).parent.parent.parent.parent / "static"
 
 
 def _configure_logging(level: str) -> None:
@@ -91,3 +95,13 @@ async def health() -> JSONResponse:
     except Exception as exc:
         log.error("health_check_failed", error=str(exc))
         return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+
+
+# Fichiers statiques du frontend (assets JS/CSS)
+if _STATIC.exists():
+    app.mount("/assets", StaticFiles(directory=_STATIC / "assets"), name="assets")
+
+    # SPA catch-all : toute route non-API renvoie index.html
+    @app.get("/{full_path:path}")
+    async def spa(full_path: str) -> FileResponse:
+        return FileResponse(_STATIC / "index.html")
