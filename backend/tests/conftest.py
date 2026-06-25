@@ -121,3 +121,16 @@ def clean_admin_users(test_schema_url: str, apply_migrations: None) -> Iterator[
     finally:
         loop.close()
     yield
+
+
+@pytest.fixture()
+async def test_workspace(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
+    """Create a workspace for M3/M4+ tests; delete it (+ cascade) after the test."""
+    row = await db_pool.fetchrow(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
+        "RETURNING workspace_technical_key, slug, label",
+        "test-ws", "Test Workspace",
+    )
+    assert row is not None
+    yield dict(row)
+    await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "test-ws")
