@@ -7,9 +7,23 @@
     "error": "Identifiants invalides"
   },
   "nav": {
+    "workspaces": "Workspaces",
     "types": "Types fonctionnels",
     "documents": "Documents",
     "logout": "Déconnexion"
+  },
+  "ws": {
+    "title": "Workspaces",
+    "create": "Nouveau workspace",
+    "slug": "Identifiant (slug)",
+    "label": "Libellé",
+    "description": "Description",
+    "select": "Ouvrir",
+    "archive": "Archiver",
+    "slugInvalid": "Le slug doit commencer par une lettre ou un chiffre, minuscules, tirets et underscores uniquement",
+    "deleteConfirmTitle": "Supprimer le workspace ?",
+    "deleteConfirmMsg": "Cette action est irréversible et détruira tout le contenu. Saisissez « {{slug}} » pour confirmer.",
+    "deleteConfirm": "Supprimer définitivement"
   },
   "types": {
     "title": "Types fonctionnels",
@@ -29,6 +43,13 @@
     "titleField": "Titre",
     "delete": "Supprimer",
     "noDocuments": "Aucun document"
+  },
+  "common": {
+    "loading": "Chargement…",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "actions": "Actions"
   },
   "error": {
     "generic": "Une erreur est survenue",
