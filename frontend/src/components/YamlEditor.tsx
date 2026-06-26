@@ -7,7 +7,7 @@ export interface YamlEditorHandle {
 }
 
 const EDITOR_THEME = EditorView.theme({
-  '&': { height: '100%', minHeight: '300px' },
+  '&': { height: '100%' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '13px' },
 })
 
@@ -37,7 +37,7 @@ export const YamlEditor = forwardRef<YamlEditorHandle, Props>(({ initialValue },
     }
   }, [initialValue])
 
-  return <div ref={containerRef} className="h-full overflow-auto" />
+  return <div ref={containerRef} style={{ height: '100%' }} />
 })
 
 YamlEditor.displayName = 'YamlEditor'

@@ -143,7 +143,7 @@ export default function TemplateList() {
               </h2>
               <button className="text-gray-400 hover:text-gray-700 text-sm" onClick={closeEdit}>✕</button>
             </div>
-            <div className="flex-1 min-h-0 overflow-hidden p-4">
+            <div className="p-4">
               {yamlLoadError && (
                 <p className="text-sm text-red-600 mb-2">{yamlLoadError}</p>
               )}
@@ -151,7 +151,7 @@ export default function TemplateList() {
                 <p className="text-sm text-gray-400">{t('common.loading')}</p>
               )}
               {yamlContent !== null && (
-                <div className="h-full border border-gray-200 rounded overflow-hidden" style={{ minHeight: '400px' }}>
+                <div className="border border-gray-200 rounded overflow-hidden" style={{ height: '60vh' }}>
                   <YamlEditor ref={editorRef} initialValue={yamlContent} />
                 </div>
               )}
