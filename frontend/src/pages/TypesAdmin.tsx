@@ -3,10 +3,11 @@ import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
-import type { FunctionalType, TemplateInfo } from '../lib/api'
+import type { FunctionalTypeRich, TemplateInfo } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { TypePropertiesPanel } from '../components/TypePropertiesPanel'
 
 export function TypesAdmin() {
   const { t } = useTranslation()
@@ -25,10 +26,11 @@ export function TypesAdmin() {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [importMsg, setImportMsg] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [expandedType, setExpandedType] = useState<string | null>(null)
 
-  const { data: types = [], isLoading } = useQuery<FunctionalType[]>({
-    queryKey: ['types', ws],
-    queryFn: () => api.get(`/workspaces/${ws}/types`),
+  const { data: types = [], isLoading } = useQuery<FunctionalTypeRich[]>({
+    queryKey: ['types-rich', ws],
+    queryFn: () => api.get(`/workspaces/${ws}/types/rich`),
   })
 
   const { data: templates = [] } = useQuery<TemplateInfo[]>({
@@ -39,9 +41,9 @@ export function TypesAdmin() {
 
   const createMutation = useMutation({
     mutationFn: (body: { slug: string; label: string; parent_slug?: string }) =>
-      api.post<FunctionalType>(`/workspaces/${ws}/types`, body),
+      api.post<FunctionalTypeRich>(`/workspaces/${ws}/types`, body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['types', ws] })
+      void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
       setCreating(false)
       setNewSlug('')
       setNewLabel('')
@@ -54,7 +56,7 @@ export function TypesAdmin() {
 
   const deleteMutation = useMutation({
     mutationFn: (slug: string) => api.delete(`/workspaces/${ws}/types/${slug}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['types', ws] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['types-rich', ws] }),
   })
 
   const importMutation = useMutation({
@@ -64,7 +66,7 @@ export function TypesAdmin() {
         { template },
       ),
     onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ['types', ws] })
+      void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
       if (result.no_op) {
         setImportMsg(t('tpl.importNoOp'))
       } else {
@@ -169,21 +171,40 @@ export function TypesAdmin() {
         </thead>
         <tbody>
           {types.map((type) => (
-            <tr key={type.slug} className="border-b hover:bg-gray-50">
-              <td className="py-2 pr-4 font-mono text-sm">{type.slug}</td>
-              <td className="py-2 pr-4 text-sm">{type.label}</td>
-              <td className="py-2 pr-4 text-sm text-gray-500">{type.parent_slug ?? '—'}</td>
-              <td className="py-2 text-right">
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => deleteMutation.mutate(type.slug)}
-                  data-testid={`delete-${type.slug}`}
-                >
-                  {t('types.delete')}
-                </Button>
-              </td>
-            </tr>
+            <>
+              <tr
+                key={type.slug}
+                className="border-b hover:bg-gray-50 cursor-pointer"
+                onClick={() => setExpandedType((v) => (v === type.slug ? null : type.slug))}
+                data-testid={`type-row-${type.slug}`}
+              >
+                <td className="py-2 pr-4 font-mono text-sm">
+                  <span className="mr-1 text-gray-400 text-xs">
+                    {expandedType === type.slug ? '▾' : '▸'}
+                  </span>
+                  {type.slug}
+                </td>
+                <td className="py-2 pr-4 text-sm">{type.label}</td>
+                <td className="py-2 pr-4 text-sm text-gray-500">{type.parent_slug ?? '—'}</td>
+                <td className="py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => deleteMutation.mutate(type.slug)}
+                    data-testid={`delete-${type.slug}`}
+                  >
+                    {t('types.delete')}
+                  </Button>
+                </td>
+              </tr>
+              {expandedType === type.slug && (
+                <tr key={`${type.slug}-props`}>
+                  <td colSpan={4} className="p-0">
+                    <TypePropertiesPanel ws={ws!} type={type} />
+                  </td>
+                </tr>
+              )}
+            </>
           ))}
         </tbody>
       </table>

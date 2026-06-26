@@ -63,7 +63,10 @@
     "delete": "Supprimer",
     "save": "Enregistrer",
     "cancel": "Annuler",
-    "confirmDelete": "Supprimer ce type ?"
+    "confirmDelete": "Supprimer ce type ?",
+    "addValue": "Ajouter une valeur",
+    "valueLabel": "Libellé",
+    "valueColor": "Couleur"
   },
   "documents": {
     "title": "Documents",
