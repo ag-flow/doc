@@ -43,8 +43,8 @@ export function PropertiesPanel({ ws, docId }: PropertiesPanelProps) {
   })
 
   const { data: types = [] } = useQuery<FunctionalTypeWithProps[]>({
-    queryKey: ['types', ws],
-    queryFn: () => api.get(`/workspaces/${ws}/types`),
+    queryKey: ['types-rich', ws],
+    queryFn: () => api.get(`/workspaces/${ws}/types/rich`),
   })
 
   const allowedIndex = useMemo(() => buildAllowedIndex(types), [types])

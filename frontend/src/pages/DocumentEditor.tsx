@@ -121,7 +121,7 @@ export function DocumentEditor() {
 
   return (
     <div className="p-6" data-testid="document-editor">
-      <div className="mb-4 flex items-center gap-4">
+      <div className="mb-1 flex items-center gap-4">
         <Input
           value={title}
           onChange={(e) => {
@@ -149,6 +149,12 @@ export function DocumentEditor() {
           </Button>
         </div>
       </div>
+
+      {doc.functional_type_slug && (
+        <p className="mb-4 text-sm text-gray-400" data-testid="document-type-badge">
+          {doc.functional_type_slug}
+        </p>
+      )}
 
       <div className="flex gap-6">
         <div className="w-2/3">
