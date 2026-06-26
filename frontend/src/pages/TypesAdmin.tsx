@@ -27,6 +27,8 @@ export function TypesAdmin() {
   const [importMsg, setImportMsg] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [expandedType, setExpandedType] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const { data: types = [], isLoading } = useQuery<FunctionalTypeRich[]>({
     queryKey: ['types-rich', ws],
@@ -56,7 +58,12 @@ export function TypesAdmin() {
 
   const deleteMutation = useMutation({
     mutationFn: (slug: string) => api.delete(`/workspaces/${ws}/types/${slug}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['types-rich', ws] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
+      setDeleteTarget(null)
+      setDeleteError(null)
+    },
+    onError: (err: Error) => setDeleteError(err.message),
   })
 
   const importMutation = useMutation({
@@ -190,7 +197,7 @@ export function TypesAdmin() {
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => deleteMutation.mutate(type.slug)}
+                    onClick={() => { setDeleteTarget(type.slug); setDeleteError(null) }}
                     data-testid={`delete-${type.slug}`}
                   >
                     {t('types.delete')}
@@ -208,6 +215,35 @@ export function TypesAdmin() {
           ))}
         </tbody>
       </table>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-red-600">{t('types.deleteConfirmTitle')}</h2>
+            <p className="text-sm text-gray-600">
+              {t('types.deleteConfirmMsg', { slug: deleteTarget })}
+            </p>
+            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => { setDeleteTarget(null); setDeleteError(null) }}
+                disabled={deleteMutation.isPending}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => deleteMutation.mutate(deleteTarget)}
+                disabled={deleteMutation.isPending}
+                data-testid="delete-type-confirm-btn"
+              >
+                {deleteMutation.isPending ? t('common.loading') : t('common.delete')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showImport && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" data-testid="import-tpl-modal">
