@@ -13,6 +13,7 @@ from docflow.documents.block_ops import (
     create_document_in_block,
     list_block_documents,
 )
+from docflow.documents.changelog import log_change
 from docflow.schemas.document import (
     DocumentCreate,
     DocumentOut,
@@ -97,7 +98,8 @@ async def _resolve_functional_type(
 ) -> uuid.UUID:
     ft_id: uuid.UUID | None = await conn.fetchval(
         "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
-        wk, type_slug,
+        wk,
+        type_slug,
     )
     if ft_id is None:
         raise HTTPException(
@@ -107,9 +109,7 @@ async def _resolve_functional_type(
     return ft_id
 
 
-async def _validate_parent(
-    conn: asyncpg.Connection, wk: uuid.UUID, parent_id: uuid.UUID
-) -> None:
+async def _validate_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_id: uuid.UUID) -> None:
     parent_wk: uuid.UUID | None = await conn.fetchval(
         "SELECT workspace_technical_key FROM document WHERE doc_technical_key = $1",
         parent_id,
@@ -161,7 +161,10 @@ async def list_documents(
                   AND pav.slug = $4
                 ORDER BY d.created_at
                 """,
-                wk, functional_type, prop_slug, allowed_value_slug,
+                wk,
+                functional_type,
+                prop_slug,
+                allowed_value_slug,
             )
         elif functional_type:
             rows = await conn.fetch(
@@ -177,16 +180,15 @@ async def list_documents(
                 WHERE d.workspace_technical_key = $1 AND ft.slug = $2
                 ORDER BY d.created_at
                 """,
-                wk, functional_type,
+                wk,
+                functional_type,
             )
         else:
             rows = await conn.fetch(_SELECT_HEAD, wk)
     return [_row_head(r) for r in rows]
 
 
-async def get_document(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID
-) -> DocumentOut:
+async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> DocumentOut:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(_SELECT_DOC, doc_id, wk)
@@ -195,9 +197,7 @@ async def get_document(
     return _row_doc(row)
 
 
-async def create_document(
-    pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
-) -> DocumentOut:
+async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
@@ -214,14 +214,21 @@ async def create_document(
                 RETURNING doc_technical_key, title, type, version, parent,
                           data_block_ref, created_at, updated_at
                 """,
-                data.title, data.parent_id, ft_id, wk, data.block_id,
+                data.title,
+                data.parent_id,
+                ft_id,
+                wk,
+                data.block_id,
             )
             assert row is not None
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
                 "VALUES ($1, 1, $2, $3)",
-                row["doc_technical_key"], data.title, data.content,
+                row["doc_technical_key"],
+                data.title,
+                data.content,
             )
+            await log_change(conn, wk, row["doc_technical_key"], "C")
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
@@ -260,7 +267,8 @@ async def update_document(
                 "SELECT version, title FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2"
                 + (" FOR UPDATE" if has_content else ""),
-                doc_id, wk,
+                doc_id,
+                wk,
             )
             if head is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
@@ -271,7 +279,8 @@ async def update_document(
                     cur = await conn.fetchrow(
                         "SELECT content FROM document_version "
                         "WHERE document_ref = $1 AND version_number = $2",
-                        doc_id, current_v,
+                        doc_id,
+                        current_v,
                     )
                     raise HTTPException(
                         status_code=409,
@@ -287,7 +296,8 @@ async def update_document(
                     prev = await conn.fetchrow(
                         "SELECT content FROM document_version "
                         "WHERE document_ref = $1 AND version_number = $2",
-                        doc_id, current_v,
+                        doc_id,
+                        current_v,
                     )
                     new_content: str | None = prev["content"] if prev else None
                 else:
@@ -295,13 +305,19 @@ async def update_document(
                 await conn.execute(
                     "INSERT INTO document_version (document_ref, version_number, title, content) "
                     "VALUES ($1, $2, $3, $4)",
-                    doc_id, new_v, new_title, new_content,
+                    doc_id,
+                    new_v,
+                    new_title,
+                    new_content,
                 )
                 await conn.execute(
                     "UPDATE document SET version = $1, title = $2, updated_at = now() "
                     "WHERE doc_technical_key = $3",
-                    new_v, new_title, doc_id,
+                    new_v,
+                    new_title,
+                    doc_id,
                 )
+                await log_change(conn, wk, doc_id, "U")
 
             # Métadonnées (parent, type) — sans versioning
             meta: dict[str, object] = {}
@@ -319,48 +335,47 @@ async def update_document(
             if meta:
                 cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(meta))
                 await conn.execute(
-                    f"UPDATE document SET {cols}, updated_at = now() "
-                    "WHERE doc_technical_key = $1",
-                    doc_id, *list(meta.values()),
+                    f"UPDATE document SET {cols}, updated_at = now() WHERE doc_technical_key = $1",
+                    doc_id,
+                    *list(meta.values()),
                 )
 
     return await get_document(pool, ws_slug, doc_id)
 
 
-async def delete_document(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID
-) -> None:
+async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
+    """Supprime le document et retourne un snapshot {id, title, type} capturé avant suppression."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
-            exists: uuid.UUID | None = await conn.fetchval(
-                "SELECT doc_technical_key FROM document "
+            snap = await conn.fetchrow(
+                "SELECT doc_technical_key, title, type FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-                doc_id, wk,
+                doc_id,
+                wk,
             )
-            if exists is None:
+            if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
             try:
-                await conn.execute(
-                    "DELETE FROM document WHERE doc_technical_key = $1", doc_id
-                )
+                await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
             except asyncpg.RestrictViolationError as exc:
                 raise HTTPException(
                     status_code=409,
                     detail="impossible de supprimer : ce document a des enfants",
                 ) from exc
+            await log_change(conn, wk, doc_id, "D")
+    return {"id": str(snap["doc_technical_key"]), "title": snap["title"], "type": snap["type"]}
 
 
 # ── Property values ───────────────────────────────────────────────────────────
 
 
-async def _get_doc_type_id(
-    conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid.UUID
-) -> uuid.UUID:
+async def _get_doc_type_id(conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid.UUID) -> uuid.UUID:
     row = await conn.fetchrow(
         "SELECT doc_technical_key, functional_type_ref FROM document "
         "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-        doc_id, wk,
+        doc_id,
+        wk,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
@@ -368,8 +383,7 @@ async def _get_doc_type_id(
         raise HTTPException(
             status_code=422,
             detail=(
-                "ce document n'a pas de type fonctionnel, "
-                "impossible de lui attacher des valeurs"
+                "ce document n'a pas de type fonctionnel, impossible de lui attacher des valeurs"
             ),
         )
     ft_ref: uuid.UUID = row["functional_type_ref"]
@@ -382,7 +396,8 @@ async def _resolve_prop(
     row = await conn.fetchrow(
         "SELECT id, type, required, label "
         "FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2",
-        type_id, prop_slug,
+        type_id,
+        prop_slug,
     )
     if row is None:
         raise HTTPException(
@@ -392,9 +407,7 @@ async def _resolve_prop(
     return row["id"], row["type"], row["required"], row["label"]
 
 
-def _validate_value_for_type(
-    prop_type: str, data: PropertyValueSet, prop_slug: str
-) -> None:
+def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: str) -> None:
     if prop_type in ("text", "int"):
         if data.value is None:
             raise HTTPException(
@@ -488,7 +501,8 @@ async def list_property_values(
             WHERE pd.functional_type_ref = $1
             ORDER BY pd.created_at
             """,
-            type_id, doc_id,
+            type_id,
+            doc_id,
         )
     result = []
     for r in rows:
@@ -500,16 +514,18 @@ async def list_property_values(
             val = r["value"]
             av_slug = r["allowed_value_slug"]
             av_label = r["allowed_value_label"]
-        result.append(PropertyValueOut(
-            prop_slug=r["prop_slug"],
-            prop_label=r["prop_label"],
-            type=r["type"],
-            version=r["pv_version"],
-            value=val,
-            allowed_value_slug=av_slug,
-            allowed_value_label=av_label,
-            required=r["required"],
-        ))
+        result.append(
+            PropertyValueOut(
+                prop_slug=r["prop_slug"],
+                prop_label=r["prop_label"],
+                type=r["type"],
+                version=r["pv_version"],
+                value=val,
+                allowed_value_slug=av_slug,
+                allowed_value_label=av_label,
+                required=r["required"],
+            )
+        )
     return result
 
 
@@ -530,7 +546,8 @@ async def set_property_value(
                 allowed_value_ref = await conn.fetchval(
                     "SELECT id FROM properties_allowed_values "
                     "WHERE property_def_ref = $1 AND slug = $2",
-                    prop_id, data.allowed_value_slug,
+                    prop_id,
+                    data.allowed_value_slug,
                 )
                 if allowed_value_ref is None:
                     raise HTTPException(
@@ -547,7 +564,8 @@ async def set_property_value(
             pv_row = await conn.fetchrow(
                 "SELECT id, version FROM properties_values "
                 "WHERE document_ref = $1 AND property_def_ref = $2 FOR UPDATE",
-                doc_id, prop_id,
+                doc_id,
+                prop_id,
             )
 
             if pv_row is None:
@@ -561,7 +579,9 @@ async def set_property_value(
                         "INSERT INTO properties_values "
                         "(document_ref, property_def_ref, version, workspace_technical_key) "
                         "VALUES ($1, $2, 1, $3) RETURNING id",
-                        doc_id, prop_id, wk,
+                        doc_id,
+                        prop_id,
+                        wk,
                     )
                 except asyncpg.UniqueViolationError as exc:
                     raise HTTPException(
@@ -572,7 +592,9 @@ async def set_property_value(
                     "INSERT INTO properties_value_version "
                     "(property_value_ref, version_number, value, allowed_value_ref) "
                     "VALUES ($1, 1, $2, $3)",
-                    pv_id, data.value, allowed_value_ref,
+                    pv_id,
+                    data.value,
+                    allowed_value_ref,
                 )
                 return_version = 1
             else:
@@ -583,7 +605,8 @@ async def set_property_value(
                         "FROM properties_value_version pvv "
                         "LEFT JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref "
                         "WHERE pvv.property_value_ref = $1 AND pvv.version_number = $2",
-                        pv_row["id"], current_v,
+                        pv_row["id"],
+                        current_v,
                     )
                     raise HTTPException(
                         status_code=409,
@@ -598,13 +621,18 @@ async def set_property_value(
                     "INSERT INTO properties_value_version "
                     "(property_value_ref, version_number, value, allowed_value_ref) "
                     "VALUES ($1, $2, $3, $4)",
-                    pv_row["id"], new_v, data.value, allowed_value_ref,
+                    pv_row["id"],
+                    new_v,
+                    data.value,
+                    allowed_value_ref,
                 )
                 await conn.execute(
                     "UPDATE properties_values SET version = $1 WHERE id = $2",
-                    new_v, pv_row["id"],
+                    new_v,
+                    pv_row["id"],
                 )
                 return_version = new_v
+            await log_change(conn, wk, doc_id, "P")
 
     allowed_label: str | None = None
     if allowed_value_ref is not None:
@@ -641,7 +669,8 @@ async def delete_property_value(
             deleted = await conn.fetchval(
                 "DELETE FROM properties_values "
                 "WHERE document_ref = $1 AND property_def_ref = $2 RETURNING id",
-                doc_id, prop_id,
+                doc_id,
+                prop_id,
             )
             if deleted is None:
                 raise HTTPException(

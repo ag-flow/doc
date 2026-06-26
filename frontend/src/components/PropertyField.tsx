@@ -38,24 +38,43 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
       </label>
 
       {prop.type === 'restricted_list' ? (
-        <select
-          id={fieldId}
-          className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          value={state.value ?? ''}
-          disabled={saving}
-          onChange={(e) => {
-            setValue(e.target.value || null)
-          }}
-          onBlur={commit}
-          data-testid={`property-input-${prop.prop_slug}`}
-        >
-          <option value="">{t('properties.none')}</option>
-          {allowedValues.map((av) => (
-            <option key={av.slug} value={av.slug}>
-              {av.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-col gap-1">
+          <select
+            id={fieldId}
+            className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            value={state.value ?? ''}
+            disabled={saving}
+            onChange={(e) => {
+              setValue(e.target.value || null)
+            }}
+            onBlur={commit}
+            data-testid={`property-input-${prop.prop_slug}`}
+          >
+            <option value="">{t('properties.none')}</option>
+            {allowedValues.map((av) => (
+              <option key={av.slug} value={av.slug}>
+                {av.label}
+              </option>
+            ))}
+          </select>
+          {state.value && (() => {
+            const av = allowedValues.find((a) => a.slug === state.value)
+            if (!av) return null
+            return (
+              <span
+                className="inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                style={
+                  av.color
+                    ? { backgroundColor: av.color, color: '#fff' }
+                    : { backgroundColor: '#e5e7eb', color: '#374151' }
+                }
+                data-testid={`property-pill-${prop.prop_slug}`}
+              >
+                {av.label}
+              </span>
+            )
+          })()}
+        </div>
       ) : (
         <Input
           id={fieldId}

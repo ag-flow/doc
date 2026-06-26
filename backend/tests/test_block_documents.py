@@ -1,4 +1,4 @@
-"""Tests spec 23 : arbre du bloc, création deux temps, types autorisés."""
+"""Tests spec 23 : arbre du bloc, création deux temps, types autorisés, filtre chemin."""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ import pytest
 from fastapi import HTTPException
 
 from docflow.documents import service as doc_svc
+from docflow.documents.block_ops import list_block_documents
+from docflow.properties import service as prop_svc
 from docflow.schemas.document import DocumentCreateInBlock
+from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
 from docflow.schemas.types import FunctionalTypeCreate
 from docflow.types import service as type_svc
 
@@ -256,3 +259,150 @@ async def test_dod5_parent_from_other_block_rejected(
             ),
         )
     assert exc.value.status_code == 422
+
+
+# ── DoD 2 bis : instanciation valeurs par défaut ──────────────────────────────
+
+async def test_dod2_default_value_instantiated(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 2 : après création, statut par défaut 'a_cadrer' est instancié dans properties_values."""
+    block_id, _ = await _setup_agile_block(db_pool)
+
+    # Ajouter une propriété statut de type restricted_list sur epic
+    await prop_svc.create_def(
+        db_pool, _WS, "epic",
+        PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
+    )
+
+    # Ajouter un allowed_value puis définir comme default
+    from docflow.schemas.properties import PropertiesDefUpdate
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "epic", "statut",
+        AllowedValueCreate(slug="a-cadrer", label="À cadrer", position=0),
+    )
+    await prop_svc.update_def(
+        db_pool, _WS, "epic", "statut",
+        PropertiesDefUpdate(default_value="a-cadrer"),
+    )
+
+    # Créer un document → doit instancier le statut par défaut
+    doc = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board",
+        DocumentCreateInBlock(title="Epic avec statut"),
+    )
+
+    # Vérifier que properties_values contient le statut avec allowed_value "a-cadrer"
+    row = await db_pool.fetchrow(
+        """
+        SELECT pav.slug
+        FROM properties_values pv
+        JOIN properties_value_version pvv
+            ON pvv.property_value_ref = pv.id AND pvv.version_number = pv.version
+        JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
+        JOIN properties_defs pd ON pd.id = pv.property_def_ref
+        WHERE pv.document_ref = $1 AND pd.slug = 'statut'
+        """,
+        doc.doc_technical_key,
+    )
+    assert row is not None, "La valeur par défaut de statut doit être instanciée"
+    assert row["slug"] == "a-cadrer"
+
+
+# ── DoD 5 : filtre préservant le chemin ───────────────────────────────────────
+
+async def test_dod5_filter_path_preserving(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 5 : filtre statut=done sur atdd → atdd + ses ancêtres (feature, epic) visibles."""
+    block_id, type_ids = await _setup_agile_block(db_pool)
+
+    # Ajouter statut sur atdd (type feuille)
+    await prop_svc.create_def(
+        db_pool, _WS, "atdd",
+        PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
+    )
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "atdd", "statut",
+        AllowedValueCreate(slug="done", label="Terminé", position=1),
+    )
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "atdd", "statut",
+        AllowedValueCreate(slug="in-progress", label="En cours", position=0),
+    )
+
+    # Créer l'arbre : epic ← feature ← atdd(done) + story(in-progress)
+    epic = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board", DocumentCreateInBlock(title="E1"),
+    )
+    feature = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board",
+        DocumentCreateInBlock(title="F1", parent_id=epic.doc_technical_key),
+    )
+    atdd_done = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board",
+        DocumentCreateInBlock(
+            title="ATDD done",
+            parent_id=feature.doc_technical_key,
+            functional_type_slug="atdd",
+        ),
+    )
+    story_ip = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board",
+        DocumentCreateInBlock(
+            title="Story in-progress",
+            parent_id=feature.doc_technical_key,
+            functional_type_slug="story",
+        ),
+    )
+
+    # Poser statut=done sur atdd_done via properties_values directement
+    wk: uuid.UUID = await db_pool.fetchval(
+        "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
+    )
+    pd_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT id FROM properties_defs WHERE slug = 'statut' "
+        "AND functional_type_ref = $1",
+        type_ids["atdd"],
+    )
+    av_done_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT id FROM properties_allowed_values WHERE slug = 'done' "
+        "AND property_def_ref = $1",
+        pd_id,
+    )
+    pv_id: uuid.UUID = await db_pool.fetchval(
+        "INSERT INTO properties_values "
+        "(document_ref, property_def_ref, version, workspace_technical_key) "
+        "VALUES ($1, $2, 1, $3) RETURNING id",
+        atdd_done.doc_technical_key, pd_id, wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO properties_value_version "
+        "(property_value_ref, version_number, value, allowed_value_ref) "
+        "VALUES ($1, 1, NULL, $2)",
+        pv_id, av_done_id,
+    )
+
+    # Filtre statut=done → doit retourner atdd_done + feature + epic (ancêtres) mais PAS story
+    filtered = await list_block_documents(
+        db_pool, _WS, "agile-board",
+        prop_slug="statut", allowed_value_slug="done",
+    )
+    filtered_ids = {d.doc_technical_key for d in filtered}
+
+    assert atdd_done.doc_technical_key in filtered_ids, "atdd_done doit être visible"
+    assert feature.doc_technical_key in filtered_ids, "feature (ancêtre) doit être visible"
+    assert epic.doc_technical_key in filtered_ids, "epic (ancêtre) doit être visible"
+    assert story_ip.doc_technical_key not in filtered_ids, "story (non done) doit être masquée"
+
+
+async def test_dod5_filter_no_match_returns_empty(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 5 : filtre sur valeur inexistante → liste vide."""
+    await _setup_agile_block(db_pool)
+    filtered = await list_block_documents(
+        db_pool, _WS, "agile-board",
+        prop_slug="statut", allowed_value_slug="inexistant",
+    )
+    assert filtered == []

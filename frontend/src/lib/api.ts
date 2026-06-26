@@ -170,13 +170,52 @@ export interface AllowedTypeOut {
   label: string
 }
 
+/** Valeur brute d'une propriété pour un doc, telle que retournée par le batch /values. */
+export interface DocPropValue {
+  prop_slug: string
+  prop_type: string
+  value: string | null
+  allowed_value_slug: string | null
+  allowed_value_label: string | null
+  allowed_value_color: string | null
+}
+
+/** Allowed value enrichie (endpoint /types/rich). */
+export interface AllowedValueRich {
+  slug: string
+  label: string
+  position: number
+  color: string | null
+}
+
+/** Définition de propriété enrichie (endpoint /types/rich). */
+export interface PropertyDefRich {
+  slug: string
+  label: string
+  type: 'text' | 'int' | 'restricted_list'
+  default_value: string | null
+  required: boolean
+  allowed_values: AllowedValueRich[]
+}
+
+/** Type fonctionnel enrichi de ses propriétés + allowed_values (endpoint /types/rich). */
+export interface FunctionalTypeRich extends FunctionalType {
+  properties: PropertyDefRich[]
+}
+
 // ── Endpoints documents / blocks ────────────────────────────────────────────
 
 export const docsApi = {
   getBlocks: (ws: string) => api.get<DataBlockOut[]>(`/workspaces/${ws}/blocks`),
 
+  getTypesRich: (ws: string) =>
+    api.get<FunctionalTypeRich[]>(`/workspaces/${ws}/types/rich`),
+
   getBlockDocuments: (ws: string, block: string) =>
     api.get<DocumentOut[]>(`/workspaces/${ws}/blocks/${block}/documents`),
+
+  getBlockValues: (ws: string, block: string) =>
+    api.get<Record<string, DocPropValue[]>>(`/workspaces/${ws}/blocks/${block}/values`),
 
   getAllowedTypes: (ws: string, block: string, parentId?: string) => {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''
@@ -211,4 +250,55 @@ export const docsApi = {
       expected_version: number | null
     },
   ) => api.put<PropertyValueOut>(`/workspaces/${ws}/documents/${docId}/values/${propSlug}`, body),
+}
+
+// ── Webhooks ────────────────────────────────────────────────────────────────
+
+export interface WebhookOut {
+  id: string
+  workspace_technical_key: string
+  label: string
+  url: string
+  headers: Record<string, string>
+  events: string[]
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WebhookTestOut {
+  status_code: number | null
+  error: string | null
+}
+
+export const ALL_EVENTS = ['document.created', 'document.updated', 'document.deleted'] as const
+export type WebhookEvent = (typeof ALL_EVENTS)[number]
+
+export const webhooksApi = {
+  list: (ws: string) => api.get<WebhookOut[]>(`/workspaces/${ws}/webhooks`),
+  get: (ws: string, id: string) => api.get<WebhookOut>(`/workspaces/${ws}/webhooks/${id}`),
+  create: (
+    ws: string,
+    body: {
+      label: string
+      url: string
+      headers: Record<string, string>
+      events: string[]
+      active: boolean
+    },
+  ) => api.post<WebhookOut>(`/workspaces/${ws}/webhooks`, body),
+  update: (
+    ws: string,
+    id: string,
+    body: Partial<{
+      label: string
+      url: string
+      headers: Record<string, string>
+      events: string[]
+      active: boolean
+    }>,
+  ) => api.patch<WebhookOut>(`/workspaces/${ws}/webhooks/${id}`, body),
+  delete: (ws: string, id: string) => api.delete(`/workspaces/${ws}/webhooks/${id}`),
+  test: (ws: string, id: string) =>
+    api.post<WebhookTestOut>(`/workspaces/${ws}/webhooks/${id}/test`, {}),
 }

@@ -56,6 +56,7 @@ class Template(BaseModel):
 
 # ── Resolved (post-inheritance, concrete only) ─────────────────────────────
 
+
 class ResolvedType(BaseModel):
     """Type concret après résolution de l'héritage — prêt pour le diff/import."""
 

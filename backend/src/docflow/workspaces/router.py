@@ -18,9 +18,7 @@ async def list_workspaces(
     include_archived: bool = Query(False),
     _: AuthUser = _Admin,
 ) -> list[WorkspaceOut]:
-    return await service.list_workspaces(
-        request.app.state.pool, include_archived=include_archived
-    )
+    return await service.list_workspaces(request.app.state.pool, include_archived=include_archived)
 
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201)
@@ -31,9 +29,7 @@ async def create_workspace(
 
 
 @router.get("/workspaces/{ws_slug}", response_model=WorkspaceOut)
-async def get_workspace(
-    ws_slug: str, request: Request, _: AuthUser = _Admin
-) -> WorkspaceOut:
+async def get_workspace(ws_slug: str, request: Request, _: AuthUser = _Admin) -> WorkspaceOut:
     return await service.get_workspace(request.app.state.pool, ws_slug)
 
 
@@ -45,9 +41,7 @@ async def update_workspace(
 
 
 @router.post("/workspaces/{ws_slug}/archive", response_model=WorkspaceOut)
-async def archive_workspace(
-    ws_slug: str, request: Request, _: AuthUser = _Admin
-) -> WorkspaceOut:
+async def archive_workspace(ws_slug: str, request: Request, _: AuthUser = _Admin) -> WorkspaceOut:
     return await service.archive_workspace(request.app.state.pool, ws_slug)
 
 

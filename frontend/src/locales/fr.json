@@ -9,9 +9,20 @@
   "nav": {
     "workspaces": "Workspaces",
     "templates": "Templates",
-    "types": "Types fonctionnels",
+    "types": "Types",
+    "blocs": "Blocs",
     "documents": "Documents",
-    "logout": "Déconnexion"
+    "logout": "Déconnexion",
+    "allWorkspaces": "Tous les workspaces",
+    "chooseBloc": "Choisissez d'abord un bloc"
+  },
+  "blocs": {
+    "title": "Blocs",
+    "create": "Nouveau bloc",
+    "rootType": "Type racine",
+    "selectType": "— choisir un type racine —",
+    "empty": "Aucun bloc dans ce workspace",
+    "open": "Ouvrir"
   },
   "tpl": {
     "title": "Templates",
@@ -38,7 +49,9 @@
     "slugInvalid": "Le slug doit commencer par une lettre ou un chiffre, minuscules, tirets et underscores uniquement",
     "deleteConfirmTitle": "Supprimer le workspace ?",
     "deleteConfirmMsg": "Cette action est irréversible et détruira tout le contenu. Saisissez « {{slug}} » pour confirmer.",
-    "deleteConfirm": "Supprimer définitivement"
+    "deleteConfirm": "Supprimer définitivement",
+    "notFound": "Le workspace « {{slug}} » est introuvable ou vous n'y avez pas accès.",
+    "archived": "Le workspace « {{slug}} » est archivé."
   },
   "types": {
     "title": "Types fonctionnels",
@@ -64,7 +77,9 @@
     "no_types": "Aucun type disponible",
     "tree_mode": "Arbre",
     "list_mode": "Liste",
-    "columns": "Colonnes"
+    "columns": "Colonnes",
+    "filter_all": "Tous",
+    "noResults": "Aucun résultat pour ce filtre"
   },
   "editor": {
     "save": "Enregistrer",
@@ -92,11 +107,30 @@
       "keepMine": "Garder le mien"
     }
   },
+  "webhooks": {
+    "title": "Webhooks",
+    "create": "Nouveau webhook",
+    "edit": "Modifier le webhook",
+    "label": "Libellé",
+    "url": "URL",
+    "urlHint": "utilisez {id_document} dans l'URL",
+    "headers": "Headers HTTP",
+    "headerKey": "Clé",
+    "headerValue": "Valeur",
+    "events": "Événements",
+    "active": "Actif",
+    "empty": "Aucun webhook dans ce workspace",
+    "statusActive": "Actif",
+    "statusInactive": "Inactif",
+    "test": "Tester",
+    "testError": "Erreur"
+  },
   "common": {
     "loading": "Chargement…",
     "save": "Enregistrer",
     "cancel": "Annuler",
     "delete": "Supprimer",
+    "edit": "Modifier",
     "actions": "Actions"
   },
   "error": {

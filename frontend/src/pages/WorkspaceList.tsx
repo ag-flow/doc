@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
@@ -13,8 +13,17 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
 export default function WorkspaceList() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const location = useLocation()
   const qc = useQueryClient()
   const { setCurrentSlug } = useWorkspace()
+
+  // Message de redirection depuis WorkspaceLayout (ws invalide ou archivé)
+  const redirectState = location.state as { invalidWs?: string; archivedWs?: string } | null
+  const redirectMsg = redirectState?.invalidWs
+    ? t('ws.notFound', { slug: redirectState.invalidWs })
+    : redirectState?.archivedWs
+      ? t('ws.archived', { slug: redirectState.archivedWs })
+      : null
 
   const [showCreate, setShowCreate] = useState(false)
   const [slug, setSlug] = useState('')
@@ -66,7 +75,7 @@ export default function WorkspaceList() {
 
   const handleSelect = (ws: WorkspaceOut) => {
     setCurrentSlug(ws.slug)
-    navigate(`/workspaces/${ws.slug}/types`)
+    navigate(`/ws/${ws.slug}/blocs`)
   }
 
   if (isLoading) return <p className="p-4">{t('common.loading')}</p>
@@ -79,6 +88,12 @@ export default function WorkspaceList() {
           {t('ws.create')}
         </Button>
       </div>
+
+      {redirectMsg && (
+        <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800" data-testid="redirect-msg">
+          {redirectMsg}
+        </p>
+      )}
 
       {apiError && (
         <p className="text-red-600 mb-4" data-testid="api-error">{apiError}</p>

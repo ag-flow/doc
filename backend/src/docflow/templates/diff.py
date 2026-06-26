@@ -13,7 +13,7 @@ DiffKind = Literal["add", "no-op", "soft_update", "conflict"]
 @dataclass
 class DiffItem:
     kind: DiffKind
-    path: str       # ex. "epic", "epic.statut", "epic.statut.todo"
+    path: str  # ex. "epic", "epic.statut", "epic.statut.todo"
     detail: str = ""
 
 
@@ -40,6 +40,7 @@ class DiffResult:
 
 # ── Helpers de comparaison ─────────────────────────────────────────────────
 
+
 def _diff_constraints(
     path: str,
     template: list[ConstraintDef],
@@ -53,11 +54,13 @@ def _diff_constraints(
         else:
             dc = db_by_kind[tc.kind]
             if dc.value != tc.value or dc.message != tc.message:
-                result.items.append(DiffItem(
-                    kind="conflict",
-                    path=f"{path}.{tc.kind}",
-                    detail="contrainte modifiée (valeur ou message)",
-                ))
+                result.items.append(
+                    DiffItem(
+                        kind="conflict",
+                        path=f"{path}.{tc.kind}",
+                        detail="contrainte modifiée (valeur ou message)",
+                    )
+                )
             else:
                 result.items.append(DiffItem(kind="no-op", path=f"{path}.{tc.kind}"))
 
@@ -75,15 +78,12 @@ def _diff_allowed_values(
             result.items.append(DiffItem(kind="add", path=p))
         else:
             dav = db_by_slug[tav.slug]
-            struct_changed = (
-                dav.position != tav.position
-                or dav.color != tav.color
-            )
+            struct_changed = dav.position != tav.position or dav.color != tav.color
             label_changed = dav.label != tav.label
             if struct_changed:
-                result.items.append(DiffItem(
-                    kind="conflict", path=p, detail="position ou couleur modifiée"
-                ))
+                result.items.append(
+                    DiffItem(kind="conflict", path=p, detail="position ou couleur modifiée")
+                )
             elif label_changed:
                 result.items.append(DiffItem(kind="soft_update", path=p))
             else:
@@ -106,9 +106,9 @@ def _diff_prop(
         return
 
     if db_prop.required != tp.required or db_prop.default != tp.default:
-        result.items.append(DiffItem(
-            kind="conflict", path=path, detail="required ou default modifié"
-        ))
+        result.items.append(
+            DiffItem(kind="conflict", path=path, detail="required ou default modifié")
+        )
         return
 
     label_changed = db_prop.label != tp.label
@@ -118,16 +118,13 @@ def _diff_prop(
         result.items.append(DiffItem(kind="no-op", path=path))
 
     _diff_constraints(path, tp.constraints, db_prop.constraints, result)
-    _diff_allowed_values(
-        f"{path}#av", tp.allowed_values, db_prop.allowed_values, result
-    )
+    _diff_allowed_values(f"{path}#av", tp.allowed_values, db_prop.allowed_values, result)
 
 
 # ── Snapshot DB ────────────────────────────────────────────────────────────
 
-async def _fetch_db_snapshot(
-    conn: asyncpg.Connection, wk: str
-) -> dict[str, ResolvedType]:
+
+async def _fetch_db_snapshot(conn: asyncpg.Connection, wk: str) -> dict[str, ResolvedType]:
     """Charge la structure existante du workspace sous forme de ResolvedType."""
     rows = await conn.fetch(
         """
@@ -158,24 +155,28 @@ async def _fetch_db_snapshot(
                 " WHERE property_def_ref = $1 ORDER BY position",
                 pd["id"],
             )
-            props.append(PropDef(
-                slug=pd["slug"],
-                label=pd["label"],
-                type=pd["type"],
-                required=pd["required"],
-                default=pd["default_value"],
-                constraints=[
-                    ConstraintDef(kind=c["kind"], value=c["value"], message=c["message"])
-                    for c in c_rows
-                ],
-                allowed_values=[
-                    AllowedValueDef(
-                        slug=av["slug"], label=av["label"],
-                        position=av["position"], color=av["color"],
-                    )
-                    for av in av_rows
-                ],
-            ))
+            props.append(
+                PropDef(
+                    slug=pd["slug"],
+                    label=pd["label"],
+                    type=pd["type"],
+                    required=pd["required"],
+                    default=pd["default_value"],
+                    constraints=[
+                        ConstraintDef(kind=c["kind"], value=c["value"], message=c["message"])
+                        for c in c_rows
+                    ],
+                    allowed_values=[
+                        AllowedValueDef(
+                            slug=av["slug"],
+                            label=av["label"],
+                            position=av["position"],
+                            color=av["color"],
+                        )
+                        for av in av_rows
+                    ],
+                )
+            )
         snapshot[r["slug"]] = ResolvedType(
             slug=r["slug"],
             label=r["label"],
@@ -186,6 +187,7 @@ async def _fetch_db_snapshot(
 
 
 # ── Point d'entrée ─────────────────────────────────────────────────────────
+
 
 async def compute_diff(
     conn: asyncpg.Connection,
@@ -206,10 +208,13 @@ async def compute_diff(
             continue
 
         if db_type.parent != rt.parent:
-            result.items.append(DiffItem(
-                kind="conflict", path=path,
-                detail=f"parent modifié ({db_type.parent!r} → {rt.parent!r})"
-            ))
+            result.items.append(
+                DiffItem(
+                    kind="conflict",
+                    path=path,
+                    detail=f"parent modifié ({db_type.parent!r} → {rt.parent!r})",
+                )
+            )
             continue
 
         if db_type.label != rt.label:

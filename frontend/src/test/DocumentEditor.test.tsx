@@ -1,12 +1,23 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 
 // BlockNote est lourd à charger en jsdom : on mocke le wrapper éditeur.
 vi.mock('../components/MarkdownEditor', () => ({
-  MarkdownEditor: () => <div data-testid="markdown-editor-mock" />,
+  MarkdownEditor: React.forwardRef(
+    (
+      { initialContent }: { initialContent?: string; onDirty?: () => void },
+      ref: React.Ref<{ getMarkdown: () => Promise<string> }>,
+    ) => {
+      React.useImperativeHandle(ref, () => ({
+        getMarkdown: () => Promise.resolve(initialContent ?? ''),
+      }))
+      return <div data-testid="markdown-editor-mock">{initialContent}</div>
+    },
+  ),
 }))
 
 // PropertiesPanel charge ses propres requêtes : on le mocke pour isoler l'éditeur.
@@ -18,6 +29,7 @@ vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../lib/api')>('../lib/api')
   return {
     ...actual,
+    ApiError: actual.ApiError,
     docsApi: {
       ...actual.docsApi,
       getDocument: vi.fn(),
@@ -26,17 +38,17 @@ vi.mock('../lib/api', async () => {
   }
 })
 
-import { docsApi, type DocumentOut } from '../lib/api'
+import { docsApi, ApiError, type DocumentOut } from '../lib/api'
 import { DocumentEditor } from '../pages/DocumentEditor'
 
 function renderEditor() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/workspaces/ws/blocks/b1/documents/d1']}>
+      <MemoryRouter initialEntries={['/ws/ws/blocs/b1/documents/d1']}>
         <Routes>
           <Route
-            path="/workspaces/:ws/blocks/:block/documents/:docId"
+            path="/ws/:wsSlug/blocs/:blocSlug/documents/:docId"
             element={<DocumentEditor />}
           />
         </Routes>
@@ -62,6 +74,7 @@ const doc: DocumentOut = {
 describe('DocumentEditor', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  // DoD 24.1 — chargement + affichage
   it('loads the document and shows the title', async () => {
     vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
     renderEditor()
@@ -71,5 +84,55 @@ describe('DocumentEditor', () => {
     expect(screen.getByDisplayValue('Mon document')).toBeInTheDocument()
     expect(screen.getByTestId('markdown-editor-mock')).toBeInTheDocument()
     expect(screen.getByTestId('document-save-btn')).toBeInTheDocument()
+  })
+
+  // DoD 24.2 — sauvegarde avec le contenu éditeur
+  it('saves document on button click', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
+
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.patchDocument)).toHaveBeenCalledWith(
+        'ws',
+        'd1',
+        expect.objectContaining({ expected_version: 3 }),
+      ),
+    )
+  })
+
+  // DoD 24.3 — 409 → ConflictResolver s'ouvre
+  it('opens ConflictResolver on 409', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    // Le detail du 409 est le DocumentOut courant côté serveur
+    vi.mocked(docsApi.patchDocument).mockRejectedValue(
+      new ApiError(
+        409,
+        { title: 'Serveur', content: '# Serveur', version: 4 },
+        'Conflit de version',
+      ),
+    )
+
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+
+    // ConflictResolver doit s'afficher
+    await waitFor(() =>
+      expect(screen.getByText('Conflit de version')).toBeInTheDocument(),
+    )
   })
 })

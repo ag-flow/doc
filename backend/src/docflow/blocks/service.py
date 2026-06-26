@@ -52,9 +52,9 @@ async def _resolve_type(
 ) -> tuple[uuid.UUID, uuid.UUID | None]:
     """Retourne (type_id, type_parent_id)."""
     row = await conn.fetchrow(
-        "SELECT id, parent FROM functional_type "
-        "WHERE workspace_technical_key = $1 AND slug = $2",
-        wk, type_slug,
+        "SELECT id, parent FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
+        wk,
+        type_slug,
     )
     if row is None:
         raise HTTPException(
@@ -75,7 +75,8 @@ async def _check_mirror_constraint(
     parent_row = await conn.fetchrow(
         "SELECT b.functional_type_ref FROM data_block b "
         "WHERE b.workspace_technical_key = $1 AND b.slug = $2",
-        wk, parent_block_slug,
+        wk,
+        parent_block_slug,
     )
     if parent_row is None:
         raise HTTPException(
@@ -109,9 +110,7 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
     return _row(row)
 
 
-async def create_block(
-    pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate
-) -> DataBlockOut:
+async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) -> DataBlockOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
@@ -119,12 +118,11 @@ async def create_block(
 
             parent_id: uuid.UUID | None = None
             if data.parent_slug is not None:
-                await _check_mirror_constraint(
-                    conn, wk, type_id, type_parent_id, data.parent_slug
-                )
+                await _check_mirror_constraint(conn, wk, type_id, type_parent_id, data.parent_slug)
                 parent_id = await conn.fetchval(
                     "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
-                    wk, data.parent_slug,
+                    wk,
+                    data.parent_slug,
                 )
             else:
                 # Bloc racine : le type doit être racine (parent=null dans functional_type)
@@ -145,7 +143,11 @@ async def create_block(
                     VALUES ($1, $2, $3, $4, $5)
                     RETURNING id, slug, label, created_at, updated_at
                     """,
-                    data.slug, data.label, type_id, parent_id, wk,
+                    data.slug,
+                    data.label,
+                    type_id,
+                    parent_id,
+                    wk,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -178,7 +180,8 @@ async def update_block(
             block_row = await conn.fetchrow(
                 "SELECT id, functional_type_ref FROM data_block "
                 "WHERE workspace_technical_key = $1 AND slug = $2",
-                wk, block_slug,
+                wk,
+                block_slug,
             )
             if block_row is None:
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
@@ -201,7 +204,8 @@ async def update_block(
                     db_updates["parent"] = await conn.fetchval(
                         "SELECT id FROM data_block "
                         "WHERE workspace_technical_key = $1 AND slug = $2",
-                        wk, new_parent_slug,
+                        wk,
+                        new_parent_slug,
                     )
                 else:
                     db_updates["parent"] = None
@@ -212,7 +216,8 @@ async def update_block(
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(db_updates))
             await conn.execute(
                 f"UPDATE data_block SET {cols}, updated_at = now() WHERE id = $1",
-                block_id, *list(db_updates.values()),
+                block_id,
+                *list(db_updates.values()),
             )
 
     return await get_block(pool, ws_slug, block_slug)
@@ -224,7 +229,8 @@ async def delete_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> Non
             wk = await require_workspace(conn, ws_slug)
             block_id: uuid.UUID | None = await conn.fetchval(
                 "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
-                wk, block_slug,
+                wk,
+                block_slug,
             )
             if block_id is None:
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")

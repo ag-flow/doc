@@ -3,14 +3,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import './lib/i18n'
 import { getToken, clearToken } from './lib/api'
-import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext'
+import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { Login } from './pages/Login'
 import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
+import { WorkspaceLayout } from './pages/WorkspaceLayout'
 import { TypesAdmin } from './pages/TypesAdmin'
-import { DocumentTree } from './pages/DocumentTree'
+import { BlocsAdmin } from './pages/BlocsAdmin'
 import { BlockDocumentList } from './pages/BlockDocumentList'
 import { DocumentEditor } from './pages/DocumentEditor'
+import { WebhooksAdmin } from './pages/WebhooksAdmin'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -21,39 +23,28 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function NavBar() {
+/** Barre globale : logo, liens globaux, logout. */
+function GlobalNav() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { currentSlug } = useWorkspace()
   return (
     <nav className="flex items-center gap-6 border-b border-gray-200 bg-white px-8 py-3">
-      <Link to="/templates" className="font-semibold text-indigo-600">docflow</Link>
+      <Link to="/workspaces" className="font-semibold text-indigo-600">
+        docflow
+      </Link>
       <Link to="/templates" className="text-sm text-gray-600 hover:text-gray-900">
         {t('nav.templates')}
       </Link>
       <Link to="/workspaces" className="text-sm text-gray-600 hover:text-gray-900">
         {t('nav.workspaces')}
       </Link>
-      {currentSlug && (
-        <>
-          <Link
-            to={`/workspaces/${currentSlug}/types`}
-            className="text-sm text-gray-600 hover:text-gray-900"
-          >
-            {t('nav.types')}
-          </Link>
-          <Link
-            to={`/workspaces/${currentSlug}/documents`}
-            className="text-sm text-gray-600 hover:text-gray-900"
-          >
-            {t('nav.documents')}
-          </Link>
-        </>
-      )}
       <div className="ml-auto">
         <button
           className="text-sm text-gray-500 hover:text-red-600"
-          onClick={() => { clearToken(); void navigate('/login') }}
+          onClick={() => {
+            clearToken()
+            void navigate('/login')
+          }}
         >
           {t('nav.logout')}
         </button>
@@ -62,10 +53,10 @@ function NavBar() {
   )
 }
 
-function Layout({ children }: { children: React.ReactNode }) {
+function GlobalLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
-      <NavBar />
+      <GlobalNav />
       <main>{children}</main>
     </div>
   )
@@ -75,50 +66,41 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      {/* Templates : lecture seule, pas d'auth requise */}
-      <Route path="/templates" element={<Layout><TemplateList /></Layout>} />
+
+      {/* Routes globales */}
+      <Route path="/templates" element={<GlobalLayout><TemplateList /></GlobalLayout>} />
       <Route
         path="/workspaces"
         element={
           <ProtectedRoute>
-            <Layout><WorkspaceList /></Layout>
+            <GlobalLayout><WorkspaceList /></GlobalLayout>
           </ProtectedRoute>
         }
       />
+
+      {/* Routes workspace — toutes sous le WorkspaceLayout contextuel */}
       <Route
-        path="/workspaces/:ws/types"
+        path="/ws/:wsSlug"
         element={
           <ProtectedRoute>
-            <Layout><TypesAdmin /></Layout>
+            <GlobalLayout>
+              <WorkspaceLayout />
+            </GlobalLayout>
           </ProtectedRoute>
         }
-      />
-      <Route
-        path="/workspaces/:ws/documents"
-        element={
-          <ProtectedRoute>
-            <Layout><DocumentTree /></Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/workspaces/:ws/blocks/:block"
-        element={
-          <ProtectedRoute>
-            <Layout><BlockDocumentList /></Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/workspaces/:ws/blocks/:block/documents/:docId"
-        element={
-          <ProtectedRoute>
-            <Layout><DocumentEditor /></Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route path="/" element={<Navigate to="/templates" replace />} />
-      <Route path="*" element={<Navigate to="/templates" replace />} />
+      >
+        {/* /ws/:wsSlug → redirect vers blocs */}
+        <Route index element={<Navigate to="blocs" replace />} />
+        <Route path="types" element={<TypesAdmin />} />
+        <Route path="blocs" element={<BlocsAdmin />} />
+        <Route path="blocs/:blocSlug/documents" element={<BlockDocumentList />} />
+        <Route path="blocs/:blocSlug/documents/:docId" element={<DocumentEditor />} />
+        <Route path="webhooks" element={<WebhooksAdmin />} />
+      </Route>
+
+      {/* Racine + catch-all */}
+      <Route path="/" element={<Navigate to="/workspaces" replace />} />
+      <Route path="*" element={<Navigate to="/workspaces" replace />} />
     </Routes>
   )
 }

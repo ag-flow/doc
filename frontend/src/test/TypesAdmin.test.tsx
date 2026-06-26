@@ -22,9 +22,9 @@ function renderWithProviders(ws = 'my-ws') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[`/workspaces/${ws}/types`]}>
+      <MemoryRouter initialEntries={[`/ws/${ws}/types`]}>
         <Routes>
-          <Route path="/workspaces/:ws/types" element={<TypesAdmin />} />
+          <Route path="/ws/:wsSlug/types" element={<TypesAdmin />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

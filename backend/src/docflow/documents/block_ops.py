@@ -9,6 +9,7 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.documents.changelog import log_change
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
 log = structlog.get_logger(__name__)
@@ -50,7 +51,8 @@ async def _resolve_block_id(
     row = await conn.fetchrow(
         "SELECT id, functional_type_ref FROM data_block "
         "WHERE workspace_technical_key = $1 AND slug = $2",
-        wk, block_slug,
+        wk,
+        block_slug,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
@@ -60,7 +62,8 @@ async def _resolve_block_id(
 async def _resolve_functional_type(conn: asyncpg.Connection, wk: uuid.UUID, slug: str) -> uuid.UUID:
     ft_id: uuid.UUID | None = await conn.fetchval(
         "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
-        wk, slug,
+        wk,
+        slug,
     )
     if ft_id is None:
         raise HTTPException(
@@ -94,7 +97,8 @@ async def _instantiate_default_values(
             allowed_value_ref = await conn.fetchval(
                 "SELECT id FROM properties_allowed_values "
                 "WHERE property_def_ref = $1 AND slug = $2",
-                prop_id, default_val,
+                prop_id,
+                default_val,
             )
             if allowed_value_ref is None:
                 log.warning(
@@ -110,13 +114,17 @@ async def _instantiate_default_values(
             "INSERT INTO properties_values "
             "(document_ref, property_def_ref, version, workspace_technical_key) "
             "VALUES ($1, $2, 1, $3) RETURNING id",
-            doc_id, prop_id, wk,
+            doc_id,
+            prop_id,
+            wk,
         )
         await conn.execute(
             "INSERT INTO properties_value_version "
             "(property_value_ref, version_number, value, allowed_value_ref) "
             "VALUES ($1, 1, $2, $3)",
-            pv_id, value_to_store, allowed_value_ref,
+            pv_id,
+            value_to_store,
+            allowed_value_ref,
         )
 
 
@@ -143,7 +151,8 @@ async def allowed_types(
                     WHERE workspace_technical_key = $1 AND slug = $2
                 )
                 """,
-                wk, block_slug,
+                wk,
+                block_slug,
             )
             if slug is None:
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
@@ -162,14 +171,110 @@ async def allowed_types(
 
 
 async def list_block_documents(
-    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    block_slug: str,
+    *,
+    prop_slug: str | None = None,
+    allowed_value_slug: str | None = None,
 ) -> list[DocumentOut]:
-    """Tous les documents du bloc (WHERE data_block_ref = block.id), à plat."""
+    """Tous les documents du bloc, à plat.
+
+    Si prop_slug + allowed_value_slug fournis : filtre préservant le chemin
+    (les ancêtres des nœuds retenus sont inclus dans le résultat).
+    """
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         block_id, _ = await _resolve_block_id(conn, wk, block_slug)
-        rows = await conn.fetch(_SELECT_BLOCK_HEAD, block_id)
-    return [_row_head(r) for r in rows]
+        all_rows = await conn.fetch(_SELECT_BLOCK_HEAD, block_id)
+        all_docs = [_row_head(r) for r in all_rows]
+
+        if not (prop_slug and allowed_value_slug):
+            return all_docs
+
+        # Filtre : ids des docs dont la propriété a la valeur cherchée
+        matched_ids: set[uuid.UUID] = set(
+            r["document_ref"]
+            for r in await conn.fetch(
+                """
+                SELECT pv.document_ref
+                FROM properties_values pv
+                JOIN properties_value_version pvv
+                    ON pvv.property_value_ref = pv.id AND pvv.version_number = pv.version
+                JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
+                JOIN properties_defs pd ON pd.id = pv.property_def_ref
+                WHERE pv.document_ref = ANY(
+                    SELECT doc_technical_key FROM document WHERE data_block_ref = $1
+                )
+                AND pd.slug  = $2
+                AND pav.slug = $3
+                """,
+                block_id,
+                prop_slug,
+                allowed_value_slug,
+            )
+        )
+
+        # Réintégration des ancêtres (filtre préservant le chemin)
+        by_id = {d.doc_technical_key: d for d in all_docs}
+        visible: set[uuid.UUID] = set(matched_ids)
+        for mid in matched_ids:
+            cur = by_id.get(mid)
+            while cur and cur.parent_id:
+                if cur.parent_id in visible:
+                    break
+                visible.add(cur.parent_id)
+                cur = by_id.get(cur.parent_id)
+
+        return [d for d in all_docs if d.doc_technical_key in visible]
+
+
+async def list_block_values(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> dict[str, list[dict[str, object]]]:
+    """Valeurs courantes de toutes les propriétés pour tous les docs du bloc.
+
+    Retourne {doc_id: [{prop_slug, type, value, allowed_value_slug, allowed_value_label}]}.
+    Utilisé pour alimenter les colonnes dynamiques de la liste front.
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        block_id, _ = await _resolve_block_id(conn, wk, block_slug)
+        rows = await conn.fetch(
+            """
+            SELECT
+                pv.document_ref,
+                pd.slug  AS prop_slug,
+                pd.type  AS prop_type,
+                pvv.value,
+                pav.slug AS allowed_value_slug,
+                pav.label AS allowed_value_label,
+                pav.color AS allowed_value_color
+            FROM properties_values pv
+            JOIN document d ON d.doc_technical_key = pv.document_ref
+            JOIN properties_defs pd ON pd.id = pv.property_def_ref
+            JOIN properties_value_version pvv
+                ON pvv.property_value_ref = pv.id AND pvv.version_number = pv.version
+            LEFT JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
+            WHERE d.data_block_ref = $1
+            """,
+            block_id,
+        )
+
+    result: dict[str, list[dict[str, object]]] = {}
+    for r in rows:
+        doc_key = str(r["document_ref"])
+        result.setdefault(doc_key, []).append(
+            {
+                "prop_slug": r["prop_slug"],
+                "prop_type": r["prop_type"],
+                "value": r["value"],
+                "allowed_value_slug": r["allowed_value_slug"],
+                "allowed_value_label": r["allowed_value_label"],
+                "allowed_value_color": r["allowed_value_color"],
+            }
+        )
+    return result
 
 
 async def create_document_in_block(
@@ -275,7 +380,11 @@ async def create_document_in_block(
                 RETURNING doc_technical_key, title, type, version, parent,
                           data_block_ref, created_at, updated_at
                 """,
-                body.title, body.parent_id, ft_id, wk, block_id,
+                body.title,
+                body.parent_id,
+                ft_id,
+                wk,
+                block_id,
             )
             assert row is not None
             doc_id: uuid.UUID = row["doc_technical_key"]
@@ -283,11 +392,15 @@ async def create_document_in_block(
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
                 "VALUES ($1, 1, $2, NULL)",
-                doc_id, body.title,
+                doc_id,
+                body.title,
             )
 
             # 5. Instancier les valeurs par défaut
             await _instantiate_default_values(conn, wk, doc_id, ft_id)
+
+            # 6. Journaliser la création (spec 30)
+            await log_change(conn, wk, doc_id, "C")
 
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],

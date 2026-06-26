@@ -55,14 +55,16 @@ def load_templates(templates_dir: pathlib.Path) -> list[TemplateInfo]:
                 raw = yaml.safe_load(f)
             tpl = Template.model_validate(raw)
             resolved = resolve(tpl)
-            result.append(TemplateInfo(
-                template=tpl.template,
-                label=tpl.label,
-                version=tpl.version,
-                path=yaml_file.name,
-                concrete_types=len(resolved),
-                type_slugs=[r.slug for r in resolved],
-            ))
+            result.append(
+                TemplateInfo(
+                    template=tpl.template,
+                    label=tpl.label,
+                    version=tpl.version,
+                    path=yaml_file.name,
+                    concrete_types=len(resolved),
+                    type_slugs=[r.slug for r in resolved],
+                )
+            )
         except Exception:
             log.warning("template_load_error", file=yaml_file.name, exc_info=True)
     return result

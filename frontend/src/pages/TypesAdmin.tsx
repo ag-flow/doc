@@ -9,7 +9,8 @@ import { Input } from '../components/ui/input'
 
 export function TypesAdmin() {
   const { t } = useTranslation()
-  const { ws } = useParams<{ ws: string }>()
+  // Route sous /ws/:wsSlug/types — le paramètre s'appelle wsSlug
+  const { wsSlug: ws } = useParams<{ wsSlug: string }>()
   const queryClient = useQueryClient()
 
   const [creating, setCreating] = useState(false)

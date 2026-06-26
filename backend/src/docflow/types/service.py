@@ -6,7 +6,14 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_type, require_workspace
-from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeOut, FunctionalTypeUpdate
+from docflow.schemas.types import (
+    AllowedValueRich,
+    FunctionalTypeCreate,
+    FunctionalTypeOut,
+    FunctionalTypeRich,
+    FunctionalTypeUpdate,
+    PropertyDefRich,
+)
 
 _SELECT_TYPE = """
 SELECT ft.id, ft.slug, ft.label, ft.created_at, ft.updated_at,
@@ -47,9 +54,7 @@ def _row_to_out(row: asyncpg.Record) -> FunctionalTypeOut:
     )
 
 
-async def _resolve_parent(
-    conn: asyncpg.Connection, wk: uuid.UUID, parent_slug: str
-) -> uuid.UUID:
+async def _resolve_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_slug: str) -> uuid.UUID:
     parent_id: uuid.UUID | None = await conn.fetchval(
         "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
         wk,
@@ -68,14 +73,10 @@ async def _check_no_cycle(
 ) -> None:
     """Vérifie l'absence de cycle si proposed_parent_id devient parent de type_id."""
     if proposed_parent_id == type_id:
-        raise HTTPException(
-            status_code=422, detail="un type ne peut pas être son propre parent"
-        )
+        raise HTTPException(status_code=422, detail="un type ne peut pas être son propre parent")
     ancestor = proposed_parent_id
     while ancestor is not None:
-        row = await conn.fetchrow(
-            "SELECT id, parent FROM functional_type WHERE id = $1", ancestor
-        )
+        row = await conn.fetchrow("SELECT id, parent FROM functional_type WHERE id = $1", ancestor)
         if row is None:
             break
         if row["parent"] == type_id:
@@ -83,6 +84,59 @@ async def _check_no_cycle(
                 status_code=422, detail="cycle détecté dans la hiérarchie des types"
             )
         ancestor = row["parent"]
+
+
+async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTypeRich]:
+    """Retourne les types avec leurs propriétés et allowed_values."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        type_rows = await conn.fetch(_SELECT_ALL, wk)
+        result: list[FunctionalTypeRich] = []
+        for tr in type_rows:
+            ft = FunctionalTypeRich(
+                id=tr["id"],
+                slug=tr["slug"],
+                label=tr["label"],
+                parent_slug=tr["parent_slug"],
+                workspace_slug=tr["workspace_slug"],
+                created_at=tr["created_at"],
+                updated_at=tr["updated_at"],
+            )
+            defs = await conn.fetch(
+                "SELECT id, slug, label, type, default_value, required "
+                "FROM properties_defs WHERE functional_type_ref = $1 ORDER BY created_at",
+                tr["id"],
+            )
+            for d in defs:
+                avs: list[AllowedValueRich] = []
+                if d["type"] == "restricted_list":
+                    av_rows = await conn.fetch(
+                        "SELECT slug, label, position, color "
+                        "FROM properties_allowed_values WHERE property_def_ref = $1 "
+                        "ORDER BY position, created_at",
+                        d["id"],
+                    )
+                    avs = [
+                        AllowedValueRich(
+                            slug=r["slug"],
+                            label=r["label"],
+                            position=r["position"],
+                            color=r["color"],
+                        )
+                        for r in av_rows
+                    ]
+                ft.properties.append(
+                    PropertyDefRich(
+                        slug=d["slug"],
+                        label=d["label"],
+                        type=d["type"],
+                        default_value=d["default_value"],
+                        required=d["required"],
+                        allowed_values=avs,
+                    )
+                )
+            result.append(ft)
+    return result
 
 
 async def list_types(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTypeOut]:
@@ -118,7 +172,10 @@ async def create_type(
                     VALUES ($1, $2, $3, $4)
                     RETURNING id, slug, label, parent, created_at, updated_at
                     """,
-                    data.slug, data.label, parent_id, wk,
+                    data.slug,
+                    data.label,
+                    parent_id,
+                    wk,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -161,7 +218,8 @@ async def update_type(
             vals = list(updates.values())
             row = await conn.fetchrow(
                 _UPDATE_RETURNING.format(cols=cols),
-                type_id, *vals,
+                type_id,
+                *vals,
             )
 
     assert row is not None

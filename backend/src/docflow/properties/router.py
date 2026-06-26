@@ -166,7 +166,11 @@ async def upsert_constraint(
 
 @router.delete(_CSTR + "/{kind}", status_code=204)
 async def delete_constraint(
-    ws_slug: str, type_slug: str, prop_slug: str, kind: str,
-    request: Request, _: AuthUser = _Auth,
+    ws_slug: str,
+    type_slug: str,
+    prop_slug: str,
+    kind: str,
+    request: Request,
+    _: AuthUser = _Auth,
 ) -> None:
     await service.delete_constraint(request.app.state.pool, ws_slug, type_slug, prop_slug, kind)

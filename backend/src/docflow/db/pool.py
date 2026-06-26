@@ -14,9 +14,7 @@ async def open_pool(dsn: str, **kwargs: Any) -> asyncpg.Pool:
     min_size=0 so the pool is created even when the DB is temporarily unreachable
     (health endpoint then returns 503 instead of failing at startup).
     """
-    pool: asyncpg.Pool = await asyncpg.create_pool(
-        dsn=dsn, min_size=0, max_size=10, **kwargs
-    )
+    pool: asyncpg.Pool = await asyncpg.create_pool(dsn=dsn, min_size=0, max_size=10, **kwargs)
     log.info("db_pool_opened")
     return pool
 

@@ -6,9 +6,7 @@ from fastapi import HTTPException
 from docflow.db.helpers import require_workspace
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
 
-_COLS = (
-    "workspace_technical_key, slug, label, description, archived_at, created_at, updated_at"
-)
+_COLS = "workspace_technical_key, slug, label, description, archived_at, created_at, updated_at"
 _SELECT_WS = f"SELECT {_COLS} FROM workspace WHERE slug = $1"
 _SELECT_ALL = f"SELECT {_COLS} FROM workspace {{where}} ORDER BY created_at"
 _UPDATE_WS = (
@@ -57,7 +55,9 @@ async def create_workspace(pool: asyncpg.Pool, data: WorkspaceCreate) -> Workspa
                     VALUES ($1, $2, $3)
                     RETURNING {_COLS}
                     """,
-                    data.slug, data.label, data.description,
+                    data.slug,
+                    data.label,
+                    data.description,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -67,12 +67,8 @@ async def create_workspace(pool: asyncpg.Pool, data: WorkspaceCreate) -> Workspa
     return _row(row)
 
 
-async def update_workspace(
-    pool: asyncpg.Pool, ws_slug: str, data: WorkspaceUpdate
-) -> WorkspaceOut:
-    updates = {
-        k: v for k, v in data.model_dump(exclude_unset=True).items() if k in _UPDATABLE
-    }
+async def update_workspace(pool: asyncpg.Pool, ws_slug: str, data: WorkspaceUpdate) -> WorkspaceOut:
+    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if k in _UPDATABLE}
     if not updates:
         return await get_workspace(pool, ws_slug)
     async with pool.acquire() as conn:
@@ -106,6 +102,4 @@ async def delete_workspace(pool: asyncpg.Pool, ws_slug: str, confirm: str) -> No
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
-            await conn.execute(
-                "DELETE FROM workspace WHERE workspace_technical_key = $1", wk
-            )
+            await conn.execute("DELETE FROM workspace WHERE workspace_technical_key = $1", wk)

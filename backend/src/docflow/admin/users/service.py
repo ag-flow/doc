@@ -68,9 +68,7 @@ async def create_user(pool: asyncpg.Pool, data: AdminUserCreate) -> AdminUserOut
     hashed = hash_password(data.password)
     async with pool.acquire() as conn:
         try:
-            row = await conn.fetchrow(
-                _INSERT, data.email, data.label, hashed, data.is_superadmin
-            )
+            row = await conn.fetchrow(_INSERT, data.email, data.label, hashed, data.is_superadmin)
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(status_code=409, detail="email déjà utilisé") from exc
     assert row is not None
@@ -133,9 +131,7 @@ async def delete_user(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
             await conn.execute("DELETE FROM admin_user WHERE id = $1", user_id)
 
 
-async def set_password(
-    pool: asyncpg.Pool, user_id: uuid.UUID, new_password: str
-) -> AdminUserOut:
+async def set_password(pool: asyncpg.Pool, user_id: uuid.UUID, new_password: str) -> AdminUserOut:
     hashed = hash_password(new_password)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

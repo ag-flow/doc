@@ -36,3 +36,27 @@ class FunctionalTypeOut(BaseModel):
     workspace_slug: str
     created_at: datetime
     updated_at: datetime
+
+
+class PropertyDefRich(BaseModel):
+    """Définition de propriété enrichie des allowed_values (pour l'endpoint rich)."""
+
+    slug: str
+    label: str
+    type: str
+    default_value: str | None
+    required: bool
+    allowed_values: list[AllowedValueRich] = []
+
+
+class AllowedValueRich(BaseModel):
+    slug: str
+    label: str
+    position: int
+    color: str | None
+
+
+class FunctionalTypeRich(FunctionalTypeOut):
+    """Type fonctionnel enrichi de ses définitions de propriété + allowed_values."""
+
+    properties: list[PropertyDefRich] = []

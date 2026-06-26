@@ -4,10 +4,25 @@ from fastapi import APIRouter, Depends, Request
 
 from docflow.auth.deps import require_admin
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeOut, FunctionalTypeUpdate
+from docflow.schemas.types import (
+    FunctionalTypeCreate,
+    FunctionalTypeOut,
+    FunctionalTypeRich,
+    FunctionalTypeUpdate,
+)
 from docflow.types import service
 
 router = APIRouter(tags=["types"])
+
+
+@router.get("/workspaces/{ws_slug}/types/rich", response_model=list[FunctionalTypeRich])
+async def list_types_rich(
+    ws_slug: str,
+    request: Request,
+    _: AuthUser = Depends(require_admin),
+) -> list[FunctionalTypeRich]:
+    """Retourne les types avec leurs propriétés et allowed_values."""
+    return await service.list_types_rich(request.app.state.pool, ws_slug)
 
 
 @router.get("/workspaces/{ws_slug}/types", response_model=list[FunctionalTypeOut])

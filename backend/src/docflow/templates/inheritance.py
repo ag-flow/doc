@@ -47,11 +47,13 @@ def resolve(template: Template) -> list[ResolvedType]:
             continue
 
         props = _resolve_one(td.slug, by_slug, set())
-        result.append(ResolvedType(
-            slug=td.slug,
-            label=td.label if td.label is not None else td.slug,
-            parent=td.parent,
-            properties=props,
-        ))
+        result.append(
+            ResolvedType(
+                slug=td.slug,
+                label=td.label if td.label is not None else td.slug,
+                parent=td.parent,
+                properties=props,
+            )
+        )
 
     return result

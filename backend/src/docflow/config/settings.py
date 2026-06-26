@@ -16,3 +16,6 @@ class Settings(BaseSettings):
     jwt_secret: Secret
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.
+    # Requise pour créer des webhooks avec headers ; absence = headers interdits.
+    encryption_key: Secret | None = None

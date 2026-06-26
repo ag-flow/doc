@@ -61,7 +61,10 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
                     RETURNING id, issuer, client_id, client_secret_ref,
                               enabled, created_at, updated_at
                     """,
-                    data.issuer, data.client_id, data.client_secret_ref, data.enabled,
+                    data.issuer,
+                    data.client_id,
+                    data.client_secret_ref,
+                    data.enabled,
                 )
             else:
                 row = await conn.fetchrow(
@@ -73,7 +76,10 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
                     RETURNING id, issuer, client_id, client_secret_ref,
                               enabled, created_at, updated_at
                     """,
-                    data.issuer, data.client_id, data.client_secret_ref, data.enabled,
+                    data.issuer,
+                    data.client_id,
+                    data.client_secret_ref,
+                    data.enabled,
                     existing["id"],
                 )
     assert row is not None
@@ -116,7 +122,8 @@ async def handle_oidc_callback(
                     # Lier le compte existant : remplir oidc_subject, préserver password_hash
                     await conn.execute(
                         "UPDATE admin_user SET oidc_subject = $1 WHERE id = $2",
-                        sub, user_row["id"],
+                        sub,
+                        user_row["id"],
                     )
                 else:
                     # Provisionner un nouveau compte (sans password_hash)
@@ -126,7 +133,9 @@ async def handle_oidc_callback(
                         VALUES ($1, $2, $3, false)
                         RETURNING id, email, label, is_superadmin, disabled, password_hash
                         """,
-                        email, name, sub,
+                        email,
+                        name,
+                        sub,
                     )
     assert user_row is not None
     if user_row["disabled"]:

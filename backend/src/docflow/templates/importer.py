@@ -31,18 +31,17 @@ class ImportConflictError(Exception):
 @dataclass
 class ImportReport:
     dry_run: bool
-    no_op: bool           # vrai si == version (rien à faire)
+    no_op: bool  # vrai si == version (rien à faire)
     diff: DiffResult
     applied: bool = False
 
 
-async def _fetch_version(
-    conn: asyncpg.Connection, wk: str, template_slug: str
-) -> int | None:
+async def _fetch_version(conn: asyncpg.Connection, wk: str, template_slug: str) -> int | None:
     return await conn.fetchval(  # type: ignore[no-any-return]
         "SELECT version FROM workspace_template_import"
         " WHERE workspace_technical_key = $1 AND template = $2",
-        wk, template_slug,
+        wk,
+        template_slug,
     )
 
 
@@ -75,7 +74,10 @@ async def _write_types(
                 VALUES ($1, $2, $3, $4)
                 RETURNING id
                 """,
-                rt.slug, rt.label, parent_id, wk,
+                rt.slug,
+                rt.label,
+                parent_id,
+                wk,
             )
             assert row is not None
             slug_to_id[rt.slug] = row["id"]
@@ -83,7 +85,9 @@ async def _write_types(
             await conn.execute(
                 "UPDATE functional_type SET label = $1, updated_at = now()"
                 " WHERE workspace_technical_key = $2 AND slug = $3",
-                rt.label, wk, rt.slug,
+                rt.label,
+                wk,
+                rt.slug,
             )
 
     # Propriétés
@@ -116,7 +120,12 @@ async def _write_props(
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id
                 """,
-                prop.slug, prop.label, type_id, prop.type, prop.default, prop.required,
+                prop.slug,
+                prop.label,
+                type_id,
+                prop.type,
+                prop.default,
+                prop.required,
             )
             assert row is not None
             prop_id = row["id"]
@@ -124,13 +133,16 @@ async def _write_props(
             await conn.execute(
                 "UPDATE properties_defs SET label = $1, updated_at = now()"
                 " WHERE functional_type_ref = $2 AND slug = $3",
-                prop.label, type_id, prop.slug,
+                prop.label,
+                type_id,
+                prop.slug,
             )
 
         if prop_id is None:
             prop_id = await conn.fetchval(
                 "SELECT id FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2",
-                type_id, prop.slug,
+                type_id,
+                prop.slug,
             )
         if prop_id is None:
             continue
@@ -153,7 +165,10 @@ async def _write_constraints(
             await conn.execute(
                 "INSERT INTO properties_constraints"
                 " (property_def_ref, kind, value, message) VALUES ($1, $2, $3, $4)",
-                prop_id, c.kind, c.value, c.message,
+                prop_id,
+                c.kind,
+                c.value,
+                c.message,
             )
 
 
@@ -172,13 +187,19 @@ async def _write_allowed_values(
             await conn.execute(
                 "INSERT INTO properties_allowed_values"
                 " (property_def_ref, slug, label, position, color) VALUES ($1, $2, $3, $4, $5)",
-                prop_id, av.slug, av.label, av.position, av.color,
+                prop_id,
+                av.slug,
+                av.label,
+                av.position,
+                av.color,
             )
         elif p in soft_paths:
             await conn.execute(
                 "UPDATE properties_allowed_values SET label = $1"
                 " WHERE property_def_ref = $2 AND slug = $3",
-                av.label, prop_id, av.slug,
+                av.label,
+                prop_id,
+                av.slug,
             )
 
 
@@ -227,7 +248,9 @@ async def run_import(
         if current_version == template.version:
             log.info(
                 "template_import_no_op",
-                workspace=ws_slug, template=template.template, version=template.version,
+                workspace=ws_slug,
+                template=template.template,
+                version=template.version,
             )
             return ImportReport(dry_run=dry_run, no_op=True, diff=DiffResult())
 
@@ -245,7 +268,9 @@ async def run_import(
         if dry_run:
             log.info(
                 "template_import_dry_run",
-                workspace=ws_slug, adds=len(diff.adds), soft=len(diff.soft_updates),
+                workspace=ws_slug,
+                adds=len(diff.adds),
+                soft=len(diff.soft_updates),
             )
             return ImportReport(dry_run=True, no_op=False, diff=diff)
 
@@ -259,12 +284,16 @@ async def run_import(
                 ON CONFLICT (workspace_technical_key, template)
                 DO UPDATE SET version = EXCLUDED.version, imported_at = now()
                 """,
-                wk, template.template, template.version,
+                wk,
+                template.template,
+                template.version,
             )
 
         log.info(
             "template_import_applied",
-            workspace=ws_slug, template=template.template,
-            version=template.version, adds=len(diff.adds),
+            workspace=ws_slug,
+            template=template.template,
+            version=template.version,
+            adds=len(diff.adds),
         )
         return ImportReport(dry_run=False, no_op=False, diff=diff, applied=True)

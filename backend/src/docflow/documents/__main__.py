@@ -10,6 +10,7 @@ Usage:
       --prop <prop_slug> --value <val> [--allowed-value-slug <slug>] \
       --expected-version <n>
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,31 +50,40 @@ async def _run() -> None:
             ws = _get("--workspace")
             assert ws is not None
             docs = await svc.list_documents(
-                pool, ws,
+                pool,
+                ws,
                 functional_type=_get("--functional-type", required=False),
                 prop_slug=_get("--prop", required=False),
                 allowed_value_slug=_get("--allowed-value", required=False),
             )
             for d in docs:
-                print(json.dumps({
-                    "id": str(d.doc_technical_key),
-                    "title": d.title,
-                    "type": d.functional_type_slug,
-                    "version": d.version,
-                }))
+                print(
+                    json.dumps(
+                        {
+                            "id": str(d.doc_technical_key),
+                            "title": d.title,
+                            "type": d.functional_type_slug,
+                            "version": d.version,
+                        }
+                    )
+                )
 
         elif cmd == "get":
             ws = _get("--workspace")
             raw_doc = _get("--doc")
             assert ws is not None and raw_doc is not None
             d = await svc.get_document(pool, ws, uuid.UUID(raw_doc))
-            print(json.dumps({
-                "id": str(d.doc_technical_key),
-                "title": d.title,
-                "version": d.version,
-                "content": d.content,
-                "functional_type": d.functional_type_slug,
-            }))
+            print(
+                json.dumps(
+                    {
+                        "id": str(d.doc_technical_key),
+                        "title": d.title,
+                        "version": d.version,
+                        "content": d.content,
+                        "functional_type": d.functional_type_slug,
+                    }
+                )
+            )
 
         elif cmd == "values":
             ws = _get("--workspace")
@@ -81,12 +91,16 @@ async def _run() -> None:
             assert ws is not None and raw_doc is not None
             vals = await svc.list_property_values(pool, ws, uuid.UUID(raw_doc))
             for v in vals:
-                print(json.dumps({
-                    "prop": v.prop_slug,
-                    "version": v.version,
-                    "value": v.value,
-                    "allowed_value": v.allowed_value_slug,
-                }))
+                print(
+                    json.dumps(
+                        {
+                            "prop": v.prop_slug,
+                            "version": v.version,
+                            "value": v.value,
+                            "allowed_value": v.allowed_value_slug,
+                        }
+                    )
+                )
 
         elif cmd == "set-value":
             ws = _get("--workspace")
@@ -94,10 +108,7 @@ async def _run() -> None:
             prop = _get("--prop")
             raw_ev = _get("--expected-version")
             assert (
-                ws is not None
-                and raw_doc is not None
-                and prop is not None
-                and raw_ev is not None
+                ws is not None and raw_doc is not None and prop is not None and raw_ev is not None
             )
             data = PropertyValueSet(
                 value=_get("--value", required=False),

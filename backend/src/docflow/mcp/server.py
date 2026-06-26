@@ -162,9 +162,7 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
 
 
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
-    rows = await pool.fetch(
-        "SELECT slug, label, description FROM workspace ORDER BY slug"
-    )
+    rows = await pool.fetch("SELECT slug, label, description FROM workspace ORDER BY slug")
     return _text([dict(r) for r in rows])
 
 
@@ -205,9 +203,7 @@ async def _list_documents(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]
     return _text([dict(r) for r in rows])
 
 
-async def _get_document(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: str
-) -> list[TextContent]:
+async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
     async with pool.acquire() as conn:
         wk = await _require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
@@ -219,16 +215,15 @@ async def _get_document(
             WHERE d.workspace_technical_key = $1
               AND d.doc_technical_key = $2
             """,
-            wk, uuid.UUID(doc_id),
+            wk,
+            uuid.UUID(doc_id),
         )
     if row is None:
         return _text({"error": f"document '{doc_id}' introuvable"})
     return _text(dict(row))
 
 
-async def _create_document(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     ws_slug = str(args.get("workspace_slug", ""))
     title = str(args.get("title", ""))
     contenu = str(args["contenu"]) if "contenu" in args else None
@@ -242,7 +237,8 @@ async def _create_document(
                 type_id = await conn.fetchval(
                     "SELECT id FROM functional_type "
                     "WHERE workspace_technical_key = $1 AND slug = $2",
-                    wk, type_slug,
+                    wk,
+                    type_slug,
                 )
                 if type_id is None:
                     return _text({"error": f"type '{type_slug}' introuvable"})
@@ -252,15 +248,16 @@ async def _create_document(
                 VALUES ($1, $2, $3, $4)
                 RETURNING doc_technical_key::text AS id, title
                 """,
-                wk, title, contenu, type_id,
+                wk,
+                title,
+                contenu,
+                type_id,
             )
     assert row is not None
     return _text({"created": True, "id": row["id"], "title": row["title"]})
 
 
-async def _update_document(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     ws_slug = str(args.get("workspace_slug", ""))
     doc_id = str(args.get("doc_id", ""))
     title = str(args["title"]) if "title" in args else None
@@ -287,16 +284,15 @@ async def _update_document(
             updated = await conn.execute(
                 f"UPDATE document SET {', '.join(cols)}, updated_at = now() "
                 f"WHERE doc_technical_key = $1 AND workspace_technical_key = ${idx}",
-                *vals, wk,
+                *vals,
+                wk,
             )
     if updated == "UPDATE 0":
         return _text({"error": "document introuvable"})
     return _text({"updated": True})
 
 
-async def _list_property_values(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: str
-) -> list[TextContent]:
+async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
     async with pool.acquire() as conn:
         wk = await _require_workspace(conn, ws_slug)
         rows = await conn.fetch(
@@ -313,14 +309,13 @@ async def _list_property_values(
             LEFT JOIN properties_allowed_values pav ON pav.id = pv.allowed_value_ref
             ORDER BY pd.slug
             """,
-            wk, uuid.UUID(doc_id),
+            wk,
+            uuid.UUID(doc_id),
         )
     return _text([dict(r) for r in rows])
 
 
-async def _set_property_value(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from docflow.documents import service as doc_svc
     from docflow.schemas.property_value import PropertyValueSet
 
@@ -328,15 +323,11 @@ async def _set_property_value(
     doc_id_str = str(args.get("doc_id", ""))
     prop_slug = str(args.get("prop_slug", ""))
     value = str(args["value"]) if "value" in args else None
-    allowed_value_slug = (
-        str(args["allowed_value_slug"]) if "allowed_value_slug" in args else None
-    )
+    allowed_value_slug = str(args["allowed_value_slug"]) if "allowed_value_slug" in args else None
     expected_version = int(str(args.get("expected_version", 0)))
 
     data = PropertyValueSet(
         value=value, allowed_value_slug=allowed_value_slug, expected_version=expected_version
     )
-    out = await doc_svc.set_property_value(
-        pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data
-    )
+    out = await doc_svc.set_property_value(pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data)
     return _text({"updated": True, "prop_slug": out.prop_slug})

@@ -28,8 +28,7 @@ async def apply(pool: asyncpg.Pool) -> None:
     async with pool.acquire() as conn:
         await conn.execute(_CREATE_MIGRATIONS_TABLE)
         applied: set[str] = {
-            row["version"]
-            for row in await conn.fetch("SELECT version FROM schema_migrations")
+            row["version"] for row in await conn.fetch("SELECT version FROM schema_migrations")
         }
 
     pending = sorted(p for p in _MIGRATIONS_DIR.glob("*.sql") if p.stem not in applied)

@@ -20,9 +20,10 @@ async def mcp_sse(
     _: object = Depends(require_admin),
 ) -> Response:
     """Point d'entrée SSE du serveur MCP (nécessite JWT admin)."""
-    async with _transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as (read_stream, write_stream):
+    async with _transport.connect_sse(request.scope, request.receive, request._send) as (
+        read_stream,
+        write_stream,
+    ):
         await mcp_server.run(
             read_stream,
             write_stream,
@@ -34,7 +35,5 @@ async def mcp_sse(
 @router.post("/mcp/messages")
 async def mcp_messages(request: Request) -> Response:
     """Endpoint de réception des messages MCP (session_id en query param)."""
-    await _transport.handle_post_message(
-        request.scope, request.receive, request._send
-    )
+    await _transport.handle_post_message(request.scope, request.receive, request._send)
     return Response()

@@ -30,9 +30,7 @@ async def resolve(
         return raw
 
     if not harpocrate_url:
-        raise ValueError(
-            "Secret contains a vault reference but HARPOCRATE_URL is not configured"
-        )
+        raise ValueError("Secret contains a vault reference but HARPOCRATE_URL is not configured")
 
     api_name, path = match.group(1), match.group(2)
     url = f"{harpocrate_url.rstrip('/')}/api/{api_name}{path}"

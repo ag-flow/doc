@@ -22,7 +22,8 @@ interface ConflictData {
 
 export function DocumentEditor() {
   const { t } = useTranslation()
-  const { ws, docId } = useParams<{ ws: string; block: string; docId: string }>()
+  // Route /ws/:wsSlug/blocs/:blocSlug/documents/:docId
+  const { wsSlug: ws, docId } = useParams<{ wsSlug: string; blocSlug: string; docId: string }>()
   const queryClient = useQueryClient()
 
   const editorRef = useRef<MarkdownEditorHandle>(null)

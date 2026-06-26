@@ -53,7 +53,9 @@ async def _main() -> None:
     )
     parser.add_argument("--workspace", required=True, help="Slug du workspace cible")
     parser.add_argument(
-        "--file", required=True, type=pathlib.Path,
+        "--file",
+        required=True,
+        type=pathlib.Path,
         help="Chemin vers le fichier YAML du template",
     )
     parser.add_argument("--dry-run", action="store_true", help="Analyse sans écriture")

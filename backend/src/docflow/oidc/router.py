@@ -13,9 +13,7 @@ _SuperAdmin = Depends(require_superadmin)
 
 
 @router.get("/admin/oidc", response_model=OidcConfigOut | None)
-async def get_oidc_config(
-    request: Request, _: AuthUser = _SuperAdmin
-) -> OidcConfigOut | None:
+async def get_oidc_config(request: Request, _: AuthUser = _SuperAdmin) -> OidcConfigOut | None:
     return await service.get_oidc_config(request.app.state.pool)
 
 
@@ -32,9 +30,7 @@ async def get_public_oidc_config(request: Request) -> OidcPublicConfig | None:
 
 
 @router.post("/auth/oidc/callback")
-async def oidc_callback(
-    body: dict[str, object], request: Request
-) -> dict[str, str]:
+async def oidc_callback(body: dict[str, object], request: Request) -> dict[str, str]:
     """Reçoit les claims id_token (après vérification externe) et émet un JWT docflow."""
     settings = request.app.state.settings
     token = await service.handle_oidc_callback(
