@@ -93,7 +93,7 @@ export function WebhooksAdmin() {
   const testMut = useMutation({
     mutationFn: (id: string) => webhooksApi.test(ws!, id),
     onSuccess: (data, id) => setTestResult({ id, status: data.status_code, error: data.error }),
-    onError: (e: Error) => setTestResult(null) || setApiError(e.message),
+    onError: (e: Error) => { setTestResult(null); setApiError(e.message) },
   })
 
   function resetForm() {
