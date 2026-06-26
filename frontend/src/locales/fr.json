@@ -84,7 +84,12 @@
     "filter_all": "Tous",
     "noResults": "Aucun résultat pour ce filtre",
     "addChild": "Ajouter un enfant :",
-    "addType": "Ajouter {{type}}"
+    "addType": "Ajouter {{type}}",
+    "children": "Documents enfants",
+    "openNewTab": "Ouvrir dans un nouvel onglet",
+    "deleteConfirmTitle": "Supprimer ce document ?",
+    "deleteConfirmMsg": "Cette action est irréversible. Le document et ses enfants seront supprimés.",
+    "deleteConfirm": "Supprimer définitivement"
   },
   "editor": {
     "save": "Enregistrer",

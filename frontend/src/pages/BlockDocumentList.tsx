@@ -251,24 +251,36 @@ export function BlockDocumentList() {
       header: '',
       enableSorting: false,
       cell: ({ row }) => {
+        const docId = row.original.doc_technical_key
         const docTypeSlug = row.original.functional_type_slug
-        const children = docTypeSlug ? (childTypesByParent.get(docTypeSlug) ?? []) : []
-        if (children.length === 0) return null
-        const label = children.length === 1
-          ? t('documents.addType', { type: children[0].label })
+        const docChildren = docTypeSlug ? (childTypesByParent.get(docTypeSlug) ?? []) : []
+        const docPath = `/ws/${ws}/blocs/${block}/documents/${docId}`
+        const addLabel = docChildren.length === 1
+          ? t('documents.addType', { type: docChildren[0].label })
           : '+'
         return (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={(e) => {
-              e.stopPropagation()
-              setDialogParent(row.original.doc_technical_key)
-            }}
-            data-testid={`add-child-${row.original.doc_technical_key}`}
-          >
-            {label}
-          </Button>
+          <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+            <a
+              href={docPath}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-400 hover:text-gray-700 text-sm"
+              title={t('documents.openNewTab')}
+              data-testid={`open-newtab-${docId}`}
+            >
+              ↗
+            </a>
+            {docChildren.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setDialogParent(docId)}
+                data-testid={`add-child-${docId}`}
+              >
+                {addLabel}
+              </Button>
+            )}
+          </div>
         )
       },
     }

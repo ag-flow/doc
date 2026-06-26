@@ -250,6 +250,9 @@ export const docsApi = {
       expected_version: number | null
     },
   ) => api.put<PropertyValueOut>(`/workspaces/${ws}/documents/${docId}/values/${propSlug}`, body),
+
+  deleteDocument: (ws: string, docId: string) =>
+    api.delete(`/workspaces/${ws}/documents/${docId}`),
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────
