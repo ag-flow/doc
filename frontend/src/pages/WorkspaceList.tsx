@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import type { WorkspaceOut } from '../lib/api'
+import { labelToSlug } from '../lib/slug'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -30,6 +31,7 @@ export default function WorkspaceList() {
   const [label, setLabel] = useState('')
   const [description, setDescription] = useState('')
   const [slugError, setSlugError] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceOut | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [apiError, setApiError] = useState('')
@@ -47,6 +49,7 @@ export default function WorkspaceList() {
       setSlug('')
       setLabel('')
       setDescription('')
+      setSlugTouched(false)
       setApiError('')
     },
     onError: (e: Error) => setApiError(e.message),
@@ -106,24 +109,31 @@ export default function WorkspaceList() {
           onSubmit={e => { e.preventDefault(); if (!slugError) createMutation.mutate() }}
         >
           <div>
-            <label className="block text-sm font-medium mb-1">{t('ws.slug')}</label>
-            <Input
-              data-testid="slug-input"
-              value={slug}
-              onChange={e => { setSlug(e.target.value); validateSlug(e.target.value) }}
-              placeholder="mon-workspace"
-              required
-            />
-            {slugError && <p className="text-red-500 text-xs mt-1">{slugError}</p>}
-          </div>
-          <div>
             <label className="block text-sm font-medium mb-1">{t('ws.label')}</label>
             <Input
               data-testid="label-input"
               value={label}
-              onChange={e => setLabel(e.target.value)}
+              onChange={e => {
+                setLabel(e.target.value)
+                if (!slugTouched) {
+                  const derived = labelToSlug(e.target.value)
+                  setSlug(derived)
+                  validateSlug(derived)
+                }
+              }}
               required
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('ws.slug')}</label>
+            <Input
+              data-testid="slug-input"
+              value={slug}
+              onChange={e => { setSlugTouched(true); setSlug(e.target.value); validateSlug(e.target.value) }}
+              placeholder="mon-workspace"
+              required
+            />
+            {slugError && <p className="text-red-500 text-xs mt-1">{slugError}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">{t('ws.description')}</label>

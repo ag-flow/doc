@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api, docsApi, type DataBlockOut, type FunctionalType } from '../lib/api'
+import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 
@@ -19,6 +20,7 @@ export function BlocsAdmin() {
   const [label, setLabel] = useState('')
   const [typeSlug, setTypeSlug] = useState('')
   const [slugError, setSlugError] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [apiError, setApiError] = useState('')
 
   const { data: blocs = [], isLoading } = useQuery<DataBlockOut[]>({
@@ -49,6 +51,7 @@ export function BlocsAdmin() {
       setSlug('')
       setLabel('')
       setTypeSlug('')
+      setSlugTouched(false)
       setApiError('')
     },
     onError: (e: Error) => setApiError(e.message),
@@ -88,11 +91,28 @@ export function BlocsAdmin() {
           }}
         >
           <div>
+            <label className="mb-1 block text-sm font-medium">{t('ws.label')}</label>
+            <Input
+              data-testid="bloc-label-input"
+              value={label}
+              onChange={(e) => {
+                setLabel(e.target.value)
+                if (!slugTouched) {
+                  const derived = labelToSlug(e.target.value)
+                  setSlug(derived)
+                  validateSlug(derived)
+                }
+              }}
+              required
+            />
+          </div>
+          <div>
             <label className="mb-1 block text-sm font-medium">{t('ws.slug')}</label>
             <Input
               data-testid="bloc-slug-input"
               value={slug}
               onChange={(e) => {
+                setSlugTouched(true)
                 setSlug(e.target.value)
                 validateSlug(e.target.value)
               }}
@@ -100,15 +120,6 @@ export function BlocsAdmin() {
               required
             />
             {slugError && <p className="mt-1 text-xs text-red-500">{slugError}</p>}
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">{t('ws.label')}</label>
-            <Input
-              data-testid="bloc-label-input"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              required
-            />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">{t('blocs.rootType')}</label>

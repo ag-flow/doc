@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import type { FunctionalType, TemplateInfo } from '../lib/api'
+import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 
@@ -17,6 +18,7 @@ export function TypesAdmin() {
   const [newSlug, setNewSlug] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [newParent, setNewParent] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
   const [showImport, setShowImport] = useState(false)
@@ -44,6 +46,7 @@ export function TypesAdmin() {
       setNewSlug('')
       setNewLabel('')
       setNewParent('')
+      setSlugTouched(false)
       setFormError(null)
     },
     onError: (err: Error) => setFormError(err.message),
@@ -108,21 +111,24 @@ export function TypesAdmin() {
         <div className="mb-6 rounded border border-gray-200 bg-gray-50 p-4">
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium">{t('types.slug')}</label>
-              <Input
-                value={newSlug}
-                onChange={(e) => setNewSlug(e.target.value)}
-                placeholder="mon-type"
-                data-testid="slug-input"
-              />
-            </div>
-            <div>
               <label className="mb-1 block text-sm font-medium">{t('types.label')}</label>
               <Input
                 value={newLabel}
-                onChange={(e) => setNewLabel(e.target.value)}
+                onChange={(e) => {
+                  setNewLabel(e.target.value)
+                  if (!slugTouched) setNewSlug(labelToSlug(e.target.value))
+                }}
                 placeholder="Mon type"
                 data-testid="label-input"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">{t('types.slug')}</label>
+              <Input
+                value={newSlug}
+                onChange={(e) => { setSlugTouched(true); setNewSlug(e.target.value) }}
+                placeholder="mon-type"
+                data-testid="slug-input"
               />
             </div>
             <div>
