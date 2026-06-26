@@ -25,6 +25,31 @@ vi.mock('../components/PropertiesPanel', () => ({
   PropertiesPanel: () => <div data-testid="properties-panel-mock" />,
 }))
 
+// DocumentChildrenPanel fait ses propres requêtes : on le mocke pour isoler l'éditeur.
+vi.mock('../components/DocumentChildrenPanel', () => ({
+  DocumentChildrenPanel: () => <div data-testid="children-panel-mock" />,
+}))
+
+// CodeMirror MergeView ne fonctionne pas en jsdom : on substitue un rendu minimal.
+vi.mock('@codemirror/merge', () => ({
+  MergeView: class {
+    b = { state: { doc: { toString: () => '' } } }
+    constructor(_config: unknown) {}
+    destroy() {}
+  },
+}))
+vi.mock('codemirror', () => ({
+  basicSetup: [],
+  EditorView: { editable: { of: () => [] } },
+}))
+vi.mock('@codemirror/lang-markdown', () => ({ markdown: () => [] }))
+vi.mock('@codemirror/state', () => ({
+  EditorState: { readOnly: { of: () => [] } },
+}))
+vi.mock('@codemirror/view', () => ({
+  EditorView: { editable: { of: () => [] } },
+}))
+
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../lib/api')>('../lib/api')
   return {

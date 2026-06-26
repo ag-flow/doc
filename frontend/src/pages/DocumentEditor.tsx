@@ -6,16 +6,18 @@ import { ApiError, docsApi, type DocumentOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
-import { ConflictResolver } from '../components/ConflictResolver'
+import { ConflictResolver } from './ConflictResolver'
 import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
 import { MarkdownEditor, type MarkdownEditorHandle } from '../components/MarkdownEditor'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
 
 interface ConflictData {
-  ancestor: { title: string; content: string }
-  server: { title: string; content: string; version: number }
-  mine: { title: string; content: string }
+  ancestor: string
+  ancestorVersion: number
+  server: string
+  serverVersion: number
+  draft: string
 }
 
 export function DocumentEditor() {
@@ -71,15 +73,13 @@ export function DocumentEditor() {
       return true
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        const server = (err.detail ?? {}) as Partial<DocumentOut>
+        const serverDoc = (err.detail ?? {}) as Partial<DocumentOut>
         setConflict({
-          ancestor: ancestorRef.current,
-          server: {
-            title: server.title ?? '',
-            content: server.content ?? '',
-            version: server.version ?? expectedVersion.current,
-          },
-          mine: { title, content },
+          ancestor: ancestorRef.current.content,
+          ancestorVersion: expectedVersion.current,
+          server: serverDoc.content ?? '',
+          serverVersion: serverDoc.version ?? expectedVersion.current + 1,
+          draft: content,
         })
         setStatus('idle')
       } else if (err instanceof ApiError && err.status === 422) {
@@ -114,20 +114,34 @@ export function DocumentEditor() {
 
   const blocker = useBlocker(status === 'dirty')
 
-  const keepServer = useCallback(
-    (serverVersion: number) => {
-      expectedVersion.current = serverVersion
+  const resolveConflict = useCallback(
+    async (merged: string, serverVersion: number) => {
+      const updated = await docsApi.patchDocument(ws!, docId!, {
+        title,
+        content: merged,
+        expected_version: serverVersion,
+      }).catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 409) {
+          const newServer = (err.detail ?? {}) as Partial<DocumentOut>
+          setConflict({
+            ancestor: merged,
+            ancestorVersion: serverVersion,
+            server: newServer.content ?? '',
+            serverVersion: newServer.version ?? serverVersion + 1,
+            draft: merged,
+          })
+          throw new Error(`Conflit persistant — le document est désormais en v${newServer.version ?? '?'}`)
+        }
+        throw err
+      })
+      expectedVersion.current = updated.version
+      ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
+      setStatus('idle')
       setConflict(null)
       void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
     },
-    [queryClient, ws, docId],
+    [ws, docId, title, queryClient],
   )
-
-  const keepMine = useCallback(() => {
-    if (conflict) expectedVersion.current = conflict.server.version
-    setConflict(null)
-    void doSave()
-  }, [conflict, doSave])
 
   async function deleteDocument() {
     if (!ws || !docId || !blocSlug) return
@@ -250,11 +264,12 @@ export function DocumentEditor() {
       {conflict && (
         <ConflictResolver
           ancestor={conflict.ancestor}
+          ancestorVersion={conflict.ancestorVersion}
           server={conflict.server}
-          mine={conflict.mine}
-          onKeepServer={keepServer}
-          onKeepMine={keepMine}
-          onClose={() => setConflict(null)}
+          serverVersion={conflict.serverVersion}
+          draft={conflict.draft}
+          onResolve={resolveConflict}
+          onCancel={() => { setConflict(null); setStatus('idle') }}
         />
       )}
     </div>
