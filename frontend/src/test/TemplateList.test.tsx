@@ -47,7 +47,7 @@ describe('TemplateList', () => {
     expect(screen.getByText('v1')).toBeInTheDocument()
     expect(screen.getByText('epic')).toBeInTheDocument()
     expect(screen.getByText('story')).toBeInTheDocument()
-    expect(screen.getByTestId('import-btn-agile-basic')).toBeDisabled()
+    expect(screen.getByTestId('import-btn-agile-basic')).toBeEnabled()
   })
 
   it("affiche l'état vide si aucun template", async () => {

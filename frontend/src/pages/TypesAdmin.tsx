@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { api, type FunctionalType } from '../lib/api'
+import { api } from '../lib/api'
+import type { FunctionalType, TemplateInfo } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 
@@ -10,15 +11,27 @@ export function TypesAdmin() {
   const { t } = useTranslation()
   const { ws } = useParams<{ ws: string }>()
   const queryClient = useQueryClient()
+
   const [creating, setCreating] = useState(false)
   const [newSlug, setNewSlug] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [newParent, setNewParent] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
 
+  const [showImport, setShowImport] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState('')
+  const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+
   const { data: types = [], isLoading } = useQuery<FunctionalType[]>({
     queryKey: ['types', ws],
     queryFn: () => api.get(`/workspaces/${ws}/types`),
+  })
+
+  const { data: templates = [] } = useQuery<TemplateInfo[]>({
+    queryKey: ['templates'],
+    queryFn: () => api.get<TemplateInfo[]>('/templates'),
+    enabled: showImport,
   })
 
   const createMutation = useMutation({
@@ -40,17 +53,51 @@ export function TypesAdmin() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['types', ws] }),
   })
 
+  const importMutation = useMutation({
+    mutationFn: (template: string) =>
+      api.post<{ applied: boolean; no_op: boolean; adds: number; soft_updates: number }>(
+        `/workspaces/${ws}/templates/import`,
+        { template },
+      ),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['types', ws] })
+      if (result.no_op) {
+        setImportMsg(t('tpl.importNoOp'))
+      } else {
+        setImportMsg(t('tpl.importSuccess', { adds: result.adds, updates: result.soft_updates }))
+      }
+      setImportError(null)
+    },
+    onError: (err: Error) => setImportError(err.message),
+  })
+
   function handleCreate() {
     if (!newSlug || !newLabel) return
     createMutation.mutate({ slug: newSlug, label: newLabel, parent_slug: newParent || undefined })
   }
 
-  if (isLoading) return <div className="p-8">{t('error.generic')}…</div>
+  function openImportModal() {
+    setShowImport(true)
+    setSelectedTemplate('')
+    setImportMsg(null)
+    setImportError(null)
+  }
+
+  function closeImportModal() {
+    setShowImport(false)
+    setImportMsg(null)
+    setImportError(null)
+  }
+
+  if (isLoading) return <div className="p-8">{t('common.loading')}…</div>
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">{t('types.title')}</h1>
+      <div className="mb-6 flex items-center gap-3">
+        <h1 className="text-2xl font-semibold text-gray-900 mr-auto">{t('types.title')}</h1>
+        <Button variant="secondary" onClick={openImportModal} data-testid="import-template-btn">
+          {t('tpl.importFromTemplate')}
+        </Button>
         <Button onClick={() => setCreating((v) => !v)} data-testid="create-type-btn">
           {t('types.create')}
         </Button>
@@ -86,10 +133,8 @@ export function TypesAdmin() {
                 data-testid="parent-select"
               >
                 <option value="">{t('types.none')}</option>
-                {types.map((t) => (
-                  <option key={t.slug} value={t.slug}>
-                    {t.label}
-                  </option>
+                {types.map((ty) => (
+                  <option key={ty.slug} value={ty.slug}>{ty.label}</option>
                 ))}
               </select>
             </div>
@@ -135,6 +180,39 @@ export function TypesAdmin() {
           ))}
         </tbody>
       </table>
+
+      {showImport && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" data-testid="import-tpl-modal">
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full space-y-4">
+            <h2 className="text-lg font-bold">{t('tpl.importFromTemplate')}</h2>
+            <select
+              className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              value={selectedTemplate}
+              onChange={e => setSelectedTemplate(e.target.value)}
+              data-testid="template-select"
+            >
+              <option value="">{t('tpl.selectTemplate')}</option>
+              {templates.map(tpl => (
+                <option key={tpl.template} value={tpl.template}>
+                  {tpl.label} (v{tpl.version})
+                </option>
+              ))}
+            </select>
+            {importError && <p className="text-sm text-red-600" data-testid="import-tpl-error">{importError}</p>}
+            {importMsg && <p className="text-sm text-green-600" data-testid="import-tpl-success">{importMsg}</p>}
+            <div className="flex gap-2">
+              <Button
+                disabled={!selectedTemplate || importMutation.isPending}
+                onClick={() => importMutation.mutate(selectedTemplate)}
+                data-testid="confirm-import-tpl-btn"
+              >
+                {importMutation.isPending ? t('common.loading') : t('tpl.importConfirm')}
+              </Button>
+              <Button variant="secondary" onClick={closeImportModal}>{t('common.cancel')}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -18,7 +18,14 @@
     "emptyTitle": "Aucun template disponible",
     "emptyHint": "Ajoutez un fichier .yaml dans le dossier templates/ du dépôt.",
     "importBtn": "Importer dans un workspace…",
-    "importDisabledHint": "Disponible après connexion"
+    "importFromTemplate": "Importer un template",
+    "importModalTitle": "Importer le template",
+    "importModalDesc": "Choisissez le workspace dans lequel importer « {{template}} ».",
+    "selectWorkspace": "— choisir un workspace —",
+    "selectTemplate": "— choisir un template —",
+    "importConfirm": "Importer",
+    "importNoOp": "Déjà à jour — aucune modification.",
+    "importSuccess": "{{adds}} type(s) ajouté(s), {{updates}} mise(s) à jour."
   },
   "ws": {
     "title": "Workspaces",
