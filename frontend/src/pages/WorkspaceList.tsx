@@ -87,7 +87,7 @@ export default function WorkspaceList() {
     <div className="p-6 max-w-3xl mx-auto" data-testid="workspace-list">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">{t('ws.title')}</h1>
-        <Button onClick={() => setShowCreate(true)} data-testid="create-ws-btn">
+        <Button onClick={() => { setSlug(crypto.randomUUID()); setSlugTouched(true); setShowCreate(true) }} data-testid="create-ws-btn">
           {t('ws.create')}
         </Button>
       </div>
