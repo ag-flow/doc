@@ -272,7 +272,9 @@ export function TypesAdmin() {
               >
                 {importMutation.isPending ? t('common.loading') : t('tpl.importConfirm')}
               </Button>
-              <Button variant="secondary" onClick={closeImportModal}>{t('common.cancel')}</Button>
+              <Button variant="secondary" onClick={closeImportModal}>
+                {importMsg ? t('common.close') : t('common.cancel')}
+              </Button>
             </div>
           </div>
         </div>
