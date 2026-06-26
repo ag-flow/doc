@@ -331,8 +331,11 @@ async def _set_property_value(
     allowed_value_slug = (
         str(args["allowed_value_slug"]) if "allowed_value_slug" in args else None
     )
+    expected_version = int(str(args.get("expected_version", 0)))
 
-    data = PropertyValueSet(value=value, allowed_value_slug=allowed_value_slug)
+    data = PropertyValueSet(
+        value=value, allowed_value_slug=allowed_value_slug, expected_version=expected_version
+    )
     out = await doc_svc.set_property_value(
         pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data
     )

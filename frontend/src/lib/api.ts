@@ -80,7 +80,8 @@ export interface DocumentOut {
   doc_technical_key: string
   title: string
   type: string
-  contenu: string | null
+  content: string | null
+  version: number
   parent_id: string | null
   functional_type_slug: string | null
   workspace_slug: string

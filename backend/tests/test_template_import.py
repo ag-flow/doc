@@ -14,8 +14,6 @@ from docflow.templates.importer import (
 )
 from docflow.templates.inheritance import InheritanceCycleError, resolve
 from docflow.templates.models import (
-    AllowedValueDef,
-    ConstraintDef,
     PropDef,
     Template,
     TypeDef,
@@ -33,7 +31,7 @@ def _load(path: pathlib.Path) -> Template:
 # ── Modèles pydantic ─────────────────────────────────────────────────────────
 
 def test_template_model_extra_field_rejected() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         Template.model_validate({
             "version": 1,
             "template": "t",
@@ -44,7 +42,7 @@ def test_template_model_extra_field_rejected() -> None:
 
 
 def test_prop_def_type_enum() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         PropDef(slug="p", label="P", type="boolean")  # type: ignore[arg-type]
 
 
@@ -54,7 +52,10 @@ def test_resolve_excludes_abstract() -> None:
     tpl = Template(
         version=1, template="t", label="T",
         functional_types=[
-            TypeDef(slug="base", abstract=True, properties=[PropDef(slug="p", label="P", type="text")]),
+            TypeDef(
+                slug="base", abstract=True,
+                properties=[PropDef(slug="p", label="P", type="text")],
+            ),
             TypeDef(slug="concrete", inherit="base"),
         ],
     )
