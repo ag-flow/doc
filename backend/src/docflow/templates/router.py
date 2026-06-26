@@ -5,6 +5,7 @@ import pathlib
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from docflow.auth.deps import require_admin
@@ -28,6 +29,11 @@ class TemplateInfo(BaseModel):
     path: str
     concrete_types: int
     type_slugs: list[str]
+
+
+class TemplateYamlBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    yaml_content: str
 
 
 class ImportTemplateIn(BaseModel):
@@ -86,6 +92,58 @@ def _find_template_file(template_slug: str) -> pathlib.Path:
 @router.get("/templates", response_model=list[TemplateInfo])
 async def list_templates() -> list[TemplateInfo]:
     return load_templates(_TEMPLATES_DIR)
+
+
+@router.get("/templates/{template_slug}/yaml", response_class=PlainTextResponse)
+async def get_template_yaml(
+    template_slug: str,
+    _: None = _Admin,
+) -> str:
+    yaml_file = _find_template_file(template_slug)
+    return yaml_file.read_text()
+
+
+@router.put("/templates/{template_slug}/yaml", response_model=TemplateInfo)
+async def update_template_yaml(
+    template_slug: str,
+    body: TemplateYamlBody,
+    _: None = _Admin,
+) -> TemplateInfo:
+    try:
+        raw = yaml.safe_load(body.yaml_content)
+        tpl = Template.model_validate(raw)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"YAML invalide : {e}") from e
+    if tpl.template != template_slug:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"le slug dans le YAML ({tpl.template!r}) "
+                f"doit correspondre à celui de l'URL ({template_slug!r})"
+            ),
+        )
+    yaml_file = _find_template_file(template_slug)
+    yaml_file.write_text(body.yaml_content)
+    log.info("template_updated", template=template_slug, version=tpl.version)
+    resolved = resolve(tpl)
+    return TemplateInfo(
+        template=tpl.template,
+        label=tpl.label,
+        version=tpl.version,
+        path=yaml_file.name,
+        concrete_types=len(resolved),
+        type_slugs=[r.slug for r in resolved],
+    )
+
+
+@router.delete("/templates/{template_slug}", status_code=204)
+async def delete_template(
+    template_slug: str,
+    _: None = _Admin,
+) -> None:
+    yaml_file = _find_template_file(template_slug)
+    yaml_file.unlink()
+    log.info("template_deleted", template=template_slug)
 
 
 @router.post(
