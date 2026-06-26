@@ -28,6 +28,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
   ({ initialContent, onDirty }, ref) => {
     const editor = useCreateBlockNote({ schema })
     const loadedRef = useRef(false)
+    // BlockNote appelle onChange au mount et lors de replaceBlocks — on ignore
+    // ces appels initiaux et on ne propage onDirty qu'après stabilisation.
+    const settledRef = useRef(false)
+    const onDirtyRef = useRef(onDirty)
+    onDirtyRef.current = onDirty
 
     useEffect(() => {
       if (loadedRef.current) return
@@ -36,8 +41,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       void (async () => {
         const api = editor as unknown as MarkdownEditorApi
         const blocks = await parseMarkdownWithMermaid(api, initialContent ?? '')
-        if (cancelled || blocks.length === 0) return
-        editor.replaceBlocks(editor.document, blocks as never)
+        if (cancelled) return
+        if (blocks.length > 0) {
+          editor.replaceBlocks(editor.document, blocks as never)
+        }
+        // Laisser BlockNote traiter le replaceBlocks avant d'autoriser dirty
+        setTimeout(() => {
+          if (!cancelled) settledRef.current = true
+        }, 0)
       })()
       return () => {
         cancelled = true
@@ -55,7 +66,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 
     return (
       <div className="rounded border border-gray-200 bg-white" data-testid="markdown-editor">
-        <BlockNoteView editor={editor} onChange={onDirty} />
+        <BlockNoteView
+          editor={editor}
+          onChange={() => {
+            if (settledRef.current) onDirtyRef.current()
+          }}
+        />
       </div>
     )
   },
