@@ -5,6 +5,7 @@ import './lib/i18n'
 import { getToken, clearToken } from './lib/api'
 import { WorkspaceProvider, useWorkspace } from './contexts/WorkspaceContext'
 import { Login } from './pages/Login'
+import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
 import { TypesAdmin } from './pages/TypesAdmin'
 import { DocumentTree } from './pages/DocumentTree'
@@ -24,7 +25,10 @@ function NavBar() {
   const { currentSlug } = useWorkspace()
   return (
     <nav className="flex items-center gap-6 border-b border-gray-200 bg-white px-8 py-3">
-      <Link to="/workspaces" className="font-semibold text-indigo-600">docflow</Link>
+      <Link to="/templates" className="font-semibold text-indigo-600">docflow</Link>
+      <Link to="/templates" className="text-sm text-gray-600 hover:text-gray-900">
+        {t('nav.templates')}
+      </Link>
       <Link to="/workspaces" className="text-sm text-gray-600 hover:text-gray-900">
         {t('nav.workspaces')}
       </Link>
@@ -69,6 +73,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Templates : lecture seule, pas d'auth requise */}
+      <Route path="/templates" element={<Layout><TemplateList /></Layout>} />
       <Route
         path="/workspaces"
         element={
@@ -93,8 +99,8 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route path="/" element={<Navigate to="/workspaces" replace />} />
-      <Route path="*" element={<Navigate to="/workspaces" replace />} />
+      <Route path="/" element={<Navigate to="/templates" replace />} />
+      <Route path="*" element={<Navigate to="/templates" replace />} />
     </Routes>
   )
 }

@@ -8,9 +8,17 @@
   },
   "nav": {
     "workspaces": "Workspaces",
+    "templates": "Templates",
     "types": "Types fonctionnels",
     "documents": "Documents",
     "logout": "Déconnexion"
+  },
+  "tpl": {
+    "title": "Templates",
+    "emptyTitle": "Aucun template disponible",
+    "emptyHint": "Ajoutez un fichier .yaml dans le dossier templates/ du dépôt.",
+    "importBtn": "Importer dans un workspace…",
+    "importDisabledHint": "Disponible après connexion"
   },
   "ws": {
     "title": "Workspaces",

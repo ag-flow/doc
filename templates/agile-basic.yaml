@@ -95,13 +95,3 @@ functional_types:
         type: text
         required: true
 
-  # ─── TASK : enfant de story ───────────────────────────────────────────────
-  - slug: task
-    inherit: base_statusable
-    parent: story
-    label: Tâche
-    properties:
-      - slug: assignee
-        label: Assigné à
-        type: text
-        required: false

@@ -67,6 +67,15 @@ export interface WorkspaceOut {
   updated_at: string
 }
 
+export interface TemplateInfo {
+  template: string
+  label: string
+  version: number
+  path: string
+  concrete_types: number
+  type_slugs: string[]
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string

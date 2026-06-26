@@ -103,13 +103,13 @@ def test_resolve_unknown_inherit_raises() -> None:
         resolve(tpl)
 
 
-def test_agile_basic_has_5_concrete_types() -> None:
+def test_agile_basic_has_4_concrete_types() -> None:
     tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
     resolved = resolve(tpl)
     slugs = {r.slug for r in resolved}
     assert "base_statusable" not in slugs
-    assert len(slugs) == 5
-    assert {"epic", "feature", "story", "atdd", "task"} == slugs
+    assert len(slugs) == 4
+    assert {"epic", "feature", "story", "atdd"} == slugs
 
 
 def test_agile_basic_story_atdd_parent_is_feature() -> None:
@@ -154,7 +154,7 @@ async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
                 "tpl-test",
             )
         slugs = {r["slug"] for r in rows}
-        assert {"epic", "feature", "story", "atdd", "task"} == slugs
+        assert {"epic", "feature", "story", "atdd"} == slugs
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-test")
 

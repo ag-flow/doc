@@ -23,6 +23,7 @@ from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
+from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
 from docflow.workspaces.router import router as workspaces_router
 
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="docflow", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(templates_router)
 app.include_router(users_router)
 app.include_router(workspaces_router)
 app.include_router(types_router)

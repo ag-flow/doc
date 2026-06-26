@@ -26,9 +26,10 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --no-dev --no-install-project --frozen
 
-# Code source + migrations SQL
+# Code source + migrations SQL + templates YAML
 COPY backend/src/ ./src/
 COPY backend/migrations/ ./migrations/
+COPY templates/ ./templates/
 RUN uv sync --no-dev --frozen
 
 # Assets frontend
