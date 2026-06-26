@@ -245,15 +245,6 @@ async def run_import(
 
         current_version: int | None = await _fetch_version(conn, wk, template.template)
 
-        if current_version == template.version:
-            log.info(
-                "template_import_no_op",
-                workspace=ws_slug,
-                template=template.template,
-                version=template.version,
-            )
-            return ImportReport(dry_run=dry_run, no_op=True, diff=DiffResult())
-
         if current_version is not None and template.version < current_version:
             raise VersionConflictError(
                 f"régression de version interdite :"
@@ -261,6 +252,17 @@ async def run_import(
             )
 
         diff = await compute_diff(conn, wk, resolved)
+
+        # no_op uniquement si même version ET diff réellement vide
+        # (si les types ont été supprimés, diff.adds sera non vide → on réimporte)
+        if current_version == template.version and not diff.adds and not diff.soft_updates:
+            log.info(
+                "template_import_no_op",
+                workspace=ws_slug,
+                template=template.template,
+                version=template.version,
+            )
+            return ImportReport(dry_run=dry_run, no_op=True, diff=diff)
 
         if diff.has_conflict:
             raise ImportConflictError(diff)
