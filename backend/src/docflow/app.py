@@ -73,16 +73,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
-app.include_router(auth_router)
-app.include_router(templates_router)
-app.include_router(users_router)
-app.include_router(workspaces_router)
-app.include_router(types_router)
-app.include_router(properties_router)
-app.include_router(documents_router)
-app.include_router(blocks_router)
-app.include_router(oidc_router)
-app.include_router(mcp_router)
+_API = "/api"
+app.include_router(auth_router, prefix=_API)
+app.include_router(templates_router, prefix=_API)
+app.include_router(users_router, prefix=_API)
+app.include_router(workspaces_router, prefix=_API)
+app.include_router(types_router, prefix=_API)
+app.include_router(properties_router, prefix=_API)
+app.include_router(documents_router, prefix=_API)
+app.include_router(blocks_router, prefix=_API)
+app.include_router(oidc_router, prefix=_API)
+app.include_router(mcp_router, prefix=_API)
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:

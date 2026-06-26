@@ -11,7 +11,7 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["mcp"])
 
-_transport = SseServerTransport("/mcp/messages")
+_transport = SseServerTransport("/api/mcp/messages")
 
 
 @router.get("/mcp/sse")
