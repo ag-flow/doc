@@ -252,8 +252,5 @@ async def delete_type(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> None:
             except (asyncpg.ForeignKeyViolationError, asyncpg.RestrictViolationError) as exc:
                 raise HTTPException(
                     status_code=409,
-                    detail=(
-                        "impossible de supprimer ce type : "
-                        "il a des enfants ou des documents associés"
-                    ),
+                    detail="impossible de supprimer ce type : contrainte de référence",
                 ) from exc
