@@ -87,6 +87,13 @@
     "save": "Enregistrer",
     "saving": "Enregistrement…",
     "dirty": "Modifications non enregistrées",
+    "leaveConfirm": {
+      "title": "Modifications non enregistrées",
+      "message": "Voulez-vous enregistrer vos modifications avant de quitter ?",
+      "save": "Enregistrer et quitter",
+      "discard": "Quitter sans enregistrer",
+      "cancel": "Annuler"
+    },
     "conflict": {
       "title": "Conflit de version",
       "desc": "Le document a été modifié côté serveur depuis votre dernier chargement. Choisissez la version à conserver.",

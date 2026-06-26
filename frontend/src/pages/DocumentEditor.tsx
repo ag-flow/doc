@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ApiError, docsApi, type AllowedTypeOut, type DocumentOut } from '../lib/api'
@@ -64,9 +64,9 @@ export function DocumentEditor() {
     setStatus((s) => (s === 'saving' ? s : 'dirty'))
   }, [])
 
-  const doSave = useCallback(async () => {
-    if (!ws || !docId || !editorRef.current) return
-    if (status !== 'dirty' && status !== 'error') return
+  const doSave = useCallback(async (): Promise<boolean> => {
+    if (!ws || !docId || !editorRef.current) return false
+    if (status !== 'dirty' && status !== 'error') return true
     const content = await editorRef.current.getMarkdown()
     setStatus('saving')
     setErrorMsg(null)
@@ -80,6 +80,7 @@ export function DocumentEditor() {
       ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
       setStatus('idle')
       void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+      return true
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const server = (err.detail ?? {}) as Partial<DocumentOut>
@@ -100,6 +101,7 @@ export function DocumentEditor() {
         setStatus('error')
         setErrorMsg(err instanceof ApiError ? err.message : t('error.generic'))
       }
+      return false
     }
   }, [ws, docId, title, status, queryClient, t])
 
@@ -113,6 +115,18 @@ export function DocumentEditor() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [doSave])
+
+  // Fermeture / rechargement onglet
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (status === 'dirty') e.preventDefault()
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [status])
+
+  // Navigation in-app (liens, retour arrière)
+  const blocker = useBlocker(status === 'dirty')
 
   const keepServer = useCallback(
     (serverVersion: number) => {
@@ -244,6 +258,44 @@ export function DocumentEditor() {
                 data-testid="child-submit"
               >
                 {t('common.save')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {blocker.state === 'blocked' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-bold">{t('editor.leaveConfirm.title')}</h2>
+            <p className="text-sm text-gray-600">{t('editor.leaveConfirm.message')}</p>
+            {status === 'error' && errorMsg && (
+              <p className="text-sm text-red-600">{errorMsg}</p>
+            )}
+            <div className="flex flex-col gap-2">
+              <Button
+                data-testid="leave-save-btn"
+                onClick={async () => {
+                  const ok = await doSave()
+                  if (ok) blocker.proceed()
+                }}
+                disabled={status === 'saving'}
+              >
+                {status === 'saving' ? t('editor.saving') : t('editor.leaveConfirm.save')}
+              </Button>
+              <Button
+                variant="secondary"
+                data-testid="leave-discard-btn"
+                onClick={() => blocker.proceed()}
+              >
+                {t('editor.leaveConfirm.discard')}
+              </Button>
+              <Button
+                variant="secondary"
+                data-testid="leave-cancel-btn"
+                onClick={() => blocker.reset()}
+              >
+                {t('editor.leaveConfirm.cancel')}
               </Button>
             </div>
           </div>

@@ -1,4 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Route,
+  Navigate,
+  Link,
+  useNavigate,
+} from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import './lib/i18n'
@@ -62,57 +69,43 @@ function GlobalLayout({ children }: { children: React.ReactNode }) {
   )
 }
 
-function AppRoutes() {
-  return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-
-      {/* Routes globales */}
-      <Route path="/templates" element={<GlobalLayout><TemplateList /></GlobalLayout>} />
-      <Route
-        path="/workspaces"
-        element={
-          <ProtectedRoute>
-            <GlobalLayout><WorkspaceList /></GlobalLayout>
-          </ProtectedRoute>
-        }
-      />
-
-      {/* Routes workspace — toutes sous le WorkspaceLayout contextuel */}
-      <Route
-        path="/ws/:wsSlug"
-        element={
-          <ProtectedRoute>
-            <GlobalLayout>
-              <WorkspaceLayout />
-            </GlobalLayout>
-          </ProtectedRoute>
-        }
-      >
-        {/* /ws/:wsSlug → redirect vers blocs */}
-        <Route index element={<Navigate to="blocs" replace />} />
-        <Route path="types" element={<TypesAdmin />} />
-        <Route path="blocs" element={<BlocsAdmin />} />
-        <Route path="blocs/:blocSlug/documents" element={<BlockDocumentList />} />
-        <Route path="blocs/:blocSlug/documents/:docId" element={<DocumentEditor />} />
-        <Route path="webhooks" element={<WebhooksAdmin />} />
-      </Route>
-
-      {/* Racine + catch-all */}
-      <Route path="/" element={<Navigate to="/workspaces" replace />} />
-      <Route path="*" element={<Navigate to="/workspaces" replace />} />
-    </Routes>
-  )
-}
+const router = createBrowserRouter([
+  { path: '/login', element: <Login /> },
+  { path: '/templates', element: <GlobalLayout><TemplateList /></GlobalLayout> },
+  {
+    path: '/workspaces',
+    element: (
+      <ProtectedRoute>
+        <GlobalLayout><WorkspaceList /></GlobalLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/ws/:wsSlug',
+    element: (
+      <ProtectedRoute>
+        <GlobalLayout><WorkspaceLayout /></GlobalLayout>
+      </ProtectedRoute>
+    ),
+    children: [
+      { index: true, element: <Navigate to="blocs" replace /> },
+      { path: 'types', element: <TypesAdmin /> },
+      { path: 'blocs', element: <BlocsAdmin /> },
+      { path: 'blocs/:blocSlug/documents', element: <BlockDocumentList /> },
+      { path: 'blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> },
+      { path: 'webhooks', element: <WebhooksAdmin /> },
+    ],
+  },
+  { path: '/', element: <Navigate to="/workspaces" replace /> },
+  { path: '*', element: <Navigate to="/workspaces" replace /> },
+])
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <WorkspaceProvider>
-          <AppRoutes />
-        </WorkspaceProvider>
-      </BrowserRouter>
+      <WorkspaceProvider>
+        <RouterProvider router={router} />
+      </WorkspaceProvider>
     </QueryClientProvider>
   )
 }
