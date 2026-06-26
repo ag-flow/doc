@@ -6,14 +6,14 @@ import uuid
 import asyncpg
 from fastapi import HTTPException
 
-_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def validate_slug(value: str, field: str = "slug") -> str:
     """Valide qu'une valeur respecte le format slug. Lève ValueError pour pydantic."""
     if not value or not _SLUG_RE.match(value) or len(value) > 100:
         raise ValueError(
-            f"{field} invalide : {value!r} (attendu: ^[a-z][a-z0-9_-]*, longueur 1–100)"
+            f"{field} invalide : {value!r} (attendu: ^[a-z0-9][a-z0-9_-]*, longueur 1–100)"
         )
     return value
 
