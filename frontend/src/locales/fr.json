@@ -55,9 +55,42 @@
   "documents": {
     "title": "Documents",
     "create": "Nouveau document",
+    "add": "Ajouter un document",
     "titleField": "Titre",
+    "type": "Type",
+    "selectType": "— choisir un type —",
     "delete": "Supprimer",
-    "noDocuments": "Aucun document"
+    "noDocuments": "Aucun document",
+    "no_types": "Aucun type disponible",
+    "tree_mode": "Arbre",
+    "list_mode": "Liste",
+    "columns": "Colonnes"
+  },
+  "editor": {
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "dirty": "Modifications non enregistrées",
+    "conflict": {
+      "title": "Conflit de version",
+      "desc": "Le document a été modifié côté serveur depuis votre dernier chargement. Choisissez la version à conserver.",
+      "ancestor": "Ancêtre",
+      "server": "Serveur",
+      "mine": "Mon brouillon",
+      "keepServer": "Garder le serveur",
+      "keepMine": "Garder le mien"
+    }
+  },
+  "properties": {
+    "title": "Propriétés",
+    "save": "Enregistrer",
+    "empty": "Aucune propriété",
+    "none": "— aucune —",
+    "conflict": {
+      "title": "Conflit de valeur",
+      "desc": "Valeur serveur : {{server}}. Choisissez la version à conserver.",
+      "keepServer": "Garder le serveur",
+      "keepMine": "Garder le mien"
+    }
   },
   "common": {
     "loading": "Chargement…",

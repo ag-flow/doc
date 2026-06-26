@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator, Iterator
 
 import asyncpg
@@ -134,3 +135,40 @@ async def test_workspace(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, objec
     assert row is not None
     yield dict(row)
     await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "test-ws")
+
+
+@pytest.fixture()
+async def test_block(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> AsyncIterator[dict[str, object]]:
+    """Crée un type racine 'root-type' et un bloc 'test-block' dans le workspace test.
+
+    Cède un dict {id, slug, type_id, type_slug}.
+    Le cleanup est pris en charge par la cascade du workspace (DELETE workspace).
+    """
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+
+    # Créer le type fonctionnel racine
+    type_row = await db_pool.fetchrow(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ($1, $2, $3) RETURNING id, slug",
+        "root-type", "Root Type", wk,
+    )
+    assert type_row is not None
+    type_id: uuid.UUID = type_row["id"]
+    type_slug: str = type_row["slug"]
+
+    # Créer le bloc
+    block_row = await db_pool.fetchrow(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ($1, $2, $3, $4) RETURNING id, slug",
+        "test-block", "Test Block", type_id, wk,
+    )
+    assert block_row is not None
+
+    yield {
+        "id": block_row["id"],
+        "slug": block_row["slug"],
+        "type_id": type_id,
+        "type_slug": type_slug,
+    }

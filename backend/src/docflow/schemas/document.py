@@ -10,7 +10,16 @@ class DocumentCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     title: str
+    block_id: uuid.UUID
     content: str | None = None
+    parent_id: uuid.UUID | None = None
+    functional_type_slug: str | None = None
+
+
+class DocumentCreateInBlock(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    title: str
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
 
@@ -40,5 +49,6 @@ class DocumentOut(BaseModel):
     parent_id: uuid.UUID | None
     functional_type_slug: str | None
     workspace_slug: str
+    data_block_ref: uuid.UUID
     created_at: datetime
     updated_at: datetime

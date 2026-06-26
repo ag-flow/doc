@@ -9,6 +9,8 @@ import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
 import { TypesAdmin } from './pages/TypesAdmin'
 import { DocumentTree } from './pages/DocumentTree'
+import { BlockDocumentList } from './pages/BlockDocumentList'
+import { DocumentEditor } from './pages/DocumentEditor'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -96,6 +98,22 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Layout><DocumentTree /></Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workspaces/:ws/blocks/:block"
+        element={
+          <ProtectedRoute>
+            <Layout><BlockDocumentList /></Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workspaces/:ws/blocks/:block/documents/:docId"
+        element={
+          <ProtectedRoute>
+            <Layout><DocumentEditor /></Layout>
           </ProtectedRoute>
         }
       />

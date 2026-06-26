@@ -4,17 +4,37 @@ import re
 import uuid
 
 import asyncpg
+import structlog
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
-from docflow.schemas.document import DocumentCreate, DocumentOut, DocumentUpdate
+from docflow.documents.block_ops import (
+    allowed_types,
+    create_document_in_block,
+    list_block_documents,
+)
+from docflow.schemas.document import (
+    DocumentCreate,
+    DocumentOut,
+    DocumentUpdate,
+)
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
+
+log = structlog.get_logger(__name__)
+
+# Spec 23 functions re-exported for callers importing from service
+__all__ = [
+    "allowed_types",
+    "create_document_in_block",
+    "list_block_documents",
+]
 
 # ── Lecture documents ─────────────────────────────────────────────────────────
 
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
+       d.data_block_ref,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -27,6 +47,7 @@ ORDER BY d.created_at
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
+       d.data_block_ref,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
        dv.content
@@ -49,6 +70,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         parent_id=row["parent"],
         functional_type_slug=row["functional_type_slug"],
         workspace_slug=row["workspace_slug"],
+        data_block_ref=row["data_block_ref"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -64,6 +86,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         parent_id=row["parent"],
         functional_type_slug=row["functional_type_slug"],
         workspace_slug=row["workspace_slug"],
+        data_block_ref=row["data_block_ref"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -120,6 +143,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
+                       d.data_block_ref,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
@@ -144,6 +168,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
+                       d.data_block_ref,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
@@ -183,11 +208,13 @@ async def create_document(
                 await _validate_parent(conn, wk, data.parent_id)
             row = await conn.fetchrow(
                 """
-                INSERT INTO document (title, parent, functional_type_ref, workspace_technical_key)
-                VALUES ($1, $2, $3, $4)
-                RETURNING doc_technical_key, title, type, version, parent, created_at, updated_at
+                INSERT INTO document
+                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING doc_technical_key, title, type, version, parent,
+                          data_block_ref, created_at, updated_at
                 """,
-                data.title, data.parent_id, ft_id, wk,
+                data.title, data.parent_id, ft_id, wk, data.block_id,
             )
             assert row is not None
             await conn.execute(
@@ -204,6 +231,7 @@ async def create_document(
         parent_id=row["parent"],
         functional_type_slug=data.functional_type_slug,
         workspace_slug=ws_slug,
+        data_block_ref=row["data_block_ref"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

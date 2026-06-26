@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import asyncpg
 import pytest
 from fastapi import HTTPException
@@ -139,3 +141,110 @@ async def test_delete_block_with_children_rejected(
 async def test_block_slug_invalid() -> None:
     with pytest.raises(ValidationError):
         DataBlockCreate(slug="UPPER", label="Bad", functional_type_slug="epic")
+
+
+# ── DoD spec 22 : agile-basic ─────────────────────────────────────────────────
+
+async def _create_agile_basic(pool: asyncpg.Pool) -> dict[str, uuid.UUID]:
+    """Crée la hiérarchie agile-basic : epic ⊃ feature ⊃ story.
+
+    Retourne {slug: type_id}.
+    """
+    epic = await type_svc.create_type(
+        pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic")
+    )
+    feature = await type_svc.create_type(
+        pool, _WS,
+        FunctionalTypeCreate(slug="feature", label="Feature", parent_slug="epic"),
+    )
+    story = await type_svc.create_type(
+        pool, _WS,
+        FunctionalTypeCreate(slug="story", label="Story", parent_slug="feature"),
+    )
+    return {
+        "epic": epic.id,
+        "feature": feature.id,
+        "story": story.id,
+    }
+
+
+async def test_dod2_create_block_root_epic_ok(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 2 : workspace importé agile-basic, créer bloc lié au type racine 'epic' → OK."""
+    await _create_agile_basic(db_pool)
+    block = await block_svc.create_block(
+        db_pool, _WS,
+        DataBlockCreate(slug="backlog", label="Backlog Epic", functional_type_slug="epic"),
+    )
+    assert block.slug == "backlog"
+    assert block.functional_type_slug == "epic"
+    assert block.parent_slug is None
+    assert block.workspace_slug == _WS
+
+
+async def test_dod3_create_block_non_root_type_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 3 : créer un bloc racine avec type 'feature' (non-racine) → 422."""
+    await _create_agile_basic(db_pool)
+    with pytest.raises(HTTPException) as exc:
+        await block_svc.create_block(
+            db_pool, _WS,
+            DataBlockCreate(
+                slug="features-board", label="Features", functional_type_slug="feature"
+            ),
+        )
+    assert exc.value.status_code == 422
+
+
+async def test_dod4_create_block_type_other_workspace_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 4 : type appartenant à un autre workspace → 422."""
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.workspaces import service as ws_svc
+
+    await _create_agile_basic(db_pool)
+    other_ws = await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="other-ws-dod4", label="Other DoD4")
+    )
+    try:
+        other_wk: uuid.UUID = other_ws.workspace_technical_key
+        await db_pool.execute(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3)",
+            "solo-root", "Solo Root", other_wk,
+        )
+        # 'solo-root' n'existe pas dans _WS → 422
+        with pytest.raises(HTTPException) as exc:
+            await block_svc.create_block(
+                db_pool, _WS,
+                DataBlockCreate(
+                    slug="bad-block", label="Bad", functional_type_slug="solo-root"
+                ),
+            )
+        assert exc.value.status_code == 422
+    finally:
+        await db_pool.execute(
+            "DELETE FROM workspace WHERE workspace_technical_key = $1",
+            other_ws.workspace_technical_key,
+        )
+
+
+async def test_dod5_create_block_duplicate_slug_409(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD 5 : slug dupliqué dans le workspace → 409."""
+    await _create_agile_basic(db_pool)
+    await block_svc.create_block(
+        db_pool, _WS,
+        DataBlockCreate(slug="dup-agile", label="Premier", functional_type_slug="epic"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await block_svc.create_block(
+            db_pool, _WS,
+            DataBlockCreate(slug="dup-agile", label="Doublon", functional_type_slug="epic"),
+        )
+    assert exc.value.status_code == 409
+    assert "dup-agile" in exc.value.detail

@@ -19,7 +19,25 @@ _WS = "test-ws"
 
 
 async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
-    """Crée type 'task' avec propriétés 'title'(text), 'count'(int), 'status'(rl)."""
+    """Crée type 'task' avec propriétés 'title'(text), 'count'(int), 'status'(rl).
+
+    Crée également un bloc racine 'setup-block' pour satisfaire la contrainte NOT NULL.
+    """
+    # Type racine pour le bloc
+    wk: uuid.UUID = await pool.fetchval(
+        "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
+    )
+    root_type_id: uuid.UUID = await pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ($1, $2, $3) RETURNING id",
+        "setup-root", "Setup Root", wk,
+    )
+    block_id: uuid.UUID = await pool.fetchval(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ($1, $2, $3, $4) RETURNING id",
+        "setup-block", "Setup Block", root_type_id, wk,
+    )
+
     await type_svc.create_type(pool, _WS, FunctionalTypeCreate(slug="task", label="Task"))
     await prop_svc.create_def(
         pool, _WS, "task", PropertiesDefCreate(slug="title", label="Title", type="text")
@@ -38,7 +56,8 @@ async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
         pool, _WS, "task", "status", AllowedValueCreate(slug="done", label="Done", position=1)
     )
     doc = await doc_svc.create_document(
-        pool, _WS, DocumentCreate(title="My task", functional_type_slug="task")
+        pool, _WS,
+        DocumentCreate(title="My task", functional_type_slug="task", block_id=block_id),
     )
     return "task", doc.doc_technical_key
 
@@ -170,6 +189,7 @@ async def test_version_bump_increments(db_pool: asyncpg.Pool, test_workspace: di
 
 async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 4 : budget_jours = -1 → 422 avec message de la contrainte min."""
+    _, _ = await _setup(db_pool)
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
     await prop_svc.create_def(
         db_pool, _WS, "story",
@@ -179,8 +199,13 @@ async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: di
         db_pool, _WS, "story", "budget_jours",
         ConstraintCreate(kind="min", value="0", message="budget_jours ne peut pas être négatif"),
     )
+    # Réutilise le bloc créé par _setup
+    block_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT id FROM data_block WHERE slug = $1", "setup-block"
+    )
     doc = await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Story 1", functional_type_slug="story")
+        db_pool, _WS,
+        DocumentCreate(title="Story 1", functional_type_slug="story", block_id=block_id),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
@@ -264,6 +289,7 @@ async def test_constraint_pattern_only_on_text(
 
 async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """I-4 : supprimer la valeur d'une propriété required → rejet."""
+    _, _ = await _setup(db_pool)
     await type_svc.create_type(
         db_pool, _WS, FunctionalTypeCreate(slug="req-type", label="Req")
     )
@@ -271,8 +297,12 @@ async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_worksp
         db_pool, _WS, "req-type",
         PropertiesDefCreate(slug="req-prop", label="Req Prop", type="text", required=True),
     )
+    block_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT id FROM data_block WHERE slug = $1", "setup-block"
+    )
     doc = await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Req doc", functional_type_slug="req-type")
+        db_pool, _WS,
+        DocumentCreate(title="Req doc", functional_type_slug="req-type", block_id=block_id),
     )
     await doc_svc.set_property_value(
         db_pool, _WS, doc.doc_technical_key, "req-prop",
