@@ -96,6 +96,14 @@ describe('DocumentEditor', () => {
       expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
     )
 
+    // Modifier le titre pour passer en dirty (le bouton devient actif)
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+
     await act(async () => {
       fireEvent.click(screen.getByTestId('document-save-btn'))
     })
@@ -112,7 +120,6 @@ describe('DocumentEditor', () => {
   // DoD 24.3 — 409 → ConflictResolver s'ouvre
   it('opens ConflictResolver on 409', async () => {
     vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
-    // Le detail du 409 est le DocumentOut courant côté serveur
     vi.mocked(docsApi.patchDocument).mockRejectedValue(
       new ApiError(
         409,
@@ -124,6 +131,14 @@ describe('DocumentEditor', () => {
     renderEditor()
     await waitFor(() =>
       expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
+    )
+
+    // Modifier le titre pour passer en dirty
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
     )
 
     await act(async () => {

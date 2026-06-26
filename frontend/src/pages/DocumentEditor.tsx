@@ -66,6 +66,7 @@ export function DocumentEditor() {
 
   const doSave = useCallback(async () => {
     if (!ws || !docId || !editorRef.current) return
+    if (status !== 'dirty' && status !== 'error') return
     const content = await editorRef.current.getMarkdown()
     setStatus('saving')
     setErrorMsg(null)
@@ -100,7 +101,7 @@ export function DocumentEditor() {
         setErrorMsg(err instanceof ApiError ? err.message : t('error.generic'))
       }
     }
-  }, [ws, docId, title, queryClient, t])
+  }, [ws, docId, title, status, queryClient, t])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -173,7 +174,7 @@ export function DocumentEditor() {
           )}
           <Button
             onClick={() => void doSave()}
-            disabled={status === 'saving'}
+            disabled={status === 'idle' || status === 'saving'}
             data-testid="document-save-btn"
           >
             {status === 'saving' ? t('editor.saving') : t('editor.save')}
