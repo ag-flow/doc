@@ -133,18 +133,18 @@ async def allowed_types(
     ws_slug: str,
     block_slug: str,
     parent_id: uuid.UUID | None = None,
-) -> list[str]:
-    """Retourne les slugs des types autorisés à la position donnée.
+) -> list[dict[str, str]]:
+    """Retourne les types autorisés à la position donnée sous forme {slug, label}.
 
-    Racine (parent_id=None) → [block.functional_type_slug]
+    Racine (parent_id=None) → [block.functional_type]
     Sous parent_id → types dont parent = type du parent doc
     """
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         if parent_id is None:
-            slug: str | None = await conn.fetchval(
+            row = await conn.fetchrow(
                 """
-                SELECT ft.slug FROM functional_type ft
+                SELECT ft.slug, ft.label FROM functional_type ft
                 JOIN data_block db ON db.functional_type_ref = ft.id
                 WHERE db.id = (
                     SELECT id FROM data_block
@@ -154,20 +154,20 @@ async def allowed_types(
                 wk,
                 block_slug,
             )
-            if slug is None:
+            if row is None:
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
-            return [slug]
+            return [{"slug": row["slug"], "label": row["label"]}]
         else:
             rows = await conn.fetch(
                 """
-                SELECT ft.slug FROM functional_type ft
+                SELECT ft.slug, ft.label FROM functional_type ft
                 WHERE ft.parent = (
                     SELECT d.functional_type_ref FROM document d WHERE d.doc_technical_key = $1
                 )
                 """,
                 parent_id,
             )
-            return [r["slug"] for r in rows]
+            return [{"slug": r["slug"], "label": r["label"]} for r in rows]
 
 
 async def list_block_documents(

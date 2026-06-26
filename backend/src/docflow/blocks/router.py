@@ -61,14 +61,14 @@ async def delete_block(
 # ── Spec 23 : arbre du bloc ───────────────────────────────────────────────────
 
 
-@router.get(_BLOCK + "/allowed-types", response_model=list[str])
+@router.get(_BLOCK + "/allowed-types", response_model=list[dict[str, str]])
 async def get_allowed_types(
     ws_slug: str,
     block_slug: str,
     request: Request,
     _: AuthUser = _Auth,
     parent_id: uuid.UUID | None = Query(default=None),
-) -> list[str]:
+) -> list[dict[str, str]]:
     return await doc_svc.allowed_types(request.app.state.pool, ws_slug, block_slug, parent_id)
 
 
