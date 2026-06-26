@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import require_admin
 from docflow.documents import service
@@ -19,9 +19,20 @@ _Auth = Depends(require_admin)
 
 @router.get(_WS + "/documents", response_model=list[DocumentOut])
 async def list_documents(
-    ws_slug: str, request: Request, _: AuthUser = _Auth
+    ws_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    functional_type: str | None = Query(default=None),
+    prop_slug: str | None = Query(default=None),
+    allowed_value_slug: str | None = Query(default=None),
 ) -> list[DocumentOut]:
-    return await service.list_documents(request.app.state.pool, ws_slug)
+    return await service.list_documents(
+        request.app.state.pool,
+        ws_slug,
+        functional_type=functional_type,
+        prop_slug=prop_slug,
+        allowed_value_slug=allowed_value_slug,
+    )
 
 
 @router.post(_WS + "/documents", response_model=DocumentOut, status_code=201)

@@ -100,10 +100,62 @@ async def _validate_parent(
         )
 
 
-async def list_documents(pool: asyncpg.Pool, ws_slug: str) -> list[DocumentOut]:
+async def list_documents(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    *,
+    functional_type: str | None = None,
+    prop_slug: str | None = None,
+    allowed_value_slug: str | None = None,
+) -> list[DocumentOut]:
+    """Arbre à plat — filtres optionnels pour le board.
+
+    Quand functional_type + prop_slug + allowed_value_slug sont fournis,
+    la jointure utilise idx_pvalue_version_allowed pour filtrer efficacement.
+    """
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
-        rows = await conn.fetch(_SELECT_HEAD, wk)
+        if functional_type and prop_slug and allowed_value_slug:
+            rows = await conn.fetch(
+                """
+                SELECT d.doc_technical_key, d.title, d.type, d.version,
+                       d.parent, d.created_at, d.updated_at,
+                       ft.slug AS functional_type_slug,
+                       w.slug  AS workspace_slug
+                FROM document d
+                JOIN workspace w  ON w.workspace_technical_key = d.workspace_technical_key
+                JOIN functional_type ft ON ft.id = d.functional_type_ref
+                JOIN properties_values pv ON pv.document_ref = d.doc_technical_key
+                JOIN properties_value_version pvv
+                    ON pvv.property_value_ref = pv.id
+                    AND pvv.version_number    = pv.version
+                JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
+                JOIN properties_defs pd ON pd.id = pv.property_def_ref
+                WHERE d.workspace_technical_key = $1
+                  AND ft.slug  = $2
+                  AND pd.slug  = $3
+                  AND pav.slug = $4
+                ORDER BY d.created_at
+                """,
+                wk, functional_type, prop_slug, allowed_value_slug,
+            )
+        elif functional_type:
+            rows = await conn.fetch(
+                """
+                SELECT d.doc_technical_key, d.title, d.type, d.version,
+                       d.parent, d.created_at, d.updated_at,
+                       ft.slug AS functional_type_slug,
+                       w.slug  AS workspace_slug
+                FROM document d
+                JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+                JOIN functional_type ft ON ft.id = d.functional_type_ref
+                WHERE d.workspace_technical_key = $1 AND ft.slug = $2
+                ORDER BY d.created_at
+                """,
+                wk, functional_type,
+            )
+        else:
+            rows = await conn.fetch(_SELECT_HEAD, wk)
     return [_row_head(r) for r in rows]
 
 

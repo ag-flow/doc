@@ -5,7 +5,10 @@ import pytest
 from fastapi import HTTPException
 
 from docflow.documents import service as doc_svc
+from docflow.properties import service as prop_svc
 from docflow.schemas.document import DocumentCreate, DocumentUpdate
+from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
+from docflow.schemas.property_value import PropertyValueSet
 from docflow.schemas.types import FunctionalTypeCreate
 from docflow.types import service as type_svc
 
@@ -199,3 +202,84 @@ async def test_delete_document_with_children_rejected(
     with pytest.raises(HTTPException) as exc:
         await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key)
     assert exc.value.status_code == 409
+
+
+# ── Board query (DoD 6) ───────────────────────────────────────────────────────
+
+async def test_board_query_dod6(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """DoD 6 : list_documents filtre par functional_type + prop + allowed_value.
+
+    Crée 3 documents 'feature', positionne statut=done sur 2, statut=todo sur 1.
+    Le board doit retourner exactement les 2 features 'done'.
+    La jointure utilise idx_pvalue_version_allowed.
+    """
+    # Crée le type 'feature' avec une prop 'statut' (restricted_list)
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature")
+    )
+    await prop_svc.create_def(
+        db_pool, _WS, "feature",
+        PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
+    )
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "feature", "statut",
+        AllowedValueCreate(slug="todo", label="À faire"),
+    )
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "feature", "statut",
+        AllowedValueCreate(slug="done", label="Terminé", position=1),
+    )
+
+    feat_a = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Feature A", functional_type_slug="feature")
+    )
+    feat_b = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Feature B", functional_type_slug="feature")
+    )
+    feat_c = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Feature C", functional_type_slug="feature")
+    )
+
+    # A et B → done ; C → todo
+    for doc in (feat_a, feat_b):
+        await doc_svc.set_property_value(
+            db_pool, _WS, doc.doc_technical_key, "statut",
+            PropertyValueSet(allowed_value_slug="done", expected_version=0),
+        )
+    await doc_svc.set_property_value(
+        db_pool, _WS, feat_c.doc_technical_key, "statut",
+        PropertyValueSet(allowed_value_slug="todo", expected_version=0),
+    )
+
+    # Board : features en statut done
+    board = await doc_svc.list_documents(
+        db_pool, _WS,
+        functional_type="feature",
+        prop_slug="statut",
+        allowed_value_slug="done",
+    )
+
+    titles = {d.title for d in board}
+    assert titles == {"Feature A", "Feature B"}
+    assert all(d.functional_type_slug == "feature" for d in board)
+
+
+async def test_board_query_functional_type_only(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """list_documents filtré par functional_type seul (sans valeur)."""
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic")
+    )
+    await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Epic 1", functional_type_slug="epic")
+    )
+    await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Epic 2", functional_type_slug="epic")
+    )
+    # Document sans type fonctionnel
+    await doc_svc.create_document(db_pool, _WS, DocumentCreate(title="Doc sans type"))
+
+    docs = await doc_svc.list_documents(db_pool, _WS, functional_type="epic")
+    assert all(d.functional_type_slug == "epic" for d in docs)
+    assert {d.title for d in docs} == {"Epic 1", "Epic 2"}
