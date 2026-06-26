@@ -8,7 +8,6 @@
 --   functional_type → data_block (CASCADE) → document (CASCADE)
 --   functional_type → properties_defs (déjà CASCADE) → properties_values (CASCADE)
 --   data_block → document (CASCADE) → properties_values via document_ref (CASCADE)
---   properties_allowed_values → properties_values.allowed_value_ref (SET NULL)
 --   document.functional_type_ref (SET NULL, le document reste lisible sans type)
 
 -- 1. Types enfants : RESTRICT → CASCADE
@@ -47,8 +46,3 @@ ALTER TABLE properties_values
     ADD  CONSTRAINT properties_values_property_def_ref_fkey
          FOREIGN KEY (property_def_ref) REFERENCES properties_defs(id) ON DELETE CASCADE;
 
--- 7. Valeurs de propriété → valeur autorisée : RESTRICT → SET NULL
-ALTER TABLE properties_values
-    DROP CONSTRAINT properties_values_allowed_value_ref_fkey,
-    ADD  CONSTRAINT properties_values_allowed_value_ref_fkey
-         FOREIGN KEY (allowed_value_ref) REFERENCES properties_allowed_values(id) ON DELETE SET NULL;
