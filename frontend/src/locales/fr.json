@@ -79,7 +79,8 @@
     "list_mode": "Liste",
     "columns": "Colonnes",
     "filter_all": "Tous",
-    "noResults": "Aucun résultat pour ce filtre"
+    "noResults": "Aucun résultat pour ce filtre",
+    "addChild": "Ajouter un enfant :"
   },
   "editor": {
     "save": "Enregistrer",
