@@ -344,7 +344,10 @@ async def update_document(
 
 
 async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
-    """Supprime le document et retourne un snapshot {id, title, type} capturé avant suppression."""
+    """Supprime le document et tous ses descendants (ON DELETE CASCADE sur document.parent).
+
+    Retourne un snapshot {id, title, type} capturé avant suppression.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
@@ -356,13 +359,7 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             )
             if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
-            try:
-                await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
-            except asyncpg.RestrictViolationError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="impossible de supprimer : ce document a des enfants",
-                ) from exc
+            await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
             await log_change(conn, wk, doc_id, "D")
     return {"id": str(snap["doc_technical_key"]), "title": snap["title"], "type": snap["type"]}
 
