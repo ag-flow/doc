@@ -15,6 +15,7 @@ import {
 } from '@tanstack/react-table'
 import {
   docsApi,
+  type AllowedTypeOut,
   type DocumentOut,
   type FunctionalTypeRich,
   type DocPropValue,
@@ -130,6 +131,24 @@ export function BlockDocumentList() {
     enabled: Boolean(ws && block),
   })
 
+  const { data: rootAllowedTypes = [] } = useQuery<AllowedTypeOut[]>({
+    queryKey: ['allowed-types', ws, block, 'root'],
+    queryFn: () => docsApi.getAllowedTypes(ws!, block!),
+    enabled: Boolean(ws && block),
+  })
+
+  const childTypesByParent = useMemo(() => {
+    const map = new Map<string, FunctionalTypeRich[]>()
+    for (const ft of types) {
+      if (ft.parent_slug) {
+        const arr = map.get(ft.parent_slug) ?? []
+        arr.push(ft)
+        map.set(ft.parent_slug, arr)
+      }
+    }
+    return map
+  }, [types])
+
   // Union des propriétés des types présents dans les docs du bloc
   const typeSlugSet = useMemo(
     () => new Set(documents.map((d) => d.functional_type_slug).filter(Boolean) as string[]),
@@ -231,19 +250,27 @@ export function BlockDocumentList() {
       id: 'actions',
       header: '',
       enableSorting: false,
-      cell: ({ row }) => (
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={(e) => {
-            e.stopPropagation()
-            setDialogParent(row.original.doc_technical_key)
-          }}
-          data-testid={`add-child-${row.original.doc_technical_key}`}
-        >
-          +
-        </Button>
-      ),
+      cell: ({ row }) => {
+        const docTypeSlug = row.original.functional_type_slug
+        const children = docTypeSlug ? (childTypesByParent.get(docTypeSlug) ?? []) : []
+        if (children.length === 0) return null
+        const label = children.length === 1
+          ? t('documents.addType', { type: children[0].label })
+          : '+'
+        return (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={(e) => {
+              e.stopPropagation()
+              setDialogParent(row.original.doc_technical_key)
+            }}
+            data-testid={`add-child-${row.original.doc_technical_key}`}
+          >
+            {label}
+          </Button>
+        )
+      },
     }
 
     return [...staticCols, ...dynCols, actionCol]
@@ -316,7 +343,9 @@ export function BlockDocumentList() {
           {treeMode ? t('documents.list_mode') : t('documents.tree_mode')}
         </Button>
         <Button onClick={() => setDialogParent(null)} data-testid="add-root-btn">
-          {t('documents.add')}
+          {rootAllowedTypes.length === 1
+            ? t('documents.addType', { type: rootAllowedTypes[0].label })
+            : t('documents.add')}
         </Button>
       </div>
 

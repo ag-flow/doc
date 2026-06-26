@@ -80,7 +80,8 @@
     "columns": "Colonnes",
     "filter_all": "Tous",
     "noResults": "Aucun résultat pour ce filtre",
-    "addChild": "Ajouter un enfant :"
+    "addChild": "Ajouter un enfant :",
+    "addType": "Ajouter {{type}}"
   },
   "editor": {
     "save": "Enregistrer",

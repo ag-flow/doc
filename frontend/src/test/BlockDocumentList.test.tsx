@@ -180,13 +180,20 @@ describe('BlockDocumentList', () => {
   // DoD 26.4 — bouton + sous parent → AddDocumentDialog s'ouvre
   it('opens add-document dialog when clicking + on a row', async () => {
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([
-      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', parent_id: null }),
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', parent_id: null, functional_type_slug: 'epic' }),
     ])
-    vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([])
+    // types-rich doit exposer feature comme enfant d'epic pour que le bouton apparaisse
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
+      { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
+    ])
+    vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([
+      { slug: 'feature', label: 'Feature' },
+    ])
     renderList()
     await waitFor(() => expect(screen.getByTestId('add-child-e1')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('add-child-e1'))
-    // getAllowedTypes est appelé quand le dialog s'ouvre
+    // getAllowedTypes est appelé quand le dialog s'ouvre (pour charger les types enfants dans le dialog)
     await waitFor(() => expect(vi.mocked(docsApi.getAllowedTypes)).toHaveBeenCalledWith(
       'ws', 'b1', 'e1'
     ))
