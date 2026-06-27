@@ -17,6 +17,7 @@ import { DocumentEditor } from './pages/DocumentEditor'
 import { WebhooksAdmin } from './pages/WebhooksAdmin'
 import { OidcAdmin } from './pages/OidcAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
+import { AutomatesPage } from './pages/AutomatesPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -75,6 +76,7 @@ const router = createBrowserRouter([
       { path: 'blocs/:blocSlug/documents', element: <BlockDocumentList /> },
       { path: 'blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> },
       { path: 'webhooks', element: <WebhooksAdmin /> },
+      { path: 'automations', element: <AutomatesPage /> },
     ],
   },
   {

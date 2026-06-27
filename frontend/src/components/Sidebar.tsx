@@ -10,6 +10,7 @@ import {
   KeyRound,
   ShieldCheck,
   LogOut,
+  Zap,
 } from 'lucide-react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -118,6 +119,7 @@ export function Sidebar() {
               />
             )}
             <NavItem to={`/ws/${wsSlug}/webhooks`} icon={Webhook} label="Webhooks" />
+            <NavItem to={`/ws/${wsSlug}/automations`} icon={Zap} label="Automates" />
           </div>
         </>
       )}

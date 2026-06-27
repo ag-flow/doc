@@ -19,3 +19,4 @@ class Settings(BaseSettings):
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.
     # Requise pour créer des webhooks avec headers ; absence = headers interdits.
     encryption_key: Secret | None = None
+    automation_tick_seconds: int = 60

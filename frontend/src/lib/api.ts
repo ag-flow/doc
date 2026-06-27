@@ -522,3 +522,113 @@ export const webhooksApi = {
   test: (ws: string, id: string) =>
     api.post<WebhookTestOut>(`/workspaces/${ws}/webhooks/${id}/test`, {}),
 }
+
+// ── Contrats OpenAPI ────────────────────────────────────────────────────────
+
+export interface ContractOut {
+  id: string
+  label: string
+  source_url: string | null
+  version: string | null
+  imported_at: string
+  updated_at: string
+}
+
+export interface OperationOut {
+  operation_id: string | null
+  method: string
+  path: string
+  summary: string | null
+  parameters: object[]
+  request_body: object | null
+  body_skeleton: Record<string, unknown> | null
+}
+
+export interface ContractDetailOut {
+  contract: ContractOut
+  operations: OperationOut[]
+}
+
+export const contractsApi = {
+  list: () => api.get<ContractOut[]>('/admin/contracts'),
+  import: (body: { label: string; source_url?: string; raw_spec: object }) =>
+    api.post<ContractOut>('/admin/contracts', body),
+  detail: (id: string) => api.get<ContractDetailOut>(`/admin/contracts/${id}`),
+  refresh: (id: string) => api.post<ContractOut>(`/admin/contracts/${id}/refresh`, {}),
+  delete: (id: string) => api.delete(`/admin/contracts/${id}`),
+}
+
+// ── Automates ───────────────────────────────────────────────────────────────
+
+export interface AutomationHeaderIn {
+  name: string
+  value?: string | null
+  secret_ref?: string | null
+  required?: boolean
+  enabled?: boolean
+}
+
+export interface AutomationHeaderOut {
+  id: string
+  name: string
+  value: string | null
+  secret_ref: string | null
+  required: boolean
+  enabled: boolean
+}
+
+export interface AutomationOut {
+  id: string
+  workspace_technical_key: string
+  label: string
+  active: boolean
+  on_create: boolean
+  on_update: boolean
+  delay_minutes: number
+  contract_ref: string | null
+  operation_id: string | null
+  url: string
+  http_method: string
+  body_template: string | null
+  headers: AutomationHeaderOut[]
+  created_at: string
+  updated_at: string
+}
+
+export interface AutomationCreate {
+  label: string
+  active?: boolean
+  on_create?: boolean
+  on_update?: boolean
+  delay_minutes?: number
+  contract_ref?: string | null
+  operation_id?: string | null
+  url: string
+  http_method: string
+  body_template?: string | null
+  headers?: AutomationHeaderIn[]
+}
+
+export interface AutomationRunOut {
+  id: string
+  automation_ref: string
+  document_ref: string
+  document_version: number
+  change_log_seq: number
+  status: string
+  executed_at: string
+}
+
+export const automationsApi = {
+  list: (ws: string) => api.get<AutomationOut[]>(`/workspaces/${ws}/automations`),
+  create: (ws: string, body: AutomationCreate) =>
+    api.post<AutomationOut>(`/workspaces/${ws}/automations`, body),
+  get: (ws: string, id: string) => api.get<AutomationOut>(`/workspaces/${ws}/automations/${id}`),
+  update: (ws: string, id: string, body: Partial<AutomationCreate>) =>
+    api.patch<AutomationOut>(`/workspaces/${ws}/automations/${id}`, body),
+  delete: (ws: string, id: string) => api.delete(`/workspaces/${ws}/automations/${id}`),
+  listRuns: (ws: string, id: string, limit = 50) =>
+    api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
+  replay: (ws: string, id: string, runId: string) =>
+    api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
+}

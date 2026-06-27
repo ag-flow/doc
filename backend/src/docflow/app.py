@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import asyncpg
 import structlog
@@ -14,8 +15,11 @@ from fastapi.staticfiles import StaticFiles
 from docflow.admin.users.router import router as users_router
 from docflow.auth.router import router as auth_router
 from docflow.auth.seed import seed_bootstrap_admin
+from docflow.automations.router import router as automations_router
+from docflow.automations.worker import worker_loop
 from docflow.blocks.router import router as blocks_router
 from docflow.config.settings import Settings
+from docflow.contracts.router import router as contracts_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
@@ -69,10 +73,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_mcp(pool)
     app.state.pool = pool
     app.state.settings = settings
+    worker_task = asyncio.create_task(worker_loop(pool, settings))
     log.info("docflow_started")
     try:
         yield
     finally:
+        worker_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker_task
         await close_pool(pool)
         log.info("docflow_stopped")
 
@@ -93,6 +101,8 @@ app.include_router(mcp_router, prefix=_API)
 app.include_router(webhooks_router, prefix=_API)
 app.include_router(reactions_router, prefix=_API)
 app.include_router(references_router, prefix=_API)
+app.include_router(contracts_router, prefix=_API)
+app.include_router(automations_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 
 
