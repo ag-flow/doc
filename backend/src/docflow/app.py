@@ -25,6 +25,7 @@ from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
+from docflow.vault.router import router as vault_router
 from docflow.webhooks.router import router as webhooks_router
 from docflow.workspaces.router import router as workspaces_router
 
@@ -84,6 +85,7 @@ app.include_router(properties_router, prefix=_API)
 app.include_router(documents_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
+app.include_router(vault_router, prefix=_API)
 app.include_router(mcp_router, prefix=_API)
 app.include_router(webhooks_router, prefix=_API)
 

@@ -151,7 +151,11 @@ async def handle_oidc_callback(
     return create_token(user, jwt_secret)
 
 
-async def resolve_client_secret(pool: asyncpg.Pool, harpocrate_url: str | None) -> str:
+async def resolve_client_secret(
+    pool: asyncpg.Pool,
+    harpocrate_url: str | None,
+    enc_key: str | None = None,
+) -> str:
     """Déballe le client_secret_ref au point d'usage uniquement."""
     async with pool.acquire() as conn:
         ref: str | None = await conn.fetchval(
@@ -159,4 +163,4 @@ async def resolve_client_secret(pool: asyncpg.Pool, harpocrate_url: str | None) 
         )
     if ref is None:
         raise HTTPException(status_code=503, detail="OIDC non configuré")
-    return await resolve(Secret(ref), harpocrate_url=harpocrate_url)
+    return await resolve(Secret(ref), harpocrate_url=harpocrate_url, pool=pool, enc_key=enc_key)

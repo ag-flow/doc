@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { oidcApi, type OidcConfigOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { SecretInput } from '../components/SecretInput'
 
 export function OidcAdmin() {
   const { t } = useTranslation()
@@ -89,15 +90,14 @@ export function OidcAdmin() {
         {/* Secret ref */}
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">{t('oidc.secretRef')}</label>
-          <Input
+          <SecretInput
             value={secretRef}
-            onChange={(e) => { setSecretRef(e.target.value); setSaveMsg(null) }}
-            placeholder="${vault://docflow/oidc_client_secret}"
-            data-testid="oidc-secret-ref"
+            onChange={(v) => { setSecretRef(v); setSaveMsg(null) }}
+            placeholder={t('oidc.secretRefPlaceholder')}
           />
-          <p className="mt-1 text-xs text-gray-400">
-            {hasExistingConfig ? t('oidc.secretRefMasked') : t('oidc.secretRefHint')}
-          </p>
+          {hasExistingConfig && (
+            <p className="mt-1 text-xs text-gray-400">{t('oidc.secretRefMasked')}</p>
+          )}
         </div>
 
         {/* Enabled toggle */}

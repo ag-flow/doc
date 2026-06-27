@@ -7,6 +7,7 @@ import {
   Boxes,
   FileText,
   Webhook,
+  KeyRound,
   ShieldCheck,
   LogOut,
 } from 'lucide-react'
@@ -67,7 +68,6 @@ export function Sidebar() {
   const navigate = useNavigate()
   const superAdmin = isSuperAdmin()
 
-  // Détection du contexte workspace
   const wsMatch = useMatch('/ws/:wsSlug/*')
   const wsSlug = wsMatch?.params.wsSlug ?? null
 
@@ -93,7 +93,6 @@ export function Sidebar() {
 
       {/* Navigation globale */}
       <div className="flex flex-col items-center gap-1">
-        <NavItem to="/templates" icon={LayoutTemplate} label="Templates" />
         <NavItem to="/workspaces" icon={LayoutDashboard} label="Workspaces" end />
       </div>
 
@@ -126,20 +125,26 @@ export function Sidebar() {
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Section admin */}
-      <div className="flex flex-col items-center gap-1">
-        {superAdmin && (
-          <NavItem to="/admin/oidc" icon={ShieldCheck} label="Admin OIDC" />
-        )}
-        <button
-          onClick={logout}
-          title="Déconnexion"
-          className="group relative flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-800 hover:text-red-400"
-        >
-          <LogOut size={18} />
-          <Tooltip>Déconnexion</Tooltip>
-        </button>
-      </div>
+      {/* Section admin (bas) */}
+      {superAdmin && (
+        <>
+          <Divider />
+          <div className="flex flex-col items-center gap-1 mb-1">
+            <NavItem to="/templates" icon={LayoutTemplate} label="Templates" />
+            <NavItem to="/admin/vault" icon={KeyRound} label="Wallets Vault" />
+            <NavItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
+          </div>
+        </>
+      )}
+
+      <button
+        onClick={logout}
+        title="Déconnexion"
+        className="group relative flex h-10 w-10 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-800 hover:text-red-400"
+      >
+        <LogOut size={18} />
+        <Tooltip>Déconnexion</Tooltip>
+      </button>
     </aside>
   )
 }

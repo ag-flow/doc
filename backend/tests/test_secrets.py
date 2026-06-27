@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,7 +67,7 @@ def test_secret_pydantic_field() -> None:
     assert "plain" not in repr(s.admin_password)
 
 
-# ── Resolver ─────────────────────────────────────────────────────────────────
+# ── Resolver — valeurs inline ─────────────────────────────────────────────────
 
 
 async def test_resolver_returns_inline_value() -> None:
@@ -76,38 +76,87 @@ async def test_resolver_returns_inline_value() -> None:
     assert result == "plain_inline_value"
 
 
-async def test_resolver_vault_ref_calls_harpocrate() -> None:
-    s = Secret("${vault://myapi:/secrets/mykey}")
-
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"value": "resolved_vault_secret"}
-    mock_response.raise_for_status = MagicMock()
-
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.aclose = AsyncMock()
-
-    result = await resolve(
-        s,
-        harpocrate_url="https://harpocrate.example.com",
-        client=mock_client,
-    )
-
-    assert result == "resolved_vault_secret"
-    mock_client.get.assert_called_once_with(
-        "https://harpocrate.example.com/api/myapi/secrets/mykey"
-    )
-
-
-async def test_resolver_vault_ref_without_harpocrate_raises() -> None:
-    s = Secret("${vault://myapi:/secrets/mykey}")
-
-    with pytest.raises(ValueError, match="HARPOCRATE_URL"):
-        await resolve(s, harpocrate_url=None)
-
-
 async def test_resolver_inline_ignores_harpocrate_url() -> None:
     """Inline value must be returned even when harpocrate_url is provided."""
     s = Secret("inline_value")
     result = await resolve(s, harpocrate_url="https://vault.example.com")
     assert result == "inline_value"
+
+
+# ── Resolver — erreurs de configuration ──────────────────────────────────────
+
+
+async def test_resolver_vault_ref_without_harpocrate_raises() -> None:
+    s = Secret("${vault://mywallet:/oidc/secret}")
+    with pytest.raises(ValueError, match="HARPOCRATE_URL"):
+        await resolve(s, harpocrate_url=None)
+
+
+async def test_resolver_vault_ref_without_pool_raises() -> None:
+    s = Secret("${vault://mywallet:/oidc/secret}")
+    with pytest.raises(ValueError, match="pool"):
+        await resolve(s, harpocrate_url="https://vault.example.com")
+
+
+async def test_resolver_wallet_not_found_raises() -> None:
+    s = Secret("${vault://unknown-wallet:/oidc/secret}")
+    mock_pool = MagicMock()
+
+    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value=None)):
+        with pytest.raises(ValueError, match="unknown-wallet"):
+            await resolve(
+                s,
+                harpocrate_url="https://vault.example.com",
+                pool=mock_pool,
+                enc_key="fakekey",
+            )
+
+
+# ── Resolver — appel Harpocrate ───────────────────────────────────────────────
+
+
+async def test_resolver_vault_ref_calls_harpocrate() -> None:
+    """Un ${vault://...} doit appeler VaultClient.secrets.get et retourner la valeur."""
+    s = Secret("${vault://mywallet:/oidc/client_secret}")
+    mock_pool = MagicMock()
+
+    mock_secrets = MagicMock()
+    mock_secrets.get.return_value = "the_real_client_secret"
+    mock_client_instance = MagicMock()
+    mock_client_instance.secrets = mock_secrets
+
+    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value="hrpv_1_abc")):
+        with patch("harpocrate.VaultClient", return_value=mock_client_instance) as mock_cls:
+            result = await resolve(
+                s,
+                harpocrate_url="https://vault.yoops.org",
+                pool=mock_pool,
+                enc_key="someenckey",
+            )
+
+    assert result == "the_real_client_secret"
+    mock_cls.assert_called_once_with(token="hrpv_1_abc", base_url="https://vault.yoops.org")
+    mock_secrets.get.assert_called_once_with("/oidc/client_secret")
+
+
+async def test_resolver_vault_ref_passes_correct_path() -> None:
+    """Le path est transmis tel quel (avec slash initial) à secrets.get()."""
+    s = Secret("${vault://corp:/infra/db/postgres_password}")
+    mock_pool = MagicMock()
+
+    mock_secrets = MagicMock()
+    mock_secrets.get.return_value = "db_secret"
+    mock_client_instance = MagicMock()
+    mock_client_instance.secrets = mock_secrets
+
+    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value="hrpv_tok")):
+        with patch("harpocrate.VaultClient", return_value=mock_client_instance):
+            result = await resolve(
+                s,
+                harpocrate_url="https://vault.example.com",
+                pool=mock_pool,
+                enc_key="key",
+            )
+
+    assert result == "db_secret"
+    mock_secrets.get.assert_called_once_with("/infra/db/postgres_password")

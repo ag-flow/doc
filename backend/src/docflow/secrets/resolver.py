@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
-import httpx
+import asyncpg
 import structlog
 
 from docflow.secrets.secret import Secret
@@ -16,31 +17,45 @@ async def resolve(
     secret: Secret,
     *,
     harpocrate_url: str | None,
-    client: httpx.AsyncClient | None = None,
+    pool: asyncpg.Pool | None = None,
+    enc_key: str | None = None,
 ) -> str:
-    """Resolve a Secret value.
+    """Résout un Secret.
 
-    If the value matches ${vault://apiname:/path}, fetches from Harpocrate.
-    Otherwise returns the inline value unchanged (fallback inline).
-    Raises ValueError when a vault ref is present but no Harpocrate URL is configured.
+    - Valeur inline (pas de ${vault://...}) → retournée telle quelle.
+    - Référence vault → récupère la clé API du wallet dans la DB,
+      appelle le SDK Harpocrate (sync dans un thread) et retourne la valeur déchiffrée.
+
+    Lève ValueError si HARPOCRATE_URL absent, pool/enc_key manquants,
+    ou wallet inconnu.
     """
     raw = secret.reveal()
-    match = _VAULT_RE.match(raw)
-    if not match:
+    m = _VAULT_RE.match(raw)
+    if not m:
         return raw
 
     if not harpocrate_url:
-        raise ValueError("Secret contains a vault reference but HARPOCRATE_URL is not configured")
+        raise ValueError(
+            "Secret contains a vault reference but HARPOCRATE_URL is not configured"
+        )
+    if pool is None or enc_key is None:
+        raise ValueError("pool and enc_key are required to resolve a vault reference")
 
-    api_name, path = match.group(1), match.group(2)
-    url = f"{harpocrate_url.rstrip('/')}/api/{api_name}{path}"
-    log.debug("resolving_vault_secret", api=api_name, path=path)
+    wallet_name, path = m.group(1), m.group(2)
+    log.debug("resolving_vault_secret", wallet=wallet_name, path=path)
 
-    _client = client if client is not None else httpx.AsyncClient()
-    try:
-        response = await _client.get(url)
-        response.raise_for_status()
-        return str(response.json()["value"])
-    finally:
-        if client is None:
-            await _client.aclose()
+    # Importé ici pour éviter d'initialiser le SDK si Harpocrate n'est pas utilisé.
+    from docflow.vault.service import get_api_key
+
+    api_key = await get_api_key(pool, wallet_name, enc_key)
+    if api_key is None:
+        raise ValueError(f"Wallet Harpocrate « {wallet_name} » introuvable dans la base.")
+
+    # Le SDK Harpocrate est synchrone — on l'exécute dans un thread dédié.
+    def _fetch() -> str:
+        from harpocrate import VaultClient
+
+        client = VaultClient(token=api_key, base_url=harpocrate_url)
+        return str(client.secrets.get(path))
+
+    return await asyncio.to_thread(_fetch)

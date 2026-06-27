@@ -326,6 +326,22 @@ export function isSuperAdmin(): boolean {
   }
 }
 
+// ── Vault wallets ───────────────────────────────────────────────────────────
+
+export interface VaultWalletOut {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export const vaultApi = {
+  listWallets: () => api.get<VaultWalletOut[]>('/admin/vault/wallets'),
+  createWallet: (body: { name: string; api_key: string }) =>
+    api.post<VaultWalletOut>('/admin/vault/wallets', body),
+  deleteWallet: (id: string) => api.delete(`/admin/vault/wallets/${id}`),
+}
+
 // ── OIDC admin ──────────────────────────────────────────────────────────────
 
 export interface OidcConfigOut {

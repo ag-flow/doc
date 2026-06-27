@@ -156,6 +156,19 @@
     "actions": "Actions",
     "close": "Fermer"
   },
+  "vault": {
+    "title": "Wallets Harpocrate",
+    "subtitle": "Clés d'API pour accéder aux wallets de secrets (superadmin uniquement).",
+    "empty": "Aucun wallet enregistré.",
+    "walletName": "Nom du wallet",
+    "walletNameHint": "Identifiant utilisé dans ${vault://nom:/chemin}",
+    "apiKey": "Clé API Harpocrate",
+    "add": "Ajouter",
+    "addWallet": "Ajouter un wallet",
+    "delete": "Supprimer",
+    "deleteTitle": "Supprimer le wallet ?",
+    "deleteConfirm": "Supprimer « {{name}} » ? Les références vault qui l'utilisent cesseront de fonctionner."
+  },
   "oidc": {
     "title": "Configuration OIDC",
     "subtitle": "Keycloak SSO — paramètres de connexion (superadmin uniquement).",
@@ -164,8 +177,9 @@
     "clientId": "Client ID",
     "secretRef": "Référence vault du client secret",
     "secretRefHint": "Référence Harpocrate, ex. ${vault://docflow/oidc_client_secret}",
-    "secretRefMasked": "La référence actuelle est masquée — ressaisissez-la pour enregistrer.",
-    "secretRequired": "La référence vault est obligatoire pour enregistrer.",
+    "secretRefPlaceholder": "valeur du secret",
+    "secretRefMasked": "Secret actuel masqué — ressaisissez pour enregistrer.",
+    "secretRequired": "Le secret est obligatoire pour enregistrer.",
     "enabledOn": "OIDC activé",
     "enabledOff": "OIDC désactivé",
     "saved": "Configuration enregistrée.",
