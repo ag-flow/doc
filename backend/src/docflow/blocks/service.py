@@ -9,7 +9,7 @@ from docflow.db.helpers import require_workspace
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 
 _SELECT_BLOCK = """
-SELECT b.id, b.slug, b.label, b.created_at, b.updated_at,
+SELECT b.id, b.slug, b.label, b.created_at, b.updated_at, b.exposed,
        ft.slug  AS functional_type_slug,
        p.slug   AS parent_slug,
        w.slug   AS workspace_slug
@@ -21,7 +21,7 @@ WHERE b.workspace_technical_key = $1 AND b.slug = $2
 """
 
 _SELECT_ALL = """
-SELECT b.id, b.slug, b.label, b.created_at, b.updated_at,
+SELECT b.id, b.slug, b.label, b.created_at, b.updated_at, b.exposed,
        ft.slug  AS functional_type_slug,
        p.slug   AS parent_slug,
        w.slug   AS workspace_slug
@@ -42,6 +42,7 @@ def _row(row: asyncpg.Record) -> DataBlockOut:
         functional_type_slug=row["functional_type_slug"],
         parent_slug=row["parent_slug"],
         workspace_slug=row["workspace_slug"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -162,6 +163,7 @@ async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) 
         functional_type_slug=data.functional_type_slug,
         parent_slug=data.parent_slug,
         workspace_slug=ws_slug,
+        exposed=False,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -220,6 +222,33 @@ async def update_block(
                 *list(db_updates.values()),
             )
 
+    return await get_block(pool, ws_slug, block_slug)
+
+
+async def set_block_exposed(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str, value: bool
+) -> DataBlockOut:
+    """Expose ou masque le bloc entier et tous ses documents (en une transaction)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            wk = await require_workspace(conn, ws_slug)
+            block_id: uuid.UUID | None = await conn.fetchval(
+                "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
+                wk,
+                block_slug,
+            )
+            if block_id is None:
+                raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
+            await conn.execute(
+                "UPDATE data_block SET exposed = $2, updated_at = now() WHERE id = $1",
+                block_id,
+                value,
+            )
+            await conn.execute(
+                "UPDATE document SET exposed = $2, updated_at = now() WHERE data_block_ref = $1",
+                block_id,
+                value,
+            )
     return await get_block(pool, ws_slug, block_slug)
 
 

@@ -35,7 +35,7 @@ __all__ = [
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref,
+       d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -48,7 +48,7 @@ ORDER BY d.created_at
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref,
+       d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
        dv.content
@@ -72,6 +72,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         functional_type_slug=row["functional_type_slug"],
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -88,6 +89,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         functional_type_slug=row["functional_type_slug"],
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -204,21 +206,30 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             ft_id: uuid.UUID | None = None
             if data.functional_type_slug:
                 ft_id = await _resolve_functional_type(conn, wk, data.functional_type_slug)
+            parent_exposed = False
             if data.parent_id:
                 await _validate_parent(conn, wk, data.parent_id)
+                parent_exposed = bool(
+                    await conn.fetchval(
+                        "SELECT exposed FROM document WHERE doc_technical_key = $1",
+                        data.parent_id,
+                    )
+                )
             row = await conn.fetchrow(
                 """
                 INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref)
-                VALUES ($1, $2, $3, $4, $5)
+                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
+                     exposed)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, created_at, updated_at
+                          data_block_ref, exposed, created_at, updated_at
                 """,
                 data.title,
                 data.parent_id,
                 ft_id,
                 wk,
                 data.block_id,
+                parent_exposed,
             )
             assert row is not None
             await conn.execute(
@@ -239,6 +250,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
         functional_type_slug=data.functional_type_slug,
         workspace_slug=ws_slug,
         data_block_ref=row["data_block_ref"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -362,6 +374,41 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
             await log_change(conn, wk, doc_id, "D")
     return {"id": str(snap["doc_technical_key"]), "title": snap["title"], "type": snap["type"]}
+
+
+async def set_document_exposed(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, value: bool
+) -> DocumentOut:
+    """Expose ou masque le document et tous ses descendants (cascade récursive)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            wk = await require_workspace(conn, ws_slug)
+            exists = await conn.fetchval(
+                "SELECT 1 FROM document "
+                "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+                doc_id,
+                wk,
+            )
+            if not exists:
+                raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+            await conn.execute(
+                """
+                WITH RECURSIVE descendants AS (
+                    SELECT doc_technical_key
+                    FROM document
+                    WHERE doc_technical_key = $1
+                    UNION ALL
+                    SELECT d.doc_technical_key
+                    FROM document d
+                    JOIN descendants p ON d.parent = p.doc_technical_key
+                )
+                UPDATE document SET exposed = $2, updated_at = now()
+                WHERE doc_technical_key IN (SELECT doc_technical_key FROM descendants)
+                """,
+                doc_id,
+                value,
+            )
+    return await get_document(pool, ws_slug, doc_id)
 
 
 # ── Property values ───────────────────────────────────────────────────────────

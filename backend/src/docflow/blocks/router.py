@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from docflow.auth.deps import require_admin
 from docflow.blocks import service
@@ -49,6 +50,24 @@ async def update_block(
     _: AuthUser = _Auth,
 ) -> DataBlockOut:
     return await service.update_block(request.app.state.pool, ws_slug, block_slug, body)
+
+
+class _ExposedUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    exposed: bool
+
+
+@router.patch(_BLOCK + "/exposed", response_model=DataBlockOut)
+async def set_block_exposed(
+    ws_slug: str,
+    block_slug: str,
+    body: _ExposedUpdate,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> DataBlockOut:
+    return await service.set_block_exposed(
+        request.app.state.pool, ws_slug, block_slug, body.exposed
+    )
 
 
 @router.delete(_BLOCK, status_code=204)

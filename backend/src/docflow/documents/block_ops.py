@@ -17,7 +17,7 @@ log = structlog.get_logger(__name__)
 _SELECT_BLOCK_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref,
+       d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -39,6 +39,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         functional_type_slug=row["functional_type_slug"],
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -371,20 +372,30 @@ async def create_document_in_block(
 
             ft_id = await _resolve_functional_type(conn, wk, chosen_slug)
 
-            # 4. Créer le document
+            # 4. Créer le document (copie le flag exposed du parent)
+            parent_exposed = False
+            if body.parent_id is not None:
+                parent_exposed = bool(
+                    await conn.fetchval(
+                        "SELECT exposed FROM document WHERE doc_technical_key = $1",
+                        body.parent_id,
+                    )
+                )
             row = await conn.fetchrow(
                 """
                 INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref)
-                VALUES ($1, $2, $3, $4, $5)
+                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
+                     exposed)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, created_at, updated_at
+                          data_block_ref, exposed, created_at, updated_at
                 """,
                 body.title,
                 body.parent_id,
                 ft_id,
                 wk,
                 block_id,
+                parent_exposed,
             )
             assert row is not None
             doc_id: uuid.UUID = row["doc_technical_key"]
@@ -412,6 +423,7 @@ async def create_document_in_block(
         functional_type_slug=chosen_slug,
         workspace_slug=ws_slug,
         data_block_ref=row["data_block_ref"],
+        exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

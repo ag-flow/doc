@@ -36,5 +36,6 @@ class DataBlockOut(BaseModel):
     functional_type_slug: str
     parent_slug: str | None
     workspace_slug: str
+    exposed: bool
     created_at: datetime
     updated_at: datetime

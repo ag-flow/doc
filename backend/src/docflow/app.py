@@ -23,6 +23,7 @@ from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
+from docflow.public.router import router as public_router
 from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
 from docflow.vault.router import router as vault_router
@@ -88,6 +89,7 @@ app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)
 app.include_router(mcp_router, prefix=_API)
 app.include_router(webhooks_router, prefix=_API)
+app.include_router(public_router, prefix="/pub")
 
 
 async def _check_db(pool: asyncpg.Pool) -> int:

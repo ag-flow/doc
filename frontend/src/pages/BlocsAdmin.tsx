@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Eye, EyeOff } from 'lucide-react'
 import { api, docsApi, type DataBlockOut, type FunctionalType } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
@@ -9,10 +10,82 @@ import { Input } from '../components/ui/input'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
 
+function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+
+  const exposeMutation = useMutation({
+    mutationFn: ({ slug, exposed }: { slug: string; exposed: boolean }) =>
+      docsApi.setBlockExposed(wsSlug, slug, exposed),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['blocs', wsSlug] })
+    },
+  })
+
+  return (
+    <table className="w-full border-collapse text-sm">
+      <thead>
+        <tr className="border-b text-left text-gray-500">
+          <th className="pb-2 pr-4">{t('ws.slug')}</th>
+          <th className="pb-2 pr-4">{t('ws.label')}</th>
+          <th className="pb-2 pr-4">{t('blocs.rootType')}</th>
+          <th className="pb-2">{t('common.actions')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {blocs.map((bloc) => (
+          <tr
+            key={bloc.slug}
+            className="border-b hover:bg-gray-50"
+            data-testid={`bloc-row-${bloc.slug}`}
+          >
+            <td className="py-2 pr-4 font-mono text-xs">{bloc.slug}</td>
+            <td className="py-2 pr-4">{bloc.label}</td>
+            <td className="py-2 pr-4">
+              <span className="font-mono text-xs text-gray-500">
+                {bloc.functional_type_slug}
+              </span>
+            </td>
+            <td className="py-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  title={bloc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
+                  onClick={() =>
+                    exposeMutation.mutate({ slug: bloc.slug, exposed: !bloc.exposed })
+                  }
+                  disabled={exposeMutation.isPending}
+                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium
+                    transition-colors ${bloc.exposed
+                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                  data-testid={`expose-bloc-${bloc.slug}`}
+                >
+                  {bloc.exposed ? <Eye size={12} /> : <EyeOff size={12} />}
+                  {bloc.exposed ? 'Public' : 'Privé'}
+                </button>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)
+                  }
+                  data-testid={`open-bloc-${bloc.slug}`}
+                >
+                  {t('blocs.open')}
+                </Button>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 export function BlocsAdmin() {
   const { t } = useTranslation()
   const { wsSlug } = useParams<{ wsSlug: string }>()
-  const navigate = useNavigate()
   const qc = useQueryClient()
 
   const [showCreate, setShowCreate] = useState(false)
@@ -161,44 +234,7 @@ export function BlocsAdmin() {
           {t('blocs.empty')}
         </p>
       ) : (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-gray-500">
-              <th className="pb-2 pr-4">{t('ws.slug')}</th>
-              <th className="pb-2 pr-4">{t('ws.label')}</th>
-              <th className="pb-2 pr-4">{t('blocs.rootType')}</th>
-              <th className="pb-2">{t('common.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {blocs.map((bloc) => (
-              <tr
-                key={bloc.slug}
-                className="border-b hover:bg-gray-50"
-                data-testid={`bloc-row-${bloc.slug}`}
-              >
-                <td className="py-2 pr-4 font-mono text-xs">{bloc.slug}</td>
-                <td className="py-2 pr-4">{bloc.label}</td>
-                <td className="py-2 pr-4">
-                  <span className="font-mono text-xs text-gray-500">
-                    {bloc.functional_type_slug}
-                  </span>
-                </td>
-                <td className="py-2">
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)
-                    }
-                    data-testid={`open-bloc-${bloc.slug}`}
-                  >
-                    {t('blocs.open')}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <BlocsTable blocs={blocs} wsSlug={wsSlug!} />
       )}
     </div>
   )

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Eye, EyeOff, Copy, Check } from 'lucide-react'
 import { ApiError, docsApi, type DocumentOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -35,6 +36,15 @@ export function DocumentEditor() {
   const [conflict, setConflict] = useState<ConflictData | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const exposeMutation = useMutation({
+    mutationFn: (value: boolean) => docsApi.setDocumentExposed(ws!, docId!, value),
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+      void queryClient.setQueryData(['document', ws, docId], updated)
+    },
+  })
 
   const { data: doc, isLoading } = useQuery<DocumentOut>({
     queryKey: ['document', ws, docId],
@@ -175,6 +185,42 @@ export function DocumentEditor() {
               {errorMsg ?? t('error.generic')}
             </span>
           )}
+
+          {/* Bouton exposé / privé */}
+          <button
+            type="button"
+            title={doc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
+            onClick={() => exposeMutation.mutate(!doc.exposed)}
+            disabled={exposeMutation.isPending}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
+              transition-colors ${doc.exposed
+                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+            data-testid="document-expose-btn"
+          >
+            {doc.exposed ? <Eye size={13} /> : <EyeOff size={13} />}
+            {doc.exposed ? 'Public' : 'Privé'}
+          </button>
+
+          {/* Copier l'URL publique quand exposé */}
+          {doc.exposed && (
+            <button
+              type="button"
+              title="Copier le lien public"
+              onClick={() => {
+                void navigator.clipboard.writeText(
+                  `${window.location.origin}/pub/${docId}`
+                )
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+              className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-gray-400
+                         hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+            </button>
+          )}
+
           <Button
             variant="danger"
             size="sm"

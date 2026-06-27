@@ -50,5 +50,6 @@ class DocumentOut(BaseModel):
     functional_type_slug: str | None
     workspace_slug: str
     data_block_ref: uuid.UUID
+    exposed: bool
     created_at: datetime
     updated_at: datetime

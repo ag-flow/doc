@@ -119,6 +119,24 @@ async def update_document(
     return doc
 
 
+class _ExposedUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    exposed: bool
+
+
+@router.patch(_DOC + "/exposed", response_model=DocumentOut)
+async def set_document_exposed(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    body: _ExposedUpdate,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> DocumentOut:
+    return await service.set_document_exposed(
+        request.app.state.pool, ws_slug, doc_id, body.exposed
+    )
+
+
 @router.delete(_DOC, status_code=204)
 async def delete_document(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth

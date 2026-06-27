@@ -24,6 +24,7 @@ const existingBloc: DataBlockOut = {
   functional_type_slug: 'epic',
   parent_slug: null,
   workspace_slug: 'devpod-ui',
+  exposed: false,
   created_at: '',
   updated_at: '',
 }

@@ -152,6 +152,7 @@ export interface DocumentOut {
   functional_type_slug: string | null
   workspace_slug: string
   data_block_ref: string
+  exposed: boolean
   created_at: string
   updated_at: string
 }
@@ -163,6 +164,7 @@ export interface DataBlockOut {
   functional_type_slug: string
   parent_slug: string | null
   workspace_slug: string
+  exposed: boolean
   created_at: string
   updated_at: string
 }
@@ -273,6 +275,28 @@ export const docsApi = {
 
   deleteDocument: (ws: string, docId: string) =>
     api.delete(`/workspaces/${ws}/documents/${docId}`),
+
+  setDocumentExposed: (ws: string, docId: string, exposed: boolean) =>
+    api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}/exposed`, { exposed }),
+
+  setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
+    api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+}
+
+// ── API publique (sans authentification) ────────────────────────────────────
+
+async function pubGet<T>(path: string): Promise<T> {
+  const res = await fetch(`/pub${path}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null)
+    throw new ApiError(res.status, detail, `${res.status} ${res.statusText}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export const publicApi = {
+  getDocument: (docId: string) => pubGet<DocumentOut>(`/documents/${docId}`),
+  getChildren: (docId: string) => pubGet<DocumentOut[]>(`/documents/${docId}/children`),
 }
 
 export const templatesApi = {

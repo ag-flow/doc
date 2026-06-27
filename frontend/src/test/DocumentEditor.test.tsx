@@ -89,6 +89,7 @@ const doc: DocumentOut = {
   functional_type_slug: 'epic',
   workspace_slug: 'ws',
   data_block_ref: 'b1',
+  exposed: false,
   created_at: '',
   updated_at: '',
 }

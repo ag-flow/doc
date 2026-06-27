@@ -5,6 +5,7 @@ import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { Sidebar } from './components/Sidebar'
 import { Breadcrumb } from './components/Breadcrumb'
+import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
 import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
@@ -92,6 +93,7 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+  { path: '/pub/:docId', element: <PublicDocumentViewer /> },
   { path: '/', element: <Navigate to="/workspaces" replace /> },
   { path: '*', element: <Navigate to="/workspaces" replace /> },
 ])
