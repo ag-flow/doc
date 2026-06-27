@@ -156,6 +156,23 @@
     "actions": "Actions",
     "close": "Fermer"
   },
+  "oidc": {
+    "title": "Configuration OIDC",
+    "subtitle": "Keycloak SSO — paramètres de connexion (superadmin uniquement).",
+    "issuer": "Issuer (realm URL)",
+    "issuerHint": "URL du realm Keycloak, ex. https://security.yoops.org/realms/yoops",
+    "clientId": "Client ID",
+    "secretRef": "Référence vault du client secret",
+    "secretRefHint": "Référence Harpocrate, ex. ${vault://docflow/oidc_client_secret}",
+    "secretRefMasked": "La référence actuelle est masquée — ressaisissez-la pour enregistrer.",
+    "secretRequired": "La référence vault est obligatoire pour enregistrer.",
+    "enabledOn": "OIDC activé",
+    "enabledOff": "OIDC désactivé",
+    "saved": "Configuration enregistrée.",
+    "lastUpdated": "Dernière mise à jour : {{date}}",
+    "forbidden": "Accès refusé — réservé aux superadmins.",
+    "navLink": "Admin OIDC"
+  },
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"

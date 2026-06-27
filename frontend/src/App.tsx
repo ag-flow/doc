@@ -8,7 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import './lib/i18n'
-import { getToken, clearToken } from './lib/api'
+import { getToken, clearToken, isSuperAdmin } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { Login } from './pages/Login'
 import TemplateList from './pages/TemplateList'
@@ -19,6 +19,7 @@ import { BlocsAdmin } from './pages/BlocsAdmin'
 import { BlockDocumentList } from './pages/BlockDocumentList'
 import { DocumentEditor } from './pages/DocumentEditor'
 import { WebhooksAdmin } from './pages/WebhooksAdmin'
+import { OidcAdmin } from './pages/OidcAdmin'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -33,6 +34,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function GlobalNav() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const superAdmin = isSuperAdmin()
   return (
     <nav className="flex items-center gap-6 border-b border-gray-200 bg-white px-8 py-3">
       <Link to="/workspaces" className="font-semibold text-indigo-600">
@@ -44,6 +46,11 @@ function GlobalNav() {
       <Link to="/workspaces" className="text-sm text-gray-600 hover:text-gray-900">
         {t('nav.workspaces')}
       </Link>
+      {superAdmin && (
+        <Link to="/admin/oidc" className="text-sm text-gray-600 hover:text-gray-900">
+          {t('oidc.navLink')}
+        </Link>
+      )}
       <div className="ml-auto">
         <button
           className="text-sm text-gray-500 hover:text-red-600"
@@ -94,6 +101,14 @@ const router = createBrowserRouter([
       { path: 'blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> },
       { path: 'webhooks', element: <WebhooksAdmin /> },
     ],
+  },
+  {
+    path: '/admin/oidc',
+    element: (
+      <ProtectedRoute>
+        <GlobalLayout><OidcAdmin /></GlobalLayout>
+      </ProtectedRoute>
+    ),
   },
   { path: '/', element: <Navigate to="/workspaces" replace /> },
   { path: '*', element: <Navigate to="/workspaces" replace /> },

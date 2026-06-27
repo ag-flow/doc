@@ -304,6 +304,51 @@ export interface WebhookTestOut {
 export const ALL_EVENTS = ['document.created', 'document.updated', 'document.deleted'] as const
 export type WebhookEvent = (typeof ALL_EVENTS)[number]
 
+// ── Auth / me ───────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string
+  email: string
+  label: string
+  is_superadmin: boolean
+  disabled: boolean
+}
+
+/** Décode le payload JWT localement (sans vérification — le serveur valide). */
+export function isSuperAdmin(): boolean {
+  const token = getToken()
+  if (!token) return false
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return Boolean(payload.is_superadmin)
+  } catch {
+    return false
+  }
+}
+
+// ── OIDC admin ──────────────────────────────────────────────────────────────
+
+export interface OidcConfigOut {
+  id: string
+  issuer: string
+  client_id: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export const oidcApi = {
+  get: () => api.get<OidcConfigOut | null>('/admin/oidc'),
+  set: (body: {
+    issuer: string
+    client_id: string
+    client_secret_ref: string
+    enabled: boolean
+  }) => api.put<OidcConfigOut>('/admin/oidc', body),
+}
+
+// ── Webhooks ────────────────────────────────────────────────────────────────
+
 export const webhooksApi = {
   list: (ws: string) => api.get<WebhookOut[]>(`/workspaces/${ws}/webhooks`),
   get: (ws: string, id: string) => api.get<WebhookOut>(`/workspaces/${ws}/webhooks/${id}`),
