@@ -89,6 +89,7 @@ export function AddDocumentDialog({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit() }}
                 placeholder="Ma page"
                 data-testid="add-document-title-input"
               />

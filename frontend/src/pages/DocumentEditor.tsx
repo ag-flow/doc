@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Eye, EyeOff, Copy, Check } from 'lucide-react'
+import { Eye, EyeOff, Copy, Check, Maximize2, Minimize2 } from 'lucide-react'
 import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -39,6 +39,7 @@ export function DocumentEditor() {
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [focusMode, setFocusMode] = useState(false)
 
   const exposeMutation = useMutation({
     mutationFn: (value: boolean) => docsApi.setDocumentExposed(ws!, docId!, value),
@@ -135,6 +136,15 @@ export function DocumentEditor() {
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [status])
+
+  useEffect(() => {
+    if (!focusMode) return
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setFocusMode(false)
+    }
+    window.addEventListener('keydown', onEscape)
+    return () => window.removeEventListener('keydown', onEscape)
+  }, [focusMode])
 
   const blocker = useBlocker(status === 'dirty')
 
@@ -237,6 +247,16 @@ export function DocumentEditor() {
             </button>
           )}
 
+          <button
+            type="button"
+            onClick={() => setFocusMode((f) => !f)}
+            title={focusMode ? 'Quitter le mode rédaction (Échap)' : 'Mode rédaction plein écran'}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
+              text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            {focusMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+
           <Button
             variant="danger"
             size="sm"
@@ -262,13 +282,44 @@ export function DocumentEditor() {
       )}
 
       <div className="flex gap-6">
-        <div className="w-2/3">
+        <div className={focusMode
+          ? 'fixed inset-0 z-40 bg-white flex flex-col p-6 overflow-y-auto'
+          : 'w-2/3'
+        }>
+          {focusMode && (
+            <div className="mb-3 flex items-center gap-3 shrink-0">
+              <span className="text-base font-semibold text-gray-700 truncate max-w-xl">{title}</span>
+              <div className="ml-auto flex items-center gap-2">
+                {status === 'dirty' && (
+                  <span className="text-xs text-amber-600">{t('editor.dirty')}</span>
+                )}
+                <Button
+                  size="sm"
+                  onClick={() => void doSave()}
+                  disabled={status === 'idle' || status === 'saving'}
+                >
+                  {status === 'saving' ? t('editor.saving') : t('editor.save')}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setFocusMode(false)}
+                  title="Quitter le mode rédaction (Échap)"
+                  className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-gray-400
+                    hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Minimize2 size={14} />
+                </button>
+              </div>
+            </div>
+          )}
           <MarkdownEditor ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
           <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
         </div>
-        <div className="w-1/3 border-l border-gray-200 pl-6">
-          <PropertiesPanel ws={ws} docId={docId} />
-        </div>
+        {!focusMode && (
+          <div className="w-1/3 border-l border-gray-200 pl-6">
+            <PropertiesPanel ws={ws} docId={docId} />
+          </div>
+        )}
       </div>
 
       <div className="mt-6 border-t border-gray-100 pt-6">
