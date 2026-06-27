@@ -4,6 +4,7 @@ import './lib/i18n'
 import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { Sidebar } from './components/Sidebar'
+import { Breadcrumb } from './components/Breadcrumb'
 import { Login } from './pages/Login'
 import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
@@ -30,9 +31,12 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      <main className="ml-14 flex-1 overflow-y-auto">
-        {children}
-      </main>
+      <div className="ml-14 flex flex-1 flex-col overflow-hidden">
+        <Breadcrumb />
+        <main className="flex-1 overflow-y-auto">
+          {children}
+        </main>
+      </div>
     </div>
   )
 }
