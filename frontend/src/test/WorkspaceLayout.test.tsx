@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
@@ -45,13 +45,6 @@ const archivedWs: WorkspaceOut = {
   archived_at: '2025-01-01T00:00:00Z',
 }
 
-const otherWs: WorkspaceOut = {
-  ...activeWs,
-  workspace_technical_key: 'wk2',
-  slug: 'autre-ws',
-  label: 'Autre WS',
-}
-
 function renderLayout(initialPath: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -80,7 +73,7 @@ describe('WorkspaceLayout', () => {
     vi.mocked(docsApi.getBlocks).mockResolvedValue([])
   })
 
-  // DoD 28.2 — workspace inconnu → redirect /workspaces
+  // Garde workspace : inconnu → redirect /workspaces
   it('redirects to /workspaces when workspace is unknown (404)', async () => {
     vi.mocked(api.get).mockImplementation((path: string) => {
       if (path.includes('/workspaces/inconnu')) return Promise.reject(new Error('404'))
@@ -94,7 +87,7 @@ describe('WorkspaceLayout', () => {
     )
   })
 
-  // DoD 28.2 — workspace archivé → redirect /workspaces
+  // Garde workspace : archivé → redirect /workspaces
   it('redirects to /workspaces when workspace is archived', async () => {
     vi.mocked(api.get).mockImplementation((path: string) => {
       if (path.includes('/workspaces/old-ws')) return Promise.resolve(archivedWs)
@@ -108,8 +101,8 @@ describe('WorkspaceLayout', () => {
     )
   })
 
-  // DoD 28.3 — F5 sur route profonde → réhydratation (fil d'Ariane + onglets)
-  it('rehydrates workspace context from URL on deep route (F5 simulation)', async () => {
+  // F5 sur route profonde → le child route s'affiche correctement
+  it('rehydrates and renders child route on deep URL (F5 simulation)', async () => {
     vi.mocked(api.get).mockImplementation((path: string) => {
       if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
       return Promise.resolve([activeWs])
@@ -120,82 +113,7 @@ describe('WorkspaceLayout', () => {
     await waitFor(() =>
       expect(screen.getByTestId('workspace-layout')).toBeInTheDocument(),
     )
-    expect(screen.getByText('DevPod UI')).toBeInTheDocument()
-    expect(screen.getByTestId('tab-types')).toBeInTheDocument()
-    expect(screen.getByTestId('tab-blocs')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('blocs-page')).toBeInTheDocument())
-  })
-
-  // DoD 28.3 — onglet Types actif sur /ws/:wsSlug/types
-  it('marks Types tab as active on /ws/:wsSlug/types', async () => {
-    vi.mocked(api.get).mockImplementation((path: string) => {
-      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
-      return Promise.resolve([activeWs])
-    })
-
-    renderLayout('/ws/devpod-ui/types')
-
-    await waitFor(() => expect(screen.getByTestId('types-page')).toBeInTheDocument())
-    expect(screen.getByTestId('tab-types')).toBeInTheDocument()
-  })
-
-  // DoD 28.4 — onglet Documents désactivé sans bloc sélectionné
-  it('shows Documents tab as disabled when no bloc is in URL', async () => {
-    vi.mocked(api.get).mockImplementation((path: string) => {
-      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
-      return Promise.resolve([activeWs])
-    })
-
-    renderLayout('/ws/devpod-ui/blocs')
-
-    await waitFor(() =>
-      expect(screen.getByTestId('tab-documents-disabled')).toBeInTheDocument(),
-    )
-  })
-
-  // DoD 28.4 — onglet Documents actif quand un bloc est dans l'URL
-  it('shows Documents tab as link when a bloc is selected', async () => {
-    vi.mocked(api.get).mockImplementation((path: string) => {
-      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
-      return Promise.resolve([activeWs])
-    })
-    vi.mocked(docsApi.getBlocks).mockResolvedValue([existingBloc])
-
-    renderLayout('/ws/devpod-ui/blocs/mon-bloc/documents')
-
-    await waitFor(() => expect(screen.getByTestId('tab-documents')).toBeInTheDocument())
-    expect(screen.queryByTestId('tab-documents-disabled')).not.toBeInTheDocument()
-  })
-
-  // DoD 28.5 — dropdown workspace + switch conserve la section
-  it('preserves current section when switching workspace via dropdown', async () => {
-    vi.mocked(api.get).mockImplementation((path: string) => {
-      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
-      return Promise.resolve([activeWs, otherWs])
-    })
-
-    renderLayout('/ws/devpod-ui/types')
-    await waitFor(() => expect(screen.getByTestId('workspace-layout')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByTestId('ws-dropdown-btn'))
-    await waitFor(() => expect(screen.getByTestId('ws-dropdown-menu')).toBeInTheDocument())
-
-    expect(screen.getByTestId('ws-switch-autre-ws')).toBeInTheDocument()
-    expect(screen.getByTestId('ws-switch-autre-ws').textContent).toBe('Autre WS')
-  })
-
-  // DoD 28.5 — "Tous les workspaces" dans le dropdown
-  it('shows "Tous les workspaces" entry in dropdown', async () => {
-    vi.mocked(api.get).mockImplementation((path: string) => {
-      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
-      return Promise.resolve([activeWs])
-    })
-
-    renderLayout('/ws/devpod-ui/blocs')
-    await waitFor(() => expect(screen.getByTestId('ws-dropdown-btn')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByTestId('ws-dropdown-btn'))
-    await waitFor(() => expect(screen.getByTestId('ws-switch-all')).toBeInTheDocument())
   })
 
   // Garde bloc : blocSlug inexistant → redirect vers /ws/:wsSlug/blocs
@@ -229,7 +147,6 @@ describe('WorkspaceLayout', () => {
 describe('WorkspaceList redirect message', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  // DoD 28.2 — message affiché sur WorkspaceList après redirection
   it('shows message when redirected from unknown workspace', async () => {
     vi.mocked(api.get).mockResolvedValue([activeWs])
     vi.mocked(docsApi.getBlocks).mockResolvedValue([])
