@@ -157,8 +157,9 @@
     "close": "Fermer"
   },
   "vault": {
-    "title": "Wallets Harpocrate",
-    "subtitle": "Clés d'API pour accéder aux wallets de secrets (superadmin uniquement).",
+    "title": "Gestionnaire de clés",
+    "tabWallets": "Wallets Harpocrate",
+    "tabSecrets": "Mes secrets",
     "empty": "Aucun wallet enregistré.",
     "walletName": "Nom du wallet",
     "walletNameHint": "Identifiant utilisé dans ${vault://nom:/chemin}",
@@ -167,7 +168,19 @@
     "addWallet": "Ajouter un wallet",
     "delete": "Supprimer",
     "deleteTitle": "Supprimer le wallet ?",
-    "deleteConfirm": "Supprimer « {{name}} » ? Les références vault qui l'utilisent cesseront de fonctionner."
+    "deleteConfirm": "Supprimer « {{name}} » ? Les références vault qui l'utilisent cesseront de fonctionner.",
+    "secrets": {
+      "empty": "Aucun secret enregistré.",
+      "label": "Libellé",
+      "slug": "Slug (identifiant)",
+      "slugHint": "Minuscules, chiffres, tirets, underscores.",
+      "value": "Valeur secrète",
+      "addBtn": "Nouveau secret",
+      "add": "Enregistrer",
+      "deleteTitle": "Supprimer le secret ?",
+      "deleteConfirm": "Supprimer « {{name}} » ? Cette action est irréversible.",
+      "slugConflict": "Un secret avec ce slug existe déjà."
+    }
   },
   "oidc": {
     "title": "Configuration OIDC",

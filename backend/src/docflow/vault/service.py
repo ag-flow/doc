@@ -8,7 +8,12 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.crypto import decrypt_str, encrypt_str
-from docflow.schemas.vault import VaultWalletCreate, VaultWalletOut
+from docflow.schemas.vault import (
+    VaultSecretCreate,
+    VaultSecretOut,
+    VaultWalletCreate,
+    VaultWalletOut,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -48,9 +53,7 @@ async def create_wallet(
 
 async def delete_wallet(pool: asyncpg.Pool, wallet_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM vault_wallet WHERE id = $1", wallet_id
-        )
+        result = await conn.execute("DELETE FROM vault_wallet WHERE id = $1", wallet_id)
     if result == "DELETE 0":
         raise HTTPException(404, "Wallet introuvable.")
 
@@ -58,9 +61,65 @@ async def delete_wallet(pool: asyncpg.Pool, wallet_id: uuid.UUID) -> None:
 async def get_api_key(pool: asyncpg.Pool, name: str, enc_key: str) -> str | None:
     """Retourne la clé API déchiffrée pour un wallet, ou None si inconnu."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT api_key_enc FROM vault_wallet WHERE name = $1", name
-        )
+        row = await conn.fetchrow("SELECT api_key_enc FROM vault_wallet WHERE name = $1", name)
     if row is None:
         return None
     return decrypt_str(enc_key, row["api_key_enc"])
+
+
+# ── Secrets utilisateur ───────────────────────────────────────────────────────
+
+
+async def list_secrets(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[VaultSecretOut]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, slug, label, created_at, updated_at
+            FROM user_secret
+            WHERE owner_ref = $1
+            ORDER BY label
+            """,
+            user_id,
+        )
+    return [VaultSecretOut(**dict(row)) for row in rows]
+
+
+async def create_secret(
+    pool: asyncpg.Pool,
+    user_id: uuid.UUID,
+    body: VaultSecretCreate,
+    enc_key: str,
+) -> VaultSecretOut:
+    value_enc = encrypt_str(enc_key, body.value)
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO user_secret (owner_ref, slug, label, value_enc)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, slug, label, created_at, updated_at
+                """,
+                user_id,
+                body.slug,
+                body.label,
+                value_enc,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
+    assert row is not None
+    return VaultSecretOut(**dict(row))
+
+
+async def delete_secret(
+    pool: asyncpg.Pool,
+    user_id: uuid.UUID,
+    secret_id: uuid.UUID,
+) -> None:
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM user_secret WHERE id = $1 AND owner_ref = $2",
+            secret_id,
+            user_id,
+        )
+    if result == "DELETE 0":
+        raise HTTPException(404, "Secret introuvable.")

@@ -359,6 +359,40 @@ export const reactionsApi = {
     ),
 }
 
+// ── Types référencement ──────────────────────────────────────────────────────
+
+export interface DocumentSearchResult {
+  id: string
+  title: string
+  type: string | null
+  bloc: string | null
+}
+
+export interface BrokenLinkBloc {
+  bloc: string | null
+  docs_with_broken_links: number
+}
+
+export interface BrokenLinkDetail {
+  source_ref: string
+  source_title: string
+  target_ref: string | null
+  target_label: string
+}
+
+export const referencesApi = {
+  searchDocuments: (ws: string, q: string, limit = 10) =>
+    api.get<DocumentSearchResult[]>(
+      `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}`
+    ),
+
+  getBrokenLinks: (ws: string) =>
+    api.get<BrokenLinkBloc[]>(`/workspaces/${ws}/broken-links`),
+
+  getBrokenLinksDetail: (ws: string, blocId: string) =>
+    api.get<BrokenLinkDetail[]>(`/workspaces/${ws}/blocs/${blocId}/broken-links`),
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 export interface WebhookOut {
@@ -412,11 +446,26 @@ export interface VaultWalletOut {
   updated_at: string
 }
 
+export interface VaultSecretOut {
+  id: string
+  slug: string
+  label: string
+  created_at: string
+  updated_at: string
+}
+
 export const vaultApi = {
   listWallets: () => api.get<VaultWalletOut[]>('/admin/vault/wallets'),
   createWallet: (body: { name: string; api_key: string }) =>
     api.post<VaultWalletOut>('/admin/vault/wallets', body),
   deleteWallet: (id: string) => api.delete(`/admin/vault/wallets/${id}`),
+}
+
+export const secretsApi = {
+  list: () => api.get<VaultSecretOut[]>('/admin/secrets'),
+  create: (body: { label: string; slug: string; value: string }) =>
+    api.post<VaultSecretOut>('/admin/secrets', body),
+  delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }
 
 // ── OIDC admin ──────────────────────────────────────────────────────────────
