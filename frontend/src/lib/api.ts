@@ -306,6 +306,59 @@ export const templatesApi = {
   delete: (slug: string) => api.delete(`/templates/${slug}`),
 }
 
+// ── Types réactions / commentaires ───────────────────────────────────────────
+
+export interface ReactionOut {
+  likes: number
+  dislikes: number
+  my_reaction: 1 | -1 | null
+  last_likes: string[]
+  last_dislikes: string[]
+}
+
+export interface CommentOut {
+  id: string
+  author_label: string
+  body: string
+  is_mine: boolean
+  reactions: ReactionOut
+  created_at: string
+  updated_at: string
+}
+
+// ── API réactions / commentaires ─────────────────────────────────────────────
+
+export const reactionsApi = {
+  getDocReactions: (ws: string, docId: string) =>
+    api.get<ReactionOut>(`/workspaces/${ws}/documents/${docId}/reactions`),
+
+  toggleDocReaction: (ws: string, docId: string, nature: 1 | -1) =>
+    api.put<ReactionOut>(`/workspaces/${ws}/documents/${docId}/reaction`, { nature }),
+
+  removeDocReaction: (ws: string, docId: string) =>
+    api.delete<ReactionOut>(`/workspaces/${ws}/documents/${docId}/reaction`),
+
+  getComments: (ws: string, docId: string) =>
+    api.get<CommentOut[]>(`/workspaces/${ws}/documents/${docId}/comments`),
+
+  addComment: (ws: string, docId: string, body: string) =>
+    api.post<CommentOut>(`/workspaces/${ws}/documents/${docId}/comments`, { body }),
+
+  deleteComment: (ws: string, docId: string, commentId: string) =>
+    api.delete<void>(`/workspaces/${ws}/documents/${docId}/comments/${commentId}`),
+
+  toggleCommentReaction: (ws: string, docId: string, commentId: string, nature: 1 | -1) =>
+    api.put<ReactionOut>(
+      `/workspaces/${ws}/documents/${docId}/comments/${commentId}/reaction`,
+      { nature }
+    ),
+
+  removeCommentReaction: (ws: string, docId: string, commentId: string) =>
+    api.delete<ReactionOut>(
+      `/workspaces/${ws}/documents/${docId}/comments/${commentId}/reaction`
+    ),
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 export interface WebhookOut {

@@ -3,13 +3,15 @@ import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Eye, EyeOff, Copy, Check } from 'lucide-react'
-import { ApiError, docsApi, type DocumentOut } from '../lib/api'
+import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
 import { ConflictResolver } from './ConflictResolver'
 import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
 import { MarkdownEditor, type MarkdownEditorHandle } from '../components/MarkdownEditor'
+import { ReactionBar } from '../components/ReactionBar'
+import { CommentsPanel } from '../components/CommentsPanel'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
 
@@ -43,6 +45,20 @@ export function DocumentEditor() {
     onSuccess: (updated) => {
       void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
       void queryClient.setQueryData(['document', ws, docId], updated)
+    },
+  })
+
+  const { data: reactions } = useQuery<ReactionOut>({
+    queryKey: ['doc-reactions', ws, docId],
+    queryFn: () => reactionsApi.getDocReactions(ws!, docId!),
+    enabled: Boolean(ws && docId),
+    staleTime: 30_000,
+  })
+
+  const reactDocMutation = useMutation({
+    mutationFn: (nature: 1 | -1) => reactionsApi.toggleDocReaction(ws!, docId!, nature),
+    onSuccess: (updated: ReactionOut) => {
+      queryClient.setQueryData(['doc-reactions', ws, docId], updated)
     },
   })
 
@@ -253,6 +269,19 @@ export function DocumentEditor() {
         <div className="w-1/3 border-l border-gray-200 pl-6">
           <PropertiesPanel ws={ws} docId={docId} />
         </div>
+      </div>
+
+      <div className="mt-6 border-t border-gray-100 pt-6">
+        {reactions && (
+          <div className="mb-4">
+            <ReactionBar
+              reactions={reactions}
+              onReact={(n) => reactDocMutation.mutate(n)}
+              disabled={reactDocMutation.isPending}
+            />
+          </div>
+        )}
+        <CommentsPanel ws={ws} docId={docId} />
       </div>
 
       {deleteConfirm && (
