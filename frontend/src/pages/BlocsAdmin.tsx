@@ -2,13 +2,71 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Eye, EyeOff } from 'lucide-react'
-import { api, docsApi, type DataBlockOut, type FunctionalType } from '../lib/api'
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react'
+import {
+  api, docsApi, referencesApi,
+  type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
+} from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
+
+// ── Badge + détail des liens cassés par bloc ──────────────────────────────────
+
+function BrokenLinksDetail({ wsSlug, blocId }: { wsSlug: string; blocId: string }) {
+  const { data: details = [], isLoading } = useQuery<BrokenLinkDetail[]>({
+    queryKey: ['broken-links-detail', wsSlug, blocId],
+    queryFn: () => referencesApi.getBrokenLinksDetail(wsSlug, blocId),
+    staleTime: 30_000,
+  })
+
+  if (isLoading) return <p className="text-xs text-gray-400 px-2 py-1">Chargement…</p>
+  if (details.length === 0) return null
+
+  return (
+    <div className="mt-1 ml-2 border-l-2 border-amber-200 pl-3 space-y-1">
+      {details.map((d) => (
+        <p key={`${d.source_ref}-${d.target_label}`} className="text-xs text-gray-600">
+          <span className="font-medium">{d.source_title}</span>
+          {' → '}
+          <span className="text-amber-700">« {d.target_label} »</span>
+          <span className="text-gray-400"> (cible supprimée)</span>
+        </p>
+      ))}
+    </div>
+  )
+}
+
+function BrokenLinksBadge({
+  wsSlug,
+  blocId,
+  count,
+}: {
+  wsSlug: string
+  blocId: string
+  count: number
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium
+                   bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+        title="Voir les liens cassés"
+      >
+        <AlertTriangle size={12} />
+        {count} doc{count > 1 ? 's' : ''} avec liens cassés
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+      </button>
+      {open && <BrokenLinksDetail wsSlug={wsSlug} blocId={blocId} />}
+    </div>
+  )
+}
 
 function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }) {
   const { t } = useTranslation()
@@ -23,6 +81,17 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
     },
   })
 
+  const { data: brokenLinks = [] } = useQuery<BrokenLinkBloc[]>({
+    queryKey: ['broken-links', wsSlug],
+    queryFn: () => referencesApi.getBrokenLinks(wsSlug),
+    staleTime: 60_000,
+  })
+
+  // index par bloc id → count
+  const brokenByBloc = Object.fromEntries(
+    brokenLinks.map((b) => [b.bloc ?? '', b.docs_with_broken_links])
+  )
+
   return (
     <table className="w-full border-collapse text-sm">
       <thead>
@@ -34,14 +103,23 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
         </tr>
       </thead>
       <tbody>
-        {blocs.map((bloc) => (
+        {blocs.map((bloc) => {
+          const brokenCount = bloc.id ? (brokenByBloc[bloc.id] ?? 0) : 0
+          return (
           <tr
             key={bloc.slug}
             className="border-b hover:bg-gray-50"
             data-testid={`bloc-row-${bloc.slug}`}
           >
             <td className="py-2 pr-4 font-mono text-xs">{bloc.slug}</td>
-            <td className="py-2 pr-4">{bloc.label}</td>
+            <td className="py-2 pr-4">
+              <div className="flex flex-col gap-1">
+                <span>{bloc.label}</span>
+                {brokenCount > 0 && bloc.id && (
+                  <BrokenLinksBadge wsSlug={wsSlug} blocId={bloc.id} count={brokenCount} />
+                )}
+              </div>
+            </td>
             <td className="py-2 pr-4">
               <span className="font-mono text-xs text-gray-500">
                 {bloc.functional_type_slug}
@@ -77,7 +155,7 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
               </div>
             </td>
           </tr>
-        ))}
+        )})}
       </tbody>
     </table>
   )

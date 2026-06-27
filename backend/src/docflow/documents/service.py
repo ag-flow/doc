@@ -14,6 +14,7 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
     DocumentOut,
@@ -330,6 +331,7 @@ async def update_document(
                     doc_id,
                 )
                 await log_change(conn, wk, doc_id, "U")
+                await refresh_references(conn, doc_id, wk, new_content)
 
             # Métadonnées (parent, type) — sans versioning
             meta: dict[str, object] = {}

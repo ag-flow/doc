@@ -132,9 +132,7 @@ async def set_document_exposed(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DocumentOut:
-    return await service.set_document_exposed(
-        request.app.state.pool, ws_slug, doc_id, body.exposed
-    )
+    return await service.set_document_exposed(request.app.state.pool, ws_slug, doc_id, body.exposed)
 
 
 @router.delete(_DOC, status_code=204)

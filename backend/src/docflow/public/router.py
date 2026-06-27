@@ -2,6 +2,7 @@
 
 Un document est accessible si et seulement si son flag `exposed` est true.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -45,6 +46,7 @@ _NOT_FOUND = "document introuvable ou non public"
 
 def _map(row: object, content: str | None = None) -> DocumentOut:
     import asyncpg  # noqa: PLC0415
+
     r: asyncpg.Record = row
     has_content = "content" in r.keys()
     return DocumentOut(

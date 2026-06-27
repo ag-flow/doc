@@ -1,4 +1,5 @@
 """Service réactions + commentaires sur les documents."""
+
 from __future__ import annotations
 
 import uuid
@@ -16,7 +17,7 @@ class ReactionOut(BaseModel):
     likes: int
     dislikes: int
     my_reaction: int | None  # 1 ou -1 ou None
-    last_likes: list[str]    # labels des 5 derniers
+    last_likes: list[str]  # labels des 5 derniers
     last_dislikes: list[str]
 
 
@@ -144,9 +145,7 @@ async def _comment_reaction_summary(
     )
 
 
-async def _require_doc(
-    conn: asyncpg.Connection, ws_slug: str, doc_id: uuid.UUID
-) -> uuid.UUID:
+async def _require_doc(conn: asyncpg.Connection, ws_slug: str, doc_id: uuid.UUID) -> uuid.UUID:
     wk = await require_workspace(conn, ws_slug)
     exists = await conn.fetchval(
         "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -180,15 +179,13 @@ async def toggle_doc_reaction(
         async with conn.transaction():
             await _require_doc(conn, ws_slug, doc_id)
             existing: int | None = await conn.fetchval(
-                "SELECT nature FROM document_reaction "
-                "WHERE document_ref = $1 AND user_ref = $2",
+                "SELECT nature FROM document_reaction WHERE document_ref = $1 AND user_ref = $2",
                 doc_id,
                 user_id,
             )
             if existing == nature:
                 await conn.execute(
-                    "DELETE FROM document_reaction "
-                    "WHERE document_ref = $1 AND user_ref = $2",
+                    "DELETE FROM document_reaction WHERE document_ref = $1 AND user_ref = $2",
                     doc_id,
                     user_id,
                 )
@@ -285,8 +282,11 @@ async def add_comment(
                 body=row["body"],
                 is_mine=True,
                 reactions=ReactionOut(
-                    likes=0, dislikes=0, my_reaction=None,
-                    last_likes=[], last_dislikes=[],
+                    likes=0,
+                    dislikes=0,
+                    my_reaction=None,
+                    last_likes=[],
+                    last_dislikes=[],
                 ),
                 created_at=row["created_at"].isoformat(),
                 updated_at=row["updated_at"].isoformat(),
@@ -305,8 +305,7 @@ async def delete_comment(
         async with conn.transaction():
             await _require_doc(conn, ws_slug, doc_id)
             row = await conn.fetchrow(
-                "SELECT user_ref FROM document_comment "
-                "WHERE id = $1 AND document_ref = $2",
+                "SELECT user_ref FROM document_comment WHERE id = $1 AND document_ref = $2",
                 comment_id,
                 doc_id,
             )
@@ -347,8 +346,7 @@ async def toggle_comment_reaction(
             await _require_doc(conn, ws_slug, doc_id)
             await _require_comment(conn, doc_id, comment_id)
             existing: int | None = await conn.fetchval(
-                "SELECT nature FROM comment_reaction "
-                "WHERE comment_ref = $1 AND user_ref = $2",
+                "SELECT nature FROM comment_reaction WHERE comment_ref = $1 AND user_ref = $2",
                 comment_id,
                 user_id,
             )

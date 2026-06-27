@@ -263,7 +263,7 @@ export function DocumentEditor() {
 
       <div className="flex gap-6">
         <div className="w-2/3">
-          <MarkdownEditor ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} />
+          <MarkdownEditor ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
           <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
         </div>
         <div className="w-1/3 border-l border-gray-200 pl-6">

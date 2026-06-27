@@ -35,9 +35,7 @@ async def resolve(
         return raw
 
     if not harpocrate_url:
-        raise ValueError(
-            "Secret contains a vault reference but HARPOCRATE_URL is not configured"
-        )
+        raise ValueError("Secret contains a vault reference but HARPOCRATE_URL is not configured")
     if pool is None or enc_key is None:
         raise ValueError("pool and enc_key are required to resolve a vault reference")
 
