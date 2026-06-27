@@ -13,8 +13,7 @@ import { MarkdownEditor, type MarkdownEditorHandle } from '../components/Markdow
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
 
 interface ConflictData {
-  ancestor: string
-  ancestorVersion: number
+  baseVersion: number
   server: string
   serverVersion: number
   draft: string
@@ -75,8 +74,7 @@ export function DocumentEditor() {
       if (err instanceof ApiError && err.status === 409) {
         const serverDoc = (err.detail ?? {}) as Partial<DocumentOut>
         setConflict({
-          ancestor: ancestorRef.current.content,
-          ancestorVersion: expectedVersion.current,
+          baseVersion: expectedVersion.current,
           server: serverDoc.content ?? '',
           serverVersion: serverDoc.version ?? expectedVersion.current + 1,
           draft: content,
@@ -124,8 +122,7 @@ export function DocumentEditor() {
         if (err instanceof ApiError && err.status === 409) {
           const newServer = (err.detail ?? {}) as Partial<DocumentOut>
           setConflict({
-            ancestor: merged,
-            ancestorVersion: serverVersion,
+            baseVersion: serverVersion,
             server: newServer.content ?? '',
             serverVersion: newServer.version ?? serverVersion + 1,
             draft: merged,
@@ -263,8 +260,7 @@ export function DocumentEditor() {
 
       {conflict && (
         <ConflictResolver
-          ancestor={conflict.ancestor}
-          ancestorVersion={conflict.ancestorVersion}
+          baseVersion={conflict.baseVersion}
           server={conflict.server}
           serverVersion={conflict.serverVersion}
           draft={conflict.draft}

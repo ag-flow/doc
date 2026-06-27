@@ -30,17 +30,17 @@ vi.mock('../components/DocumentChildrenPanel', () => ({
   DocumentChildrenPanel: () => <div data-testid="children-panel-mock" />,
 }))
 
-// CodeMirror MergeView ne fonctionne pas en jsdom : on substitue un rendu minimal.
+// CodeMirror ne fonctionne pas en jsdom : on substitue des implémentations minimales.
 vi.mock('@codemirror/merge', () => ({
-  MergeView: class {
-    b = { state: { doc: { toString: () => '' } } }
-    constructor(_config: unknown) {}
-    destroy() {}
-  },
+  unifiedMergeView: () => [],
 }))
 vi.mock('codemirror', () => ({
   basicSetup: [],
-  EditorView: { editable: { of: () => [] } },
+  EditorView: class {
+    state = { doc: { toString: () => '' } }
+    constructor(_config: unknown) {}
+    destroy() {}
+  },
 }))
 vi.mock('@codemirror/lang-markdown', () => ({ markdown: () => [] }))
 vi.mock('@codemirror/state', () => ({

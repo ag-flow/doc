@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
-import { MergeView } from '@codemirror/merge'
+import { unifiedMergeView } from '@codemirror/merge'
 import { markdown } from '@codemirror/lang-markdown'
 import './conflict.css'
 
 export interface ConflictResolverProps {
-  ancestor: string
-  ancestorVersion: number
+  baseVersion: number
   server: string
   serverVersion: number
   draft: string
@@ -15,46 +13,38 @@ export interface ConflictResolverProps {
   onCancel: () => void
 }
 
-const READONLY = [EditorView.editable.of(false), EditorState.readOnly.of(true)]
 const COLLAPSE = { margin: 3, minSize: 4 }
 
 export function ConflictResolver({
-  ancestor, ancestorVersion, server, serverVersion, draft, onResolve, onCancel,
+  baseVersion, server, serverVersion, draft, onResolve, onCancel,
 }: ConflictResolverProps) {
-  const leftRef = useRef<HTMLDivElement>(null)
-  const rightRef = useRef<HTMLDivElement>(null)
-  const draftView = useRef<EditorView | null>(null)
+  const hostRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!leftRef.current || !rightRef.current) return
-
-    const left = new MergeView({
-      parent: leftRef.current,
-      collapseUnchanged: COLLAPSE,
-      a: { doc: ancestor, extensions: [basicSetup, markdown(), ...READONLY] },
-      b: { doc: server,   extensions: [basicSetup, markdown(), ...READONLY] },
+    if (!hostRef.current) return
+    const view = new EditorView({
+      parent: hostRef.current,
+      doc: draft,
+      extensions: [
+        basicSetup,
+        markdown(),
+        unifiedMergeView({
+          original: server,
+          mergeControls: true,
+          collapseUnchanged: COLLAPSE,
+        }),
+      ],
     })
-
-    const right = new MergeView({
-      parent: rightRef.current,
-      collapseUnchanged: COLLAPSE,
-      a: { doc: ancestor, extensions: [basicSetup, markdown(), ...READONLY] },
-      b: { doc: draft,    extensions: [basicSetup, markdown()] },
-    })
-    draftView.current = right.b
-
-    return () => {
-      left.destroy()
-      right.destroy()
-      draftView.current = null
-    }
-  }, [ancestor, server, draft])
+    viewRef.current = view
+    return () => { view.destroy(); viewRef.current = null }
+  }, [server, draft])
 
   async function handleSave() {
-    const merged = draftView.current?.state.doc.toString() ?? draft
+    const merged = viewRef.current?.state.doc.toString() ?? draft
     setSaving(true)
     setError(null)
     try {
@@ -72,33 +62,14 @@ export function ConflictResolver({
         <header className="conflict-head">
           <p className="conflict-title">Conflit de version</p>
           <p className="muted">
-            Ce document a changé pendant ton édition (tu partais de la v{ancestorVersion},
-            il est en v{serverVersion}). À gauche, ce que le serveur a modifié&nbsp;; à droite,
-            ton brouillon, que tu ajustes. Puis enregistre sur la v{serverVersion}.
+            Ce document a changé pendant ton édition (tu partais de la v{baseVersion},
+            il est en v{serverVersion}). Les différences entre le serveur et ton texte
+            sont surlignées : accepte, rejette ou édite chaque bloc, puis enregistre
+            sur la v{serverVersion}.
           </p>
         </header>
 
-        <div className="conflict-panes">
-          <section className="pane">
-            <header className="pane-head">
-              <span className="pane-label">Ancêtre v{ancestorVersion}</span>
-              <span className="pane-arrow">⇄</span>
-              <span className="pane-label pane-label--server">
-                Serveur v{serverVersion} · lecture seule
-              </span>
-            </header>
-            <div ref={leftRef} className="merge" />
-          </section>
-
-          <section className="pane">
-            <header className="pane-head">
-              <span className="pane-label">Ancêtre v{ancestorVersion}</span>
-              <span className="pane-arrow">⇄</span>
-              <span className="pane-label pane-label--draft">Ton brouillon · éditable</span>
-            </header>
-            <div ref={rightRef} className="merge" />
-          </section>
-        </div>
+        <div ref={hostRef} className="merge merge--single" />
 
         {error && <p className="conflict-error">{error}</p>}
 
