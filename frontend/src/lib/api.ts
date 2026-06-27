@@ -250,6 +250,9 @@ export const docsApi = {
     body: { title: string; functional_type_slug: string; parent_id?: string },
   ) => api.post<DocumentOut>(`/workspaces/${ws}/blocks/${block}/documents`, body),
 
+  listDocuments: (ws: string) =>
+    api.get<DocumentOut[]>(`/workspaces/${ws}/documents`),
+
   getDocument: (ws: string, docId: string) =>
     api.get<DocumentOut>(`/workspaces/${ws}/documents/${docId}`),
 

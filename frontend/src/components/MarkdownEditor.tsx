@@ -7,14 +7,15 @@ import {
   getDefaultReactSlashMenuItems,
 } from '@blocknote/react'
 import '@blocknote/mantine/style.css'
-import { Link, Search } from 'lucide-react'
+import { Link } from 'lucide-react'
 import { MermaidBlock } from './MermaidBlock'
 import {
   parseMarkdownWithMermaid,
   serializeMarkdownWithMermaid,
   type MarkdownEditorApi,
 } from '../lib/mermaidMarkdown'
-import { referencesApi, type DocumentSearchResult } from '../lib/api'
+import { type DocumentSearchResult } from '../lib/api'
+import { LinkSearchPopup } from './LinkSearchPopup'
 
 function filterItems<T extends { title: string; aliases?: string[] }>(
   items: T[],
@@ -41,104 +42,6 @@ interface MarkdownEditorProps {
   initialContent: string
   onDirty: () => void
   wsSlug?: string
-}
-
-// ── Popup de recherche de lien ────────────────────────────────────────────────
-
-interface LinkSearchPopupProps {
-  wsSlug: string
-  onSelect: (doc: DocumentSearchResult) => void
-  onClose: () => void
-}
-
-function LinkSearchPopup({ wsSlug, onSelect, onClose }: LinkSearchPopupProps) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<DocumentSearchResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [selected, setSelected] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); return }
-    setLoading(true)
-    const timer = setTimeout(() => {
-      referencesApi.searchDocuments(wsSlug, query)
-        .then((r) => { setResults(r); setSelected(0) })
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false))
-    }, 200)
-    return () => clearTimeout(timer)
-  }, [query, wsSlug])
-
-  const handleKey = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); onClose() }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, results.length - 1)) }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((s) => Math.max(s - 1, 0)) }
-    if (e.key === 'Enter' && results[selected]) { e.preventDefault(); onSelect(results[selected]) }
-  }, [results, selected, onClose, onSelect])
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/20"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
-          <Search size={16} className="text-gray-400 shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Rechercher un document par titre…"
-            className="flex-1 text-sm outline-none placeholder:text-gray-400"
-          />
-          {loading && (
-            <span className="text-xs text-gray-400 shrink-0">Recherche…</span>
-          )}
-        </div>
-        <div className="max-h-72 overflow-y-auto">
-          {results.length === 0 && query.trim() && !loading && (
-            <p className="px-4 py-3 text-sm text-gray-400">Aucun document trouvé.</p>
-          )}
-          {results.length === 0 && !query.trim() && (
-            <p className="px-4 py-3 text-sm text-gray-400">Tapez pour rechercher…</p>
-          )}
-          {results.map((doc, i) => (
-            <button
-              key={doc.id}
-              type="button"
-              onClick={() => onSelect(doc)}
-              className={[
-                'w-full text-left px-4 py-2.5 flex flex-col gap-0.5 transition-colors',
-                i === selected ? 'bg-blue-50' : 'hover:bg-gray-50',
-              ].join(' ')}
-            >
-              <span className="text-sm font-medium text-gray-800 truncate">{doc.title}</span>
-              {(doc.type || doc.bloc) && (
-                <span className="text-xs text-gray-400">
-                  {[doc.type, doc.bloc ? `bloc ${doc.bloc.slice(0, 8)}…` : null]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-        <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
-          ↑↓ naviguer · Entrée sélectionner · Échap fermer
-        </div>
-      </div>
-    </div>
-  )
 }
 
 // ── Éditeur principal ─────────────────────────────────────────────────────────
