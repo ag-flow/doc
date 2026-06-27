@@ -99,6 +99,10 @@ def _diff_prop(
     path = f"{type_path}.{tp.slug}"
     if db_prop is None:
         result.items.append(DiffItem(kind="add", path=path))
+        for c in tp.constraints:
+            result.items.append(DiffItem(kind="add", path=f"{path}.{c.kind}"))
+        for av in tp.allowed_values:
+            result.items.append(DiffItem(kind="add", path=f"{path}#av.{av.slug}"))
         return
 
     if db_prop.type != tp.type:
@@ -205,6 +209,12 @@ async def compute_diff(
             result.items.append(DiffItem(kind="add", path=path))
             for prop in rt.properties:
                 result.items.append(DiffItem(kind="add", path=f"{path}.{prop.slug}"))
+                for c in prop.constraints:
+                    result.items.append(DiffItem(kind="add", path=f"{path}.{prop.slug}.{c.kind}"))
+                for av in prop.allowed_values:
+                    result.items.append(
+                        DiffItem(kind="add", path=f"{path}.{prop.slug}#av.{av.slug}")
+                    )
             continue
 
         if db_type.parent != rt.parent:

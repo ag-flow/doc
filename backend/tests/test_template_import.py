@@ -144,7 +144,7 @@ async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
         assert report.applied
         assert not report.no_op
 
-        # Vérifie les 5 types en base
+        # Vérifie les 4 types concrets en base
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -158,6 +158,44 @@ async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
         assert {"epic", "feature", "story", "atdd"} == slugs
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-test")
+
+
+async def test_import_allowed_values_populated(db_pool: asyncpg.Pool) -> None:
+    """Régression : les allowed_values d'une prop restricted_list doivent être insérées."""
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-av", label="AV Test"))
+    try:
+        tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
+        await run_import(db_pool, "tpl-av", tpl)
+
+        async with db_pool.acquire() as conn:
+            # epic.statut doit avoir 4 allowed_values (a_cadrer, cadre, en_cours, done)
+            count = await conn.fetchval(
+                """
+                SELECT count(*) FROM properties_allowed_values av
+                JOIN properties_defs pd ON pd.id = av.property_def_ref
+                JOIN functional_type ft ON ft.id = pd.functional_type_ref
+                JOIN workspace w ON w.workspace_technical_key = ft.workspace_technical_key
+                WHERE w.slug = $1 AND ft.slug = 'epic' AND pd.slug = 'statut'
+                """,
+                "tpl-av",
+            )
+        assert count == 4, f"epic.statut devrait avoir 4 allowed_values, got {count}"
+
+        async with db_pool.acquire() as conn:
+            # story.statut hérite de base_statusable : 4 valeurs (a_faire, en_cours, en_review, done)
+            count = await conn.fetchval(
+                """
+                SELECT count(*) FROM properties_allowed_values av
+                JOIN properties_defs pd ON pd.id = av.property_def_ref
+                JOIN functional_type ft ON ft.id = pd.functional_type_ref
+                JOIN workspace w ON w.workspace_technical_key = ft.workspace_technical_key
+                WHERE w.slug = $1 AND ft.slug = 'story' AND pd.slug = 'statut'
+                """,
+                "tpl-av",
+            )
+        assert count == 4, f"story.statut devrait avoir 4 allowed_values, got {count}"
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-av")
 
 
 async def test_import_same_version_noop(db_pool: asyncpg.Pool) -> None:
