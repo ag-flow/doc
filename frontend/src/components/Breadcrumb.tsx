@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useMatch } from 'react-router-dom'
+import { useMatch, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight } from 'lucide-react'
 import { api, docsApi, type DataBlockOut, type DocumentOut, type WorkspaceOut } from '../lib/api'
+
+interface Crumb { label: string; href: string | null }
 
 function useDocumentChain(ws: string | null, docId: string | null): DocumentOut[] {
   const [chain, setChain] = useState<DocumentOut[]>([])
@@ -65,10 +67,18 @@ export function Breadcrumb() {
   const bloc = blocs?.find((b) => b.slug === blocSlug) ?? null
   const docChain = useDocumentChain(wsSlug, docId)
 
-  const crumbs: string[] = []
-  if (workspace) crumbs.push(workspace.label)
-  if (bloc) crumbs.push(bloc.label)
-  for (const d of docChain) crumbs.push(d.title)
+  const crumbs: Crumb[] = []
+  if (workspace) crumbs.push({ label: workspace.label, href: `/ws/${wsSlug}/blocs` })
+  if (bloc) crumbs.push({ label: bloc.label, href: `/ws/${wsSlug}/blocs/${blocSlug}/documents` })
+  for (const d of docChain) {
+    crumbs.push({
+      label: d.title,
+      href: `/ws/${wsSlug}/blocs/${blocSlug}/documents/${d.doc_technical_key}`,
+    })
+  }
+
+  // Le dernier élément n'est pas cliquable (page courante)
+  if (crumbs.length > 0) crumbs[crumbs.length - 1].href = null
 
   if (crumbs.length === 0) return null
 
@@ -77,9 +87,16 @@ export function Breadcrumb() {
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1">
           {i > 0 && <ChevronRight size={13} className="text-gray-300 shrink-0" />}
-          <span className={i === crumbs.length - 1 ? 'font-medium text-gray-800' : 'text-gray-400'}>
-            {crumb}
-          </span>
+          {crumb.href ? (
+            <Link
+              to={crumb.href}
+              className="text-gray-400 hover:text-gray-700 transition-colors"
+            >
+              {crumb.label}
+            </Link>
+          ) : (
+            <span className="font-medium text-gray-800">{crumb.label}</span>
+          )}
         </span>
       ))}
     </div>
