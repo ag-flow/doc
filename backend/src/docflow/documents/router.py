@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from docflow.auth.deps import require_admin
 from docflow.documents import service
+from docflow.references import service as ref_service
+from docflow.references.service import DocumentSearchResult
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.document import DocumentCreate, DocumentOut, DocumentUpdate
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
@@ -87,6 +89,17 @@ async def create_document(
         },
     )
     return doc
+
+
+@router.get(_WS + "/documents/search", response_model=list[DocumentSearchResult])
+async def search_documents(
+    ws_slug: str,
+    request: Request,
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    _: AuthUser = _Auth,
+) -> list[DocumentSearchResult]:
+    return await ref_service.search_documents(request.app.state.pool, ws_slug, q, limit)
 
 
 @router.get(_DOC, response_model=DocumentOut)
