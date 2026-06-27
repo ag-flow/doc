@@ -28,5 +28,8 @@ Le SDK Python Harpocrate (`harpocrate.VaultClient`) est **synchrone** (utilise `
 - Le SDK gère lui-même le déchiffrement E2E côté client (AES-GCM, wallet_key cachée)
 - Dépendance : `harpocrate>=0.6.0` via `[tool.uv.sources]` → wheel sur `vault.yoops.org`
 
+## [fastapi] Routes statiques avant routes paramétriques dans le même préfixe
+FastAPI évalue les routes dans l'ordre d'enregistrement. Si `GET /documents/{doc_id: UUID}` est enregistré avant `GET /documents/search`, FastAPI capture "search" avec le paramètre `{doc_id}`, échoue la validation UUID, et retourne 422 sans fallback. Règle : toujours placer les routes statiques (chemins littéraux) **avant** les routes paramétriques (`{param}`) dans le même router, ou les déplacer dans le même router si elles sont dans des routers différents inclus dans un ordre défavorable.
+
 ## [harpocrate] OpenAPI disponible sans auth
 La spec OpenAPI de Harpocrate (endpoints API key) est accessible sans authentification : `GET https://vault.yoops.org/v1/openapi-api-key.json`. Utile pour vérifier les routes et schémas disponibles.
