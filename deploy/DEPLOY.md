@@ -3,165 +3,86 @@
 ## Prérequis
 
 - Docker ≥ 24 avec le plugin Compose (`docker compose version`)
-- Un compte GitHub membre de l'organisation `ag-flow` (l'image GHCR est privée)
-- Python 3 disponible sur l'hôte (génération des secrets)
+- Python 3 disponible sur l'hôte
+- Accès à `ghcr.io` (voir § Authentification GHCR si l'image est privée)
 
 ---
 
-## Étape 1 — Récupérer les fichiers de déploiement
-
-Cloner le dépôt sur la machine de production :
+## Installation — une seule commande
 
 ```bash
-git clone git@github.com:ag-flow/doc.git /opt/docflow
-cd /opt/docflow
+curl -fsSL https://raw.githubusercontent.com/ag-flow/doc/main/deploy/prod-deploy.sh -o prod-deploy.sh
+bash prod-deploy.sh
 ```
 
-> Si git n'est pas disponible, copier au minimum ces deux fichiers depuis un poste ayant accès au dépôt :
-> - `deploy/docker-compose.prod.yml`
-> - `deploy/.env.example`
+Le script `prod-deploy.sh` effectue automatiquement :
+
+1. Création de `/opt/docflow/` et `/data/`
+2. Téléchargement de `docker-compose.prod.yml` (toujours la dernière version depuis `main`)
+3. Génération des secrets (`pg_password`, `JWT_SECRET`, `ENCRYPTION_KEY`) et pré-remplissage de `/data/.env`
+4. Pause pour que l'opérateur renseigne `ADMIN_EMAIL` et `ADMIN_PASSWORD` dans `/data/.env`
+5. Pull de l'image `ghcr.io/ag-flow/doc:latest`
+6. Démarrage de la stack (app + postgres)
+7. Smoke test sur `/health`
 
 ---
 
-## Étape 2 — S'authentifier sur GitHub Container Registry
+## Authentification GHCR (si l'image est privée)
 
-L'image Docker est hébergée sur GHCR (privé). Il faut un **Personal Access Token (PAT)** GitHub avec la permission `read:packages`.
+Si le pull échoue avec une erreur d'accès, authentifier Docker auprès de GHCR avant de relancer le script :
 
-### Créer le PAT (une seule fois)
+1. Créer un **Personal Access Token (PAT)** GitHub avec la permission `read:packages`
+   → GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
 
-1. Aller sur GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)**
-2. Générer un token avec la permission **`read:packages`** cochée
-3. Copier le token
+2. Se connecter :
+   ```bash
+   echo "<VOTRE_TOKEN>" | docker login ghcr.io -u <VOTRE_NOM_UTILISATEUR_GITHUB> --password-stdin
+   ```
 
-### Se connecter à GHCR sur la machine de production
-
-```bash
-echo "<VOTRE_TOKEN>" | docker login ghcr.io -u <VOTRE_NOM_UTILISATEUR_GITHUB> --password-stdin
-```
-
-Vérification :
-
-```bash
-# Doit afficher "Login Succeeded"
-```
+3. Relancer le script :
+   ```bash
+   bash /opt/docflow/prod-deploy.sh
+   ```
 
 ---
 
-## Étape 3 — Créer le répertoire des secrets
+## Variables de `/data/.env`
 
-```bash
-mkdir -p /data
-chmod 700 /data
-```
+Le script pré-remplit automatiquement `DATABASE_URL`, `JWT_SECRET` et `ENCRYPTION_KEY`.  
+L'opérateur doit uniquement renseigner :
 
----
+| Variable | Description |
+|---|---|
+| `ADMIN_EMAIL` | Email du compte admin bootstrap (accès de secours permanent) |
+| `ADMIN_PASSWORD` | Mot de passe fort (≥ 16 caractères) |
 
-## Étape 4 — Mot de passe PostgreSQL
+Variables optionnelles disponibles dans `/data/.env` :
 
-```bash
-python3 -c "import secrets; print(secrets.token_hex(24))" > /data/pg_password.txt
-chmod 600 /data/pg_password.txt
-cat /data/pg_password.txt   # noter ce mot de passe
-```
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `HARPOCRATE_URL` | *(vide)* | URL Harpocrate pour résoudre les `${vault://…}` (automates, OIDC) |
+| `AUTOMATION_TICK_SECONDS` | `60` | Intervalle du worker d'automates (secondes) |
+| `LOG_LEVEL` | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
----
-
-## Étape 5 — Fichier de configuration
-
-```bash
-cp /opt/docflow/deploy/.env.example /data/.env
-chmod 600 /data/.env
-```
-
-Éditer `/data/.env` et renseigner les variables suivantes :
-
-### `DATABASE_URL`
-
-Remplacer `CHANGE_ME` par le mot de passe généré à l'étape 4 :
-
-```
-DATABASE_URL=postgresql://docflow:<contenu de /data/pg_password.txt>@postgres:5432/docflow
-```
-
-### `JWT_SECRET`
-
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Coller la valeur dans `.env` :
-```
-JWT_SECRET=<valeur générée>
-```
-
-### `ADMIN_EMAIL` et `ADMIN_PASSWORD`
-
-Compte administrateur de secours, accessible même si l'OIDC est configuré :
-
-```
-ADMIN_EMAIL=admin@exemple.fr
-ADMIN_PASSWORD=<mot de passe fort, 16 caractères minimum>
-```
-
-### `ENCRYPTION_KEY`
-
-Nécessaire pour chiffrer les secrets vault, wallets et headers. **Ne jamais changer cette valeur une fois des données chiffrées en base.**
-
-```bash
-python3 -c "import os, base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
-```
-
-```
-ENCRYPTION_KEY=<valeur générée>
-```
-
-> **Sauvegarder `ENCRYPTION_KEY` en dehors du serveur** (gestionnaire de mots de passe, coffre-fort). La perdre rend illisibles tous les secrets stockés.
-
----
-
-## Étape 6 — Démarrage
-
-```bash
-cd /opt/docflow
-docker compose -f deploy/docker-compose.prod.yml pull
-docker compose -f deploy/docker-compose.prod.yml up -d
-```
-
-### Vérifier que tout est prêt
-
-```bash
-until curl -sf http://localhost:8080/health; do echo "En attente…"; sleep 3; done
-echo "docflow est démarré"
-```
-
-Les migrations SQL sont appliquées automatiquement au premier démarrage. Le compte admin bootstrap est créé à ce moment.
-
-### Consulter les logs
-
-```bash
-docker compose -f deploy/docker-compose.prod.yml logs -f app
-```
+> **`ENCRYPTION_KEY` est critique.** Une fois des données chiffrées en base (wallets, secrets, headers webhook), cette clé ne doit plus jamais changer. La sauvegarder en dehors du serveur.
 
 ---
 
 ## Mise à jour
 
 ```bash
-cd /opt/docflow
-git pull --ff-only origin main
-docker compose -f deploy/docker-compose.prod.yml pull
-docker compose -f deploy/docker-compose.prod.yml up -d --no-deps app
+bash /opt/docflow/prod-deploy.sh
 ```
 
-Le `--no-deps app` redémarre uniquement le conteneur applicatif. Les nouvelles migrations sont appliquées automatiquement.
+Le script télécharge la dernière version de `docker-compose.prod.yml`, tire la nouvelle image et redémarre uniquement le conteneur app. Les migrations sont appliquées automatiquement.
 
 ---
 
 ## Exposition HTTPS
 
-Le service écoute en HTTP sur le port `8080`. Placer un reverse proxy devant pour HTTPS.
+Le service écoute en HTTP sur le port `8080`. Placer un reverse proxy devant.
 
-**Caddy** (recommandé — TLS automatique via Let's Encrypt) :
+**Caddy** (TLS automatique Let's Encrypt) :
 
 ```
 docflow.exemple.fr {
@@ -190,19 +111,19 @@ server {
 
 ---
 
-## Sauvegarde de la base de données
+## Sauvegarde
 
 ```bash
 mkdir -p /data/backups
-docker compose -f deploy/docker-compose.prod.yml exec postgres \
+docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres \
   pg_dump -U docflow docflow | gzip > /data/backups/docflow_$(date +%Y%m%d_%H%M).sql.gz
 ```
 
-Exemple de cron quotidien (2h du matin) :
+Cron quotidien (2h) :
 
 ```bash
 # crontab -e
-0 2 * * * mkdir -p /data/backups && docker compose -f /opt/docflow/deploy/docker-compose.prod.yml exec -T postgres pg_dump -U docflow docflow | gzip > /data/backups/docflow_$(date +\%Y\%m\%d_\%H\%M).sql.gz
+0 2 * * * mkdir -p /data/backups && docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres pg_dump -U docflow docflow | gzip > /data/backups/docflow_$(date +\%Y\%m\%d_\%H\%M).sql.gz
 ```
 
 ---
@@ -210,24 +131,8 @@ Exemple de cron quotidien (2h du matin) :
 ## Restauration
 
 ```bash
-# Arrêter l'app (pas la base)
-docker compose -f deploy/docker-compose.prod.yml stop app
-
-# Restaurer
+docker compose -f /opt/docflow/docker-compose.prod.yml stop app
 gunzip -c /data/backups/docflow_YYYYMMDD_HHMM.sql.gz | \
-  docker compose -f deploy/docker-compose.prod.yml exec -T postgres \
-  psql -U docflow -d docflow
-
-# Relancer
-docker compose -f deploy/docker-compose.prod.yml start app
+  docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres psql -U docflow -d docflow
+docker compose -f /opt/docflow/docker-compose.prod.yml start app
 ```
-
----
-
-## Variables optionnelles
-
-| Variable | Défaut | Rôle |
-|---|---|---|
-| `HARPOCRATE_URL` | *(vide)* | URL du service Harpocrate pour résoudre les références `${vault://…}` dans les automates et l'OIDC |
-| `AUTOMATION_TICK_SECONDS` | `60` | Intervalle en secondes entre chaque vérification du worker d'automates |
-| `LOG_LEVEL` | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
