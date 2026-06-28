@@ -1,3 +1,4 @@
+import { ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useFieldState, type ValueType } from '../hooks/useFieldState'
 import type { AllowedValueOut, PropertyValueOut } from '../lib/api'
@@ -17,7 +18,7 @@ function initialValue(prop: PropertyValueOut): string | null {
 
 export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldProps) {
   const { t } = useTranslation()
-  const valueType: ValueType = prop.type
+  const valueType: ValueType = prop.type as ValueType
   const { state, setValue, save, keepServer, keepMine } = useFieldState(
     initialValue(prop),
     prop.version,
@@ -75,6 +76,81 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
             )
           })()}
         </div>
+      ) : prop.type === 'bool' ? (
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            id={fieldId}
+            type="checkbox"
+            className="h-4 w-4 rounded border-gray-300"
+            checked={state.value === 'true'}
+            disabled={saving}
+            onChange={(e) => {
+              setValue(e.target.checked ? 'true' : 'false')
+              setTimeout(commit, 0)
+            }}
+            data-testid={`property-input-${prop.prop_slug}`}
+          />
+          <span className="text-sm text-gray-600">
+            {state.value === 'true' ? t('common.yes', 'Oui') : t('common.no', 'Non')}
+          </span>
+        </label>
+      ) : prop.type === 'date' ? (
+        <Input
+          id={fieldId}
+          type="date"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+        />
+      ) : prop.type === 'url' ? (
+        <div className="flex items-center gap-1">
+          <Input
+            id={fieldId}
+            type="url"
+            value={state.value ?? ''}
+            disabled={saving}
+            placeholder="https://..."
+            onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+            onBlur={commit}
+            data-testid={`property-input-${prop.prop_slug}`}
+          />
+          {state.value && (
+            <a
+              href={state.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-gray-400 hover:text-blue-600"
+              tabIndex={-1}
+            >
+              <ExternalLink size={14} />
+            </a>
+          )}
+        </div>
+      ) : prop.type === 'float' ? (
+        <Input
+          id={fieldId}
+          type="number"
+          step="any"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+        />
+      ) : prop.type === 'reference' ? (
+        <Input
+          id={fieldId}
+          type="text"
+          placeholder="UUID du document cible"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+          className="font-mono text-xs"
+        />
       ) : (
         <Input
           id={fieldId}

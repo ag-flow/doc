@@ -12,6 +12,7 @@ import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
 import { MarkdownEditor, type MarkdownEditorHandle } from '../components/MarkdownEditor'
 import { ReactionBar } from '../components/ReactionBar'
 import { CommentsPanel } from '../components/CommentsPanel'
+import { BacklinksPanel } from '../components/BacklinksPanel'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
 
@@ -318,6 +319,7 @@ export function DocumentEditor() {
         {!focusMode && (
           <div className="w-1/3 border-l border-gray-200 pl-6">
             <PropertiesPanel ws={ws} docId={docId} />
+            <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </div>
         )}
       </div>

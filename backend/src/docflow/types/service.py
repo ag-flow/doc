@@ -16,7 +16,7 @@ from docflow.schemas.types import (
 )
 
 _SELECT_TYPE = """
-SELECT ft.id, ft.slug, ft.label, ft.created_at, ft.updated_at,
+SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.created_at, ft.updated_at,
        p.slug AS parent_slug,
        w.slug AS workspace_slug
 FROM functional_type ft
@@ -26,7 +26,7 @@ WHERE ft.workspace_technical_key = $1 AND ft.slug = $2
 """
 
 _SELECT_ALL = """
-SELECT ft.id, ft.slug, ft.label, ft.created_at, ft.updated_at,
+SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.created_at, ft.updated_at,
        p.slug AS parent_slug,
        w.slug AS workspace_slug
 FROM functional_type ft
@@ -38,7 +38,7 @@ ORDER BY ft.created_at
 
 _UPDATE_RETURNING = (
     "UPDATE functional_type SET {cols}, updated_at = now() WHERE id = $1 "
-    "RETURNING id, slug, label, parent, created_at, updated_at"
+    "RETURNING id, slug, label, parent, content_template, created_at, updated_at"
 )
 
 
@@ -49,6 +49,7 @@ def _row_to_out(row: asyncpg.Record) -> FunctionalTypeOut:
         label=row["label"],
         parent_slug=row["parent_slug"],
         workspace_slug=row["workspace_slug"],
+        content_template=row["content_template"] if "content_template" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -99,6 +100,9 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                 label=tr["label"],
                 parent_slug=tr["parent_slug"],
                 workspace_slug=tr["workspace_slug"],
+                content_template=(
+                    tr["content_template"] if "content_template" in tr.keys() else None
+                ),
                 created_at=tr["created_at"],
                 updated_at=tr["updated_at"],
             )
@@ -189,6 +193,7 @@ async def create_type(
         label=row["label"],
         parent_slug=data.parent_slug,
         workspace_slug=ws_slug,
+        content_template=None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -237,6 +242,7 @@ async def update_type(
         label=row["label"],
         parent_slug=parent_slug_out,
         workspace_slug=ws_slug,
+        content_template=row["content_template"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

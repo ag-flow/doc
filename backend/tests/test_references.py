@@ -209,3 +209,130 @@ async def test_orphan_after_target_deleted(db_pool: asyncpg.Pool) -> None:
         assert any(b.docs_with_broken_links >= 1 for b in blocs)
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", ws_slug)
+
+
+# ── Backlinks (spec 33) ───────────────────────────────────────────────────────
+
+
+async def test_backlinks_basic(db_pool: asyncpg.Pool) -> None:
+    """A référence B → backlinks(B) liste A ; backlinks(A) est vide."""
+    from docflow.references.service import refresh_references, get_backlinks
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.workspaces import service as ws_svc
+    from docflow.schemas.document import DocumentCreate
+    from docflow.documents import service as doc_svc
+
+    ws_slug = "blk-test-basic"
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Basic"))
+    try:
+        async with db_pool.acquire() as conn:
+            wk: uuid.UUID = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+            )
+
+        doc_a = await doc_svc.create_document(
+            db_pool, ws_slug,
+            DocumentCreate(title="ADR-012", parent_id=None, functional_type_slug=None),
+        )
+        doc_b = await doc_svc.create_document(
+            db_pool, ws_slug,
+            DocumentCreate(title="Spec auth", parent_id=None, functional_type_slug=None),
+        )
+
+        # A cite B
+        content = f"[Spec auth](docflow://doc/{doc_b.doc_technical_key})"
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await refresh_references(conn, doc_a.doc_technical_key, wk, content)
+
+        backlinks_b = await get_backlinks(db_pool, ws_slug, doc_b.doc_technical_key)
+        assert len(backlinks_b) == 1
+        assert backlinks_b[0].source_id == doc_a.doc_technical_key
+        assert backlinks_b[0].source_title == "ADR-012"
+
+        backlinks_a = await get_backlinks(db_pool, ws_slug, doc_a.doc_technical_key)
+        assert len(backlinks_a) == 0
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", ws_slug)
+
+
+async def test_backlinks_workspace_isolation(db_pool: asyncpg.Pool) -> None:
+    """Référence dans W2 invisible dans backlinks d'un doc de W1."""
+    from docflow.references.service import refresh_references, get_backlinks
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.workspaces import service as ws_svc
+    from docflow.schemas.document import DocumentCreate
+    from docflow.documents import service as doc_svc
+
+    ws1 = "blk-iso-w1"
+    ws2 = "blk-iso-w2"
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws1, label="BLK W1"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws2, label="BLK W2"))
+    try:
+        async with db_pool.acquire() as conn:
+            wk2: uuid.UUID = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws2
+            )
+
+        doc_b = await doc_svc.create_document(
+            db_pool, ws1,
+            DocumentCreate(title="Shared target", parent_id=None, functional_type_slug=None),
+        )
+        # Source dans W2 qui pointe vers l'id de doc_b (cross-workspace — id connu)
+        doc_a2 = await doc_svc.create_document(
+            db_pool, ws2,
+            DocumentCreate(title="W2 source", parent_id=None, functional_type_slug=None),
+        )
+        content = f"[Target](docflow://doc/{doc_b.doc_technical_key})"
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await refresh_references(conn, doc_a2.doc_technical_key, wk2, content)
+
+        # backlinks pour doc_b scopé à ws1 doit être vide
+        backlinks = await get_backlinks(db_pool, ws1, doc_b.doc_technical_key)
+        assert len(backlinks) == 0
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug IN ($1, $2)", ws1, ws2)
+
+
+async def test_backlinks_live_title(db_pool: asyncpg.Pool) -> None:
+    """Renommer la source → backlinks(B) reflète le nouveau titre."""
+    from docflow.references.service import refresh_references, get_backlinks
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.workspaces import service as ws_svc
+    from docflow.schemas.document import DocumentCreate, DocumentUpdate
+    from docflow.documents import service as doc_svc
+
+    ws_slug = "blk-test-live"
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Live"))
+    try:
+        async with db_pool.acquire() as conn:
+            wk: uuid.UUID = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+            )
+
+        doc_a = await doc_svc.create_document(
+            db_pool, ws_slug,
+            DocumentCreate(title="ADR-012", parent_id=None, functional_type_slug=None),
+        )
+        doc_b = await doc_svc.create_document(
+            db_pool, ws_slug,
+            DocumentCreate(title="Spec auth", parent_id=None, functional_type_slug=None),
+        )
+
+        content = f"[Spec](docflow://doc/{doc_b.doc_technical_key})"
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await refresh_references(conn, doc_a.doc_technical_key, wk, content)
+
+        # Renomme A
+        await doc_svc.patch_document(
+            db_pool, ws_slug, doc_a.doc_technical_key,
+            DocumentUpdate(title="ADR-012 — Keycloak", expected_version=doc_a.version),
+        )
+
+        backlinks = await get_backlinks(db_pool, ws_slug, doc_b.doc_technical_key)
+        assert len(backlinks) == 1
+        assert backlinks[0].source_title == "ADR-012 — Keycloak"
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", ws_slug)

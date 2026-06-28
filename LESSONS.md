@@ -33,3 +33,12 @@ FastAPI évalue les routes dans l'ordre d'enregistrement. Si `GET /documents/{do
 
 ## [harpocrate] OpenAPI disponible sans auth
 La spec OpenAPI de Harpocrate (endpoints API key) est accessible sans authentification : `GET https://vault.yoops.org/v1/openapi-api-key.json`. Utile pour vérifier les routes et schémas disponibles.
+
+## [migration] Numérotation des migrations : vérifier avant d'écrire
+La numérotation des migrations peut diverger des specs si une migration a été ajoutée entre temps (ex : wizard → 0021). Toujours vérifier les fichiers existants dans `backend/migrations/` avant d'écrire une nouvelle migration pour éviter les collisions.
+
+## [asyncpg] AuthUser : le champ id, pas user_id
+Le modèle `AuthUser` (schemas/auth.py) expose le champ `id: uuid.UUID`, pas `user_id`. Dans les routers, accéder à `current.id` pour l'identifiant de l'utilisateur connecté.
+
+## [filter_engine] Renumérotation des placeholders $n : fragile
+La renumérotation manuelle des `$i` → `$i+offset` (dans views/service.py) est fragile si les placeholders ont plus de 9 digits (`$1` → `$11` peut matcher `$10`). Préférer des systèmes qui construisent la liste de params en séquence sans renumérotation.

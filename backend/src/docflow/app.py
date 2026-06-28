@@ -22,6 +22,7 @@ from docflow.contracts.router import router as contracts_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
+from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.oidc.router import router as oidc_router
@@ -33,6 +34,7 @@ from docflow.setup.router import router as setup_router
 from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
 from docflow.vault.router import router as vault_router
+from docflow.views.router import router as views_router
 from docflow.webhooks.router import router as webhooks_router
 from docflow.workspaces.router import router as workspaces_router
 
@@ -103,6 +105,8 @@ app.include_router(reactions_router, prefix=_API)
 app.include_router(references_router, prefix=_API)
 app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
+app.include_router(export_router, prefix=_API)
+app.include_router(views_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 
 

@@ -98,6 +98,7 @@ export interface FunctionalType {
   label: string
   parent_slug: string | null
   workspace_slug: string
+  content_template: string | null
   created_at: string
   updated_at: string
 }
@@ -113,7 +114,7 @@ export interface AllowedValueOut {
 export interface PropertyDef {
   slug: string
   label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   required: boolean
   allowed_values?: AllowedValueOut[]
 }
@@ -383,10 +384,18 @@ export interface BrokenLinkDetail {
   target_label: string
 }
 
+export interface BacklinkOut {
+  source_id: string
+  source_title: string
+  source_type: string | null
+  bloc: string | null
+  target_label: string
+}
+
 export const referencesApi = {
-  searchDocuments: (ws: string, q: string, limit = 10) =>
+  searchDocuments: (ws: string, q: string, limit = 10, type?: string) =>
     api.get<DocumentSearchResult[]>(
-      `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}`
+      `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}${type ? `&type=${encodeURIComponent(type)}` : ''}`
     ),
 
   getBrokenLinks: (ws: string) =>
@@ -394,6 +403,9 @@ export const referencesApi = {
 
   getBrokenLinksDetail: (ws: string, blocId: string) =>
     api.get<BrokenLinkDetail[]>(`/workspaces/${ws}/blocs/${blocId}/broken-links`),
+
+  getBacklinks: (ws: string, docId: string, limit = 50) =>
+    api.get<BacklinkOut[]>(`/workspaces/${ws}/documents/${docId}/backlinks?limit=${limit}`),
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────

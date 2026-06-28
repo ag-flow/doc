@@ -2,16 +2,30 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import require_admin
 from docflow.references import service
-from docflow.references.service import BrokenLinkBloc, BrokenLinkDetail
+from docflow.references.service import BacklinkOut, BrokenLinkBloc, BrokenLinkDetail
 from docflow.schemas.auth import AuthUser
 
 router = APIRouter(tags=["references"])
 
 _Auth = Depends(require_admin)
+
+
+@router.get(
+    "/workspaces/{ws_slug}/documents/{doc_id}/backlinks",
+    response_model=list[BacklinkOut],
+)
+async def get_backlinks(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    request: Request,
+    _: AuthUser = _Auth,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[BacklinkOut]:
+    return await service.get_backlinks(request.app.state.pool, ws_slug, doc_id, limit)
 
 
 @router.get(

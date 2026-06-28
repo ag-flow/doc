@@ -16,6 +16,9 @@ export function TypePropertiesPanel({ ws, type }: Props) {
   const queryClient = useQueryClient()
 
   const [addingFor, setAddingFor] = useState<string | null>(null)
+  const [templateValue, setTemplateValue] = useState(type.content_template ?? '')
+  const [templateSaving, setTemplateSaving] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
   const [newLabel, setNewLabel] = useState('')
   const [newSlug, setNewSlug] = useState('')
   const [newColor, setNewColor] = useState('')
@@ -168,6 +171,47 @@ export function TypePropertiesPanel({ ws, type }: Props) {
           )}
         </div>
       ))}
+
+      {/* Éditeur de template de contenu */}
+      <div className="mt-6 rounded border border-gray-200 p-4">
+        <h3 className="mb-2 text-sm font-semibold text-gray-700">
+          {t('types.contentTemplate', 'Modèle de contenu')}
+        </h3>
+        <p className="mb-2 text-xs text-gray-500">
+          {t('types.contentTemplateHint', 'Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide.')}
+        </p>
+        <textarea
+          className="block w-full rounded border border-gray-300 p-2 font-mono text-xs"
+          rows={6}
+          value={templateValue}
+          onChange={(e) => setTemplateValue(e.target.value)}
+          placeholder="# {{title}}&#10;> Créé le {{date}}&#10;&#10;## Contexte"
+          data-testid={`template-editor-${type.slug}`}
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            size="sm"
+            disabled={templateSaving}
+            onClick={async () => {
+              setTemplateSaving(true)
+              setTemplateError(null)
+              try {
+                await api.patch(`/workspaces/${ws}/types/${type.slug}`, {
+                  content_template: templateValue || null,
+                })
+                void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
+              } catch (err) {
+                setTemplateError(err instanceof Error ? err.message : String(err))
+              } finally {
+                setTemplateSaving(false)
+              }
+            }}
+          >
+            {t('types.saveTemplate', 'Enregistrer le modèle')}
+          </Button>
+          {templateError && <p className="text-xs text-red-600">{templateError}</p>}
+        </div>
+      </div>
     </div>
   )
 }

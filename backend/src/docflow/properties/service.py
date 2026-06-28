@@ -19,17 +19,23 @@ from docflow.schemas.properties import (
 # ── Properties defs ───────────────────────────────────────────────────────────
 
 _SELECT_DEF = """
-SELECT id, slug, label, type, default_value, required, created_at, updated_at
-FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required,
+       ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
+FROM properties_defs pd
+LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
+WHERE pd.functional_type_ref = $1 AND pd.slug = $2
 """
 _SELECT_ALL_DEFS = """
-SELECT id, slug, label, type, default_value, required, created_at, updated_at
-FROM properties_defs WHERE functional_type_ref = $1 ORDER BY created_at
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required,
+       ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
+FROM properties_defs pd
+LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
+WHERE pd.functional_type_ref = $1 ORDER BY pd.created_at
 """
 _INSERT_DEF = """
 INSERT INTO properties_defs
-    (slug, label, functional_type_ref, type, default_value, required)
-VALUES ($1, $2, $3, $4, $5, $6)
+    (slug, label, functional_type_ref, type, default_value, required, target_functional_type_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, slug, label, type, default_value, required, created_at, updated_at
 """
 _UPDATE_DEF = (
@@ -70,6 +76,7 @@ def _def_row(row: asyncpg.Record) -> PropertiesDefOut:
         type=row["type"],
         default_value=row["default_value"],
         required=row["required"],
+        target_functional_type_slug=row.get("target_functional_type_slug"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -131,7 +138,18 @@ async def create_def(
 ) -> PropertiesDefOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            wk = await require_workspace(conn, ws_slug)
+            type_id = await require_type(conn, wk, type_slug)
+
+            target_ft_id: uuid.UUID | None = None
+            if data.target_functional_type_slug is not None:
+                if data.type != "reference":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="target_functional_type_slug n'est valide que pour type='reference'",
+                    )
+                target_ft_id = await require_type(conn, wk, data.target_functional_type_slug)
+
             try:
                 row = await conn.fetchrow(
                     _INSERT_DEF,
@@ -141,6 +159,7 @@ async def create_def(
                     data.type,
                     data.default_value,
                     data.required,
+                    target_ft_id,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -148,7 +167,8 @@ async def create_def(
                     detail=f"propriété '{data.slug}' déjà définie sur ce type",
                 ) from exc
     assert row is not None
-    return _def_row(row)
+    # Recharger pour avoir target_functional_type_slug via le SELECT avec JOIN
+    return await get_def(pool, ws_slug, type_slug, data.slug)
 
 
 async def update_def(
@@ -289,7 +309,8 @@ async def delete_allowed_value(
 # ── Constraints ───────────────────────────────────────────────────────────────
 
 _TEXT_ONLY_KINDS = frozenset({"min_length", "max_length", "pattern"})
-_INT_ONLY_KINDS = frozenset({"min", "max"})
+# min/max acceptés pour int, float, date
+_NUMERIC_RANGE_TYPES = frozenset({"int", "float", "date"})
 
 
 async def list_constraints(
@@ -322,16 +343,20 @@ async def upsert_constraint(
         async with conn.transaction():
             type_id = await _resolve_type_id(conn, ws_slug, type_slug)
             prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
-            # I-6 : pattern/min_length/max_length réservés à text ; min/max à int
+            # I-6 : pattern/min_length/max_length réservés à text
+            #       min/max acceptés pour int, float, date uniquement
             if data.kind in _TEXT_ONLY_KINDS and prop_type != "text":
                 raise HTTPException(
                     status_code=422,
                     detail=f"contrainte '{data.kind}' réservée aux propriétés de type text",
                 )
-            if data.kind in _INT_ONLY_KINDS and prop_type != "int":
+            if data.kind in {"min", "max"} and prop_type not in _NUMERIC_RANGE_TYPES:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"contrainte '{data.kind}' réservée aux propriétés de type int",
+                    detail=(
+                        f"contrainte '{data.kind}' réservée aux propriétés "
+                        "de type int, float ou date"
+                    ),
                 )
             row = await conn.fetchrow(
                 """

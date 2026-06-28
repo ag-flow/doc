@@ -3,7 +3,7 @@ import { ApiError, docsApi, type PropertyValueOut, type ValueConflictDetail } fr
 
 export type FieldStatus = 'idle' | 'dirty' | 'saving' | 'conflict' | 'error'
 
-export type ValueType = 'text' | 'int' | 'restricted_list'
+export type ValueType = 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
 
 export interface FieldServerState {
   version: number

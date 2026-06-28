@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime
 import re
+import urllib.parse
 import uuid
 
 import asyncpg
@@ -14,6 +16,7 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.documents.template_apply import apply_content_template
 from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
@@ -205,8 +208,14 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
             ft_id: uuid.UUID | None = None
+            content_template: str | None = None
             if data.functional_type_slug:
                 ft_id = await _resolve_functional_type(conn, wk, data.functional_type_slug)
+                ct_row = await conn.fetchrow(
+                    "SELECT content_template FROM functional_type WHERE id = $1", ft_id
+                )
+                if ct_row:
+                    content_template = ct_row["content_template"]
             parent_exposed = False
             if data.parent_id:
                 await _validate_parent(conn, wk, data.parent_id)
@@ -216,6 +225,11 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                         data.parent_id,
                     )
                 )
+            # Appliquer le template si corps vide et modèle défini
+            initial_content = data.content
+            if not initial_content and content_template:
+                today = datetime.date.today().isoformat()
+                initial_content = apply_content_template(content_template, data.title, today)
             row = await conn.fetchrow(
                 """
                 INSERT INTO document
@@ -238,14 +252,14 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                 "VALUES ($1, 1, $2, $3)",
                 row["doc_technical_key"],
                 data.title,
-                data.content,
+                initial_content,
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
-        content=data.content,
+        content=initial_content,
         version=row["version"],
         parent_id=row["parent"],
         functional_type_slug=data.functional_type_slug,
@@ -453,8 +467,11 @@ async def _resolve_prop(
     return row["id"], row["type"], row["required"], row["label"]
 
 
+_SCALAR_TYPES = frozenset({"text", "int", "date", "bool", "url", "float"})
+
+
 def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: str) -> None:
-    if prop_type in ("text", "int"):
+    if prop_type in _SCALAR_TYPES:
         if data.value is None:
             raise HTTPException(
                 status_code=422,
@@ -478,6 +495,31 @@ def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: 
                 status_code=422,
                 detail=f"propriété '{prop_slug}' de type restricted_list : 'value' doit être null",
             )
+    elif prop_type == "reference":
+        if data.value is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"propriété '{prop_slug}' de type reference : 'value' (doc UUID) requis",
+            )
+        if data.allowed_value_slug is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"propriété '{prop_slug}' de type reference : "
+                    "'allowed_value_slug' doit être null"
+                ),
+            )
+        try:
+            import uuid as _uuid
+            _uuid.UUID(data.value)
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"propriété '{prop_slug}' de type reference : "
+                    f"'{data.value}' n'est pas un UUID valide"
+                ),
+            ) from exc
 
 
 async def _apply_constraints(
@@ -502,6 +544,30 @@ async def _apply_constraints(
                     error = msg or f"valeur > maximum ({cval})"
             except ValueError:
                 pass
+        elif kind == "min" and prop_type == "float":
+            try:
+                if float(value) < float(cval):
+                    error = msg or f"valeur < minimum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "max" and prop_type == "float":
+            try:
+                if float(value) > float(cval):
+                    error = msg or f"valeur > maximum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "min" and prop_type == "date":
+            try:
+                if datetime.date.fromisoformat(value) < datetime.date.fromisoformat(cval):
+                    error = msg or f"date antérieure au minimum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "max" and prop_type == "date":
+            try:
+                if datetime.date.fromisoformat(value) > datetime.date.fromisoformat(cval):
+                    error = msg or f"date postérieure au maximum ({cval})"
+            except ValueError:
+                pass
         elif kind == "min_length" and prop_type == "text":
             if len(value) < int(cval):
                 error = msg or f"longueur < minimum ({cval})"
@@ -522,6 +588,52 @@ async def _validate_int(value: str, prop_slug: str) -> None:
         raise HTTPException(
             status_code=422,
             detail=f"propriété '{prop_slug}' de type int : '{value}' n'est pas un entier",
+        ) from exc
+
+
+def _validate_date(value: str, prop_slug: str) -> None:
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type date : "
+                f"'{value}' n'est pas une date ISO (YYYY-MM-DD)"
+            ),
+        ) from exc
+
+
+def _validate_bool(value: str, prop_slug: str) -> None:
+    if value not in {"true", "false"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type bool : '{value}' invalide "
+                "— valeurs acceptées : 'true' ou 'false'"
+            ),
+        )
+
+
+def _validate_url(value: str, prop_slug: str) -> None:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type url : "
+                "URL invalide (scheme http/https requis, netloc requis)"
+            ),
+        )
+
+
+def _validate_float(value: str, prop_slug: str) -> None:
+    try:
+        float(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"propriété '{prop_slug}' de type float : '{value}' n'est pas un nombre décimal",
         ) from exc
 
 
@@ -588,6 +700,14 @@ async def set_property_value(
             allowed_value_ref: uuid.UUID | None = None
             if prop_type == "int" and data.value is not None:
                 await _validate_int(data.value, prop_slug)
+            if prop_type == "date" and data.value is not None:
+                _validate_date(data.value, prop_slug)
+            if prop_type == "bool" and data.value is not None:
+                _validate_bool(data.value, prop_slug)
+            if prop_type == "url" and data.value is not None:
+                _validate_url(data.value, prop_slug)
+            if prop_type == "float" and data.value is not None:
+                _validate_float(data.value, prop_slug)
             if prop_type == "restricted_list" and data.allowed_value_slug is not None:
                 allowed_value_ref = await conn.fetchval(
                     "SELECT id FROM properties_allowed_values "
@@ -603,6 +723,38 @@ async def set_property_value(
                             "ou n'appartient pas à cette définition (I-5)"
                         ),
                     )
+            if prop_type == "reference" and data.value is not None:
+                ref_doc_id = uuid.UUID(data.value)
+                # Vérifier que le doc cible existe dans ce workspace
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM document "
+                    "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+                    ref_doc_id,
+                    wk,
+                )
+                if not exists:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"document cible '{data.value}' introuvable dans ce workspace",
+                    )
+                # Vérifier le type cible (target_functional_type_ref) si défini
+                target_ft_id = await conn.fetchval(
+                    "SELECT target_functional_type_ref FROM properties_defs WHERE id = $1",
+                    prop_id,
+                )
+                if target_ft_id is not None:
+                    doc_ft_id = await conn.fetchval(
+                        "SELECT functional_type_ref FROM document WHERE doc_technical_key = $1",
+                        ref_doc_id,
+                    )
+                    if doc_ft_id != target_ft_id:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "le document cible n'est pas du type fonctionnel attendu "
+                                "(contrainte target_functional_type_ref)"
+                            ),
+                        )
             if data.value is not None:
                 await _apply_constraints(conn, prop_id, prop_type, data.value)
 
@@ -634,13 +786,18 @@ async def set_property_value(
                         status_code=409,
                         detail={"version": 0, "value": None, "allowed_value_slug": None},
                     ) from exc
+                target_doc_ref: uuid.UUID | None = (
+                    uuid.UUID(data.value) if prop_type == "reference" and data.value else None
+                )
                 await conn.execute(
                     "INSERT INTO properties_value_version "
-                    "(property_value_ref, version_number, value, allowed_value_ref) "
-                    "VALUES ($1, 1, $2, $3)",
+                    "(property_value_ref, version_number, "
+                    "value, allowed_value_ref, target_document_ref) "
+                    "VALUES ($1, 1, $2, $3, $4)",
                     pv_id,
                     data.value,
                     allowed_value_ref,
+                    target_doc_ref,
                 )
                 return_version = 1
             else:
@@ -663,14 +820,19 @@ async def set_property_value(
                         },
                     )
                 new_v = current_v + 1
+                target_doc_ref = (
+                    uuid.UUID(data.value) if prop_type == "reference" and data.value else None
+                )
                 await conn.execute(
                     "INSERT INTO properties_value_version "
-                    "(property_value_ref, version_number, value, allowed_value_ref) "
-                    "VALUES ($1, $2, $3, $4)",
+                    "(property_value_ref, version_number, "
+                    "value, allowed_value_ref, target_document_ref) "
+                    "VALUES ($1, $2, $3, $4, $5)",
                     pv_row["id"],
                     new_v,
                     data.value,
                     allowed_value_ref,
+                    target_doc_ref,
                 )
                 await conn.execute(
                     "UPDATE properties_values SET version = $1 WHERE id = $2",

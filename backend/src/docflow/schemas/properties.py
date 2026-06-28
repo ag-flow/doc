@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 
 from docflow.db.helpers import validate_slug
 
-PropType = Literal["text", "int", "restricted_list"]
+PropType = Literal["text", "int", "restricted_list", "date", "bool", "url", "float", "reference"]
 
 
 class PropertiesDefCreate(BaseModel):
@@ -19,6 +19,7 @@ class PropertiesDefCreate(BaseModel):
     type: PropType
     default_value: str | None = None
     required: bool = False
+    target_functional_type_slug: str | None = None  # uniquement pour type='reference'
 
     @field_validator("slug")
     @classmethod
@@ -41,6 +42,7 @@ class PropertiesDefOut(BaseModel):
     type: str
     default_value: str | None
     required: bool
+    target_functional_type_slug: str | None = None
     created_at: datetime
     updated_at: datetime
 

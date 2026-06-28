@@ -217,13 +217,38 @@ export function BlocsAdmin() {
 
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
 
+  const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') + '/api'
+
+  function handleExport() {
+    const url = `${BASE_URL}/workspaces/${wsSlug}/export?scope=workspace`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${wsSlug}.zip`
+    // Injecte le token en Authorization (fetch redirection non supportée)
+    // Alternative simple : ouvrir en nouvel onglet (le token est Bearer)
+    // Pour un téléchargement propre avec auth, on fetch puis crée un blob.
+    void fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('docflow_token') ?? ''}` } })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const blobUrl = URL.createObjectURL(blob)
+        a.href = blobUrl
+        a.click()
+        URL.revokeObjectURL(blobUrl)
+      })
+  }
+
   return (
     <div className="mx-auto max-w-3xl p-8" data-testid="blocs-admin">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-gray-900">{t('blocs.title')}</h1>
-        <Button onClick={() => setShowCreate(true)} data-testid="create-bloc-btn">
-          {t('blocs.create')}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={handleExport} data-testid="export-workspace-btn">
+            {t('blocs.export', 'Exporter (markdown)')}
+          </Button>
+          <Button onClick={() => setShowCreate(true)} data-testid="create-bloc-btn">
+            {t('blocs.create')}
+          </Button>
+        </div>
       </div>
 
       {apiError && (

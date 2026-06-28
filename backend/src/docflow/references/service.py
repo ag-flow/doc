@@ -30,6 +30,14 @@ class BrokenLinkDetail(BaseModel):
     target_label: str
 
 
+class BacklinkOut(BaseModel):
+    source_id: uuid.UUID
+    source_title: str
+    source_type: str | None
+    bloc: uuid.UUID | None
+    target_label: str
+
+
 # ── Rafraîchissement des références (appelé dans la transaction du save) ─────
 
 
@@ -120,6 +128,46 @@ async def broken_links_by_bloc(
         )
     return [
         BrokenLinkBloc(bloc=r["bloc"], docs_with_broken_links=r["docs_with_broken_links"])
+        for r in rows
+    ]
+
+
+async def get_backlinks(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    limit: int = 50,
+) -> list[BacklinkOut]:
+    """Références inverses : documents qui citent doc_id dans ce workspace."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        rows = await conn.fetch(
+            """
+            SELECT r.source_ref            AS source_id,
+                   src.title               AS source_title,
+                   ft.slug                 AS source_type,
+                   src.data_block_ref      AS bloc,
+                   r.target_label
+            FROM document_reference r
+            JOIN document src         ON src.doc_technical_key = r.source_ref
+            LEFT JOIN functional_type ft ON ft.id = src.functional_type_ref
+            WHERE r.target_ref = $1
+              AND r.workspace_technical_key = $2
+            ORDER BY src.title
+            LIMIT $3
+            """,
+            doc_id,
+            wk,
+            limit,
+        )
+    return [
+        BacklinkOut(
+            source_id=r["source_id"],
+            source_title=r["source_title"],
+            source_type=r["source_type"],
+            bloc=r["bloc"],
+            target_label=r["target_label"],
+        )
         for r in rows
     ]
 

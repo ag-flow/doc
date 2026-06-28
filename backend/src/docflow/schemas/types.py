@@ -26,6 +26,7 @@ class FunctionalTypeUpdate(BaseModel):
 
     label: str | None = None
     parent_slug: str | None = None
+    content_template: str | None = None
 
 
 class FunctionalTypeOut(BaseModel):
@@ -34,6 +35,7 @@ class FunctionalTypeOut(BaseModel):
     label: str
     parent_slug: str | None
     workspace_slug: str
+    content_template: str | None = None
     created_at: datetime
     updated_at: datetime
 
