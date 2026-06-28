@@ -155,7 +155,7 @@
     }
   },
   "webhooks": {
-    "title": "Webhooks",
+    "title": "Webhooks sortants",
     "create": "Nouveau webhook",
     "edit": "Modifier le webhook",
     "label": "Libellé",
