@@ -27,11 +27,14 @@ class PropDef(BaseModel):
 
     slug: str
     label: str
-    type: Literal["text", "int", "restricted_list"]
+    type: Literal["text", "int", "restricted_list", "date", "bool", "reference"]
     required: bool = False
     default: str | None = None
     constraints: list[ConstraintDef] = Field(default_factory=list)
     allowed_values: list[AllowedValueDef] = Field(default_factory=list)
+    # reference-type fields (spec MREL)
+    target_type: str | None = None
+    max_occurrences: int | None = None
 
 
 class TypeDef(BaseModel):
@@ -43,6 +46,7 @@ class TypeDef(BaseModel):
     inherit: str | None = None
     parent: str | None = None
     properties: list[PropDef] = Field(default_factory=list)
+    content_template: str | None = None  # spec MEXP
 
 
 class Template(BaseModel):
