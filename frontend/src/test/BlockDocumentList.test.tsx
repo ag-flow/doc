@@ -103,6 +103,7 @@ describe('BlockDocumentList', () => {
         label: 'Epic',
         parent_slug: null,
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [
@@ -122,6 +123,7 @@ describe('BlockDocumentList', () => {
         label: 'Feature',
         parent_slug: 'epic',
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [],
@@ -157,6 +159,7 @@ describe('BlockDocumentList', () => {
         label: 'Epic',
         parent_slug: null,
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [
@@ -185,8 +188,8 @@ describe('BlockDocumentList', () => {
     ])
     // types-rich doit exposer feature comme enfant d'epic pour que le bouton apparaisse
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([
-      { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
-      { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
+      { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', content_template: null, created_at: '', updated_at: '', properties: [] },
+      { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', content_template: null, created_at: '', updated_at: '', properties: [] },
     ])
     vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([
       { slug: 'feature', label: 'Feature' },
@@ -215,6 +218,7 @@ describe('BlockDocumentList', () => {
         label: 'ATDD',
         parent_slug: 'feature',
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [

@@ -173,7 +173,7 @@ export interface DataBlockOut {
 export interface PropertyValueOut {
   prop_slug: string
   prop_label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   version: number | null
   value: string | null
   allowed_value_slug: string | null
