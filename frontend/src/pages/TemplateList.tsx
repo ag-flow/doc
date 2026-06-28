@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api, galleryApi, templatesApi } from '../lib/api'
@@ -233,8 +233,7 @@ function GalleryTemplates({
     }
   }
 
-  // Charger automatiquement quand la source change
-  useState(() => { void load() })
+  useEffect(() => { void load() }, [sourceUrl]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function pullTemplate(tpl: RemoteTemplateInfo) {
     setPulling(tpl.template)
