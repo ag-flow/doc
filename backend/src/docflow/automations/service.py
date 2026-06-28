@@ -56,9 +56,7 @@ def _row_to_out(row: asyncpg.Record, headers: list[AutomationHeaderOut]) -> Auto
 async def _upsert_headers(
     conn: asyncpg.Connection, automation_id: uuid.UUID, headers: list[Any]
 ) -> None:
-    await conn.execute(
-        "DELETE FROM automation_header WHERE automation_ref = $1", automation_id
-    )
+    await conn.execute("DELETE FROM automation_header WHERE automation_ref = $1", automation_id)
     for h in headers:
         await conn.execute(
             "INSERT INTO automation_header "
@@ -154,7 +152,8 @@ async def update_automation(
         wk = await require_workspace(conn, ws_slug)
         exists = await conn.fetchval(
             "SELECT id FROM automation WHERE id=$1 AND workspace_technical_key=$2",
-            automation_id, wk,
+            automation_id,
+            wk,
         )
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
@@ -165,8 +164,16 @@ async def update_automation(
             sets: list[str] = []
             values: list[Any] = [automation_id]
             scalar_map: set[str] = {
-                "label", "active", "on_create", "on_update", "delay_minutes",
-                "contract_ref", "operation_id", "url", "http_method", "body_template",
+                "label",
+                "active",
+                "on_create",
+                "on_update",
+                "delay_minutes",
+                "contract_ref",
+                "operation_id",
+                "url",
+                "http_method",
+                "body_template",
             }
             for k, v in raw.items():
                 if k in scalar_map:
@@ -193,14 +200,13 @@ async def update_automation(
     return _row_to_out(row, headers)
 
 
-async def delete_automation(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
-) -> None:
+async def delete_automation(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         result = await conn.execute(
             "DELETE FROM automation WHERE id=$1 AND workspace_technical_key=$2",
-            automation_id, wk,
+            automation_id,
+            wk,
         )
     if result == "DELETE 0":
         raise HTTPException(404, f"Automate {automation_id} introuvable.")
@@ -216,7 +222,8 @@ async def list_runs(
         wk = await require_workspace(conn, ws_slug)
         exists = await conn.fetchval(
             "SELECT id FROM automation WHERE id=$1 AND workspace_technical_key=$2",
-            automation_id, wk,
+            automation_id,
+            wk,
         )
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
@@ -225,7 +232,8 @@ async def list_runs(
             "change_log_seq, status, executed_at "
             "FROM automation_run WHERE automation_ref=$1 "
             "ORDER BY executed_at DESC LIMIT $2",
-            automation_id, limit,
+            automation_id,
+            limit,
         )
     return [AutomationRunOut(**dict(r)) for r in rows]
 
@@ -246,7 +254,8 @@ async def replay_run(
             "SELECT id, workspace_technical_key, on_create, on_update, delay_minutes, "
             "url, http_method, body_template FROM automation "
             "WHERE id=$1 AND workspace_technical_key=$2",
-            automation_id, wk,
+            automation_id,
+            wk,
         )
         if auto_row is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
@@ -254,14 +263,14 @@ async def replay_run(
         run_row = await conn.fetchrow(
             "SELECT id, document_ref, document_version, change_log_seq, status "
             "FROM automation_run WHERE id=$1 AND automation_ref=$2",
-            run_id, automation_id,
+            run_id,
+            automation_id,
         )
         if run_row is None:
             raise HTTPException(404, f"Run {run_id} introuvable.")
 
         doc = await conn.fetchrow(
-            "SELECT doc_technical_key, version, title "
-            "FROM document WHERE doc_technical_key=$1",
+            "SELECT doc_technical_key, version, title FROM document WHERE doc_technical_key=$1",
             run_row["document_ref"],
         )
         if doc is None:
@@ -274,7 +283,9 @@ async def replay_run(
             "WHERE id=$3 "
             "RETURNING id, automation_ref, document_ref, document_version, "
             "change_log_seq, status, executed_at",
-            status, doc["version"], run_id,
+            status,
+            doc["version"],
+            run_id,
         )
     assert updated is not None
     return AutomationRunOut(**dict(updated))

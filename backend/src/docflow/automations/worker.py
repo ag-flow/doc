@@ -79,8 +79,7 @@ async def execute(
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
-        "SELECT name, value, secret_ref, enabled "
-        "FROM automation_header WHERE automation_ref = $1",
+        "SELECT name, value, secret_ref, enabled FROM automation_header WHERE automation_ref = $1",
         automation["id"],
     )
     for h in header_rows:
@@ -145,9 +144,7 @@ async def execute(
 # ── Tick par automate ─────────────────────────────────────────────────────────
 
 
-async def run_tick(
-    pool: asyncpg.Pool, automation: asyncpg.Record, settings: object
-) -> None:
+async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
     natures: list[str] = []
     if automation["on_create"]:
         natures.append("C")

@@ -53,7 +53,5 @@ async def refresh_contract(
 
 
 @router.delete("/admin/contracts/{contract_id}", status_code=204)
-async def delete_contract(
-    contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth
-) -> None:
+async def delete_contract(contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth) -> None:
     await service.delete_contract(request.app.state.pool, contract_id)

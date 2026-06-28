@@ -50,9 +50,7 @@ async def update_automation(
     request: Request,
     _: AuthUser = _Auth,
 ) -> AutomationOut:
-    return await service.update_automation(
-        request.app.state.pool, ws_slug, automation_id, body
-    )
+    return await service.update_automation(request.app.state.pool, ws_slug, automation_id, body)
 
 
 @router.delete(_AUTO, status_code=204)
@@ -70,9 +68,7 @@ async def list_runs(
     limit: int = Query(default=50, ge=1, le=200),
     _: AuthUser = _Auth,
 ) -> list[AutomationRunOut]:
-    return await service.list_runs(
-        request.app.state.pool, ws_slug, automation_id, limit
-    )
+    return await service.list_runs(request.app.state.pool, ws_slug, automation_id, limit)
 
 
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)
