@@ -143,6 +143,20 @@ export interface TemplateInfo {
   type_slugs: string[]
 }
 
+export interface RemoteTemplateInfo {
+  template: string
+  label: string
+  version: number
+  type_slugs: string[]
+  concrete_types: number
+  installed: boolean
+  update_available: boolean
+}
+
+export interface GalleryConfig {
+  default_url: string | null
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string
@@ -308,6 +322,14 @@ export const templatesApi = {
   saveYaml: (slug: string, content: string) =>
     api.put<TemplateInfo>(`/templates/${slug}/yaml`, { yaml_content: content }),
   delete: (slug: string) => api.delete(`/templates/${slug}`),
+}
+
+export const galleryApi = {
+  getConfig: () => api.get<GalleryConfig>('/templates/gallery/config'),
+  list: (source_url: string) =>
+    api.get<RemoteTemplateInfo[]>(`/templates/gallery?source_url=${encodeURIComponent(source_url)}`),
+  pull: (source_url: string, template_slug: string) =>
+    api.post<TemplateInfo>('/templates/gallery/pull', { source_url, template_slug }),
 }
 
 // ── Types réactions / commentaires ───────────────────────────────────────────

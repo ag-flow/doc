@@ -1,15 +1,17 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { api, templatesApi } from '../lib/api'
-import type { TemplateInfo } from '../lib/api'
+import { api, galleryApi, templatesApi } from '../lib/api'
+import type { GalleryConfig, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
 import { YamlEditor, type YamlEditorHandle } from '../components/YamlEditor'
 
-export default function TemplateList() {
+// ── Onglet Bibliothèque locale ───────────────────────────────────────────────
+
+function LocalLibrary() {
   const { t } = useTranslation()
   const qc = useQueryClient()
-
   const editorRef = useRef<YamlEditorHandle>(null)
 
   const [editTarget, setEditTarget] = useState<TemplateInfo | null>(null)
@@ -86,7 +88,7 @@ export default function TemplateList() {
   }
   if (!data?.length) {
     return (
-      <div className="p-6 text-center text-gray-400" data-testid="empty">
+      <div className="py-12 text-center text-gray-400" data-testid="empty">
         <p className="text-lg font-medium mb-2">{t('tpl.emptyTitle')}</p>
         <p className="text-sm">{t('tpl.emptyHint')}</p>
       </div>
@@ -94,9 +96,8 @@ export default function TemplateList() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto" data-testid="template-list">
-      <h1 className="text-2xl font-bold mb-6">{t('tpl.title')}</h1>
-      <div className="grid gap-4">
+    <>
+      <div className="grid gap-4" data-testid="template-list">
         {data.map(tpl => (
           <div
             key={tpl.template}
@@ -195,6 +196,236 @@ export default function TemplateList() {
           </div>
         </div>
       )}
+    </>
+  )
+}
+
+// ── Onglet Galerie en ligne ──────────────────────────────────────────────────
+
+function GalleryTab() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [items, setItems] = useState<RemoteTemplateInfo[]>([])
+  const [pulling, setPulling] = useState<string | null>(null)
+  const [pullMsg, setPullMsg] = useState<{ slug: string; msg: string; ok: boolean } | null>(null)
+
+  // Pré-remplir l'URL depuis le config serveur
+  const { data: cfg } = useQuery<GalleryConfig>({
+    queryKey: ['gallery-config'],
+    queryFn: () => galleryApi.getConfig(),
+  })
+  useEffect(() => {
+    if (cfg?.default_url && !sourceUrl) {
+      setSourceUrl(cfg.default_url)
+    }
+  }, [cfg, sourceUrl])
+
+  async function loadGallery() {
+    if (!sourceUrl.trim()) return
+    setLoading(true)
+    setLoadError(null)
+    setPullMsg(null)
+    try {
+      const data = await galleryApi.list(sourceUrl.trim())
+      setItems(data)
+      setLoadedUrl(sourceUrl.trim())
+    } catch (e) {
+      setLoadError((e as Error).message)
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function pullTemplate(tpl: RemoteTemplateInfo) {
+    if (!loadedUrl) return
+    setPulling(tpl.template)
+    setPullMsg(null)
+    try {
+      const result = await galleryApi.pull(loadedUrl, tpl.template)
+      setPullMsg({
+        slug: tpl.template,
+        msg: t('tpl.gallery.pullSuccess', { template: result.template, version: result.version }),
+        ok: true,
+      })
+      // Rafraîchir la lib locale et la galerie
+      void qc.invalidateQueries({ queryKey: ['templates'] })
+      // Mettre à jour l'état local de la carte (installed = true)
+      setItems(prev =>
+        prev.map(item =>
+          item.template === tpl.template
+            ? { ...item, installed: true, update_available: false }
+            : item
+        )
+      )
+    } catch (e) {
+      setPullMsg({ slug: tpl.template, msg: (e as Error).message, ok: false })
+    } finally {
+      setPulling(null)
+    }
+  }
+
+  return (
+    <div>
+      {/* Barre de recherche URL */}
+      <div className="flex gap-2 mb-6">
+        <Input
+          type="url"
+          placeholder="https://templates.example.com"
+          value={sourceUrl}
+          onChange={e => setSourceUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') void loadGallery() }}
+          className="flex-1"
+          data-testid="gallery-url-input"
+        />
+        <Button
+          onClick={() => void loadGallery()}
+          disabled={loading || !sourceUrl.trim()}
+          data-testid="gallery-load-btn"
+        >
+          {loading ? t('common.loading') : t('tpl.gallery.load')}
+        </Button>
+      </div>
+
+      {loadError && (
+        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          {loadError}
+        </div>
+      )}
+
+      {loading && (
+        <p className="text-sm text-gray-400">{t('tpl.gallery.loading')}</p>
+      )}
+
+      {!loading && loadedUrl && items.length === 0 && (
+        <p className="text-sm text-gray-400">{t('tpl.gallery.empty')}</p>
+      )}
+
+      {/* Message résultat pull */}
+      {pullMsg && (
+        <div
+          className={`mb-4 rounded border px-4 py-2 text-sm ${
+            pullMsg.ok
+              ? 'border-green-200 bg-green-50 text-green-800'
+              : 'border-red-200 bg-red-50 text-red-700'
+          }`}
+        >
+          {pullMsg.msg}
+        </div>
+      )}
+
+      {/* Cartes galerie */}
+      {items.length > 0 && (
+        <div className="grid gap-4">
+          {items.map(tpl => {
+            const isPulling = pulling === tpl.template
+            const canInstall = !tpl.installed || tpl.update_available
+
+            return (
+              <div
+                key={tpl.template}
+                className="border rounded-lg p-4 bg-white shadow-sm"
+                data-testid={`gallery-card-${tpl.template}`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
+                      <span className="font-mono text-sm font-semibold text-indigo-700">
+                        {tpl.template}
+                      </span>
+                      <span className="font-mono text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded">
+                        v{tpl.version}
+                      </span>
+                      <span className="text-gray-700 font-medium">{tpl.label}</span>
+                      {tpl.installed && !tpl.update_available && (
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">
+                          ✓ {t('tpl.gallery.upToDate')}
+                        </span>
+                      )}
+                      {tpl.update_available && (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
+                          ↑ {t('tpl.gallery.update')} disponible
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {tpl.type_slugs.map(slug => (
+                        <span
+                          key={slug}
+                          className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono"
+                        >
+                          {slug}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="shrink-0">
+                    {canInstall ? (
+                      <Button
+                        size="sm"
+                        onClick={() => void pullTemplate(tpl)}
+                        disabled={isPulling || pulling !== null}
+                        data-testid={`gallery-install-${tpl.template}`}
+                      >
+                        {isPulling
+                          ? t('tpl.gallery.pulling')
+                          : tpl.update_available
+                          ? t('tpl.gallery.update')
+                          : t('tpl.gallery.install')}
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-gray-400 font-medium px-2">
+                        {t('tpl.gallery.installed')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Page principale avec onglets ─────────────────────────────────────────────
+
+type Tab = 'local' | 'gallery'
+
+export default function TemplateList() {
+  const { t } = useTranslation()
+  const [activeTab, setActiveTab] = useState<Tab>('local')
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">{t('tpl.title')}</h1>
+
+      {/* Onglets */}
+      <div className="flex gap-0 border-b border-gray-200 mb-6">
+        {(['local', 'gallery'] as const).map(tab => (
+          <button
+            key={tab}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab
+                ? 'border-indigo-600 text-indigo-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+            onClick={() => setActiveTab(tab)}
+            data-testid={`tab-${tab}`}
+          >
+            {tab === 'local' ? t('tpl.tabLocal') : t('tpl.tabGallery')}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'local' ? <LocalLibrary /> : <GalleryTab />}
     </div>
   )
 }

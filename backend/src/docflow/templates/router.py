@@ -4,11 +4,12 @@ import pathlib
 
 import structlog
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from docflow.auth.deps import require_admin
+from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
 from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import Template
@@ -48,6 +49,27 @@ class ImportResultOut(BaseModel):
     no_op: bool
     adds: int
     soft_updates: int
+
+
+class RemoteTemplateInfo(BaseModel):
+    template: str
+    label: str
+    version: int
+    type_slugs: list[str]
+    concrete_types: int
+    installed: bool
+    update_available: bool
+
+
+class GalleryConfigOut(BaseModel):
+    default_url: str | None
+
+
+class GalleryPullIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    source_url: str
+    template_slug: str
 
 
 def load_templates(templates_dir: pathlib.Path) -> list[TemplateInfo]:
@@ -92,6 +114,78 @@ def _find_template_file(template_slug: str) -> pathlib.Path:
 @router.get("/templates", response_model=list[TemplateInfo])
 async def list_templates() -> list[TemplateInfo]:
     return load_templates(_TEMPLATES_DIR)
+
+
+# ── Galerie distante ────────────────────────────────────────────────────────
+# Ces routes sont déclarées AVANT les routes paramétriques ({template_slug})
+# pour éviter toute capture ambiguë.
+
+
+@router.get("/templates/gallery/config", response_model=GalleryConfigOut)
+async def gallery_config(
+    request: Request,
+    _: None = _Admin,
+) -> GalleryConfigOut:
+    """Retourne l'URL de galerie configurée dans l'env (GALLERY_URL), ou null."""
+    return GalleryConfigOut(default_url=request.app.state.settings.gallery_url)
+
+
+@router.get("/templates/gallery", response_model=list[RemoteTemplateInfo])
+async def list_gallery(
+    source_url: str = Query(..., description="URL de base de la galerie distante"),
+    _: None = _Admin,
+) -> list[RemoteTemplateInfo]:
+    """Lit toc.txt + les YAMLs distants et les compare aux templates locaux."""
+    try:
+        remote = await fetch_gallery(source_url)
+    except GalleryError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    local: dict[str, TemplateInfo] = {t.template: t for t in load_templates(_TEMPLATES_DIR)}
+
+    result: list[RemoteTemplateInfo] = []
+    r: RemoteTemplateData
+    for r in remote:
+        loc = local.get(r["template"])
+        result.append(
+            RemoteTemplateInfo(
+                template=r["template"],
+                label=r["label"],
+                version=r["version"],
+                type_slugs=r["type_slugs"],
+                concrete_types=r["concrete_types"],
+                installed=loc is not None,
+                update_available=loc is not None and loc.version < r["version"],
+            )
+        )
+    return result
+
+
+@router.post("/templates/gallery/pull", response_model=TemplateInfo)
+async def pull_from_gallery(
+    body: GalleryPullIn,
+    _: None = _Admin,
+) -> TemplateInfo:
+    """Télécharge un template depuis la galerie et le sauvegarde localement."""
+    try:
+        tpl = await pull_template(body.source_url, body.template_slug, _TEMPLATES_DIR)
+    except GalleryError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Template invalide : {e}") from e
+
+    resolved = resolve(tpl)
+    return TemplateInfo(
+        template=tpl.template,
+        label=tpl.label,
+        version=tpl.version,
+        path=f"{tpl.template}.yaml",
+        concrete_types=len(resolved),
+        type_slugs=[r.slug for r in resolved],
+    )
+
+
+# ── Templates locaux (CRUD) ─────────────────────────────────────────────────
 
 
 @router.get("/templates/{template_slug}/yaml", response_class=PlainTextResponse)

@@ -18,3 +18,5 @@ class Settings(BaseSettings):
     # Requise pour créer des webhooks avec headers ; absence = headers interdits.
     encryption_key: Secret | None = None
     automation_tick_seconds: int = 60
+    # URL de base d'une galerie de templates distante (toc.txt + *.yaml)
+    gallery_url: str | None = None
