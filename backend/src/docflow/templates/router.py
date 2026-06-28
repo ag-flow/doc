@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import pathlib
+import uuid as _uuid
 
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 
 from docflow.auth.deps import require_admin
 from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
@@ -72,6 +73,20 @@ class GalleryPullIn(BaseModel):
     template_slug: str
 
 
+class GallerySourceIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    label: str
+    url: HttpUrl
+
+
+class GallerySourceOut(BaseModel):
+    id: _uuid.UUID | None  # None = source "builtin" issue de l'env
+    label: str
+    url: str
+    builtin: bool = False
+
+
 def load_templates(templates_dir: pathlib.Path) -> list[TemplateInfo]:
     """Scanne templates_dir/*.yaml, ignore les fichiers illisibles/invalides."""
     result: list[TemplateInfo] = []
@@ -119,6 +134,69 @@ async def list_templates() -> list[TemplateInfo]:
 # ── Galerie distante ────────────────────────────────────────────────────────
 # Ces routes sont déclarées AVANT les routes paramétriques ({template_slug})
 # pour éviter toute capture ambiguë.
+
+# -- Sources enregistrées --
+
+
+@router.get("/templates/gallery/sources", response_model=list[GallerySourceOut])
+async def list_gallery_sources(
+    request: Request,
+    _: None = _Admin,
+) -> list[GallerySourceOut]:
+    """Liste les sources de galerie enregistrées + la source env si non dupliquée."""
+    pool = request.app.state.pool
+    rows = await pool.fetch(
+        "SELECT id, label, url FROM gallery_source ORDER BY created_at"
+    )
+    result: list[GallerySourceOut] = [
+        GallerySourceOut(id=row["id"], label=row["label"], url=row["url"])
+        for row in rows
+    ]
+    default_url = request.app.state.settings.gallery_url
+    if default_url and not any(s.url == default_url for s in result):
+        result.insert(0, GallerySourceOut(id=None, label="(défaut)", url=default_url, builtin=True))
+    return result
+
+
+@router.post("/templates/gallery/sources", response_model=GallerySourceOut, status_code=201)
+async def add_gallery_source(
+    body: GallerySourceIn,
+    request: Request,
+    _: None = _Admin,
+) -> GallerySourceOut:
+    pool = request.app.state.pool
+    url_str = str(body.url)
+    try:
+        row = await pool.fetchrow(
+            "INSERT INTO gallery_source (label, url) VALUES ($1, $2)"
+            " ON CONFLICT (url) DO UPDATE SET label = EXCLUDED.label"
+            " RETURNING id, label, url",
+            body.label,
+            url_str,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    assert row is not None
+    log.info("gallery_source_added", url=url_str)
+    return GallerySourceOut(id=row["id"], label=row["label"], url=row["url"])
+
+
+@router.delete("/templates/gallery/sources/{source_id}", status_code=204)
+async def delete_gallery_source(
+    source_id: _uuid.UUID,
+    request: Request,
+    _: None = _Admin,
+) -> None:
+    pool = request.app.state.pool
+    deleted = await pool.fetchval(
+        "DELETE FROM gallery_source WHERE id = $1 RETURNING id", source_id
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="source introuvable")
+    log.info("gallery_source_deleted", id=str(source_id))
+
+
+# -- Config & fetch --
 
 
 @router.get("/templates/gallery/config", response_model=GalleryConfigOut)

@@ -43,10 +43,18 @@
     "importNoOp": "Déjà à jour — aucune modification.",
     "importSuccess": "{{adds}} type(s) ajouté(s), {{updates}} mise(s) à jour.",
     "gallery": {
-      "sourceUrl": "URL de la galerie",
+      "sources": "Sources",
+      "addSource": "Ajouter une source",
+      "sourceLabel": "Libellé",
+      "sourceLabelPlaceholder": "Ma galerie",
+      "sourceUrl": "URL",
+      "sourceUrlPlaceholder": "https://templates.example.com",
       "sourceUrlHint": "URL de base contenant toc.txt et les fichiers *.yaml",
-      "load": "Charger",
-      "loading": "Chargement de la galerie…",
+      "add": "Ajouter",
+      "noSources": "Aucune source enregistrée.",
+      "selectSource": "Sélectionnez une source pour charger ses templates.",
+      "refresh": "Rafraîchir",
+      "loading": "Chargement…",
       "empty": "Aucun template disponible dans cette galerie.",
       "install": "Installer",
       "update": "Mettre à jour",
@@ -54,8 +62,8 @@
       "upToDate": "À jour",
       "pulling": "Installation…",
       "pullSuccess": "Template « {{template}} » installé (v{{version}}).",
-      "pullError": "Erreur lors de l'installation.",
-      "errorLoad": "Impossible de charger la galerie."
+      "deleteSourceConfirm": "Supprimer cette source ?",
+      "builtin": "défaut env"
     }
   },
   "ws": {

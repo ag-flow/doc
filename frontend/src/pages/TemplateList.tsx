@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api, galleryApi, templatesApi } from '../lib/api'
-import type { GalleryConfig, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
+import type { GallerySourceOut, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { YamlEditor, type YamlEditorHandle } from '../components/YamlEditor'
@@ -202,38 +202,29 @@ function LocalLibrary() {
 
 // ── Onglet Galerie en ligne ──────────────────────────────────────────────────
 
-function GalleryTab() {
+function GalleryTemplates({
+  sourceUrl,
+  onInstalled,
+}: {
+  sourceUrl: string
+  onInstalled: () => void
+}) {
   const { t } = useTranslation()
   const qc = useQueryClient()
 
-  const [sourceUrl, setSourceUrl] = useState('')
-  const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
+  const [items, setItems] = useState<RemoteTemplateInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [items, setItems] = useState<RemoteTemplateInfo[]>([])
   const [pulling, setPulling] = useState<string | null>(null)
-  const [pullMsg, setPullMsg] = useState<{ slug: string; msg: string; ok: boolean } | null>(null)
+  const [pullMsg, setPullMsg] = useState<{ msg: string; ok: boolean } | null>(null)
 
-  // Pré-remplir l'URL depuis le config serveur
-  const { data: cfg } = useQuery<GalleryConfig>({
-    queryKey: ['gallery-config'],
-    queryFn: () => galleryApi.getConfig(),
-  })
-  useEffect(() => {
-    if (cfg?.default_url && !sourceUrl) {
-      setSourceUrl(cfg.default_url)
-    }
-  }, [cfg, sourceUrl])
-
-  async function loadGallery() {
-    if (!sourceUrl.trim()) return
+  async function load() {
     setLoading(true)
     setLoadError(null)
     setPullMsg(null)
     try {
-      const data = await galleryApi.list(sourceUrl.trim())
+      const data = await galleryApi.list(sourceUrl)
       setItems(data)
-      setLoadedUrl(sourceUrl.trim())
     } catch (e) {
       setLoadError((e as Error).message)
       setItems([])
@@ -242,20 +233,19 @@ function GalleryTab() {
     }
   }
 
+  // Charger automatiquement quand la source change
+  useState(() => { void load() })
+
   async function pullTemplate(tpl: RemoteTemplateInfo) {
-    if (!loadedUrl) return
     setPulling(tpl.template)
     setPullMsg(null)
     try {
-      const result = await galleryApi.pull(loadedUrl, tpl.template)
+      const result = await galleryApi.pull(sourceUrl, tpl.template)
       setPullMsg({
-        slug: tpl.template,
         msg: t('tpl.gallery.pullSuccess', { template: result.template, version: result.version }),
         ok: true,
       })
-      // Rafraîchir la lib locale et la galerie
       void qc.invalidateQueries({ queryKey: ['templates'] })
-      // Mettre à jour l'état local de la carte (installed = true)
       setItems(prev =>
         prev.map(item =>
           item.template === tpl.template
@@ -263,8 +253,9 @@ function GalleryTab() {
             : item
         )
       )
+      onInstalled()
     } catch (e) {
-      setPullMsg({ slug: tpl.template, msg: (e as Error).message, ok: false })
+      setPullMsg({ msg: (e as Error).message, ok: false })
     } finally {
       setPulling(null)
     }
@@ -272,23 +263,10 @@ function GalleryTab() {
 
   return (
     <div>
-      {/* Barre de recherche URL */}
-      <div className="flex gap-2 mb-6">
-        <Input
-          type="url"
-          placeholder="https://templates.example.com"
-          value={sourceUrl}
-          onChange={e => setSourceUrl(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void loadGallery() }}
-          className="flex-1"
-          data-testid="gallery-url-input"
-        />
-        <Button
-          onClick={() => void loadGallery()}
-          disabled={loading || !sourceUrl.trim()}
-          data-testid="gallery-load-btn"
-        >
-          {loading ? t('common.loading') : t('tpl.gallery.load')}
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-xs text-gray-400 font-mono truncate max-w-xs">{sourceUrl}</span>
+        <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading} data-testid="gallery-refresh-btn">
+          {loading ? t('tpl.gallery.loading') : t('tpl.gallery.refresh')}
         </Button>
       </div>
 
@@ -298,99 +276,196 @@ function GalleryTab() {
         </div>
       )}
 
-      {loading && (
-        <p className="text-sm text-gray-400">{t('tpl.gallery.loading')}</p>
-      )}
-
-      {!loading && loadedUrl && items.length === 0 && (
-        <p className="text-sm text-gray-400">{t('tpl.gallery.empty')}</p>
-      )}
-
-      {/* Message résultat pull */}
       {pullMsg && (
-        <div
-          className={`mb-4 rounded border px-4 py-2 text-sm ${
-            pullMsg.ok
-              ? 'border-green-200 bg-green-50 text-green-800'
-              : 'border-red-200 bg-red-50 text-red-700'
-          }`}
-        >
+        <div className={`mb-4 rounded border px-4 py-2 text-sm ${pullMsg.ok ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
           {pullMsg.msg}
         </div>
       )}
 
-      {/* Cartes galerie */}
-      {items.length > 0 && (
-        <div className="grid gap-4">
-          {items.map(tpl => {
-            const isPulling = pulling === tpl.template
-            const canInstall = !tpl.installed || tpl.update_available
+      {!loading && items.length === 0 && !loadError && (
+        <p className="text-sm text-gray-400">{t('tpl.gallery.empty')}</p>
+      )}
 
-            return (
-              <div
-                key={tpl.template}
-                className="border rounded-lg p-4 bg-white shadow-sm"
-                data-testid={`gallery-card-${tpl.template}`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-2 flex-wrap">
-                      <span className="font-mono text-sm font-semibold text-indigo-700">
-                        {tpl.template}
-                      </span>
-                      <span className="font-mono text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded">
-                        v{tpl.version}
-                      </span>
-                      <span className="text-gray-700 font-medium">{tpl.label}</span>
-                      {tpl.installed && !tpl.update_available && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">
-                          ✓ {t('tpl.gallery.upToDate')}
-                        </span>
-                      )}
-                      {tpl.update_available && (
-                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
-                          ↑ {t('tpl.gallery.update')} disponible
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {tpl.type_slugs.map(slug => (
-                        <span
-                          key={slug}
-                          className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono"
-                        >
-                          {slug}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="shrink-0">
-                    {canInstall ? (
-                      <Button
-                        size="sm"
-                        onClick={() => void pullTemplate(tpl)}
-                        disabled={isPulling || pulling !== null}
-                        data-testid={`gallery-install-${tpl.template}`}
-                      >
-                        {isPulling
-                          ? t('tpl.gallery.pulling')
-                          : tpl.update_available
-                          ? t('tpl.gallery.update')
-                          : t('tpl.gallery.install')}
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-gray-400 font-medium px-2">
-                        {t('tpl.gallery.installed')}
-                      </span>
+      <div className="grid gap-3">
+        {items.map(tpl => {
+          const isPulling = pulling === tpl.template
+          const canInstall = !tpl.installed || tpl.update_available
+          return (
+            <div key={tpl.template} className="border rounded-lg p-4 bg-white shadow-sm" data-testid={`gallery-card-${tpl.template}`}>
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-mono text-sm font-semibold text-indigo-700">{tpl.template}</span>
+                    <span className="font-mono text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded">v{tpl.version}</span>
+                    <span className="text-gray-700 font-medium">{tpl.label}</span>
+                    {tpl.installed && !tpl.update_available && (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">✓ {t('tpl.gallery.upToDate')}</span>
+                    )}
+                    {tpl.update_available && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">↑ màj disponible</span>
                     )}
                   </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tpl.type_slugs.map(slug => (
+                      <span key={slug} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">{slug}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  {canInstall ? (
+                    <Button size="sm" onClick={() => void pullTemplate(tpl)} disabled={isPulling || pulling !== null} data-testid={`gallery-install-${tpl.template}`}>
+                      {isPulling ? t('tpl.gallery.pulling') : tpl.update_available ? t('tpl.gallery.update') : t('tpl.gallery.install')}
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-gray-400 font-medium px-2">{t('tpl.gallery.installed')}</span>
+                  )}
                 </div>
               </div>
-            )
-          })}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function GalleryTab() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  const [activeSource, setActiveSource] = useState<GallerySourceOut | null>(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newLabel, setNewLabel] = useState('')
+  const [newUrl, setNewUrl] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const { data: sources = [], refetch: refetchSources } = useQuery<GallerySourceOut[]>({
+    queryKey: ['gallery-sources'],
+    queryFn: () => galleryApi.listSources(),
+  })
+
+  async function addSource() {
+    if (!newLabel.trim() || !newUrl.trim()) return
+    setAdding(true)
+    setAddError(null)
+    try {
+      const created = await galleryApi.addSource(newLabel.trim(), newUrl.trim())
+      await refetchSources()
+      setActiveSource(created)
+      setShowAddForm(false)
+      setNewLabel('')
+      setNewUrl('')
+    } catch (e) {
+      setAddError((e as Error).message)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function deleteSource(src: GallerySourceOut) {
+    if (!src.id) return
+    setDeletingId(src.id)
+    try {
+      await galleryApi.deleteSource(src.id)
+      if (activeSource?.id === src.id) setActiveSource(null)
+      await refetchSources()
+      void qc.invalidateQueries({ queryKey: ['gallery-sources'] })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  return (
+    <div className="flex gap-6">
+      {/* ── Panneau sources ── */}
+      <div className="w-56 shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('tpl.gallery.sources')}</span>
+          <button
+            className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
+            onClick={() => { setShowAddForm(v => !v); setAddError(null) }}
+            data-testid="gallery-add-source-btn"
+          >
+            {showAddForm ? '✕' : '+ ' + t('tpl.gallery.addSource')}
+          </button>
         </div>
-      )}
+
+        {/* Formulaire ajout */}
+        {showAddForm && (
+          <div className="mb-3 rounded border border-indigo-100 bg-indigo-50 p-3 space-y-2">
+            <Input
+              placeholder={t('tpl.gallery.sourceLabelPlaceholder')}
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              className="text-sm h-8"
+              data-testid="gallery-new-label"
+            />
+            <Input
+              placeholder={t('tpl.gallery.sourceUrlPlaceholder')}
+              value={newUrl}
+              onChange={e => setNewUrl(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void addSource() }}
+              className="text-sm h-8"
+              data-testid="gallery-new-url"
+            />
+            {addError && <p className="text-xs text-red-600">{addError}</p>}
+            <Button size="sm" className="w-full" onClick={() => void addSource()} disabled={adding || !newLabel.trim() || !newUrl.trim()} data-testid="gallery-add-confirm">
+              {adding ? t('common.loading') : t('tpl.gallery.add')}
+            </Button>
+          </div>
+        )}
+
+        {/* Liste des sources */}
+        {sources.length === 0 && !showAddForm && (
+          <p className="text-xs text-gray-400">{t('tpl.gallery.noSources')}</p>
+        )}
+        <ul className="space-y-1">
+          {sources.map(src => (
+            <li key={src.id ?? 'builtin'}>
+              <div
+                className={`group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer text-sm transition-colors ${
+                  activeSource?.url === src.url
+                    ? 'bg-indigo-100 text-indigo-800 font-medium'
+                    : 'hover:bg-gray-100 text-gray-700'
+                }`}
+                onClick={() => setActiveSource(src)}
+                data-testid={`gallery-source-${src.id ?? 'builtin'}`}
+              >
+                <span className="flex-1 truncate" title={src.url}>{src.label}</span>
+                {src.builtin && (
+                  <span className="text-xs text-gray-400 shrink-0">{t('tpl.gallery.builtin')}</span>
+                )}
+                {!src.builtin && src.id && (
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity shrink-0"
+                    onClick={e => { e.stopPropagation(); void deleteSource(src) }}
+                    disabled={deletingId === src.id}
+                    data-testid={`gallery-delete-source-${src.id}`}
+                    title={t('tpl.gallery.deleteSourceConfirm')}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* ── Panneau templates ── */}
+      <div className="flex-1 min-w-0">
+        {activeSource ? (
+          <GalleryTemplates
+            key={activeSource.url}
+            sourceUrl={activeSource.url}
+            onInstalled={() => void refetchSources()}
+          />
+        ) : (
+          <p className="text-sm text-gray-400 mt-2">{t('tpl.gallery.selectSource')}</p>
+        )}
+      </div>
     </div>
   )
 }

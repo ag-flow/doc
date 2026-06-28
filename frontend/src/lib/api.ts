@@ -157,6 +157,13 @@ export interface GalleryConfig {
   default_url: string | null
 }
 
+export interface GallerySourceOut {
+  id: string | null
+  label: string
+  url: string
+  builtin: boolean
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string
@@ -326,6 +333,10 @@ export const templatesApi = {
 
 export const galleryApi = {
   getConfig: () => api.get<GalleryConfig>('/templates/gallery/config'),
+  listSources: () => api.get<GallerySourceOut[]>('/templates/gallery/sources'),
+  addSource: (label: string, url: string) =>
+    api.post<GallerySourceOut>('/templates/gallery/sources', { label, url }),
+  deleteSource: (id: string) => api.delete(`/templates/gallery/sources/${id}`),
   list: (source_url: string) =>
     api.get<RemoteTemplateInfo[]>(`/templates/gallery?source_url=${encodeURIComponent(source_url)}`),
   pull: (source_url: string, template_slug: string) =>
