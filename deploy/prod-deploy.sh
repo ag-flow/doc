@@ -68,23 +68,15 @@ if [[ ! -f "$DATA/.env" ]]; then
     sed -i "s|JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" "$DATA/.env"
     sed -i "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=${ENCRYPTION_KEY}|" "$DATA/.env"
 
-    ok "Fichier $DATA/.env créé avec JWT_SECRET et ENCRYPTION_KEY pré-remplis"
+    ok "Fichier $DATA/.env créé (JWT_SECRET et ENCRYPTION_KEY pré-remplis)"
     echo ""
-    echo -e "${YELLOW}ACTION REQUISE${NC} — Éditer $DATA/.env et renseigner :"
-    echo "   ADMIN_EMAIL=<votre email>"
-    echo "   ADMIN_PASSWORD=<mot de passe fort>"
-    echo ""
-    echo "   nano $DATA/.env"
-    echo ""
-    read -r -p "Appuyer sur Entrée une fois .env complété…"
+    warn "Le compte administrateur sera créé via le wizard au premier accès à l'interface."
 fi
 
 # ── Vérifier que les variables obligatoires sont renseignées ───────────────────
-source "$DATA/.env" 2>/dev/null || true
+set -a; source "$DATA/.env"; set +a
 : "${DATABASE_URL:?'DATABASE_URL manquant dans $DATA/.env'}"
 : "${JWT_SECRET:?'JWT_SECRET manquant dans $DATA/.env'}"
-: "${ADMIN_EMAIL:?'ADMIN_EMAIL manquant dans $DATA/.env'}"
-: "${ADMIN_PASSWORD:?'ADMIN_PASSWORD manquant dans $DATA/.env'}"
 : "${ENCRYPTION_KEY:?'ENCRYPTION_KEY manquant dans $DATA/.env'}"
 ok "Configuration validée"
 

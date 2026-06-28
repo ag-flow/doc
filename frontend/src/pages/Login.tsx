@@ -1,9 +1,10 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, setToken } from '../lib/api'
+import { api, setToken, setupApi } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { SetupForm } from '../components/SetupForm'
 
 export function Login() {
   const { t } = useTranslation()
@@ -12,6 +13,11 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    setupApi.methods().then((m) => setNeedsSetup(m.needs_setup)).catch(() => setNeedsSetup(false))
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -27,6 +33,11 @@ export function Login() {
       setLoading(false)
     }
   }
+
+  // Attendre la réponse de /auth/methods avant d'afficher quoi que ce soit
+  if (needsSetup === null) return null
+
+  if (needsSetup) return <SetupForm />
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">

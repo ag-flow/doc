@@ -632,3 +632,22 @@ export const automationsApi = {
   replay: (ws: string, id: string, runId: string) =>
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
 }
+
+// ── Setup wizard ─────────────────────────────────────────────────────────────
+
+export interface AuthMethodsOut {
+  local: boolean
+  oidc: boolean
+  needs_setup: boolean
+}
+
+export interface InitAdminRequest {
+  username: string
+  email: string
+  password: string
+}
+
+export const setupApi = {
+  methods: () => api.get<AuthMethodsOut>('/auth/methods'),
+  initAdmin: (body: InitAdminRequest) => api.post<{ id: string }>('/setup/init-admin', body),
+}

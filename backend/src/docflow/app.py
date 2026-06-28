@@ -14,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
 from docflow.auth.router import router as auth_router
-from docflow.auth.seed import seed_bootstrap_admin
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
 from docflow.blocks.router import router as blocks_router
@@ -30,6 +29,7 @@ from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router
 from docflow.reactions.router import router as reactions_router
 from docflow.references.router import router as references_router
+from docflow.setup.router import router as setup_router
 from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
 from docflow.vault.router import router as vault_router
@@ -69,7 +69,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
-    await seed_bootstrap_admin(pool, settings)
     configure_mcp(pool)
     app.state.pool = pool
     app.state.settings = settings
@@ -87,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="docflow", lifespan=lifespan)
 _API = "/api"
+app.include_router(setup_router, prefix=_API)
 app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
