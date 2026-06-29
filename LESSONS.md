@@ -40,5 +40,6 @@ La numérotation des migrations peut diverger des specs si une migration a été
 ## [asyncpg] AuthUser : le champ id, pas user_id
 Le modèle `AuthUser` (schemas/auth.py) expose le champ `id: uuid.UUID`, pas `user_id`. Dans les routers, accéder à `current.id` pour l'identifiant de l'utilisateur connecté.
 
+
 ## [filter_engine] Renumérotation des placeholders $n : fragile
 La renumérotation manuelle des `$i` → `$i+offset` (dans views/service.py) est fragile si les placeholders ont plus de 9 digits (`$1` → `$11` peut matcher `$10`). Préférer des systèmes qui construisent la liste de params en séquence sans renumérotation.

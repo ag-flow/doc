@@ -191,7 +191,7 @@ Exécution **dans l'ordre** M1 → M9. Ne pas démarrer M(n+1) sans la Definitio
 
 ### Livraison
 
-- Ne livre **jamais** le code, ni en test ni sur git, sans demande explicite.
+- **`test1` (192.168.10.166) est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
 - Ne modifie pas `.env` sauf si demandé.
 - Commit messages en **français**, format conventionnel (`feat:`, `fix:`, `chore:`, `docs:`, `test:`…).
 
