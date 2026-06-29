@@ -6,7 +6,11 @@ import uuid
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import (
+    check_api_key_scope,
+    filter_blocks_by_scope,
+    require_admin,
+)
 from docflow.blocks import service
 from docflow.documents import service as doc_svc
 from docflow.documents.block_ops import list_block_values as _list_block_values
@@ -24,13 +28,15 @@ _Auth = Depends(require_admin)
 
 @router.get(_WS + "/blocks", response_model=list[DataBlockOut])
 async def list_blocks(ws_slug: str, request: Request, _: AuthUser = _Auth) -> list[DataBlockOut]:
-    return await service.list_blocks(request.app.state.pool, ws_slug)
+    result = await service.list_blocks(request.app.state.pool, ws_slug)
+    return filter_blocks_by_scope(request, ws_slug, result)
 
 
 @router.post(_WS + "/blocks", response_model=DataBlockOut, status_code=201)
 async def create_block(
     ws_slug: str, body: DataBlockCreate, request: Request, _: AuthUser = _Auth
 ) -> DataBlockOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.create_block(request.app.state.pool, ws_slug, body)
 
 
@@ -38,6 +44,7 @@ async def create_block(
 async def get_block(
     ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
 ) -> DataBlockOut:
+    check_api_key_scope(request, ws_slug, block_slug)
     return await service.get_block(request.app.state.pool, ws_slug, block_slug)
 
 
@@ -49,6 +56,7 @@ async def update_block(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DataBlockOut:
+    check_api_key_scope(request, ws_slug, block_slug, write=True)
     return await service.update_block(request.app.state.pool, ws_slug, block_slug, body)
 
 
@@ -65,6 +73,7 @@ async def set_block_exposed(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DataBlockOut:
+    check_api_key_scope(request, ws_slug, block_slug, write=True)
     return await service.set_block_exposed(
         request.app.state.pool, ws_slug, block_slug, body.exposed
     )
@@ -74,6 +83,7 @@ async def set_block_exposed(
 async def delete_block(
     ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
 ) -> None:
+    check_api_key_scope(request, ws_slug, block_slug, write=True)
     await service.delete_block(request.app.state.pool, ws_slug, block_slug)
 
 
@@ -88,6 +98,7 @@ async def get_allowed_types(
     _: AuthUser = _Auth,
     parent_id: uuid.UUID | None = Query(default=None),
 ) -> list[dict[str, str]]:
+    check_api_key_scope(request, ws_slug, block_slug)
     return await doc_svc.allowed_types(request.app.state.pool, ws_slug, block_slug, parent_id)
 
 
@@ -99,6 +110,7 @@ async def create_document_in_block(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DocumentOut:
+    check_api_key_scope(request, ws_slug, block_slug, write=True)
     doc = await doc_svc.create_document_in_block(request.app.state.pool, ws_slug, block_slug, body)
     enc_key = request.app.state.settings.encryption_key
     asyncio.create_task(
@@ -127,6 +139,7 @@ async def list_block_documents(
     prop_slug: str | None = Query(default=None),
     allowed_value_slug: str | None = Query(default=None),
 ) -> list[DocumentOut]:
+    check_api_key_scope(request, ws_slug, block_slug)
     return await doc_svc.list_block_documents(
         request.app.state.pool,
         ws_slug,
@@ -144,4 +157,5 @@ async def list_block_values(
     _: AuthUser = _Auth,
 ) -> dict[str, list[dict[str, object]]]:
     """Valeurs courantes de toutes les propriétés pour tous les docs du bloc (batch)."""
+    check_api_key_scope(request, ws_slug, block_slug)
     return await _list_block_values(request.app.state.pool, ws_slug, block_slug)

@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
+from docflow.apikeys.router import router as apikeys_router
 from docflow.auth.router import router as auth_router
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
@@ -107,6 +108,7 @@ app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
 app.include_router(export_router, prefix=_API)
 app.include_router(views_router, prefix=_API)
+app.include_router(apikeys_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 
 

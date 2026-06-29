@@ -700,6 +700,67 @@ export const automationsApi = {
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
 }
 
+// ── API Keys ─────────────────────────────────────────────────────────────────
+
+export interface ApiProfileOut {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+  updated_at: string
+  scope_count: number
+  key_count: number
+}
+
+export interface ApiProfileScopeIn {
+  workspace_slug: string
+  block_slug: string | null
+  read_only: boolean
+}
+
+export interface ApiProfileScopeOut {
+  id: string
+  workspace_slug: string
+  block_slug: string | null
+  read_only: boolean
+}
+
+export interface ApiProfileDetail extends ApiProfileOut {
+  scopes: ApiProfileScopeOut[]
+}
+
+export interface ApiKeyOut {
+  id: string
+  profile_id: string
+  profile_name: string
+  label: string
+  key_prefix: string
+  created_at: string
+  last_used_at: string | null
+  revoked: boolean
+}
+
+export interface ApiKeyCreated extends ApiKeyOut {
+  key: string
+}
+
+export const apiProfilesApi = {
+  list: () => api.get<ApiProfileOut[]>('/user/api-profiles'),
+  create: (body: { name: string; description?: string | null }) =>
+    api.post<ApiProfileOut>('/user/api-profiles', body),
+  get: (id: string) => api.get<ApiProfileDetail>(`/user/api-profiles/${id}`),
+  setScopes: (id: string, scopes: ApiProfileScopeIn[]) =>
+    api.put<ApiProfileScopeOut[]>(`/user/api-profiles/${id}/scopes`, { scopes }),
+  delete: (id: string) => api.delete(`/user/api-profiles/${id}`),
+}
+
+export const apiKeysApi = {
+  list: () => api.get<ApiKeyOut[]>('/user/api-keys'),
+  generate: (body: { profile_id: string; label: string }) =>
+    api.post<ApiKeyCreated>('/user/api-keys', body),
+  revoke: (id: string) => api.delete(`/user/api-keys/${id}`),
+}
+
 // ── Setup wizard ─────────────────────────────────────────────────────────────
 
 export interface AuthMethodsOut {

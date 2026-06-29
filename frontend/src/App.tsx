@@ -19,6 +19,7 @@ import { OidcAdmin } from './pages/OidcAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
 import { UsersAdmin } from './pages/UsersAdmin'
+import { ApiKeysPage } from './pages/ApiKeysPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -101,6 +102,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><UsersAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/api-keys',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ApiKeysPage /></AppLayout>
       </ProtectedRoute>
     ),
   },
