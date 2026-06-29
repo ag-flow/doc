@@ -16,90 +16,201 @@ _pool: asyncpg.Pool | None = None
 _TOOLS: list[Tool] = [
     Tool(
         name="list_workspaces",
-        description="Lister tous les workspaces docflow",
+        description=(
+            "Retourne la liste de tous les workspaces docflow. "
+            "Chaque entrée contient : slug (clé stable à passer aux autres outils), "
+            "label (nom affiché), description. "
+            "Lecture seule — aucun effet de bord."
+        ),
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
         name="list_types",
-        description="Lister les types fonctionnels d'un workspace",
+        description=(
+            "Retourne les types fonctionnels d'un workspace (ex. epic, feature, story). "
+            "Chaque type a un slug stable, un label et un éventuel parent_slug "
+            "(hiérarchie). "
+            "Utiliser les slugs retournés pour typer un document lors de "
+            "create_document. "
+            "Lecture seule — aucun effet de bord."
+        ),
         inputSchema={
             "type": "object",
-            "properties": {"workspace_slug": {"type": "string"}},
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace (issu de list_workspaces)",
+                },
+            },
             "required": ["workspace_slug"],
         },
     ),
     Tool(
         name="list_documents",
-        description="Lister les documents d'un workspace",
+        description=(
+            "Retourne tous les documents d'un workspace (tous blocs confondus). "
+            "Chaque entrée contient : id (UUID — clé à passer à get_document, "
+            "update_document et set_property_value), title, "
+            "functional_type_slug (peut être null). "
+            "Liste non paginée : sur un grand workspace, privilégier une recherche "
+            "ciblée. "
+            "Lecture seule — aucun effet de bord."
+        ),
         inputSchema={
             "type": "object",
-            "properties": {"workspace_slug": {"type": "string"}},
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+            },
             "required": ["workspace_slug"],
         },
     ),
     Tool(
         name="get_document",
-        description="Lire un document (titre, contenu markdown, type)",
+        description=(
+            "Lit le contenu complet d'un document : id, title, contenu (markdown "
+            "brut), functional_type_slug. "
+            "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
+            "au workspace indiqué. "
+            "Lecture seule — aucun effet de bord."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_slug": {"type": "string"},
-                "doc_id": {"type": "string", "format": "uuid"},
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document (champ id de list_documents)",
+                },
             },
             "required": ["workspace_slug", "doc_id"],
         },
     ),
     Tool(
         name="create_document",
-        description="Créer un document dans un workspace",
+        description=(
+            "Crée un document et le persiste immédiatement en base de données. "
+            "ÉCRITURE : le document est visible dans l'interface et via "
+            "list_documents dès la réponse. "
+            "Retourne l'id (UUID) et le title du document créé. "
+            "functional_type_slug est optionnel ; s'il est fourni, il doit exister "
+            "dans le workspace (sinon erreur). "
+            "contenu est du markdown libre, optionnel."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_slug": {"type": "string"},
-                "title": {"type": "string"},
-                "contenu": {"type": "string"},
-                "functional_type_slug": {"type": "string"},
+                "workspace_slug": {"type": "string", "description": "Slug du workspace cible"},
+                "title": {"type": "string", "description": "Titre du document (non vide)"},
+                "contenu": {
+                    "type": "string",
+                    "description": "Corps du document en markdown (optionnel)",
+                },
+                "functional_type_slug": {
+                    "type": "string",
+                    "description": (
+                        "Type fonctionnel à associer (optionnel, "
+                        "doit exister dans le workspace)"
+                    ),
+                },
             },
             "required": ["workspace_slug", "title"],
         },
     ),
     Tool(
         name="update_document",
-        description="Modifier le titre ou le contenu d'un document",
+        description=(
+            "Modifie le titre et/ou le contenu markdown d'un document existant. "
+            "ÉCRITURE : mise à jour permanente, visible immédiatement dans "
+            "l'interface. "
+            "Au moins un des deux champs (title ou contenu) doit être fourni, "
+            "sinon erreur. "
+            "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
+            "(utiliser set_property_value pour cela). "
+            "Retourne {error: ...} si le document est introuvable dans le workspace."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_slug": {"type": "string"},
-                "doc_id": {"type": "string", "format": "uuid"},
-                "title": {"type": "string"},
-                "contenu": {"type": "string"},
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document à modifier",
+                },
+                "title": {"type": "string", "description": "Nouveau titre (omis = inchangé)"},
+                "contenu": {
+                    "type": "string",
+                    "description": "Nouveau contenu markdown (omis = inchangé)",
+                },
             },
             "required": ["workspace_slug", "doc_id"],
         },
     ),
     Tool(
         name="list_property_values",
-        description="Lire les valeurs de propriétés d'un document",
+        description=(
+            "Retourne toutes les propriétés du type fonctionnel du document avec "
+            "leur valeur actuelle (null si non renseignée). "
+            "Chaque entrée contient : prop_slug, label, type "
+            "(text | int | restricted_list), value (texte brut pour text/int), "
+            "allowed_value_slug + allowed_value_label (pour restricted_list). "
+            "Utiliser prop_slug et allowed_value_slug avec set_property_value "
+            "pour écrire une valeur. "
+            "Lecture seule — aucun effet de bord."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_slug": {"type": "string"},
-                "doc_id": {"type": "string", "format": "uuid"},
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {"type": "string", "format": "uuid", "description": "UUID du document"},
             },
             "required": ["workspace_slug", "doc_id"],
         },
     ),
     Tool(
         name="set_property_value",
-        description="Écrire une valeur de propriété sur un document",
+        description=(
+            "Écrit (crée ou remplace) la valeur d'une propriété sur un document. "
+            "ÉCRITURE : upsert permanent en base, visible immédiatement dans "
+            "l'interface. "
+            "Règle d'exclusivité selon le type de propriété : "
+            "- text ou int → fournir value (chaîne), omettre allowed_value_slug ; "
+            "- restricted_list → fournir allowed_value_slug (slug de la valeur "
+            "autorisée, issu de list_property_values), omettre value. "
+            "Fournir les deux champs ou aucun déclenche une erreur de validation. "
+            "expected_version active la concurrence optimiste : si > 0, la mise à "
+            "jour échoue quand la version courante diffère (conflit concurrent). "
+            "Retourne {updated: true, prop_slug} en cas de succès."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_slug": {"type": "string"},
-                "doc_id": {"type": "string", "format": "uuid"},
-                "prop_slug": {"type": "string"},
-                "value": {"type": "string"},
-                "allowed_value_slug": {"type": "string"},
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {"type": "string", "format": "uuid", "description": "UUID du document"},
+                "prop_slug": {
+                    "type": "string",
+                    "description": "Slug de la propriété (issu de list_property_values)",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Valeur brute — pour propriétés text ou int uniquement",
+                },
+                "allowed_value_slug": {
+                    "type": "string",
+                    "description": (
+                        "Slug de la valeur autorisée — "
+                        "pour propriétés restricted_list uniquement"
+                    ),
+                },
+                "expected_version": {
+                    "type": "integer",
+                    "description": (
+                        "Version attendue pour concurrence optimiste "
+                        "(0 = désactivé, défaut)"
+                    ),
+                    "default": 0,
+                },
             },
             "required": ["workspace_slug", "doc_id", "prop_slug"],
         },
