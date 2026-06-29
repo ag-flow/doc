@@ -10,12 +10,12 @@ from docflow.schemas.setup import InitAdminRequest
 
 log = structlog.get_logger(__name__)
 
-_COUNT = "SELECT COUNT(*) FROM admin_user"
+_COUNT = "SELECT COUNT(*) FROM app_user"
 
 _INSERT = """
-INSERT INTO admin_user (username, email, label, password_hash, is_superadmin, disabled)
-VALUES ($1, $2, $3, $4, true, false)
-RETURNING id, email, label, is_superadmin, disabled,
+INSERT INTO app_user (username, email, label, password_hash, is_admin, validated, disabled, source)
+VALUES ($1, $2, $3, $4, true, true, false, 'local')
+RETURNING id, email, label, username, source, is_admin, validated, disabled,
           (password_hash IS NOT NULL) AS has_local_password,
           created_at, updated_at
 """
@@ -39,11 +39,15 @@ async def init_admin(pool: asyncpg.Pool, body: InitAdminRequest) -> AdminUserOut
                 raise HTTPException(status_code=409, detail="SetupAlreadyDone") from exc
 
     log.info("setup_admin_created", email=body.email, username=body.username)
+    assert row is not None
     return AdminUserOut(
         id=row["id"],
         email=row["email"],
         label=row["label"],
-        is_superadmin=row["is_superadmin"],
+        username=row["username"],
+        source=row["source"],
+        is_admin=row["is_admin"],
+        validated=row["validated"],
         disabled=row["disabled"],
         has_local_password=row["has_local_password"],
         created_at=row["created_at"],

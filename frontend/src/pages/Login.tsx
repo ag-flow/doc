@@ -12,6 +12,7 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [pendingValidation, setPendingValidation] = useState(false)
   const [loading, setLoading] = useState(false)
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
 
@@ -22,13 +23,19 @@ export function Login() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    setPendingValidation(false)
     setLoading(true)
     try {
       const res = await api.post<{ access_token: string }>('/auth/login', { email, password })
       setToken(res.access_token)
       navigate('/')
-    } catch {
-      setError(t('login.error'))
+    } catch (err: unknown) {
+      const detail = (err as { detail?: string }).detail
+      if (detail === 'PendingValidation') {
+        setPendingValidation(true)
+      } else {
+        setError(t('login.error'))
+      }
     } finally {
       setLoading(false)
     }
@@ -71,6 +78,11 @@ export function Login() {
             />
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
+          {pendingValidation && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Votre compte est en attente de validation par un administrateur.
+            </div>
+          )}
           <Button type="submit" className="w-full" disabled={loading} data-testid="submit-button">
             {t('login.submit')}
           </Button>

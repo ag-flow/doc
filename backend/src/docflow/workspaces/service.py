@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import uuid
+
 import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
 
-_COLS = "workspace_technical_key, slug, label, description, archived_at, created_at, updated_at"
+_COLS = (
+    "workspace_technical_key, slug, label, description, owner_id,"
+    " archived_at, created_at, updated_at"
+)
 _SELECT_WS = f"SELECT {_COLS} FROM workspace WHERE slug = $1"
 _SELECT_ALL = f"SELECT {_COLS} FROM workspace {{where}} ORDER BY created_at"
 _UPDATE_WS = (
@@ -22,6 +27,7 @@ def _row(row: asyncpg.Record) -> WorkspaceOut:
         slug=row["slug"],
         label=row["label"],
         description=row["description"],
+        owner_id=row["owner_id"],
         archived_at=row["archived_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -45,19 +51,22 @@ async def get_workspace(pool: asyncpg.Pool, ws_slug: str) -> WorkspaceOut:
     return _row(row)
 
 
-async def create_workspace(pool: asyncpg.Pool, data: WorkspaceCreate) -> WorkspaceOut:
+async def create_workspace(
+    pool: asyncpg.Pool, data: WorkspaceCreate, owner_id: uuid.UUID
+) -> WorkspaceOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             try:
                 row = await conn.fetchrow(
                     f"""
-                    INSERT INTO workspace (slug, label, description)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO workspace (slug, label, description, owner_id)
+                    VALUES ($1, $2, $3, $4)
                     RETURNING {_COLS}
                     """,
                     data.slug,
                     data.label,
                     data.description,
+                    owner_id,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(

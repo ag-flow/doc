@@ -104,15 +104,12 @@ async def db_pool(test_schema_url: str, apply_migrations: None) -> AsyncIterator
 
 @pytest.fixture()
 def clean_admin_users(test_schema_url: str, apply_migrations: None) -> Iterator[None]:
-    """Truncate admin_user (and cascaded tables) before the test that requests this fixture.
-
-    Sync fixture so it works with both sync and async tests.
-    """
+    """Truncate app_user (and cascaded tables) before the test that requests this fixture."""
 
     async def _truncate() -> None:
         conn: asyncpg.Connection = await asyncpg.connect(test_schema_url)
         try:
-            await conn.execute("TRUNCATE admin_user CASCADE")
+            await conn.execute("TRUNCATE app_user CASCADE")
         finally:
             await conn.close()
 

@@ -12,8 +12,8 @@ from docflow.schemas.auth import AuthUser
 _bearer = HTTPBearer(auto_error=False)
 
 _SELECT_USER = """
-SELECT id, email, label, is_superadmin, disabled
-FROM admin_user WHERE id = $1
+SELECT id, email, label, is_admin, validated, disabled
+FROM app_user WHERE id = $1
 """
 
 
@@ -48,11 +48,15 @@ async def get_current_user(
     if row is None or row["disabled"]:
         raise HTTPException(status_code=401, detail="compte désactivé ou introuvable")
 
+    if not row["validated"]:
+        raise HTTPException(status_code=403, detail="PendingValidation")
+
     return AuthUser(
         id=row["id"],
         email=row["email"],
         label=row["label"],
-        is_superadmin=row["is_superadmin"],
+        is_admin=row["is_admin"],
+        validated=row["validated"],
         disabled=row["disabled"],
     )
 
@@ -62,6 +66,6 @@ async def require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
 
 
 async def require_superadmin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-    if not user.is_superadmin:
-        raise HTTPException(status_code=403, detail="droits superadmin requis")
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="droits admin requis")
     return user

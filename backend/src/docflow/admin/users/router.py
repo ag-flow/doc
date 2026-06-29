@@ -16,47 +16,52 @@ from docflow.schemas.auth import AuthUser
 
 router = APIRouter(prefix="/admin/users", tags=["admin-users"])
 
+_SuperAdmin = Depends(require_superadmin)
+
 
 @router.get("", response_model=list[AdminUserOut])
-async def list_users(
-    request: Request, _: AuthUser = Depends(require_superadmin)
-) -> list[AdminUserOut]:
+async def list_users(request: Request, _: AuthUser = _SuperAdmin) -> list[AdminUserOut]:
     return await service.list_users(request.app.state.pool)
 
 
 @router.post("", response_model=AdminUserOut, status_code=201)
 async def create_user(
-    body: AdminUserCreate,
-    request: Request,
-    _: AuthUser = Depends(require_superadmin),
+    body: AdminUserCreate, request: Request, _: AuthUser = _SuperAdmin
 ) -> AdminUserOut:
     return await service.create_user(request.app.state.pool, body)
 
 
 @router.get("/{user_id}", response_model=AdminUserOut)
 async def get_user(
-    user_id: uuid.UUID,
-    request: Request,
-    _: AuthUser = Depends(require_superadmin),
+    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
 ) -> AdminUserOut:
     return await service.get_user(request.app.state.pool, user_id)
 
 
 @router.patch("/{user_id}", response_model=AdminUserOut)
 async def update_user(
-    user_id: uuid.UUID,
-    body: AdminUserUpdate,
-    request: Request,
-    _: AuthUser = Depends(require_superadmin),
+    user_id: uuid.UUID, body: AdminUserUpdate, request: Request, _: AuthUser = _SuperAdmin
 ) -> AdminUserOut:
     return await service.update_user(request.app.state.pool, user_id, body)
 
 
+@router.post("/{user_id}/validate", response_model=AdminUserOut)
+async def validate_user(
+    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
+) -> AdminUserOut:
+    return await service.validate_user(request.app.state.pool, user_id, validated=True)
+
+
+@router.post("/{user_id}/unvalidate", response_model=AdminUserOut)
+async def unvalidate_user(
+    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
+) -> AdminUserOut:
+    return await service.validate_user(request.app.state.pool, user_id, validated=False)
+
+
 @router.delete("/{user_id}", status_code=204)
 async def delete_user(
-    user_id: uuid.UUID,
-    request: Request,
-    _: AuthUser = Depends(require_superadmin),
+    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
 ) -> None:
     await service.delete_user(request.app.state.pool, user_id)
 
@@ -66,6 +71,6 @@ async def set_password(
     user_id: uuid.UUID,
     body: AdminUserSetPassword,
     request: Request,
-    _: AuthUser = Depends(require_superadmin),
+    _: AuthUser = _SuperAdmin,
 ) -> AdminUserOut:
     return await service.set_password(request.app.state.pool, user_id, body.password)

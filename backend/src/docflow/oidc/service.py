@@ -89,7 +89,7 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
 async def handle_oidc_callback(
     pool: asyncpg.Pool, jwt_secret: str, id_token_claims: dict[str, object]
 ) -> str:
-    """Provisionne ou lie l'admin_user depuis les claims OIDC, retourne un JWT docflow."""
+    """Provisionne ou lie l'app_user depuis les claims OIDC, retourne un JWT docflow."""
     email = str(id_token_claims.get("email", ""))
     sub = str(id_token_claims.get("sub", ""))
     name = str(id_token_claims.get("name", email))
@@ -108,30 +108,30 @@ async def handle_oidc_callback(
 
             # Chercher par oidc_subject d'abord, puis par email
             user_row = await conn.fetchrow(
-                "SELECT id, email, label, is_superadmin, disabled, password_hash "
-                "FROM admin_user WHERE oidc_subject = $1",
+                "SELECT id, email, label, is_admin, validated, disabled "
+                "FROM app_user WHERE oidc_subject = $1",
                 sub,
             )
             if user_row is None:
                 user_row = await conn.fetchrow(
-                    "SELECT id, email, label, is_superadmin, disabled, password_hash "
-                    "FROM admin_user WHERE email = $1",
+                    "SELECT id, email, label, is_admin, validated, disabled "
+                    "FROM app_user WHERE email = $1",
                     email,
                 )
                 if user_row is not None:
-                    # Lier le compte existant : remplir oidc_subject, préserver password_hash
                     await conn.execute(
-                        "UPDATE admin_user SET oidc_subject = $1 WHERE id = $2",
+                        "UPDATE app_user SET oidc_subject = $1, source = 'oidc' WHERE id = $2",
                         sub,
                         user_row["id"],
                     )
                 else:
-                    # Provisionner un nouveau compte (sans password_hash)
+                    # Nouveau compte OIDC : non admin, non validé
                     user_row = await conn.fetchrow(
                         """
-                        INSERT INTO admin_user (email, label, oidc_subject, is_superadmin)
-                        VALUES ($1, $2, $3, false)
-                        RETURNING id, email, label, is_superadmin, disabled, password_hash
+                        INSERT INTO app_user
+                            (email, label, oidc_subject, is_admin, validated, source)
+                        VALUES ($1, $2, $3, false, false, 'oidc')
+                        RETURNING id, email, label, is_admin, validated, disabled
                         """,
                         email,
                         name,
@@ -140,12 +140,15 @@ async def handle_oidc_callback(
     assert user_row is not None
     if user_row["disabled"]:
         raise HTTPException(status_code=403, detail="compte désactivé")
+    if not user_row["validated"]:
+        raise HTTPException(status_code=403, detail="PendingValidation")
 
     user = AuthUser(
         id=user_row["id"],
         email=user_row["email"],
         label=user_row["label"],
-        is_superadmin=user_row["is_superadmin"],
+        is_admin=user_row["is_admin"],
+        validated=user_row["validated"],
         disabled=user_row["disabled"],
     )
     return create_token(user, jwt_secret)

@@ -23,9 +23,9 @@ async def list_workspaces(
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201)
 async def create_workspace(
-    body: WorkspaceCreate, request: Request, _: AuthUser = _Admin
+    body: WorkspaceCreate, request: Request, current_user: AuthUser = _Admin
 ) -> WorkspaceOut:
-    return await service.create_workspace(request.app.state.pool, body)
+    return await service.create_workspace(request.app.state.pool, body, current_user.id)
 
 
 @router.get("/workspaces/{ws_slug}", response_model=WorkspaceOut)

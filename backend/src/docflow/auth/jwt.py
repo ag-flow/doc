@@ -19,7 +19,7 @@ def create_token(user: AuthUser, secret: str) -> str:
     payload = {
         "sub": str(user.id),
         "email": user.email,
-        "is_superadmin": user.is_superadmin,
+        "is_admin": user.is_admin,
         "iat": now,
         "exp": now + _TTL,
     }

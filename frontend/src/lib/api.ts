@@ -469,8 +469,23 @@ export interface AuthUser {
   id: string
   email: string
   label: string
-  is_superadmin: boolean
+  is_admin: boolean
+  validated: boolean
   disabled: boolean
+}
+
+export interface AppUserOut {
+  id: string
+  email: string
+  label: string
+  username: string | null
+  source: 'local' | 'oidc'
+  is_admin: boolean
+  validated: boolean
+  disabled: boolean
+  has_local_password: boolean
+  created_at: string
+  updated_at: string
 }
 
 /** Décode le payload JWT localement (sans vérification — le serveur valide). */
@@ -479,10 +494,17 @@ export function isSuperAdmin(): boolean {
   if (!token) return false
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))
-    return Boolean(payload.is_superadmin)
+    return Boolean(payload.is_admin)
   } catch {
     return false
   }
+}
+
+export const usersApi = {
+  list: () => api.get<AppUserOut[]>('/admin/users'),
+  validate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/validate`, {}),
+  unvalidate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/unvalidate`, {}),
+  delete: (id: string) => api.delete(`/admin/users/${id}`),
 }
 
 // ── Vault wallets ───────────────────────────────────────────────────────────

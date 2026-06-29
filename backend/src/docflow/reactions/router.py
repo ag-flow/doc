@@ -79,7 +79,7 @@ async def delete_comment(
     user: AuthUser = _Auth,
 ) -> None:
     await service.delete_comment(
-        request.app.state.pool, ws_slug, doc_id, comment_id, user.id, user.is_superadmin
+        request.app.state.pool, ws_slug, doc_id, comment_id, user.id, user.is_admin
     )
 
 

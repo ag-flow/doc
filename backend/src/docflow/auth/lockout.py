@@ -6,9 +6,10 @@ import asyncpg
 from fastapi import HTTPException
 
 _COUNT_LOCAL_ADMINS = """
-SELECT COUNT(*) FROM admin_user
+SELECT COUNT(*) FROM app_user
 WHERE password_hash IS NOT NULL
   AND disabled = false
+  AND is_admin = true
   AND id != $1
 """
 

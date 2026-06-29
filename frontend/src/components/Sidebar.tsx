@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   LogOut,
   Zap,
+  Users,
 } from 'lucide-react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -133,6 +134,7 @@ export function Sidebar() {
           <Divider />
           <div className="flex flex-col items-center gap-1 mb-1">
             <NavItem to="/templates" icon={LayoutTemplate} label="Templates" />
+            <NavItem to="/admin/users" icon={Users} label="Utilisateurs" />
             <NavItem to="/admin/vault" icon={KeyRound} label="Wallets Vault" />
             <NavItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
           </div>

@@ -13,8 +13,8 @@ from docflow.setup import service as setup_service
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _SELECT_FOR_LOGIN = """
-SELECT id, email, label, password_hash, is_superadmin, disabled
-FROM admin_user WHERE email = $1
+SELECT id, email, label, password_hash, is_admin, validated, disabled
+FROM app_user WHERE email = $1
 """
 
 
@@ -50,11 +50,15 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
     if not verify_password(body.password, row["password_hash"]):
         raise _invalid
 
+    if not row["validated"]:
+        raise HTTPException(status_code=403, detail="PendingValidation")
+
     user = AuthUser(
         id=row["id"],
         email=row["email"],
         label=row["label"],
-        is_superadmin=row["is_superadmin"],
+        is_admin=row["is_admin"],
+        validated=row["validated"],
         disabled=row["disabled"],
     )
     return TokenResponse(access_token=create_token(user, secret))
