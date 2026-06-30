@@ -223,22 +223,68 @@ function CertificatesTab() {
         </div>
       )}
 
-      <div className="divide-y divide-gray-100 rounded-lg border border-gray-200">
-        {certs.length === 0 && <p className="p-4 text-sm text-gray-400">Aucun certificat enregistré.</p>}
-        {certs.map((c: RemoteCertificateOut) => (
-          <div key={c.id} className="flex items-center gap-3 px-4 py-3">
+      <CertList certs={certs} onDelete={slug => delMut.mutate(slug)} />
+    </div>
+  )
+}
+
+function CertList({ certs, onDelete }: { certs: RemoteCertificateOut[]; onDelete: (slug: string) => void }) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+
+  function copyPub(slug: string, pub: string) {
+    void navigator.clipboard.writeText(pub).then(() => {
+      setCopied(slug); setTimeout(() => setCopied(null), 2000)
+    })
+  }
+
+  return (
+    <div className="divide-y divide-gray-100 rounded-lg border border-gray-200">
+      {certs.length === 0 && <p className="p-4 text-sm text-gray-400">Aucun certificat enregistré.</p>}
+      {certs.map((c: RemoteCertificateOut) => (
+        <div key={c.id}>
+          <div className="flex items-center gap-3 px-4 py-3">
             <KeyRound className="h-4 w-4 text-gray-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-900">{c.label} <span className="text-xs text-gray-400">({c.slug})</span></p>
-              <p className="text-xs text-gray-500">{c.cert_type === 'ssh_key' ? 'Clé SSH' : 'Certificat TLS'}{c.fingerprint ? ` · ${c.fingerprint}` : ''}</p>
+              <p className="text-xs text-gray-500">
+                {c.cert_type === 'ssh_key' ? 'Clé SSH' : 'Certificat TLS'}
+                {c.fingerprint ? ` · ${c.fingerprint}` : ''}
+              </p>
             </div>
             {c.expires_at && <p className="text-xs text-amber-600">{new Date(c.expires_at).toLocaleDateString()}</p>}
-            <button onClick={() => delMut.mutate(c.slug)} className="text-gray-300 hover:text-red-500 transition-colors">
+            <button
+              onClick={() => setExpanded(e => e === c.slug ? null : c.slug)}
+              className="text-xs text-indigo-600 hover:text-indigo-800 px-2 py-1 transition-colors"
+              title={expanded === c.slug ? 'Masquer la clé publique' : 'Afficher la clé publique'}
+            >
+              {expanded === c.slug ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            <button onClick={() => onDelete(c.slug)} className="text-gray-300 hover:text-red-500 transition-colors">
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
-        ))}
-      </div>
+          {expanded === c.slug && (
+            <div className="border-t border-indigo-50 bg-indigo-50 px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-gray-600">
+                  {c.cert_type === 'ssh_key' ? 'Clé publique — à ajouter comme deploy key sur GitHub / GitLab' : 'Certificat PEM (partie publique)'}
+                </p>
+                <button
+                  onClick={() => copyPub(c.slug, c.public_part)}
+                  className="flex items-center gap-1 rounded border border-indigo-200 bg-white px-2 py-1 text-xs text-indigo-600 hover:text-indigo-900 transition-colors"
+                >
+                  <Copy className="h-3 w-3" />
+                  {copied === c.slug ? 'Copié !' : 'Copier'}
+                </button>
+              </div>
+              <pre className="rounded bg-white border border-indigo-100 px-3 py-2 text-xs font-mono text-gray-700 whitespace-pre-wrap break-all select-all">
+                {c.public_part}
+              </pre>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
@@ -389,6 +435,23 @@ function PointForm({ initial, onSave, onCancel, certs }: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// URL de connexion calculée depuis un RemotePointOut
+// ─────────────────────────────────────────────────────────────────────────────
+
+function connectionUrl(pt: RemotePointOut): string {
+  if (pt.point_type === 'git') {
+    const host = pt.host
+    const repo = pt.git_repo ?? ''
+    if (pt.auth_type === 'certificate') {
+      return `git@${host}:${repo}.git`
+    }
+    return `https://${host}/${repo}.git`
+  }
+  const portSuffix = pt.port ? `:${pt.port}` : ''
+  return `${pt.point_type}://${pt.username}@${pt.host}${portSuffix}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Onglet Remote Points
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -397,6 +460,23 @@ const TYPE_ICON: Record<PointType, React.ReactNode> = {
   sftp: <Network className="h-4 w-4 text-teal-500" />,
   ftp: <Globe className="h-4 w-4 text-gray-400" />,
   ftps: <ShieldCheck className="h-4 w-4 text-emerald-500" />,
+}
+
+function CopyableUrl({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <code className="flex-1 truncate rounded bg-gray-100 px-2 py-0.5 text-xs font-mono text-gray-700">{url}</code>
+      <button onClick={copy} className="shrink-0 text-gray-400 hover:text-gray-700 transition-colors" title="Copier l'URL">
+        {copied ? <CheckCircle className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  )
 }
 
 function RemotePointsTab() {
@@ -450,10 +530,10 @@ function RemotePointsTab() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900">{pt.label} <span className="text-xs text-gray-400">({pt.slug})</span></p>
                 <p className="text-xs text-gray-500">
-                  {pt.point_type.toUpperCase()} · {pt.username}@{pt.host}
-                  {pt.git_repo ? ` · ${pt.git_repo}` : ''}
-                  {' · '}{pt.auth_type === 'certificate' ? `cert:${pt.certificate_slug}` : pt.auth_storage === 'vault' ? 'vault' : 'local'}
+                  {pt.point_type.toUpperCase()}
+                  {' · '}{pt.auth_type === 'certificate' ? `clé SSH: ${pt.certificate_slug}` : pt.auth_storage === 'vault' ? 'vault' : 'local'}
                 </p>
+                <CopyableUrl url={connectionUrl(pt)} />
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={() => setEditing(e => e === pt.slug ? null : pt.slug)} className="text-xs text-indigo-600 hover:underline px-2 py-1">Éditer</button>
