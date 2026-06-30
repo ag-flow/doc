@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle, ChevronDown, ChevronRight, Clock, Cpu, GitBranch,
+  CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Cpu, GitBranch,
   Globe, HardDrive, KeyRound, Loader2, Network, Plus, ShieldCheck,
-  Trash2, XCircle,
+  Trash2, Wand2, XCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -15,6 +15,81 @@ import {
 } from '../lib/api'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Génération de paire de clés SSH (WebCrypto RSA-4096, côté client)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _abToB64(buf: ArrayBuffer): string {
+  const b = new Uint8Array(buf)
+  let s = ''
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i])
+  return btoa(s)
+}
+
+function _pemWrap(b64: string, type: string): string {
+  const lines: string[] = []
+  for (let i = 0; i < b64.length; i += 64) lines.push(b64.slice(i, i + 64))
+  return `-----BEGIN ${type}-----\n${lines.join('\n')}\n-----END ${type}-----`
+}
+
+// Parse un TLV DER : retourne [tag, longueur, offset données]
+function _derTlv(b: Uint8Array, off: number): [number, number, number] {
+  const tag = b[off]
+  let len = b[off + 1]
+  let dOff = off + 2
+  if (len & 0x80) {
+    const n = len & 0x7f; len = 0
+    for (let i = 0; i < n; i++) len = (len << 8) | b[dOff++]
+  }
+  return [tag, len, dOff]
+}
+
+// Convertit une clé publique RSA exportée au format SPKI (DER) → ssh-rsa <b64>
+function _spkiToSshRsa(spki: Uint8Array): string {
+  let o = 0
+  const [, , s1] = _derTlv(spki, o); o = s1           // outer SEQUENCE
+  const [, al, ad] = _derTlv(spki, o); o = ad + al     // AlgorithmIdentifier (skip)
+  const [, , bd] = _derTlv(spki, o); o = bd + 1        // BIT STRING, skip unused-bits byte
+  const [, , rs] = _derTlv(spki, o); o = rs            // inner RSAPublicKey SEQUENCE
+  const [, ml, md] = _derTlv(spki, o)
+  const mod = spki.slice(md, md + ml); o = md + ml     // modulus INTEGER
+  const [, el, ed] = _derTlv(spki, o)
+  const exp = spki.slice(ed, ed + el)                   // exponent INTEGER
+
+  const mpint = (v: Uint8Array): Uint8Array => {
+    const pad = v[0] & 0x80 ? new Uint8Array([0, ...v]) : v
+    const r = new Uint8Array(4 + pad.length)
+    new DataView(r.buffer).setUint32(0, pad.length)
+    r.set(pad, 4); return r
+  }
+  const sshStr = (s: string): Uint8Array => {
+    const enc = new TextEncoder().encode(s)
+    const r = new Uint8Array(4 + enc.length)
+    new DataView(r.buffer).setUint32(0, enc.length)
+    r.set(enc, 4); return r
+  }
+
+  const parts = [sshStr('ssh-rsa'), mpint(exp), mpint(mod)]
+  const blob = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let pos = 0; for (const p of parts) { blob.set(p, pos); pos += p.length }
+  return `ssh-rsa ${_abToB64(blob.buffer)} docflow-generated`
+}
+
+async function _generateSshKeyPair(): Promise<{ publicKey: string; privateKey: string }> {
+  const kp = await window.crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true, ['sign', 'verify'],
+  )
+  const [privDer, pubDer] = await Promise.all([
+    window.crypto.subtle.exportKey('pkcs8', kp.privateKey),
+    window.crypto.subtle.exportKey('spki', kp.publicKey),
+  ])
+  return {
+    publicKey: _spkiToSshRsa(new Uint8Array(pubDer)),
+    privateKey: _pemWrap(_abToB64(privDer), 'PRIVATE KEY'),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Onglet Certificats
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -23,17 +98,41 @@ function CertificatesTab() {
   const { data: certs = [] } = useQuery({ queryKey: ['remote-certs'], queryFn: remoteCertsApi.list })
   const [showForm, setShowForm] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [form, setForm] = useState({ slug: '', label: '', cert_type: 'ssh_key' as 'ssh_key' | 'tls', public_part: '', private_key: '' })
 
   const createMut = useMutation({
     mutationFn: () => remoteCertsApi.create(form),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['remote-certs'] }); setShowForm(false); setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' }) },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['remote-certs'] })
+      setShowForm(false)
+      setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' })
+    },
     onError: (e) => setErr((e as Error).message),
   })
   const delMut = useMutation({
     mutationFn: (slug: string) => remoteCertsApi.delete(slug),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['remote-certs'] }),
   })
+
+  function handleGenerate() {
+    setGenerating(true)
+    setErr(null)
+    void _generateSshKeyPair()
+      .then(({ publicKey, privateKey }) => {
+        setForm(p => ({ ...p, public_part: publicKey, private_key: privateKey }))
+      })
+      .catch(e => setErr(`Génération échouée : ${(e as Error).message}`))
+      .finally(() => setGenerating(false))
+  }
+
+  function handleCopyPublicKey() {
+    void navigator.clipboard.writeText(form.public_part).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   return (
     <div className="space-y-4">
@@ -50,14 +149,60 @@ function CertificatesTab() {
             <Input placeholder="slug (ex. deploy-key)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
             <Input placeholder="Label" value={form.label} onChange={e => setForm(p => ({ ...p, label: e.target.value }))} />
           </div>
-          <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={form.cert_type} onChange={e => setForm(p => ({ ...p, cert_type: e.target.value as 'ssh_key' | 'tls' }))}>
-            <option value="ssh_key">Clé SSH (git / SFTP)</option>
-            <option value="tls">Certificat TLS (FTPS)</option>
-          </select>
-          <textarea rows={4} placeholder="Clé publique / cert PEM" className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none" value={form.public_part} onChange={e => setForm(p => ({ ...p, public_part: e.target.value }))} />
-          <textarea rows={6} placeholder="Clé privée (chiffrée en base, jamais exposée)" className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none" value={form.private_key} onChange={e => setForm(p => ({ ...p, private_key: e.target.value }))} />
+
+          <div className="flex items-center gap-2">
+            <select
+              className="flex-1 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+              value={form.cert_type}
+              onChange={e => setForm(p => ({ ...p, cert_type: e.target.value as 'ssh_key' | 'tls', public_part: '', private_key: '' }))}
+            >
+              <option value="ssh_key">Clé SSH (git / SFTP)</option>
+              <option value="tls">Certificat TLS (FTPS)</option>
+            </select>
+            {form.cert_type === 'ssh_key' && (
+              <Button size="sm" variant="secondary" onClick={handleGenerate} disabled={generating}>
+                {generating
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Génération…</>
+                  : <><Wand2 className="h-3.5 w-3.5 mr-1" />{form.public_part ? 'Regénérer' : 'Générer'}</>
+                }
+              </Button>
+            )}
+          </div>
+
+          <div className="relative">
+            <textarea
+              rows={4}
+              placeholder={form.cert_type === 'ssh_key' ? 'Clé publique (ssh-rsa …) — ou cliquez Générer' : 'Certificat PEM (-----BEGIN CERTIFICATE-----)'}
+              className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none"
+              value={form.public_part}
+              onChange={e => setForm(p => ({ ...p, public_part: e.target.value }))}
+            />
+            {form.public_part && (
+              <button
+                onClick={handleCopyPublicKey}
+                className="absolute top-2 right-2 flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-500 hover:text-gray-800 transition-colors"
+                title="Copier la clé publique (deploy key GitHub / GitLab)"
+              >
+                <Copy className="h-3 w-3" />
+                {copied ? 'Copié !' : 'Copier'}
+              </button>
+            )}
+          </div>
+
+          <textarea
+            rows={6}
+            placeholder="Clé privée (chiffrée en base, jamais exposée)"
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none"
+            value={form.private_key}
+            onChange={e => setForm(p => ({ ...p, private_key: e.target.value }))}
+          />
+
           {err && <p className="text-xs text-red-600">{err}</p>}
-          <Button size="sm" className="w-full" onClick={() => createMut.mutate()} disabled={createMut.isPending || !form.slug || !form.label || !form.public_part || !form.private_key}>
+          <Button
+            size="sm" className="w-full"
+            onClick={() => createMut.mutate()}
+            disabled={createMut.isPending || !form.slug || !form.label || !form.public_part || !form.private_key}
+          >
             {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Enregistrer'}
           </Button>
         </div>
@@ -501,13 +646,13 @@ function BackupTab() {
 type Tab = 'points' | 'certificates' | 'backup'
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: 'points', label: 'Remote Points', icon: <Cpu className="h-4 w-4" /> },
   { id: 'certificates', label: 'Certificats', icon: <KeyRound className="h-4 w-4" /> },
+  { id: 'points', label: 'Remote Points', icon: <Cpu className="h-4 w-4" /> },
   { id: 'backup', label: 'Sauvegarde', icon: <Clock className="h-4 w-4" /> },
 ]
 
 export function RemotePage() {
-  const [tab, setTab] = useState<Tab>('points')
+  const [tab, setTab] = useState<Tab>('certificates')
 
   return (
     <div className="p-8 max-w-3xl">
