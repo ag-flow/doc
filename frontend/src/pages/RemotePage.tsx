@@ -15,6 +15,21 @@ import {
 } from '../lib/api'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Slugification automatique depuis le label
+// ─────────────────────────────────────────────────────────────────────────────
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{M}/gu, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Génération de paire de clés SSH (WebCrypto RSA-4096, côté client)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -146,8 +161,8 @@ function CertificatesTab() {
       {showForm && (
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
+            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, slug: slugify(v) })) }} />
             <Input placeholder="slug (ex. deploy-key)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
-            <Input placeholder="Label" value={form.label} onChange={e => setForm(p => ({ ...p, label: e.target.value }))} />
           </div>
 
           <div className="flex items-center gap-2">
@@ -280,8 +295,13 @@ function PointForm({ initial, onSave, onCancel, certs }: {
   return (
     <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        {!isEdit && <Input placeholder="slug" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />}
-        <Input placeholder="Label" value={form.label} onChange={e => setForm(p => ({ ...p, label: e.target.value }))} className={isEdit ? 'col-span-2' : ''} />
+        <Input
+          placeholder="Label"
+          value={form.label}
+          onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, ...(!isEdit ? { slug: slugify(v) } : {}) })) }}
+          className={isEdit ? 'col-span-2' : ''}
+        />
+        {!isEdit && <Input placeholder="slug (auto)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -588,8 +608,8 @@ function BackupTab() {
       {showForm && (
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Input placeholder="slug" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
-            <Input placeholder="Label" value={form.label} onChange={e => setForm(p => ({ ...p, label: e.target.value }))} />
+            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, slug: slugify(v) })) }} />
+            <Input placeholder="slug (auto)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
