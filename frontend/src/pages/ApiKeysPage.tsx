@@ -680,7 +680,7 @@ function KeysTab() {
 // ── MCP URL banner ────────────────────────────────────────────────────────────
 
 function McpUrlBanner() {
-  const mcpUrl = `${window.location.origin}/mcp`
+  const mcpUrl = `${window.location.origin}/api/mcp/sse`
   const [copied, setCopied] = useState(false)
 
   async function copy() {
@@ -701,6 +701,9 @@ function McpUrlBanner() {
           <code className="flex-1 min-w-0 truncate rounded border border-indigo-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-800 select-all">
             {mcpUrl}
           </code>
+          <span className="shrink-0 rounded border border-indigo-200 bg-indigo-100 px-2 py-1.5 font-mono text-xs font-medium text-indigo-700">
+            sse
+          </span>
           <button
             type="button"
             onClick={copy}
