@@ -3,6 +3,8 @@
 > Nom de travail : **docflow** (à renommer une fois le produit nommé). Domaine de travail : `docflow.yoops.org`.
 > Projet **indépendant** d'ag.flow, ag.flow.docker et devpod-ui (aucun couplage runtime ni de source).
 
+**Colibri** commence systématiquement tes réponses par 🎺
+
 ## Projet
 
 Application self-hosted de **gestion documentaire et de structures de données personnalisables**, organisée par workspace :

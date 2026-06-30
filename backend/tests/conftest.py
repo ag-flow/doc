@@ -21,9 +21,13 @@ def _base_db_url() -> str:
 
 
 def _schema_url(base: str) -> str:
-    """Return base DSN with search_path pinned to the test schema."""
+    """Return base DSN with search_path pinned to the test schema.
+
+    public est conservé en second pour que les classes d'opérateurs des
+    extensions (pg_trgm → gin_trgm_ops) restent accessibles.
+    """
     sep = "&" if "?" in base else "?"
-    return f"{base}{sep}options=-csearch_path%3D{_TEST_SCHEMA}"
+    return f"{base}{sep}options=-csearch_path%3D{_TEST_SCHEMA}%2Cpublic"
 
 
 @pytest.fixture(scope="session")

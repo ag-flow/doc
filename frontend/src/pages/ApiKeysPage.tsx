@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key, ShieldCheck } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import {
@@ -235,6 +235,12 @@ function ProfileCard({
         >
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           <span className="font-medium text-gray-900">{profile.name}</span>
+          {profile.is_admin && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+              <ShieldCheck size={11} />
+              Admin
+            </span>
+          )}
           {profile.description && (
             <span className="text-sm text-gray-500">{profile.description}</span>
           )}
@@ -309,6 +315,7 @@ function ProfilesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [newIsAdmin, setNewIsAdmin] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
   const { data: profiles = [], isLoading } = useQuery<ApiProfileOut[]>({
@@ -317,12 +324,13 @@ function ProfilesTab() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => apiProfilesApi.create({ name: newName, description: newDesc || null }),
+    mutationFn: () => apiProfilesApi.create({ name: newName, description: newDesc || null, is_admin: newIsAdmin }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['api-profiles'] })
       setShowCreate(false)
       setNewName('')
       setNewDesc('')
+      setNewIsAdmin(false)
       setCreateError(null)
     },
     onError: (err: Error) => setCreateError(err.message),
@@ -362,6 +370,19 @@ function ProfilesTab() {
                 placeholder="Optionnel"
               />
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="new-is-admin"
+              type="checkbox"
+              checked={newIsAdmin}
+              onChange={(e) => setNewIsAdmin(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+            />
+            <label htmlFor="new-is-admin" className="text-sm font-medium text-gray-700 flex items-center gap-1">
+              <ShieldCheck size={14} className="text-indigo-500" />
+              Profil admin — accès complet (tous workspaces, create_workspace, import_template, create_block)
+            </label>
           </div>
           {createError && <p className="text-sm text-red-600">{createError}</p>}
           <div className="flex gap-2">

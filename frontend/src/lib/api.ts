@@ -706,6 +706,7 @@ export interface ApiProfileOut {
   id: string
   name: string
   description: string | null
+  is_admin: boolean
   created_at: string
   updated_at: string
   scope_count: number
@@ -746,7 +747,7 @@ export interface ApiKeyCreated extends ApiKeyOut {
 
 export const apiProfilesApi = {
   list: () => api.get<ApiProfileOut[]>('/user/api-profiles'),
-  create: (body: { name: string; description?: string | null }) =>
+  create: (body: { name: string; description?: string | null; is_admin?: boolean }) =>
     api.post<ApiProfileOut>('/user/api-profiles', body),
   get: (id: string) => api.get<ApiProfileDetail>(`/user/api-profiles/${id}`),
   setScopes: (id: string, scopes: ApiProfileScopeIn[]) =>
