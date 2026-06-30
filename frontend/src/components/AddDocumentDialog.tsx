@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ApiError, docsApi, type AllowedTypeOut, type DocumentOut } from '../lib/api'
 import { Button } from './ui/button'
@@ -35,15 +35,33 @@ export function AddDocumentDialog({
   onClose,
 }: AddDocumentDialogProps) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
   const [selectedType, setSelectedType] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Slugs des siblings depuis le cache (déjà chargé par BlockDocumentList)
+  const siblingSlugSet = (() => {
+    const cached = qc.getQueryData<DocumentOut[]>(['block-documents', ws, block])
+    if (!cached) return new Set<string>()
+    const pid = parentId ?? null
+    return new Set(
+      cached
+        .filter((d) => (d.parent_id ?? null) === pid && d.slug)
+        .map((d) => d.slug as string),
+    )
+  })()
+
   function handleTitleChange(v: string) {
     setTitle(v)
     setSlug(slugify(v))
+  }
+
+  function handleSlugChange(raw: string) {
+    // Filtre immédiat : seuls [a-z0-9-] autorisés
+    setSlug(raw.replace(/[^a-z0-9-]/g, '').slice(0, 80))
   }
 
   const { data: types = [], isLoading } = useQuery<AllowedTypeOut[]>({
@@ -54,7 +72,17 @@ export function AddDocumentDialog({
   const effectiveType = types.length === 1 ? types[0].slug : selectedType
 
   const slugTrimmed = slug.trim()
-  const slugValid = slugTrimmed !== '' && SLUG_RE.test(slugTrimmed)
+  const formatOk = slugTrimmed !== '' && SLUG_RE.test(slugTrimmed)
+  const notDuplicate = !siblingSlugSet.has(slugTrimmed)
+  const slugValid = formatOk && notDuplicate
+
+  const slugError = slug
+    ? !formatOk
+      ? 'Commence et finit par un alphanumérique, 2–80 chars.'
+      : !notDuplicate
+        ? 'Ce slug est déjà utilisé par un document du même niveau.'
+        : null
+    : null
 
   async function handleSubmit() {
     if (!title.trim() || !effectiveType || !slugValid) return
@@ -122,15 +150,13 @@ export function AddDocumentDialog({
               <label className="mb-1 block text-sm font-medium text-gray-600">Slug</label>
               <Input
                 value={slug}
-                onChange={(e) => setSlug(e.target.value.replace(/[^a-z0-9-]/g, '').slice(0, 80))}
+                onChange={(e) => handleSlugChange(e.target.value)}
                 placeholder="ma-page"
-                className={slug && !slugValid ? 'border-red-400 focus-visible:ring-red-400' : ''}
+                className={slugError ? 'border-red-400 focus-visible:ring-red-400' : ''}
                 data-testid="add-document-slug-input"
               />
-              {slug && !slugValid && (
-                <p className="mt-1 text-xs text-red-500">
-                  Commence et finit par un alphanumérique, 2–80 chars.
-                </p>
+              {slugError && (
+                <p className="mt-1 text-xs text-red-500">{slugError}</p>
               )}
             </div>
           </>
