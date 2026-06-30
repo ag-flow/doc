@@ -162,6 +162,15 @@ async def delete_profile(
 
 async def list_keys(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[ApiKeyOut]:
     async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM api_key
+            WHERE owner_id = $1
+              AND revoked_at IS NOT NULL
+              AND revoked_at < now() - interval '24 hours'
+            """,
+            owner_id,
+        )
         rows = await conn.fetch(
             """
             SELECT k.id, k.profile_id, p.name AS profile_name, k.label,
