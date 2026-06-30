@@ -9,43 +9,44 @@ from pydantic import BaseModel, field_validator
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 
-def _validate_slug(v: str | None) -> str | None:
-    if v is not None and not _SLUG_RE.match(v):
-        raise ValueError(
-            "slug invalide : minuscules, chiffres et tirets, 2–80 chars, "
-            "commence et finit par un alphanumérique"
-        )
-    return v
-
-
 class DocumentCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     title: str
     block_id: uuid.UUID
+    slug: str
     content: str | None = None
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
-    slug: str | None = None
 
     @field_validator("slug")
     @classmethod
-    def check_slug(cls, v: str | None) -> str | None:
-        return _validate_slug(v)
+    def check_slug(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug invalide : minuscules, chiffres et tirets, 2–80 chars, "
+                "commence et finit par un alphanumérique"
+            )
+        return v
 
 
 class DocumentCreateInBlock(BaseModel):
     model_config = {"extra": "forbid"}
 
     title: str
+    slug: str
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
-    slug: str | None = None
 
     @field_validator("slug")
     @classmethod
-    def check_slug(cls, v: str | None) -> str | None:
-        return _validate_slug(v)
+    def check_slug(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug invalide : minuscules, chiffres et tirets, 2–80 chars, "
+                "commence et finit par un alphanumérique"
+            )
+        return v
 
 
 class DocumentUpdate(BaseModel):
@@ -67,7 +68,12 @@ class DocumentUpdate(BaseModel):
     @field_validator("slug")
     @classmethod
     def check_slug(cls, v: str | None) -> str | None:
-        return _validate_slug(v)
+        if v is not None and not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug invalide : minuscules, chiffres et tirets, 2–80 chars, "
+                "commence et finit par un alphanumérique"
+            )
+        return v
 
 
 class DocumentOut(BaseModel):
