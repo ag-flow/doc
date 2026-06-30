@@ -62,8 +62,11 @@ async def _resolve_api_key(
 ) -> AuthUser:
     from docflow.apikeys.service import resolve_api_key
 
-    user, scopes = await resolve_api_key(_pool(request), credentials.credentials)
+    user, scopes, profile_is_admin = await resolve_api_key(
+        _pool(request), credentials.credentials
+    )
     request.state.api_key_scopes = scopes
+    request.state.api_key_is_admin = profile_is_admin
     return user
 
 
@@ -90,6 +93,14 @@ async def require_superadmin(user: AuthUser = Depends(get_current_user)) -> Auth
     return user
 
 
+def _is_api_key_admin(request: Request) -> bool:
+    return bool(getattr(request.state, "api_key_is_admin", False))
+
+
+def _is_api_key_request(request: Request) -> bool:
+    return getattr(request.state, "api_key_scopes", None) is not None
+
+
 def check_api_key_scope(
     request: Request,
     ws_slug: str,
@@ -98,7 +109,7 @@ def check_api_key_scope(
 ) -> None:
     """Lève 403 si la requête vient d'une API key et que le scope demandé est refusé.
 
-    Sans effet pour les requêtes JWT (accès complet inchangé).
+    Sans effet pour les requêtes JWT et pour les clés API de profil admin.
     """
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
@@ -106,7 +117,9 @@ def check_api_key_scope(
         request.state, "api_key_scopes", None
     )
     if scopes is None:
-        return
+        return  # JWT → accès complet
+    if _is_api_key_admin(request):
+        return  # profil admin → accès complet
 
     for scope in scopes:
         if scope.workspace_slug != ws_slug:
@@ -120,14 +133,29 @@ def check_api_key_scope(
     raise HTTPException(status_code=403, detail="hors du périmètre de la clé API")
 
 
+def require_api_key_admin_write(request: Request) -> None:
+    """Bloque les clés API non-admin sur les opérations structurelles (sans scope ws connu).
+
+    Opérations visées : create_workspace, import_template.
+    Sans effet pour les JWT et les clés de profil admin.
+    """
+    if not _is_api_key_request(request):
+        return  # JWT → libre
+    if not _is_api_key_admin(request):
+        raise HTTPException(
+            status_code=403,
+            detail="clé API non-admin : opération d'administration interdite",
+        )
+
+
 def filter_workspaces_by_scope(request: Request, workspaces: list) -> list:  # type: ignore[type-arg]
-    """Filtre la liste des workspaces selon les scopes de l'API key (sans effet si JWT)."""
+    """Filtre la liste des workspaces selon les scopes de l'API key (sans effet si JWT/admin)."""
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
     scopes: list[ApiProfileScopeOut] | None = getattr(
         request.state, "api_key_scopes", None
     )
-    if scopes is None:
+    if scopes is None or _is_api_key_admin(request):
         return workspaces
     allowed = {s.workspace_slug for s in scopes}
     return [ws for ws in workspaces if ws.slug in allowed]
@@ -136,13 +164,13 @@ def filter_workspaces_by_scope(request: Request, workspaces: list) -> list:  # t
 def filter_blocks_by_scope(
     request: Request, ws_slug: str, blocks: list  # type: ignore[type-arg]
 ) -> list:  # type: ignore[type-arg]
-    """Filtre la liste des blocs selon les scopes de l'API key (sans effet si JWT)."""
+    """Filtre la liste des blocs selon les scopes de l'API key (sans effet si JWT/admin)."""
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
     scopes: list[ApiProfileScopeOut] | None = getattr(
         request.state, "api_key_scopes", None
     )
-    if scopes is None:
+    if scopes is None or _is_api_key_admin(request):
         return blocks
     ws_scopes = [s for s in scopes if s.workspace_slug == ws_slug]
     if not ws_scopes:

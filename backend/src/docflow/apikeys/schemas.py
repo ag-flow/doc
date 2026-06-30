@@ -10,12 +10,14 @@ class ApiProfileCreate(BaseModel):
     model_config = {"extra": "forbid"}
     name: str = Field(min_length=1, max_length=80)
     description: str | None = None
+    is_admin: bool = False
 
 
 class ApiProfileOut(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
+    is_admin: bool
     created_at: datetime
     updated_at: datetime
     scope_count: int

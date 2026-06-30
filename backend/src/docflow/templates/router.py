@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, HttpUrl
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_admin, require_api_key_admin_write
 from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
 from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
 from docflow.templates.inheritance import resolve
@@ -328,6 +328,7 @@ async def import_template(
     request: Request,
     _: None = _Admin,
 ) -> ImportResultOut:
+    require_api_key_admin_write(request)
     yaml_file = _find_template_file(body.template)
     with yaml_file.open() as f:
         raw = yaml.safe_load(f)

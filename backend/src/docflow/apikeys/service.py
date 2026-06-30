@@ -32,7 +32,7 @@ async def list_profiles(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[ApiProf
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+            SELECT p.id, p.name, p.description, p.is_admin, p.created_at, p.updated_at,
                    COUNT(DISTINCT s.id)::int AS scope_count,
                    COUNT(DISTINCT k.id) FILTER (WHERE k.revoked_at IS NULL)::int AS key_count
             FROM api_profile p
@@ -54,13 +54,14 @@ async def create_profile(
         try:
             row = await conn.fetchrow(
                 """
-                INSERT INTO api_profile (owner_id, name, description)
-                VALUES ($1, $2, $3)
-                RETURNING id, name, description, created_at, updated_at
+                INSERT INTO api_profile (owner_id, name, description, is_admin)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, name, description, is_admin, created_at, updated_at
                 """,
                 owner_id,
                 body.name,
                 body.description,
+                body.is_admin,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(status_code=409, detail="nom de profil déjà utilisé") from exc
@@ -74,7 +75,7 @@ async def get_profile(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+            SELECT p.id, p.name, p.description, p.is_admin, p.created_at, p.updated_at,
                    COUNT(DISTINCT s.id)::int AS scope_count,
                    COUNT(DISTINCT k.id) FILTER (WHERE k.revoked_at IS NULL)::int AS key_count
             FROM api_profile p
@@ -237,15 +238,22 @@ async def revoke_key(
 
 async def resolve_api_key(
     pool: asyncpg.Pool, raw: str
-) -> tuple[AuthUser, list[ApiProfileScopeOut]]:
+) -> tuple[AuthUser, list[ApiProfileScopeOut], bool]:
+    """Retourne (AuthUser, scopes, profile_is_admin).
+
+    profile_is_admin=True : la clé appartient à un profil admin — aucune restriction de scope.
+    """
     key_hash = _hash_key(raw)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             SELECT k.id AS key_id, k.owner_id,
-                   u.email, u.label, u.is_admin, u.validated, u.disabled
+                   u.email, u.label, u.is_admin AS user_is_admin,
+                   u.validated, u.disabled,
+                   p.is_admin AS profile_is_admin
             FROM api_key k
             JOIN app_user u ON u.id = k.owner_id
+            JOIN api_profile p ON p.id = k.profile_id
             WHERE k.key_hash = $1 AND k.revoked_at IS NULL
             """,
             key_hash,
@@ -271,9 +279,9 @@ async def resolve_api_key(
         id=row["owner_id"],
         email=row["email"],
         label=row["label"],
-        is_admin=row["is_admin"],
+        is_admin=row["user_is_admin"],
         validated=row["validated"],
         disabled=row["disabled"],
     )
     scopes = [ApiProfileScopeOut(**dict(s)) for s in scope_rows]
-    return user, scopes
+    return user, scopes, bool(row["profile_is_admin"])

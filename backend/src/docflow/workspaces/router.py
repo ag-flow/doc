@@ -6,6 +6,7 @@ from docflow.auth.deps import (
     check_api_key_scope,
     filter_workspaces_by_scope,
     require_admin,
+    require_api_key_admin_write,
 )
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
@@ -32,6 +33,7 @@ async def list_workspaces(
 async def create_workspace(
     body: WorkspaceCreate, request: Request, current_user: AuthUser = _Admin
 ) -> WorkspaceOut:
+    require_api_key_admin_write(request)
     return await service.create_workspace(request.app.state.pool, body, current_user.id)
 
 
