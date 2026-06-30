@@ -94,6 +94,54 @@ async def _resolve_git_auth(
     return remote_url, None
 
 
+async def _resolve_dump_auth(
+    pool: asyncpg.Pool, remote_point_slug: str, settings: object
+) -> tuple[str, int | None, str, str | None, str | None]:
+    """Retourne (host, port, username, password_or_None, ssh_key_path_or_None)."""
+    from docflow.remote import service as rp_svc
+
+    fernet_key_obj = getattr(settings, "encryption_key", None)
+    fernet_key: str | None = fernet_key_obj.reveal() if fernet_key_obj else None
+    harpocrate_url: str | None = getattr(settings, "harpocrate_url", None)
+
+    point = await rp_svc.get_point(pool, remote_point_slug)
+
+    if point.auth_type == "certificate":
+        if not fernet_key:
+            raise RuntimeError("encryption_key non configurée")
+        assert point.certificate_slug
+        private_key = await rp_svc.get_certificate_private_key(
+            pool, point.certificate_slug, fernet_key
+        )
+        key_path = _REPOS_ROOT / "keys" / f"{point.certificate_slug}.pem"
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(private_key)
+        key_path.chmod(0o600)
+        return point.host, point.port, point.username, None, str(key_path)
+
+    secret: str
+    if point.auth_storage == "vault":
+        from docflow.secrets.resolver import resolve
+        from docflow.secrets.secret import Secret
+        enc_key_obj = getattr(settings, "encryption_key", None)
+        enc_key: str | None = enc_key_obj.reveal() if enc_key_obj else None
+        secret = await resolve(
+            Secret(point.auth_vault_ref or ""),
+            harpocrate_url=harpocrate_url,
+            pool=pool,
+            enc_key=enc_key,
+        )
+    else:
+        if not fernet_key:
+            raise RuntimeError("encryption_key non configurée")
+        secret = await rp_svc.get_point_secret(pool, remote_point_slug, fernet_key)
+
+    return point.host, point.port, point.username, secret, None
+
+
+_DUMPS_ROOT = pathlib.Path("/data/backup-dumps")
+
+
 async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) -> None:
     job_id: uuid.UUID = job["id"]
     log.info("backup_job_start", job_slug=job["slug"], strategy=job["strategy"])
@@ -132,7 +180,32 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
                 ),
             )
         else:
-            raise NotImplementedError("db_dump non encore implémenté")
+            host, port, username, password, ssh_key_path = await _resolve_dump_auth(
+                pool, job["remote_point_slug"], settings
+            )
+            point_detail = await _get_point_detail(pool, job["remote_point_slug"])
+            db_url: str = getattr(settings, "database_url", "")
+            if not db_url:
+                raise RuntimeError("DATABASE_URL non configurée")
+
+            from docflow.backup.db_dump import run_db_dump
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: run_db_dump(
+                    job_id=job_id,
+                    workspace_slug=job.get("workspace_slug"),
+                    database_url=db_url,
+                    point_type=point_detail["point_type"],
+                    host=host,
+                    port=port,
+                    username=username,
+                    password=password,
+                    ssh_key_path=ssh_key_path,
+                    remote_dir=job.get("git_base_path"),
+                    dumps_root=_DUMPS_ROOT,
+                ),
+            )
 
         async with pool.acquire() as conn:
             await svc.finish_run(
@@ -165,7 +238,7 @@ async def _last_success_seq(pool: asyncpg.Pool, job_id: uuid.UUID) -> int:
 
 async def _get_point_detail(pool: asyncpg.Pool, slug: str) -> dict[str, Any]:
     row = await pool.fetchrow(
-        "SELECT git_branch FROM remote_point WHERE slug = $1", slug
+        "SELECT point_type, git_branch FROM remote_point WHERE slug = $1", slug
     )
     assert row is not None
     return dict(row)
@@ -194,6 +267,7 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
 
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
     _REPOS_ROOT.mkdir(parents=True, exist_ok=True)
+    _DUMPS_ROOT.mkdir(parents=True, exist_ok=True)
     log.info("backup_worker_started")
     while True:
         try:
