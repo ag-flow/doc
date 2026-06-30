@@ -367,6 +367,67 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "slug", "label", "functional_type_slug"],
         },
     ),
+    Tool(
+        name="create_api_profile",
+        description=(
+            "Crée un profil d'accès API avec un périmètre limité à UN workspace. "
+            "ÉCRITURE : le profil est immédiatement utilisable pour générer des clés. "
+            "name doit être unique parmi les profils de l'utilisateur système. "
+            "workspace_slug doit exister (utiliser list_workspaces pour le vérifier). "
+            "read_only=true (défaut) : lecture seule sur tout le workspace. "
+            "read_only=false : lecture et écriture sur tout le workspace. "
+            "description est optionnelle. "
+            "Retourne le profile_id à passer à generate_api_key."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Nom unique du profil (ex. 'lecture-projet-alpha')",
+                },
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace dont l'accès est accordé",
+                },
+                "read_only": {
+                    "type": "boolean",
+                    "description": "true = lecture seule (défaut), false = lecture+écriture",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Description optionnelle du profil",
+                },
+            },
+            "required": ["name", "workspace_slug"],
+        },
+    ),
+    Tool(
+        name="generate_api_key",
+        description=(
+            "Génère une clé API pour un profil existant. "
+            "ÉCRITURE : la clé brute (dfk_...) n'est retournée qu'une seule fois — "
+            "elle ne peut pas être récupérée ultérieurement. "
+            "profile_id est l'UUID retourné par create_api_profile ou list_api_profiles. "
+            "label identifie l'usage de la clé (ex. 'script-ci', 'integration-x'). "
+            "Retourne {key, key_prefix, profile_name} — stocker key immédiatement."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "profile_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du profil (issu de create_api_profile)",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Label identifiant l'usage de la clé",
+                },
+            },
+            "required": ["profile_id", "label"],
+        },
+    ),
 ]
 
 mcp_server = Server("docflow")
@@ -436,6 +497,10 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _import_template(pool, arguments)
     if name == "create_block":
         return await _create_block(pool, arguments)
+    if name == "create_api_profile":
+        return await _create_api_profile(pool, arguments)
+    if name == "generate_api_key":
+        return await _generate_api_key(pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})
 
 
@@ -824,5 +889,89 @@ async def _create_block(
             "label": result.label,
             "workspace_slug": result.workspace_slug,
             "functional_type_slug": result.functional_type_slug,
+        }
+    )
+
+
+async def _system_owner(pool: asyncpg.Pool) -> uuid.UUID:
+    """Retourne l'id du premier admin local validé — propriétaire système pour les ops MCP."""
+    uid: uuid.UUID | None = await pool.fetchval(
+        """
+        SELECT id FROM app_user
+        WHERE is_admin = true AND password_hash IS NOT NULL
+          AND disabled = false AND validated = true
+        ORDER BY created_at LIMIT 1
+        """
+    )
+    if uid is None:
+        raise RuntimeError("Aucun admin local disponible pour les opérations MCP")
+    return uid
+
+
+async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.apikeys import service as ak_svc
+    from docflow.apikeys.schemas import ApiProfileCreate, ApiProfileScopeIn
+
+    name = str(args.get("name", ""))
+    ws_slug = str(args.get("workspace_slug", ""))
+    read_only = bool(args.get("read_only", True))
+    description = str(args["description"]) if "description" in args else None
+
+    owner_id = await _system_owner(pool)
+
+    try:
+        profile = await ak_svc.create_profile(
+            pool,
+            owner_id,
+            ApiProfileCreate(name=name, description=description, is_admin=False),
+        )
+        await ak_svc.set_scopes(
+            pool,
+            owner_id,
+            profile.id,
+            [ApiProfileScopeIn(workspace_slug=ws_slug, block_slug=None, read_only=read_only)],
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {
+            "created": True,
+            "profile_id": str(profile.id),
+            "name": profile.name,
+            "workspace_slug": ws_slug,
+            "read_only": read_only,
+        }
+    )
+
+
+async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.apikeys import service as ak_svc
+    from docflow.apikeys.schemas import ApiKeyCreate
+
+    profile_id_str = str(args.get("profile_id", ""))
+    label = str(args.get("label", ""))
+
+    owner_id = await _system_owner(pool)
+
+    try:
+        created = await ak_svc.generate_key(
+            pool,
+            owner_id,
+            ApiKeyCreate(profile_id=uuid.UUID(profile_id_str), label=label),
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {
+            "key": created.key,
+            "key_prefix": created.key_prefix,
+            "profile_name": created.profile_name,
+            "label": created.label,
         }
     )

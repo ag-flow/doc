@@ -178,6 +178,8 @@ function ProfileCard({
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [scopes, setScopes] = useState<Map<ScopeKey, boolean>>(new Map())
   const [scopesLoaded, setScopesLoaded] = useState(false)
+  const [desc, setDesc] = useState(profile.description ?? '')
+  const [descMsg, setDescMsg] = useState<string | null>(null)
 
   const { data: detail } = useQuery<ApiProfileDetail>({
     queryKey: ['api-profile', profile.id],
@@ -208,6 +210,15 @@ function ProfileCard({
   const toggleAdminMutation = useMutation({
     mutationFn: (is_admin: boolean) => apiProfilesApi.update(profile.id, { is_admin }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['api-profiles'] }),
+  })
+
+  const saveDescMutation = useMutation({
+    mutationFn: () => apiProfilesApi.update(profile.id, { description: desc || null }),
+    onSuccess: () => {
+      setDescMsg('Description enregistrée')
+      void qc.invalidateQueries({ queryKey: ['api-profiles'] })
+      setTimeout(() => setDescMsg(null), 2000)
+    },
   })
 
   const deleteMutation = useMutation({
@@ -283,6 +294,26 @@ function ProfileCard({
 
       {expanded && (
         <div className="border-t border-gray-100 px-4 py-4 space-y-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Description</label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="Description optionnelle"
+                className="flex-1"
+              />
+              <Button
+                size="sm"
+                onClick={() => saveDescMutation.mutate()}
+                disabled={saveDescMutation.isPending}
+              >
+                Enregistrer
+              </Button>
+              {descMsg && <span className="text-xs text-green-600">{descMsg}</span>}
+            </div>
+          </div>
+
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Scopes</p>
           {workspaces.length === 0 ? (
             <p className="text-sm text-gray-400">Aucun workspace disponible</p>
