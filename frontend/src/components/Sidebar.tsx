@@ -7,6 +7,7 @@ import {
   Boxes,
   FileText,
   Webhook,
+  HardDrive,
   KeyRound,
   KeySquare,
   ShieldCheck,
@@ -143,6 +144,7 @@ export function Sidebar() {
             <NavItem to="/admin/users" icon={Users} label="Utilisateurs" />
             <NavItem to="/admin/vault" icon={KeyRound} label="Wallets Vault" />
             <NavItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
+            <NavItem to="/admin/remote" icon={HardDrive} label="Connexions & Sauvegarde" />
           </div>
         </>
       )}
