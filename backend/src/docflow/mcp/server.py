@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import uuid
 
 import asyncpg
 import structlog
 from mcp.server import Server
 from mcp.types import TextContent, Tool
+
+_TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
 log = structlog.get_logger(__name__)
 
@@ -215,6 +218,123 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "doc_id", "prop_slug"],
         },
     ),
+    Tool(
+        name="list_templates",
+        description=(
+            "Retourne la liste des modèles (templates) globaux installés sur le serveur. "
+            "Chaque entrée contient : template (slug stable), label, version, "
+            "type_slugs (liste des types fonctionnels définis par le template). "
+            "Utiliser template_slug avec import_template ou create_block pour "
+            "appliquer un modèle dans un workspace. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="create_workspace",
+        description=(
+            "Crée un nouveau workspace docflow et le persiste immédiatement. "
+            "ÉCRITURE : le workspace est visible dans l'interface dès la réponse. "
+            "slug doit être unique, en minuscules, chiffres et tirets uniquement "
+            "(ex. 'mon-projet-2024'). "
+            "label est le nom affiché (libre). "
+            "description est optionnelle. "
+            "Retourne le slug, le label et le workspace_technical_key créés. "
+            "Erreur 409 si le slug est déjà pris."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "description": "Identifiant unique du workspace (minuscules, tirets)",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Nom affiché du workspace",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Description optionnelle du workspace",
+                },
+            },
+            "required": ["slug", "label"],
+        },
+    ),
+    Tool(
+        name="import_template",
+        description=(
+            "Importe un modèle global (issu de list_templates) dans un workspace : "
+            "crée ou met à jour les types fonctionnels et leurs propriétés. "
+            "ÉCRITURE : opération additive et idempotente — appeler plusieurs fois "
+            "le même template sur le même workspace est sans danger. "
+            "Ne supprime jamais de types existants. "
+            "Retourne {applied, no_op, adds, soft_updates} : "
+            "no_op=true si le workspace avait déjà la version courante du template. "
+            "Erreur si workspace_slug ou template_slug est introuvable."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace cible (issu de list_workspaces)",
+                },
+                "template_slug": {
+                    "type": "string",
+                    "description": "Slug du template à importer (issu de list_templates)",
+                },
+            },
+            "required": ["workspace_slug", "template_slug"],
+        },
+    ),
+    Tool(
+        name="create_block",
+        description=(
+            "Crée un bloc de données dans un workspace. "
+            "ÉCRITURE : le bloc est immédiatement visible dans l'interface. "
+            "functional_type_slug doit exister dans le workspace ; si template_slug "
+            "est fourni, le template est importé automatiquement avant la création "
+            "(idempotent — sans danger si déjà importé). "
+            "slug doit être unique dans le workspace (minuscules, tirets). "
+            "parent_slug est optionnel : si fourni, le bloc est enfant d'un autre bloc "
+            "(contrainte miroir : le type du bloc doit être enfant du type du parent). "
+            "Retourne le slug, le label et l'id du bloc créé."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace cible (issu de list_workspaces)",
+                },
+                "slug": {
+                    "type": "string",
+                    "description": "Identifiant unique du bloc dans le workspace",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Nom affiché du bloc",
+                },
+                "functional_type_slug": {
+                    "type": "string",
+                    "description": "Type fonctionnel du bloc (doit exister dans le workspace)",
+                },
+                "parent_slug": {
+                    "type": "string",
+                    "description": "Slug du bloc parent (optionnel — omis = bloc racine)",
+                },
+                "template_slug": {
+                    "type": "string",
+                    "description": (
+                        "Slug d'un template global à importer avant la création "
+                        "(optionnel — utile si le type n'est pas encore dans le workspace)"
+                    ),
+                },
+            },
+            "required": ["workspace_slug", "slug", "label", "functional_type_slug"],
+        },
+    ),
 ]
 
 mcp_server = Server("docflow")
@@ -269,6 +389,14 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         )
     if name == "set_property_value":
         return await _set_property_value(pool, arguments)
+    if name == "list_templates":
+        return await _list_templates()
+    if name == "create_workspace":
+        return await _create_workspace(pool, arguments)
+    if name == "import_template":
+        return await _import_template(pool, arguments)
+    if name == "create_block":
+        return await _create_block(pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})
 
 
@@ -442,3 +570,167 @@ async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> li
     )
     out = await doc_svc.set_property_value(pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data)
     return _text({"updated": True, "prop_slug": out.prop_slug})
+
+
+async def _list_templates() -> list[TextContent]:
+    import yaml
+
+    from docflow.templates.inheritance import resolve
+    from docflow.templates.models import Template
+
+    result = []
+    if _TEMPLATES_DIR.exists():
+        for yaml_file in sorted(_TEMPLATES_DIR.glob("*.yaml")):
+            try:
+                with yaml_file.open() as f:
+                    raw = yaml.safe_load(f)
+                tpl = Template.model_validate(raw)
+                resolved = resolve(tpl)
+                result.append(
+                    {
+                        "template": tpl.template,
+                        "label": tpl.label,
+                        "version": tpl.version,
+                        "type_slugs": [r.slug for r in resolved],
+                    }
+                )
+            except Exception:
+                log.warning("mcp_template_load_error", file=yaml_file.name, exc_info=True)
+    return _text(result)
+
+
+def _find_template(template_slug: str) -> object:
+    """Charge un Template depuis le répertoire global ; lève ValueError si introuvable."""
+    import yaml
+
+    from docflow.templates.models import Template
+
+    for yaml_file in _TEMPLATES_DIR.glob("*.yaml"):
+        try:
+            with yaml_file.open() as f:
+                raw = yaml.safe_load(f)
+            tpl = Template.model_validate(raw)
+            if tpl.template == template_slug:
+                return tpl
+        except Exception:
+            continue
+    raise ValueError(f"template '{template_slug}' introuvable")
+
+
+async def _create_workspace(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.workspaces import service as ws_svc
+
+    ws_slug = str(args.get("slug", ""))
+    label = str(args.get("label", ""))
+    description = str(args["description"]) if "description" in args else None
+
+    try:
+        data = WorkspaceCreate(slug=ws_slug, label=label, description=description)
+        result = await ws_svc.create_workspace(pool, data, owner_id=None)
+    except ValidationError as e:
+        return _text({"error": e.errors(include_url=False)})
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {
+            "created": True,
+            "slug": result.slug,
+            "label": result.label,
+            "workspace_technical_key": str(result.workspace_technical_key),
+        }
+    )
+
+
+async def _import_template(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from docflow.templates.importer import (
+        ImportConflictError,
+        VersionConflictError,
+        run_import,
+    )
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    template_slug = str(args.get("template_slug", ""))
+
+    try:
+        tpl = _find_template(template_slug)
+        report = await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
+    except VersionConflictError as e:
+        return _text({"error": str(e)})
+    except ImportConflictError as e:
+        conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]
+        return _text({"error": "conflits bloquants", "conflicts": conflicts})
+    except ValueError as e:
+        return _text({"error": str(e)})
+
+    return _text(
+        {
+            "applied": report.applied,
+            "no_op": report.no_op,
+            "adds": len(report.diff.adds),
+            "soft_updates": len(report.diff.soft_updates),
+        }
+    )
+
+
+async def _create_block(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from docflow.blocks import service as block_svc
+    from docflow.schemas.block import DataBlockCreate
+    from docflow.templates.importer import (
+        ImportConflictError,
+        VersionConflictError,
+        run_import,
+    )
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    blk_slug = str(args.get("slug", ""))
+    label = str(args.get("label", ""))
+    type_slug = str(args.get("functional_type_slug", ""))
+    parent_slug = str(args["parent_slug"]) if "parent_slug" in args else None
+    template_slug = str(args["template_slug"]) if "template_slug" in args else None
+
+    if template_slug:
+        try:
+            tpl = _find_template(template_slug)
+            await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
+        except VersionConflictError:
+            pass  # version plus ancienne déjà installée — on continue
+        except (ImportConflictError, ValueError) as e:
+            return _text({"error": f"import template : {e}"})
+
+    try:
+        data = DataBlockCreate(
+            slug=blk_slug,
+            label=label,
+            functional_type_slug=type_slug,
+            parent_slug=parent_slug,
+        )
+        result = await block_svc.create_block(pool, ws_slug, data)
+    except ValidationError as e:
+        return _text({"error": e.errors(include_url=False)})
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {
+            "created": True,
+            "id": str(result.id),
+            "slug": result.slug,
+            "label": result.label,
+            "workspace_slug": result.workspace_slug,
+            "functional_type_slug": result.functional_type_slug,
+        }
+    )

@@ -52,7 +52,7 @@ async def get_workspace(pool: asyncpg.Pool, ws_slug: str) -> WorkspaceOut:
 
 
 async def create_workspace(
-    pool: asyncpg.Pool, data: WorkspaceCreate, owner_id: uuid.UUID
+    pool: asyncpg.Pool, data: WorkspaceCreate, owner_id: uuid.UUID | None
 ) -> WorkspaceOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
