@@ -749,6 +749,8 @@ export const apiProfilesApi = {
   list: () => api.get<ApiProfileOut[]>('/user/api-profiles'),
   create: (body: { name: string; description?: string | null; is_admin?: boolean }) =>
     api.post<ApiProfileOut>('/user/api-profiles', body),
+  update: (id: string, body: { name?: string; description?: string | null; is_admin?: boolean }) =>
+    api.patch<ApiProfileOut>(`/user/api-profiles/${id}`, body),
   get: (id: string) => api.get<ApiProfileDetail>(`/user/api-profiles/${id}`),
   setScopes: (id: string, scopes: ApiProfileScopeIn[]) =>
     api.put<ApiProfileScopeOut[]>(`/user/api-profiles/${id}/scopes`, { scopes }),

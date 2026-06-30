@@ -16,6 +16,7 @@ from docflow.apikeys.schemas import (
     ApiProfileOut,
     ApiProfileScopeIn,
     ApiProfileScopeOut,
+    ApiProfileUpdate,
 )
 from docflow.schemas.auth import AuthUser
 
@@ -100,6 +101,47 @@ async def get_profile(
         )
     scopes = [ApiProfileScopeOut(**dict(s)) for s in scope_rows]
     return ApiProfileDetail(**dict(row), scopes=scopes)
+
+
+async def update_profile(
+    pool: asyncpg.Pool, owner_id: uuid.UUID, profile_id: uuid.UUID, body: ApiProfileUpdate
+) -> ApiProfileOut:
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        return (await get_profile(pool, owner_id, profile_id)).model_copy()
+
+    cols = ", ".join(f"{k} = ${i + 3}" for i, k in enumerate(updates))
+    vals = list(updates.values())
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"""
+            UPDATE api_profile
+            SET {cols}, updated_at = now()
+            WHERE id = $1 AND owner_id = $2
+            RETURNING id, name, description, is_admin, created_at, updated_at
+            """,
+            profile_id,
+            owner_id,
+            *vals,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="profil introuvable")
+        counts = await conn.fetchrow(
+            """
+            SELECT COUNT(DISTINCT s.id)::int AS scope_count,
+                   COUNT(DISTINCT k.id) FILTER (WHERE k.revoked_at IS NULL)::int AS key_count
+            FROM api_profile p
+            LEFT JOIN api_profile_scope s ON s.profile_id = p.id
+            LEFT JOIN api_key k ON k.profile_id = p.id
+            WHERE p.id = $1
+            GROUP BY p.id
+            """,
+            profile_id,
+        )
+    assert counts is not None
+    return ApiProfileOut(
+        **dict(row), scope_count=counts["scope_count"], key_count=counts["key_count"]
+    )
 
 
 async def set_scopes(

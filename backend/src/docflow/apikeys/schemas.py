@@ -24,6 +24,13 @@ class ApiProfileOut(BaseModel):
     key_count: int
 
 
+class ApiProfileUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = None
+    is_admin: bool | None = None
+
+
 class ApiProfileScopeIn(BaseModel):
     model_config = {"extra": "forbid"}
     workspace_slug: str

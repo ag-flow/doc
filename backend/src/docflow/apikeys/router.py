@@ -13,6 +13,7 @@ from docflow.apikeys.schemas import (
     ApiProfileDetail,
     ApiProfileOut,
     ApiProfileScopeOut,
+    ApiProfileUpdate,
     ScopesUpdate,
 )
 from docflow.auth.deps import require_admin
@@ -46,6 +47,16 @@ async def get_profile(
     profile_id: uuid.UUID, request: Request, user: AuthUser = _Auth
 ) -> ApiProfileDetail:
     return await service.get_profile(request.app.state.pool, user.id, profile_id)
+
+
+@router.patch("/user/api-profiles/{profile_id}", response_model=ApiProfileOut)
+async def update_profile(
+    profile_id: uuid.UUID,
+    body: ApiProfileUpdate,
+    request: Request,
+    user: AuthUser = _Auth,
+) -> ApiProfileOut:
+    return await service.update_profile(request.app.state.pool, user.id, profile_id, body)
 
 
 @router.put(

@@ -205,6 +205,11 @@ function ProfileCard({
     },
   })
 
+  const toggleAdminMutation = useMutation({
+    mutationFn: (is_admin: boolean) => apiProfilesApi.update(profile.id, { is_admin }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['api-profiles'] }),
+  })
+
   const deleteMutation = useMutation({
     mutationFn: () => apiProfilesApi.delete(profile.id),
     onSuccess: () => {
@@ -301,6 +306,21 @@ function ProfileCard({
             {saveScopesMutation.isError && (
               <span className="text-sm text-red-600">Erreur lors de l'enregistrement</span>
             )}
+          </div>
+
+          <div className="border-t border-gray-100 pt-3 flex items-center gap-2">
+            <input
+              id={`admin-${profile.id}`}
+              type="checkbox"
+              checked={profile.is_admin}
+              onChange={(e) => toggleAdminMutation.mutate(e.target.checked)}
+              disabled={toggleAdminMutation.isPending}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+            />
+            <label htmlFor={`admin-${profile.id}`} className="text-sm font-medium text-gray-700 flex items-center gap-1 cursor-pointer">
+              <ShieldCheck size={14} className="text-indigo-500" />
+              Profil admin — accès complet (tous workspaces, create_workspace, import_template, create_block)
+            </label>
           </div>
         </div>
       )}
