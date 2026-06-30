@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Eye, EyeOff, Copy, Check, Maximize2, Minimize2 } from 'lucide-react'
+import { Check, Copy, Eye, EyeOff, Link2, Maximize2, Minimize2 } from 'lucide-react'
 import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
+
+const _SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
@@ -41,6 +43,9 @@ export function DocumentEditor() {
   const [deleting, setDeleting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
+  const [slugEdit, setSlugEdit] = useState(false)
+  const [slugValue, setSlugValue] = useState<string>('')
+  const [slugError, setSlugError] = useState<string | null>(null)
 
   const exposeMutation = useMutation({
     mutationFn: (value: boolean) => docsApi.setDocumentExposed(ws!, docId!, value),
@@ -70,9 +75,23 @@ export function DocumentEditor() {
     enabled: Boolean(ws && docId),
   })
 
+  const slugMutation = useMutation({
+    mutationFn: (s: string | null) =>
+      docsApi.patchDocument(ws!, docId!, { slug: s ?? undefined }),
+    onSuccess: (updated) => {
+      void queryClient.setQueryData(['document', ws, docId], updated)
+      setSlugEdit(false)
+      setSlugError(null)
+    },
+    onError: (err) => {
+      setSlugError(err instanceof ApiError ? err.message : t('error.generic'))
+    },
+  })
+
   useEffect(() => {
     if (!doc) return
     setTitle(doc.title)
+    setSlugValue(doc.slug ?? '')
     expectedVersion.current = doc.version
     ancestorRef.current = { title: doc.title, content: doc.content ?? '' }
   }, [doc])
@@ -276,11 +295,51 @@ export function DocumentEditor() {
         </div>
       </div>
 
-      {doc.functional_type_slug && (
-        <p className="mb-4 text-sm text-gray-400" data-testid="document-type-badge">
-          {doc.functional_type_slug}
-        </p>
-      )}
+      <div className="mb-4 flex items-center gap-3 flex-wrap">
+        {doc.functional_type_slug && (
+          <span className="text-sm text-gray-400" data-testid="document-type-badge">
+            {doc.functional_type_slug}
+          </span>
+        )}
+        {/* Slug inline edit */}
+        {slugEdit ? (
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const v = slugValue.trim()
+              if (v && !_SLUG_RE.test(v)) {
+                setSlugError('Minuscules, chiffres, tirets — 2-80 chars')
+                return
+              }
+              slugMutation.mutate(v || null)
+            }}
+          >
+            <Input
+              value={slugValue}
+              onChange={(e) => { setSlugValue(e.target.value); setSlugError(null) }}
+              className="h-7 w-52 text-xs font-mono"
+              placeholder="mon-slug"
+              autoFocus
+            />
+            <button type="submit" className="text-xs text-indigo-600 hover:underline px-1">OK</button>
+            <button type="button" className="text-xs text-gray-400 hover:underline px-1" onClick={() => { setSlugEdit(false); setSlugValue(doc.slug ?? ''); setSlugError(null) }}>Annuler</button>
+            {slugError && <span className="text-xs text-red-500 ml-1">{slugError}</span>}
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setSlugEdit(true)}
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 group"
+            title="Définir le slug pour la synchro git"
+          >
+            <Link2 size={12} className="shrink-0" />
+            {doc.slug
+              ? <span className="font-mono">{doc.slug}</span>
+              : <span className="italic text-gray-300">ajouter un slug</span>}
+          </button>
+        )}
+      </div>
 
       <div className="flex gap-6">
         <div className={focusMode

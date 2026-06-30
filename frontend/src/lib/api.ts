@@ -168,6 +168,7 @@ export interface DocumentOut {
   doc_technical_key: string
   title: string
   type: string
+  slug: string | null
   content: string | null
   version: number
   parent_id: string | null
@@ -269,7 +270,7 @@ export const docsApi = {
   createDocument: (
     ws: string,
     block: string,
-    body: { title: string; functional_type_slug: string; parent_id?: string },
+    body: { title: string; functional_type_slug: string; parent_id?: string; slug?: string },
   ) => api.post<DocumentOut>(`/workspaces/${ws}/blocks/${block}/documents`, body),
 
   listDocuments: (ws: string) =>
@@ -281,7 +282,7 @@ export const docsApi = {
   patchDocument: (
     ws: string,
     docId: string,
-    body: { title?: string; content?: string; expected_version: number },
+    body: { title?: string; content?: string; expected_version?: number; slug?: string },
   ) => api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}`, body),
 
   getDocumentValues: (ws: string, docId: string) =>
@@ -762,6 +763,138 @@ export const apiKeysApi = {
   generate: (body: { profile_id: string; label: string }) =>
     api.post<ApiKeyCreated>('/user/api-keys', body),
   revoke: (id: string) => api.delete(`/user/api-keys/${id}`),
+}
+
+// ── Remote certificates ───────────────────────────────────────────────────────
+
+export interface RemoteCertificateOut {
+  id: string
+  slug: string
+  label: string
+  cert_type: 'ssh_key' | 'tls'
+  public_part: string
+  fingerprint: string | null
+  expires_at: string | null
+  created_at: string
+}
+
+export const remoteCertsApi = {
+  list: () => api.get<RemoteCertificateOut[]>('/admin/remote/certificates'),
+  create: (body: {
+    slug: string; label: string; cert_type: 'ssh_key' | 'tls'
+    public_part: string; private_key: string; expires_at?: string | null
+  }) => api.post<RemoteCertificateOut>('/admin/remote/certificates', body),
+  get: (slug: string) => api.get<RemoteCertificateOut>(`/admin/remote/certificates/${slug}`),
+  delete: (slug: string) => api.delete(`/admin/remote/certificates/${slug}`),
+}
+
+// ── Remote points ─────────────────────────────────────────────────────────────
+
+export type PointType = 'ftp' | 'ftps' | 'sftp' | 'git'
+export type AuthType = 'password' | 'pat' | 'certificate'
+export type AuthStorage = 'local' | 'vault'
+export type GitProvider = 'github' | 'gitlab' | 'gitea' | 'custom'
+
+export interface RemotePointOut {
+  id: string
+  slug: string
+  label: string
+  point_type: PointType
+  host: string
+  port: number | null
+  username: string
+  git_provider: GitProvider | null
+  git_repo: string | null
+  git_branch: string
+  auth_type: AuthType
+  auth_storage: AuthStorage | null
+  auth_vault_ref: string | null
+  certificate_slug: string | null
+  has_local_secret: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface RemotePointBody {
+  slug?: string
+  label: string
+  point_type: PointType
+  host: string
+  port?: number | null
+  username: string
+  git_provider?: GitProvider | null
+  git_repo?: string | null
+  git_branch?: string
+  auth_type: AuthType
+  auth_storage?: AuthStorage | null
+  auth_secret?: string | null
+  auth_vault_ref?: string | null
+  certificate_slug?: string | null
+}
+
+export const remotePointsApi = {
+  list: () => api.get<RemotePointOut[]>('/admin/remote/points'),
+  create: (body: RemotePointBody & { slug: string }) =>
+    api.post<RemotePointOut>('/admin/remote/points', body),
+  get: (slug: string) => api.get<RemotePointOut>(`/admin/remote/points/${slug}`),
+  update: (slug: string, body: RemotePointBody) =>
+    api.put<RemotePointOut>(`/admin/remote/points/${slug}`, body),
+  delete: (slug: string) => api.delete(`/admin/remote/points/${slug}`),
+}
+
+// ── Backup jobs ───────────────────────────────────────────────────────────────
+
+export interface BackupJobOut {
+  id: string
+  slug: string
+  label: string
+  strategy: 'db_dump' | 'git_sync'
+  enabled: boolean
+  remote_point_slug: string
+  workspace_slug: string | null
+  schedule_cron: string | null
+  schedule_every_seconds: number | null
+  git_base_path: string | null
+  created_at: string
+  updated_at: string
+  last_run_at: string | null
+  last_run_status: 'running' | 'success' | 'error' | null
+}
+
+export interface BackupJobRunOut {
+  id: string
+  job_id: string
+  started_at: string
+  finished_at: string | null
+  status: 'running' | 'success' | 'error'
+  error_message: string | null
+  last_change_seq: number | null
+  files_written: number | null
+  files_deleted: number | null
+  commit_sha: string | null
+}
+
+export interface BackupJobBody {
+  slug?: string
+  label: string
+  strategy: 'db_dump' | 'git_sync'
+  enabled?: boolean
+  remote_point_slug: string
+  workspace_slug?: string | null
+  schedule_cron?: string | null
+  schedule_every_seconds?: number | null
+  git_base_path?: string | null
+}
+
+export const backupApi = {
+  listJobs: () => api.get<BackupJobOut[]>('/admin/backup/jobs'),
+  createJob: (body: BackupJobBody & { slug: string }) =>
+    api.post<BackupJobOut>('/admin/backup/jobs', body),
+  getJob: (slug: string) => api.get<BackupJobOut>(`/admin/backup/jobs/${slug}`),
+  updateJob: (slug: string, body: BackupJobBody) =>
+    api.put<BackupJobOut>(`/admin/backup/jobs/${slug}`, body),
+  deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
+  listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
 }
 
 // ── Setup wizard ─────────────────────────────────────────────────────────────

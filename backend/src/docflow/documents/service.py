@@ -39,7 +39,7 @@ __all__ = [
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -52,7 +52,7 @@ ORDER BY d.created_at
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
        dv.content
@@ -70,6 +70,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
@@ -87,6 +88,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=row["content"],
         version=row["version"],
         parent_id=row["parent"],
@@ -230,22 +232,29 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             if not initial_content and content_template:
                 today = datetime.date.today().isoformat()
                 initial_content = apply_content_template(content_template, data.title, today)
-            row = await conn.fetchrow(
-                """
-                INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
-                     exposed)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, exposed, created_at, updated_at
-                """,
-                data.title,
-                data.parent_id,
-                ft_id,
-                wk,
-                data.block_id,
-                parent_exposed,
-            )
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO document
+                        (title, slug, parent, functional_type_ref, workspace_technical_key,
+                         data_block_ref, exposed)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING doc_technical_key, title, type, version, parent,
+                              data_block_ref, exposed, slug, created_at, updated_at
+                    """,
+                    data.title,
+                    data.slug,
+                    data.parent_id,
+                    ft_id,
+                    wk,
+                    data.block_id,
+                    parent_exposed,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
+                ) from exc
             assert row is not None
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
@@ -259,6 +268,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=initial_content,
         version=row["version"],
         parent_id=row["parent"],
@@ -347,7 +357,7 @@ async def update_document(
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
 
-            # Métadonnées (parent, type) — sans versioning
+            # Métadonnées (parent, type, slug) — sans versioning
             meta: dict[str, object] = {}
             if "parent_id" in raw:
                 pid = raw["parent_id"]
@@ -360,13 +370,22 @@ async def update_document(
                     meta["functional_type_ref"] = await _resolve_functional_type(conn, wk, ft_slug)
                 else:
                     meta["functional_type_ref"] = None
+            if "slug" in raw:
+                meta["slug"] = raw["slug"]
             if meta:
                 cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(meta))
-                await conn.execute(
-                    f"UPDATE document SET {cols}, updated_at = now() WHERE doc_technical_key = $1",
-                    doc_id,
-                    *list(meta.values()),
-                )
+                try:
+                    await conn.execute(
+                        f"UPDATE document SET {cols}, updated_at = now() "  # noqa: S608
+                        "WHERE doc_technical_key = $1",
+                        doc_id,
+                        *list(meta.values()),
+                    )
+                except asyncpg.UniqueViolationError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"slug '{raw['slug']}' déjà utilisé dans ce workspace",
+                    ) from exc
 
     return await get_document(pool, ws_slug, doc_id)
 

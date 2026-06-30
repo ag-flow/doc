@@ -5,6 +5,18 @@ import { ApiError, docsApi, type AllowedTypeOut, type DocumentOut } from '../lib
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
+
 interface AddDocumentDialogProps {
   ws: string
   block: string
@@ -22,9 +34,21 @@ export function AddDocumentDialog({
 }: AddDocumentDialogProps) {
   const { t } = useTranslation()
   const [title, setTitle] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugManual, setSlugManual] = useState(false)
   const [selectedType, setSelectedType] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  function handleTitleChange(v: string) {
+    setTitle(v)
+    if (!slugManual) setSlug(slugify(v))
+  }
+
+  function handleSlugChange(v: string) {
+    setSlug(v)
+    setSlugManual(true)
+  }
 
   const { data: types = [], isLoading } = useQuery<AllowedTypeOut[]>({
     queryKey: ['allowed-types', ws, block, parentId ?? null],
@@ -33,8 +57,11 @@ export function AddDocumentDialog({
 
   const effectiveType = types.length === 1 ? types[0].slug : selectedType
 
+  const slugValue = slug.trim()
+  const slugValid = slugValue === '' || SLUG_RE.test(slugValue)
+
   async function handleSubmit() {
-    if (!title.trim() || !effectiveType) return
+    if (!title.trim() || !effectiveType || !slugValid) return
     setSubmitting(true)
     setError(null)
     try {
@@ -42,6 +69,7 @@ export function AddDocumentDialog({
         title: title.trim(),
         functional_type_slug: effectiveType,
         parent_id: parentId,
+        slug: slugValue || undefined,
       })
       onCreated(doc.doc_technical_key)
     } catch (err) {
@@ -88,11 +116,28 @@ export function AddDocumentDialog({
               <label className="mb-1 block text-sm font-medium">{t('documents.titleField')}</label>
               <Input
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => handleTitleChange(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void handleSubmit() }}
                 placeholder="Ma page"
                 data-testid="add-document-title-input"
               />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-600">
+                Slug <span className="font-normal text-gray-400">(optionnel — pour la synchro git)</span>
+              </label>
+              <Input
+                value={slug}
+                onChange={(e) => handleSlugChange(e.target.value)}
+                placeholder="ma-page"
+                className={!slugValid ? 'border-red-400 focus-visible:ring-red-400' : ''}
+                data-testid="add-document-slug-input"
+              />
+              {!slugValid && (
+                <p className="mt-1 text-xs text-red-500">
+                  Minuscules, chiffres et tirets, 2–80 chars, commence et finit par un alphanumérique.
+                </p>
+              )}
             </div>
           </>
         )}
@@ -105,7 +150,7 @@ export function AddDocumentDialog({
           </Button>
           <Button
             onClick={() => void handleSubmit()}
-            disabled={submitting || isLoading || types.length === 0 || !title.trim() || !effectiveType}
+            disabled={submitting || isLoading || types.length === 0 || !title.trim() || !effectiveType || !slugValid}
             data-testid="add-document-submit"
           >
             {t('common.save')}

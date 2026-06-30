@@ -17,7 +17,7 @@ log = structlog.get_logger(__name__)
 _SELECT_BLOCK_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -33,6 +33,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
@@ -381,22 +382,29 @@ async def create_document_in_block(
                         body.parent_id,
                     )
                 )
-            row = await conn.fetchrow(
-                """
-                INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
-                     exposed)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, exposed, created_at, updated_at
-                """,
-                body.title,
-                body.parent_id,
-                ft_id,
-                wk,
-                block_id,
-                parent_exposed,
-            )
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO document
+                        (title, slug, parent, functional_type_ref, workspace_technical_key,
+                         data_block_ref, exposed)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING doc_technical_key, title, type, version, parent,
+                              data_block_ref, exposed, slug, created_at, updated_at
+                    """,
+                    body.title,
+                    body.slug,
+                    body.parent_id,
+                    ft_id,
+                    wk,
+                    block_id,
+                    parent_exposed,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"slug '{body.slug}' déjà utilisé dans ce workspace",
+                ) from exc
             assert row is not None
             doc_id: uuid.UUID = row["doc_technical_key"]
 
@@ -417,6 +425,7 @@ async def create_document_in_block(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
