@@ -172,6 +172,31 @@ _TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="get_property_value",
+        description=(
+            "Lit la valeur actuelle d'une seule propriété d'un document. "
+            "Retourne : prop_slug, label, type (text | int | restricted_list), "
+            "value (texte brut pour text/int, null si vide), "
+            "allowed_value_slug + allowed_value_label (pour restricted_list, null si vide). "
+            "Préférer list_property_values pour lire toutes les propriétés d'un coup ; "
+            "utiliser cet outil quand seule une propriété précise est nécessaire. "
+            "Retourne {error: ...} si le document ou la propriété est introuvable. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {"type": "string", "format": "uuid", "description": "UUID du document"},
+                "prop_slug": {
+                    "type": "string",
+                    "description": "Slug de la propriété à lire (issu de list_property_values)",
+                },
+            },
+            "required": ["workspace_slug", "doc_id", "prop_slug"],
+        },
+    ),
+    Tool(
         name="set_property_value",
         description=(
             "Écrit (crée ou remplace) la valeur d'une propriété sur un document. "
@@ -387,6 +412,13 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
             str(arguments.get("workspace_slug", "")),
             str(arguments.get("doc_id", "")),
         )
+    if name == "get_property_value":
+        return await _get_property_value(
+            pool,
+            str(arguments.get("workspace_slug", "")),
+            str(arguments.get("doc_id", "")),
+            str(arguments.get("prop_slug", "")),
+        )
     if name == "set_property_value":
         return await _set_property_value(pool, arguments)
     if name == "list_templates":
@@ -552,6 +584,34 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             uuid.UUID(doc_id),
         )
     return _text([dict(r) for r in rows])
+
+
+async def _get_property_value(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: str, prop_slug: str
+) -> list[TextContent]:
+    async with pool.acquire() as conn:
+        wk = await _require_workspace(conn, ws_slug)
+        row = await conn.fetchrow(
+            """
+            SELECT pd.slug AS prop_slug, pd.label, pd.type,
+                   pv.value, pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
+            FROM properties_defs pd
+            JOIN functional_type ft ON ft.id = pd.functional_type_ref
+            JOIN document d ON d.functional_type_ref = ft.id
+                           AND d.workspace_technical_key = $1
+                           AND d.doc_technical_key = $2
+            LEFT JOIN properties_values pv ON pv.property_def_ref = pd.id
+                                          AND pv.document_ref = d.doc_technical_key
+            LEFT JOIN properties_allowed_values pav ON pav.id = pv.allowed_value_ref
+            WHERE pd.slug = $3
+            """,
+            wk,
+            uuid.UUID(doc_id),
+            prop_slug,
+        )
+    if row is None:
+        return _text({"error": f"propriété '{prop_slug}' introuvable sur ce document"})
+    return _text(dict(row))
 
 
 async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
