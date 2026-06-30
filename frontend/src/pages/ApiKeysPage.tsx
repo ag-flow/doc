@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key, ShieldCheck } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key, ShieldCheck, Plug } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import {
@@ -677,6 +677,44 @@ function KeysTab() {
   )
 }
 
+// ── MCP URL banner ────────────────────────────────────────────────────────────
+
+function McpUrlBanner() {
+  const mcpUrl = `${window.location.origin}/mcp`
+  const [copied, setCopied] = useState(false)
+
+  async function copy() {
+    await navigator.clipboard.writeText(mcpUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 mb-6">
+      <Plug size={16} className="mt-0.5 shrink-0 text-indigo-500" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-indigo-900 mb-1">Serveur MCP</p>
+        <p className="text-xs text-indigo-700 mb-2">
+          Connectez vos outils IA (Claude Desktop, Cursor…) à cette instance docflow via le protocole MCP.
+        </p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 min-w-0 truncate rounded border border-indigo-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-800 select-all">
+            {mcpUrl}
+          </code>
+          <button
+            type="button"
+            onClick={copy}
+            className="shrink-0 flex items-center gap-1 rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
+            {copied ? 'Copié' : 'Copier'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 type Tab = 'profiles' | 'keys'
@@ -687,6 +725,7 @@ export function ApiKeysPage() {
   return (
     <div className="p-8 max-w-5xl">
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Clés API</h1>
+      <McpUrlBanner />
 
       <div className="flex gap-1 mb-6 border-b border-gray-200">
         {([['profiles', 'Profils API'], ['keys', 'Clés API']] as [Tab, string][]).map(
