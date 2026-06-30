@@ -50,6 +50,9 @@ async def mcp_ws(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
     """Workspace complet pour les tests MCP : type, bloc, document, propriété."""
     configure(db_pool)
 
+    # Cleanup préventif au cas où un test précédent aurait planté sans teardown
+    await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "mcp-camp-ws")
+
     row = await db_pool.fetchrow(
         "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
         "RETURNING workspace_technical_key, slug",
@@ -69,50 +72,50 @@ async def mcp_ws(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
     assert type_row is not None
     type_id: uuid.UUID = type_row["id"]
 
-    prop_row = await db_pool.fetchrow(
-        "INSERT INTO properties_defs (slug, label, type, functional_type_ref, position) "
-        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    await db_pool.execute(
+        "INSERT INTO properties_defs (slug, label, type, functional_type_ref) "
+        "VALUES ($1, $2, $3, $4)",
         "priority",
         "Priorité",
         "text",
         type_id,
-        0,
     )
-    assert prop_row is not None
 
-    block_row = await db_pool.fetchrow(
-        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
-        "VALUES ($1, $2, $3, $4) RETURNING id, slug",
-        "epics",
-        "Epics",
-        type_id,
-        wk,
+    from docflow.blocks import service as block_svc
+    from docflow.schemas.block import DataBlockCreate
+
+    bloc = await block_svc.create_block(
+        db_pool,
+        "mcp-camp-ws",
+        DataBlockCreate(slug="epics", label="Epics", functional_type_slug="epic"),
     )
-    assert block_row is not None
 
-    doc_row = await db_pool.fetchrow(
-        "INSERT INTO document (title, content, workspace_technical_key, "
-        "data_block_ref, functional_type_ref) "
-        "VALUES ($1, $2, $3, $4, $5) RETURNING doc_technical_key",
-        "Epic A",
-        "# Epic A",
-        wk,
-        block_row["id"],
-        type_id,
+    doc_result = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": "mcp-camp-ws",
+                "block_slug": "epics",
+                "title": "Epic A",
+                "contenu": "# Epic A",
+                "functional_type_slug": "epic",
+            },
+        )
     )
-    assert doc_row is not None
+    assert doc_result["created"] is True  # type: ignore[index]
 
-    yield {
-        "wk": wk,
-        "ws_slug": "mcp-camp-ws",
-        "type_slug": "epic",
-        "type_id": type_id,
-        "block_slug": "epics",
-        "doc_id": str(doc_row["doc_technical_key"]),
-        "prop_slug": "priority",
-    }
-
-    await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "mcp-camp-ws")
+    try:
+        yield {
+            "wk": wk,
+            "ws_slug": "mcp-camp-ws",
+            "type_slug": "epic",
+            "type_id": type_id,
+            "block_slug": bloc.slug,
+            "doc_id": str(doc_result["id"]),
+            "prop_slug": "priority",
+        }
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "mcp-camp-ws")
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +228,7 @@ async def test_create_document_nominal(
             db_pool,
             {
                 "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
                 "title": "Nouveau doc MCP",
                 "contenu": "# Contenu",
                 "functional_type_slug": mcp_ws["type_slug"],
@@ -243,6 +247,7 @@ async def test_create_document_type_inconnu(
             db_pool,
             {
                 "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
                 "title": "Test",
                 "functional_type_slug": "inexistant",
             },

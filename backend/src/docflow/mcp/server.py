@@ -92,18 +92,24 @@ _TOOLS: list[Tool] = [
     Tool(
         name="create_document",
         description=(
-            "Crée un document et le persiste immédiatement en base de données. "
+            "Crée un document dans un bloc et le persiste immédiatement en base. "
             "ÉCRITURE : le document est visible dans l'interface et via "
             "list_documents dès la réponse. "
+            "block_slug est requis : utiliser list_blocks (REST) ou lire la réponse "
+            "de create_block pour obtenir le slug. "
             "Retourne l'id (UUID) et le title du document créé. "
-            "functional_type_slug est optionnel ; s'il est fourni, il doit exister "
-            "dans le workspace (sinon erreur). "
+            "functional_type_slug est optionnel mais doit correspondre au type du bloc "
+            "(doit exister dans le workspace, sinon erreur). "
             "contenu est du markdown libre, optionnel."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "workspace_slug": {"type": "string", "description": "Slug du workspace cible"},
+                "block_slug": {
+                    "type": "string",
+                    "description": "Slug du bloc qui contiendra le document (requis)",
+                },
                 "title": {"type": "string", "description": "Titre du document (non vide)"},
                 "contenu": {
                     "type": "string",
@@ -117,17 +123,18 @@ _TOOLS: list[Tool] = [
                     ),
                 },
             },
-            "required": ["workspace_slug", "title"],
+            "required": ["workspace_slug", "block_slug", "title"],
         },
     ),
     Tool(
         name="update_document",
         description=(
             "Modifie le titre et/ou le contenu markdown d'un document existant. "
-            "ÉCRITURE : mise à jour permanente, visible immédiatement dans "
-            "l'interface. "
+            "ÉCRITURE : mise à jour versionnée et permanente, visible immédiatement. "
             "Au moins un des deux champs (title ou contenu) doit être fourni, "
             "sinon erreur. "
+            "La mise à jour est atomique : la version courante est lue puis "
+            "incrémentée dans la même transaction (concurrence optimiste transparente). "
             "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
             "(utiliser set_property_value pour cela). "
             "Retourne {error: ...} si le document est introuvable dans le workspace."
@@ -479,10 +486,14 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
         wk = await _require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             """
-            SELECT d.doc_technical_key::text AS id, d.title, d.contenu,
+            SELECT d.doc_technical_key::text AS id, d.title,
+                   dv.content AS contenu,
                    ft.slug AS functional_type_slug
             FROM document d
             LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
+            LEFT JOIN document_version dv
+                   ON dv.document_ref = d.doc_technical_key
+                  AND dv.version_number = d.version
             WHERE d.workspace_technical_key = $1
               AND d.doc_technical_key = $2
             """,
@@ -495,72 +506,85 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
 
 
 async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
     ws_slug = str(args.get("workspace_slug", ""))
+    block_slug = str(args.get("block_slug", ""))
     title = str(args.get("title", ""))
     contenu = str(args["contenu"]) if "contenu" in args else None
     type_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
 
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            wk = await _require_workspace(conn, ws_slug)
-            type_id: uuid.UUID | None = None
-            if type_slug:
-                type_id = await conn.fetchval(
-                    "SELECT id FROM functional_type "
-                    "WHERE workspace_technical_key = $1 AND slug = $2",
-                    wk,
-                    type_slug,
-                )
-                if type_id is None:
-                    return _text({"error": f"type '{type_slug}' introuvable"})
-            row = await conn.fetchrow(
-                """
-                INSERT INTO document (workspace_technical_key, title, contenu, functional_type_ref)
-                VALUES ($1, $2, $3, $4)
-                RETURNING doc_technical_key::text AS id, title
-                """,
-                wk,
-                title,
-                contenu,
-                type_id,
-            )
-    assert row is not None
-    return _text({"created": True, "id": row["id"], "title": row["title"]})
+        block_id: uuid.UUID | None = await conn.fetchval(
+            """
+            SELECT db.id FROM data_block db
+            JOIN workspace w ON w.workspace_technical_key = db.workspace_technical_key
+            WHERE w.slug = $1 AND db.slug = $2
+            """,
+            ws_slug,
+            block_slug,
+        )
+    if block_id is None:
+        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+
+    try:
+        data = DocumentCreate(
+            title=title,
+            block_id=block_id,
+            content=contenu,
+            functional_type_slug=type_slug,
+        )
+        doc = await doc_svc.create_document(pool, ws_slug, data)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {"created": True, "id": str(doc.doc_technical_key), "title": doc.title}
+    )
 
 
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentUpdate
+
     ws_slug = str(args.get("workspace_slug", ""))
-    doc_id = str(args.get("doc_id", ""))
+    doc_id_str = str(args.get("doc_id", ""))
     title = str(args["title"]) if "title" in args else None
     contenu = str(args["contenu"]) if "contenu" in args else None
 
     if not title and contenu is None:
         return _text({"error": "au moins title ou contenu requis"})
 
-    cols: list[str] = []
-    vals: list[object] = [uuid.UUID(doc_id)]
-    idx = 2
-    if title is not None:
-        cols.append(f"title = ${idx}")
-        vals.append(title)
-        idx += 1
-    if contenu is not None:
-        cols.append(f"contenu = ${idx}")
-        vals.append(contenu)
-        idx += 1
+    doc_id = uuid.UUID(doc_id_str)
 
+    # Lecture de la version courante pour la concurrence optimiste transparente
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            wk = await _require_workspace(conn, ws_slug)
-            updated = await conn.execute(
-                f"UPDATE document SET {', '.join(cols)}, updated_at = now() "
-                f"WHERE doc_technical_key = $1 AND workspace_technical_key = ${idx}",
-                *vals,
-                wk,
-            )
-    if updated == "UPDATE 0":
-        return _text({"error": "document introuvable"})
-    return _text({"updated": True})
+        wk = await _require_workspace(conn, ws_slug)
+        current_version: int | None = await conn.fetchval(
+            "SELECT version FROM document "
+            "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+    if current_version is None:
+        return _text({"error": f"document '{doc_id_str}' introuvable"})
+
+    try:
+        data = DocumentUpdate(
+            title=title,
+            content=contenu,
+            expected_version=current_version,
+        )
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text({"updated": True, "title": doc.title, "version": doc.version})
 
 
 async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
@@ -569,7 +593,8 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type,
-                   pv.value, pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
+                   pvv.value,
+                   pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
             JOIN functional_type ft ON ft.id = pd.functional_type_ref
             JOIN document d ON d.functional_type_ref = ft.id
@@ -577,7 +602,10 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
                            AND d.doc_technical_key = $2
             LEFT JOIN properties_values pv ON pv.property_def_ref = pd.id
                                           AND pv.document_ref = d.doc_technical_key
-            LEFT JOIN properties_allowed_values pav ON pav.id = pv.allowed_value_ref
+            LEFT JOIN properties_value_version pvv
+                   ON pvv.property_value_ref = pv.id
+                  AND pvv.version_number = pv.version
+            LEFT JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
             ORDER BY pd.slug
             """,
             wk,
@@ -594,7 +622,8 @@ async def _get_property_value(
         row = await conn.fetchrow(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type,
-                   pv.value, pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
+                   pvv.value,
+                   pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
             JOIN functional_type ft ON ft.id = pd.functional_type_ref
             JOIN document d ON d.functional_type_ref = ft.id
@@ -602,7 +631,10 @@ async def _get_property_value(
                            AND d.doc_technical_key = $2
             LEFT JOIN properties_values pv ON pv.property_def_ref = pd.id
                                           AND pv.document_ref = d.doc_technical_key
-            LEFT JOIN properties_allowed_values pav ON pav.id = pv.allowed_value_ref
+            LEFT JOIN properties_value_version pvv
+                   ON pvv.property_value_ref = pv.id
+                  AND pvv.version_number = pv.version
+            LEFT JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
             WHERE pd.slug = $3
             """,
             wk,
