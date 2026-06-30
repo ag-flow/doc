@@ -166,11 +166,14 @@ async def add_gallery_source(
 ) -> GallerySourceOut:
     pool = request.app.state.pool
     url_str = str(body.url)
+    exists = await pool.fetchval(
+        "SELECT 1 FROM gallery_source WHERE url = $1", url_str
+    )
+    if exists:
+        raise HTTPException(status_code=409, detail="cette source est déjà enregistrée")
     try:
         row = await pool.fetchrow(
-            "INSERT INTO gallery_source (label, url) VALUES ($1, $2)"
-            " ON CONFLICT (url) DO UPDATE SET label = EXCLUDED.label"
-            " RETURNING id, label, url",
+            "INSERT INTO gallery_source (label, url) VALUES ($1, $2) RETURNING id, label, url",
             body.label,
             url_str,
         )

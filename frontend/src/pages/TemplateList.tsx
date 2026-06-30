@@ -347,10 +347,19 @@ function GalleryTab() {
 
   async function addSource() {
     if (!newLabel.trim() || !newUrl.trim()) return
+    const trimmedUrl = newUrl.trim().replace(/\/toc\.txt$/, '').replace(/\/$/, '')
+    if (sources.some(s => s.url === trimmedUrl)) {
+      setAddError('Cette source est déjà dans la liste')
+      return
+    }
+    if (/\.(yaml|yml|txt)$/i.test(trimmedUrl)) {
+      setAddError("L'URL doit pointer vers un répertoire de base, pas un fichier")
+      return
+    }
     setAdding(true)
     setAddError(null)
     try {
-      const created = await galleryApi.addSource(newLabel.trim(), newUrl.trim())
+      const created = await galleryApi.addSource(newLabel.trim(), trimmedUrl)
       await refetchSources()
       setActiveSource(created)
       setShowAddForm(false)
