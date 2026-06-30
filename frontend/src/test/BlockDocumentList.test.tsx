@@ -27,6 +27,7 @@ function makeDoc(over: Partial<DocumentOut>): DocumentOut {
     doc_technical_key: 'd1',
     title: 'Doc',
     type: 'page',
+    slug: null,
     content: null,
     version: 1,
     parent_id: null,

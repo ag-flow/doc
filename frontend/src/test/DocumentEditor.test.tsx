@@ -83,6 +83,7 @@ const doc: DocumentOut = {
   doc_technical_key: 'd1',
   title: 'Mon document',
   type: 'page',
+  slug: null,
   content: '# Hello',
   version: 3,
   parent_id: null,

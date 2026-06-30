@@ -217,7 +217,7 @@ function PointForm({ initial, onSave, onCancel, certs }: {
 
       <div className="flex gap-2 pt-1">
         <Button size="sm" className="flex-1" onClick={() => onSave(form)}>Enregistrer</Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>Annuler</Button>
+        <Button size="sm" variant="secondary" onClick={onCancel}>Annuler</Button>
       </div>
     </div>
   )
