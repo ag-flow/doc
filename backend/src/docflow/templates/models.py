@@ -27,7 +27,7 @@ class PropDef(BaseModel):
 
     slug: str
     label: str
-    type: Literal["text", "int", "restricted_list", "date", "bool", "reference"]
+    type: Literal["text", "int", "restricted_list", "date", "bool", "url", "float", "reference"]
     required: bool = False
     default: str | None = None
     constraints: list[ConstraintDef] = Field(default_factory=list)
