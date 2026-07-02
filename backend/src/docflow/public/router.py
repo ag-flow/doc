@@ -14,7 +14,7 @@ from docflow.schemas.document import DocumentOut
 router = APIRouter(tags=["public"])
 
 _SELECT_DOC = """
-SELECT d.doc_technical_key, d.title, d.type, d.version,
+SELECT d.doc_technical_key, d.title, d.type, d.slug, d.version,
        d.parent, d.created_at, d.updated_at,
        d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
@@ -29,7 +29,7 @@ WHERE d.doc_technical_key = $1 AND d.exposed = true
 """
 
 _SELECT_CHILDREN = """
-SELECT d.doc_technical_key, d.title, d.type, d.version,
+SELECT d.doc_technical_key, d.title, d.type, d.slug, d.version,
        d.parent, d.created_at, d.updated_at,
        d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
@@ -53,6 +53,7 @@ def _map(row: object, content: str | None = None) -> DocumentOut:
         doc_technical_key=r["doc_technical_key"],
         title=r["title"],
         type=r["type"],
+        slug=r["slug"],
         content=r["content"] if (content is None and has_content) else content,
         version=r["version"],
         parent_id=r["parent"],

@@ -14,15 +14,15 @@ class DocumentCreate(BaseModel):
 
     title: str
     block_id: uuid.UUID
-    slug: str
+    slug: str | None = None
     content: str | None = None
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
 
     @field_validator("slug")
     @classmethod
-    def check_slug(cls, v: str) -> str:
-        if not _SLUG_RE.match(v):
+    def check_slug(cls, v: str | None) -> str | None:
+        if v is not None and not _SLUG_RE.match(v):
             raise ValueError(
                 "slug invalide : minuscules, chiffres et tirets, 2–80 chars, "
                 "commence et finit par un alphanumérique"

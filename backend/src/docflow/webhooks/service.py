@@ -254,15 +254,15 @@ async def emit_event(
                     log.info(
                         "webhook_sent",
                         webhook_id=str(row["id"]),
-                        event=event,
+                        webhook_event=event,
                         status=resp.status_code,
                     )
                 except Exception as exc:
                     log.warning(
                         "webhook_send_failed",
                         webhook_id=str(row["id"]),
-                        event=event,
+                        webhook_event=event,
                         error=str(exc),
                     )
     except Exception as exc:
-        log.error("webhook_emit_error", event=event, error=str(exc))
+        log.error("webhook_emit_error", webhook_event=event, error=str(exc))

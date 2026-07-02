@@ -151,7 +151,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
-                       d.data_block_ref,
+                       d.data_block_ref, d.exposed, d.slug,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
@@ -179,7 +179,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
-                       d.data_block_ref,
+                       d.data_block_ref, d.exposed, d.slug,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
