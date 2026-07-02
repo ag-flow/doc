@@ -58,13 +58,11 @@ def test_secret_pydantic_field() -> None:
 
     s = Settings(
         database_url="postgresql://localhost/test",
-        admin_email="a@b.com",
-        admin_password="plain",
-        jwt_secret="jwt",
+        jwt_secret="plain",
     )
-    assert isinstance(s.admin_password, Secret)
-    assert s.admin_password.reveal() == "plain"
-    assert "plain" not in repr(s.admin_password)
+    assert isinstance(s.jwt_secret, Secret)
+    assert s.jwt_secret.reveal() == "plain"
+    assert "plain" not in repr(s.jwt_secret)
 
 
 # ── Resolver — valeurs inline ─────────────────────────────────────────────────

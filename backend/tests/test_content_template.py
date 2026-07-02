@@ -35,7 +35,9 @@ def test_substitution_title_with_markdown_chars() -> None:
 
 # ── Application à la création (DB) ───────────────────────────────────────────
 
-async def test_template_applied_on_empty_body(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+async def test_template_applied_on_empty_body(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
     """Corps vide + template → pré-rempli."""
     from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
     from docflow.schemas.document import DocumentCreate
@@ -51,7 +53,10 @@ async def test_template_applied_on_empty_body(db_pool: asyncpg.Pool, test_worksp
 
     doc = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Ma feature", parent_id=None, functional_type_slug="t35a"),
+        DocumentCreate(
+            title="Ma feature", parent_id=None, functional_type_slug="t35a",
+            block_id=test_block["id"],
+        ),
     )
     assert doc.content is not None
     assert "Ma feature" in doc.content
@@ -59,7 +64,7 @@ async def test_template_applied_on_empty_body(db_pool: asyncpg.Pool, test_worksp
 
 
 async def test_template_not_applied_on_provided_body(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     """Corps fourni → template ignoré (pas d'écrasement)."""
     from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
@@ -81,13 +86,14 @@ async def test_template_not_applied_on_provided_body(
             parent_id=None,
             functional_type_slug="t35b",
             content="Mon brouillon personnel",
+            block_id=test_block["id"],
         ),
     )
     assert doc.content == "Mon brouillon personnel"
 
 
 async def test_existing_docs_unaffected_by_template_change(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     """Modifier le modèle n'altère pas les documents déjà créés."""
     from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
@@ -100,7 +106,10 @@ async def test_existing_docs_unaffected_by_template_change(
     # Pas de template initialement
     doc = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Old doc", parent_id=None, functional_type_slug="t35c"),
+        DocumentCreate(
+            title="Old doc", parent_id=None, functional_type_slug="t35c",
+            block_id=test_block["id"],
+        ),
     )
     # Ajouter un template après coup
     await type_svc.update_type(

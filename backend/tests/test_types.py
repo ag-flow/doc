@@ -17,15 +17,15 @@ _JWT_SECRET = "test_jwt_secret_for_m2"
 _BOOTSTRAP_EMAIL = "bootstrap@example.com"
 _BOOTSTRAP_PW = "bootstrap_pw_123"
 _BASE_ENV = {
-    "ADMIN_EMAIL": _BOOTSTRAP_EMAIL,
-    "ADMIN_PASSWORD": _BOOTSTRAP_PW,
     "JWT_SECRET": _JWT_SECRET,
 }
 _WS = "test-ws"
 
 
 def _admin_token(user_id: uuid.UUID) -> str:
-    user = AuthUser(id=user_id, email="a@b.com", label="L", is_superadmin=True, disabled=False)
+    user = AuthUser(
+        id=user_id, email="a@b.com", label="L", is_admin=True, validated=True, disabled=False
+    )
     return create_token(user, _JWT_SECRET)
 
 
@@ -89,16 +89,19 @@ async def test_cycle_detection(db_pool: asyncpg.Pool, test_workspace: dict) -> N
     assert exc.value.status_code == 422
 
 
-async def test_delete_type_with_children_rejected(
+async def test_delete_type_with_children_cascades(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
+    """0011_type_cascade_delete : supprimer un type parent supprime ses enfants
+    (ON DELETE CASCADE), plus de rejet 409 — comportement délibérément inversé."""
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     await type_svc.create_type(
         db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature", parent_slug="epic")
     )
+    await type_svc.delete_type(db_pool, _WS, "epic")
     with pytest.raises(HTTPException) as exc:
-        await type_svc.delete_type(db_pool, _WS, "epic")
-    assert exc.value.status_code == 409
+        await type_svc.get_type(db_pool, _WS, "feature")
+    assert exc.value.status_code == 404
 
 
 async def test_delete_type_ok(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
@@ -130,7 +133,7 @@ def test_unauthenticated_types_rejected(
     monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _client(monkeypatch, test_schema_url) as client:
-        resp = client.get(f"/workspaces/{_WS}/types")
+        resp = client.get(f"/api/workspaces/{_WS}/types")
     assert resp.status_code == 401
 
 
@@ -140,25 +143,39 @@ async def test_types_crud_via_http(
     clean_admin_users: None,
     test_workspace: dict,
 ) -> None:
-    """Test HTTP round-trip : login → CRUD types (workspace fourni par test_workspace)."""
+    """Test HTTP round-trip : setup wizard → login → CRUD types.
+
+    auth/seed.py : le bootstrap admin par variable d'env a été supprimé, remplacé
+    par le setup wizard (POST /api/setup/init-admin), premier compte = admin validé.
+    """
     with _client(monkeypatch, test_schema_url) as client:
+        setup = client.post(
+            "/api/setup/init-admin",
+            json={
+                "username": "bootstrap",
+                "email": _BOOTSTRAP_EMAIL,
+                "password": _BOOTSTRAP_PW,
+            },
+        )
+        assert setup.status_code == 201
+
         login = client.post(
-            "/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
         )
         token = login.json()["access_token"]
         hdrs = {"Authorization": f"Bearer {token}"}
 
         r = client.post(
-            f"/workspaces/{_WS}/types",
+            f"/api/workspaces/{_WS}/types",
             json={"slug": "http-epic", "label": "HTTP Epic"},
             headers=hdrs,
         )
         assert r.status_code == 201
         assert r.json()["slug"] == "http-epic"
 
-        r = client.get(f"/workspaces/{_WS}/types", headers=hdrs)
+        r = client.get(f"/api/workspaces/{_WS}/types", headers=hdrs)
         assert r.status_code == 200
         assert "http-epic" in [t["slug"] for t in r.json()]
 
-        r = client.delete(f"/workspaces/{_WS}/types/http-epic", headers=hdrs)
+        r = client.delete(f"/api/workspaces/{_WS}/types/http-epic", headers=hdrs)
         assert r.status_code == 204

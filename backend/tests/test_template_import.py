@@ -112,13 +112,13 @@ def test_resolve_unknown_inherit_raises() -> None:
         resolve(tpl)
 
 
-def test_agile_basic_has_4_concrete_types() -> None:
+def test_agile_basic_has_7_concrete_types() -> None:
     tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
     resolved = resolve(tpl)
     slugs = {r.slug for r in resolved}
     assert "base_statusable" not in slugs
-    assert len(slugs) == 4
-    assert {"epic", "feature", "story", "atdd"} == slugs
+    assert len(slugs) == 7
+    assert {"personne", "epic", "feature", "story", "atdd", "bug", "enabler"} == slugs
 
 
 def test_agile_basic_story_atdd_parent_is_feature() -> None:
@@ -145,14 +145,14 @@ def test_agile_basic_epic_feature_statut_overridden() -> None:
 # ── Import (nécessite DB) ────────────────────────────────────────────────────
 
 async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-test", label="Tpl Test"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-test", label="Tpl Test"), None)
     try:
         tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
         report = await run_import(db_pool, "tpl-test", tpl)
         assert report.applied
         assert not report.no_op
 
-        # Vérifie les 4 types concrets en base
+        # Vérifie les 7 types concrets en base
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -163,14 +163,14 @@ async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
                 "tpl-test",
             )
         slugs = {r["slug"] for r in rows}
-        assert {"epic", "feature", "story", "atdd"} == slugs
+        assert {"personne", "epic", "feature", "story", "atdd", "bug", "enabler"} == slugs
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-test")
 
 
 async def test_import_allowed_values_populated(db_pool: asyncpg.Pool) -> None:
     """Régression : les allowed_values d'une prop restricted_list doivent être insérées."""
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-av", label="AV Test"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-av", label="AV Test"), None)
     try:
         tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
         await run_import(db_pool, "tpl-av", tpl)
@@ -207,7 +207,7 @@ async def test_import_allowed_values_populated(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_import_same_version_noop(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-noop", label="Tpl Noop"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-noop", label="Tpl Noop"), None)
     try:
         tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
         await run_import(db_pool, "tpl-noop", tpl)
@@ -240,14 +240,16 @@ async def test_import_same_version_noop(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_import_version_upgrade_additive(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-upgrade", label="Upgrade"))
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-upgrade", label="Upgrade"), None
+    )
     try:
         tpl_v1 = _load(TEMPLATES_DIR / "agile-basic.yaml")
         await run_import(db_pool, "tpl-upgrade", tpl_v1)
 
         # v2 : ajoute une propriété sur 'epic'
         raw = yaml.safe_load((TEMPLATES_DIR / "agile-basic.yaml").read_text())
-        raw["version"] = 2
+        raw["version"] = tpl_v1.version + 1
         for td in raw["functional_types"]:
             if td["slug"] == "epic":
                 td.setdefault("properties", []).append({
@@ -268,13 +270,13 @@ async def test_import_version_upgrade_additive(db_pool: asyncpg.Pool) -> None:
                 """,
                 "tpl-upgrade", tpl_v2.template,
             )
-        assert version == 2
+        assert version == tpl_v1.version + 1
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-upgrade")
 
 
 async def test_import_version_downgrade_rejected(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-down", label="Down"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-down", label="Down"), None)
     try:
         tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
         await run_import(db_pool, "tpl-down", tpl)
@@ -289,14 +291,16 @@ async def test_import_version_downgrade_rejected(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_import_conflict_blocks_all_writes(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-conflict", label="Conflict"))
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-conflict", label="Conflict"), None
+    )
     try:
         tpl_v1 = _load(TEMPLATES_DIR / "agile-basic.yaml")
         await run_import(db_pool, "tpl-conflict", tpl_v1)
 
         # v2 : change le TYPE d'une propriété (conflit structurel)
         raw = yaml.safe_load((TEMPLATES_DIR / "agile-basic.yaml").read_text())
-        raw["version"] = 2
+        raw["version"] = tpl_v1.version + 1
         for td in raw["functional_types"]:
             if td["slug"] == "story":
                 for p in td.get("properties", []):
@@ -307,7 +311,7 @@ async def test_import_conflict_blocks_all_writes(db_pool: asyncpg.Pool) -> None:
         with pytest.raises(ImportConflictError):
             await run_import(db_pool, "tpl-conflict", tpl_v2)
 
-        # La base est STRICTEMENT inchangée — version toujours 1
+        # La base est STRICTEMENT inchangée — version toujours celle de tpl_v1
         async with db_pool.acquire() as conn:
             version = await conn.fetchval(
                 """
@@ -317,13 +321,13 @@ async def test_import_conflict_blocks_all_writes(db_pool: asyncpg.Pool) -> None:
                 """,
                 "tpl-conflict", tpl_v1.template,
             )
-        assert version == 1
+        assert version == tpl_v1.version
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-conflict")
 
 
 async def test_import_dry_run_no_write(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-dry", label="Dry"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-dry", label="Dry"), None)
     try:
         tpl = _load(TEMPLATES_DIR / "agile-basic.yaml")
         report = await run_import(db_pool, "tpl-dry", tpl, dry_run=True)
@@ -400,7 +404,9 @@ async def test_import_reference_target_type_written(db_pool: asyncpg.Pool) -> No
 async def test_import_unresolved_target_type_raises(db_pool: asyncpg.Pool) -> None:
     """target_type pointant vers un slug introuvable (ni workspace, ni template) : rejet
     explicite avant toute écriture — jamais un target_functional_type_ref NULL silencieux."""
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-ref-bad", label="Ref Bad"), None)
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-ref-bad", label="Ref Bad"), None
+    )
     try:
         tpl = _reference_template(version=1, target_type="ghost")
         with pytest.raises(UnresolvedTargetTypeError, match="ghost"):

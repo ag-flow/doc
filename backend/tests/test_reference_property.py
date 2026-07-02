@@ -28,7 +28,7 @@ async def test_create_reference_property_def(
 
 
 async def test_set_reference_property_value(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="rtype2", label="R2"))
@@ -38,11 +38,17 @@ async def test_set_reference_property_value(
     )
     doc_src = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Source", parent_id=None, functional_type_slug="rtype2"),
+        DocumentCreate(
+            title="Source", parent_id=None, functional_type_slug="rtype2",
+            block_id=test_block["id"],
+        ),
     )
     doc_tgt = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Cible", parent_id=None, functional_type_slug="rtype2"),
+        DocumentCreate(
+            title="Cible", parent_id=None, functional_type_slug="rtype2",
+            block_id=test_block["id"],
+        ),
     )
     src_id = doc_src.doc_technical_key
     tgt_id = str(doc_tgt.doc_technical_key)
@@ -54,7 +60,9 @@ async def test_set_reference_property_value(
     assert result.type == "reference"
 
 
-async def test_reference_invalid_uuid(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+async def test_reference_invalid_uuid(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="rtype3", label="R3"))
     await prop_svc.create_def(
@@ -63,7 +71,10 @@ async def test_reference_invalid_uuid(db_pool: asyncpg.Pool, test_workspace: dic
     )
     doc_src = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Src", parent_id=None, functional_type_slug="rtype3"),
+        DocumentCreate(
+            title="Src", parent_id=None, functional_type_slug="rtype3",
+            block_id=test_block["id"],
+        ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
@@ -74,7 +85,7 @@ async def test_reference_invalid_uuid(db_pool: asyncpg.Pool, test_workspace: dic
 
 
 async def test_reference_doc_not_in_workspace(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     import uuid
     ws = "test-ws"
@@ -85,7 +96,10 @@ async def test_reference_doc_not_in_workspace(
     )
     doc_src = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="SrcNF", parent_id=None, functional_type_slug="rtype4"),
+        DocumentCreate(
+            title="SrcNF", parent_id=None, functional_type_slug="rtype4",
+            block_id=test_block["id"],
+        ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
@@ -97,7 +111,7 @@ async def test_reference_doc_not_in_workspace(
 
 
 async def test_reference_target_type_constraint(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="tsrc5", label="Src"))
@@ -114,15 +128,24 @@ async def test_reference_target_type_constraint(
     )
     doc_src = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Src5", parent_id=None, functional_type_slug="tsrc5"),
+        DocumentCreate(
+            title="Src5", parent_id=None, functional_type_slug="tsrc5",
+            block_id=test_block["id"],
+        ),
     )
     doc_right = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Bon type", parent_id=None, functional_type_slug="ttgt5"),
+        DocumentCreate(
+            title="Bon type", parent_id=None, functional_type_slug="ttgt5",
+            block_id=test_block["id"],
+        ),
     )
     doc_wrong = await doc_svc.create_document(
         db_pool, ws,
-        DocumentCreate(title="Mauvais type", parent_id=None, functional_type_slug="tsrc5"),
+        DocumentCreate(
+            title="Mauvais type", parent_id=None, functional_type_slug="tsrc5",
+            block_id=test_block["id"],
+        ),
     )
     src_id = doc_src.doc_technical_key
 

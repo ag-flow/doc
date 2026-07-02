@@ -97,7 +97,7 @@ async def test_document_parent_wrong_workspace(
     from docflow.workspaces import service as ws_svc
 
     other_ws = await ws_svc.create_workspace(
-        db_pool, WorkspaceCreate(slug="other-ws", label="Other")
+        db_pool, WorkspaceCreate(slug="other-ws", label="Other"), None
     )
     # Créer un type et un bloc dans l'autre workspace pour pouvoir créer un document
     other_wk: uuid.UUID = other_ws.workspace_technical_key
@@ -257,13 +257,15 @@ async def test_delete_document(
     assert exc.value.status_code == 404
 
 
-async def test_delete_document_with_children_rejected(
+async def test_delete_document_with_children_cascades(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
+    """0010_document_cascade_delete : supprimer un parent supprime ses enfants
+    (ON DELETE CASCADE), plus de rejet 409 — comportement délibérément inversé."""
     parent = await doc_svc.create_document(
         db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
     )
-    await doc_svc.create_document(
+    child = await doc_svc.create_document(
         db_pool, _WS,
         DocumentCreate(
             title="Child",
@@ -271,9 +273,10 @@ async def test_delete_document_with_children_rejected(
             block_id=test_block["id"],
         ),
     )
+    await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key)
     with pytest.raises(HTTPException) as exc:
-        await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key)
-    assert exc.value.status_code == 409
+        await doc_svc.get_document(db_pool, _WS, child.doc_technical_key)
+    assert exc.value.status_code == 404
 
 
 # ── Board query (DoD 6) ───────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""Campagne de tests complète des 13 outils MCP + flag is_admin sur les profils API.
+"""Campagne de tests complète des 15 outils MCP + flag is_admin sur les profils API.
 
 Chaque test appelle les handlers directement (pas via SSE) pour isoler la logique.
 Couverture : chemin nominal, erreur métier, idempotence, guard admin.
@@ -140,6 +140,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "create_workspace",
         "import_template",
         "create_block",
+        "create_api_profile",
+        "generate_api_key",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 

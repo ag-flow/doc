@@ -18,7 +18,7 @@ from docflow.mcp.server import (
 
 
 async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
-    """list_tools retourne bien les 8 outils définis."""
+    """list_tools retourne bien les 15 outils définis (liste exhaustive : test_mcp_tools.py)."""
     tool_names = {t.name for t in _TOOLS}
     assert "list_workspaces" in tool_names
     assert "list_types" in tool_names
@@ -28,7 +28,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "update_document" in tool_names
     assert "list_property_values" in tool_names
     assert "set_property_value" in tool_names
-    assert len(_TOOLS) == 8
+    assert len(_TOOLS) == 15
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
@@ -90,14 +90,27 @@ async def test_call_tool_unknown_name(db_pool: asyncpg.Pool) -> None:
 
 async def test_create_and_get_document_via_mcp(db_pool: asyncpg.Pool) -> None:
     configure(db_pool)
-    await db_pool.execute(
-        "INSERT INTO workspace (slug, label) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    wk: object = await db_pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
+        "ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug "
+        "RETURNING workspace_technical_key",
         "mcp-crud-ws", "MCP CRUD WS",
+    )
+    root_type_id = await db_pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ($1, $2, $3) RETURNING id",
+        "mcp-root", "MCP Root", wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ($1, $2, $3, $4)",
+        "mcp-block", "MCP Block", root_type_id, wk,
     )
     result = await _create_document(
         db_pool,
         {
             "workspace_slug": "mcp-crud-ws",
+            "block_slug": "mcp-block",
             "title": "Doc créé via MCP",
             "contenu": "# Hello MCP",
         },

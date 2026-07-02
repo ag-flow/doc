@@ -101,11 +101,11 @@ async def test_delete_view(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
 
 
 async def test_resolve_view_empty_returns_all(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Résolvable", parent_id=None)
+        db_pool, ws, DocumentCreate(title="Résolvable", parent_id=None, block_id=test_block["id"])
     )
     await view_svc.create_view(
         db_pool, ws, _CALLER,
@@ -116,11 +116,12 @@ async def test_resolve_view_empty_returns_all(
 
 
 async def test_resolve_view_filter_title(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="XYZ Spécifique", parent_id=None)
+        db_pool, ws,
+        DocumentCreate(title="XYZ Spécifique", parent_id=None, block_id=test_block["id"]),
     )
     await view_svc.create_view(
         db_pool, ws, _CALLER,

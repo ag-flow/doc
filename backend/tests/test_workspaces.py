@@ -11,7 +11,7 @@ from docflow.workspaces import service as ws_svc
 
 async def test_create_workspace(db_pool: asyncpg.Pool) -> None:
     ws = await ws_svc.create_workspace(
-        db_pool, WorkspaceCreate(slug="my-ws", label="My WS")
+        db_pool, WorkspaceCreate(slug="my-ws", label="My WS"), None
     )
     assert ws.slug == "my-ws"
     assert ws.description is None
@@ -20,9 +20,9 @@ async def test_create_workspace(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_workspace_slug_unique(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="dup-ws", label="Dup"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="dup-ws", label="Dup"), None)
     with pytest.raises(HTTPException) as exc:
-        await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="dup-ws", label="Dup2"))
+        await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="dup-ws", label="Dup2"), None)
     assert exc.value.status_code == 409
     await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "dup-ws")
 
@@ -38,7 +38,7 @@ async def test_list_workspaces(db_pool: asyncpg.Pool, test_workspace: dict) -> N
 
 
 async def test_list_workspaces_excludes_archived(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="to-archive", label="Arch"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="to-archive", label="Arch"), None)
     await ws_svc.archive_workspace(db_pool, "to-archive")
     active = await ws_svc.list_workspaces(db_pool)
     assert not any(w.slug == "to-archive" for w in active)
@@ -48,7 +48,7 @@ async def test_list_workspaces_excludes_archived(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_archive_workspace(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="arch-ws", label="Arch"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="arch-ws", label="Arch"), None)
     result = await ws_svc.archive_workspace(db_pool, "arch-ws")
     assert result.archived_at is not None
     await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "arch-ws")
@@ -81,7 +81,7 @@ async def test_update_workspace_no_changes(db_pool: asyncpg.Pool, test_workspace
 
 
 async def test_delete_workspace_with_confirm(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="to-delete", label="Del"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="to-delete", label="Del"), None)
     await ws_svc.delete_workspace(db_pool, "to-delete", confirm="to-delete")
     with pytest.raises(HTTPException) as exc:
         await ws_svc.get_workspace(db_pool, "to-delete")
@@ -89,7 +89,7 @@ async def test_delete_workspace_with_confirm(db_pool: asyncpg.Pool) -> None:
 
 
 async def test_delete_workspace_confirm_mismatch(db_pool: asyncpg.Pool) -> None:
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="safe-ws", label="Safe"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="safe-ws", label="Safe"), None)
     with pytest.raises(HTTPException) as exc:
         await ws_svc.delete_workspace(db_pool, "safe-ws", confirm="wrong-slug")
     assert exc.value.status_code == 400

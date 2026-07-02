@@ -8,21 +8,20 @@ from docflow.secrets.secret import Secret
 
 _BASE_ENV = {
     "DATABASE_URL": "postgresql://localhost/docflow",
-    "ADMIN_EMAIL": "admin@example.com",
-    "ADMIN_PASSWORD": "s3cr3t",
     "JWT_SECRET": "jwt_key",
 }
 
 
 def test_settings_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bootstrap admin par variable d'env supprimé (auth/seed.py) — remplacé par le
+    setup wizard (GET /api/setup/status + POST /api/setup/init-admin). Settings ne
+    porte donc plus admin_email/admin_password."""
     for k, v in _BASE_ENV.items():
         monkeypatch.setenv(k, v)
 
     s = Settings()
 
     assert s.database_url == "postgresql://localhost/docflow"
-    assert s.admin_email == "admin@example.com"
-    assert isinstance(s.admin_password, Secret)
     assert isinstance(s.jwt_secret, Secret)
     assert s.harpocrate_url is None
     assert s.log_level == "INFO"

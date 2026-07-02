@@ -160,12 +160,12 @@ async def test_set_property_value_logs_P(
     db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
 ) -> None:
     """DoD 30 — mise à jour valeur propriété → nature P."""
-    from docflow.schemas.property import PropertiesDefCreate
+    from docflow.schemas.properties import PropertiesDefCreate
     from docflow.properties import service as prop_svc
 
     wk = cf_ws["workspace_technical_key"]
     # Ajouter une propriété text au type
-    await prop_svc.create_property_def(
+    await prop_svc.create_def(
         db_pool, "cf-ws", "cf-type",
         PropertiesDefCreate(slug="notes", label="Notes", type="text"),
     )

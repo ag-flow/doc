@@ -75,21 +75,32 @@ async def test_refresh_references_inserts(db_pool: asyncpg.Pool) -> None:
     from docflow.documents import service as doc_svc
 
     ws_slug = "ref-test-ins"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Ins"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Ins"), None)
     try:
         async with db_pool.acquire() as conn:
             wk: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
             )
 
+        root_type_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk,
+        )
+        block_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id, wk,
+        )
+
         # Crée deux documents (source et cible)
         source = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Source", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Source", parent_id=None, block_id=block_id),
         )
         target = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Cible", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Cible", parent_id=None, block_id=block_id),
         )
 
         content = f"[Voir Cible](docflow://doc/{target.doc_technical_key})"
@@ -119,20 +130,31 @@ async def test_refresh_references_replaces(db_pool: asyncpg.Pool) -> None:
     from docflow.documents import service as doc_svc
 
     ws_slug = "ref-test-rep"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Rep"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Rep"), None)
     try:
         async with db_pool.acquire() as conn:
             wk: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
             )
 
+        root_type_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk,
+        )
+        block_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id, wk,
+        )
+
         source = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Source", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Source", parent_id=None, block_id=block_id),
         )
         target = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Cible", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Cible", parent_id=None, block_id=block_id),
         )
 
         # Premier save : avec lien
@@ -165,20 +187,31 @@ async def test_orphan_after_target_deleted(db_pool: asyncpg.Pool) -> None:
     from docflow.documents import service as doc_svc
 
     ws_slug = "ref-test-orp"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Orp"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="Ref Orp"), None)
     try:
         async with db_pool.acquire() as conn:
             wk: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
             )
 
+        root_type_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk,
+        )
+        block_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id, wk,
+        )
+
         source = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Source", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Source", parent_id=None, block_id=block_id),
         )
         target = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Cible", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Cible", parent_id=None, block_id=block_id),
         )
 
         content = f"[Cible](docflow://doc/{target.doc_technical_key})"
@@ -223,20 +256,31 @@ async def test_backlinks_basic(db_pool: asyncpg.Pool) -> None:
     from docflow.documents import service as doc_svc
 
     ws_slug = "blk-test-basic"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Basic"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Basic"), None)
     try:
         async with db_pool.acquire() as conn:
             wk: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
             )
 
+        root_type_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk,
+        )
+        block_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id, wk,
+        )
+
         doc_a = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="ADR-012", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="ADR-012", parent_id=None, block_id=block_id),
         )
         doc_b = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Spec auth", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Spec auth", parent_id=None, block_id=block_id),
         )
 
         # A cite B
@@ -266,22 +310,46 @@ async def test_backlinks_workspace_isolation(db_pool: asyncpg.Pool) -> None:
 
     ws1 = "blk-iso-w1"
     ws2 = "blk-iso-w2"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws1, label="BLK W1"))
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws2, label="BLK W2"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws1, label="BLK W1"), None)
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws2, label="BLK W2"), None)
     try:
         async with db_pool.acquire() as conn:
+            wk1: uuid.UUID = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws1
+            )
             wk2: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws2
             )
 
+        root_type_id1: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk1,
+        )
+        block_id1: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id1, wk1,
+        )
+        root_type_id2: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk2,
+        )
+        block_id2: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id2, wk2,
+        )
+
         doc_b = await doc_svc.create_document(
             db_pool, ws1,
-            DocumentCreate(title="Shared target", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Shared target", parent_id=None, block_id=block_id1),
         )
         # Source dans W2 qui pointe vers l'id de doc_b (cross-workspace — id connu)
         doc_a2 = await doc_svc.create_document(
             db_pool, ws2,
-            DocumentCreate(title="W2 source", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="W2 source", parent_id=None, block_id=block_id2),
         )
         content = f"[Target](docflow://doc/{doc_b.doc_technical_key})"
         async with db_pool.acquire() as conn:
@@ -297,36 +365,51 @@ async def test_backlinks_workspace_isolation(db_pool: asyncpg.Pool) -> None:
 
 async def test_backlinks_live_title(db_pool: asyncpg.Pool) -> None:
     """Renommer la source → backlinks(B) reflète le nouveau titre."""
-    from docflow.references.service import refresh_references, get_backlinks
+    from docflow.references.service import get_backlinks
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
     from docflow.schemas.document import DocumentCreate, DocumentUpdate
     from docflow.documents import service as doc_svc
 
     ws_slug = "blk-test-live"
-    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Live"))
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=ws_slug, label="BLK Live"), None)
     try:
         async with db_pool.acquire() as conn:
             wk: uuid.UUID = await conn.fetchval(
                 "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
             )
 
+        root_type_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+            "VALUES ($1, $2, $3) RETURNING id",
+            "ref-root", "Ref Root", wk,
+        )
+        block_id: uuid.UUID = await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            "ref-block", "Ref Block", root_type_id, wk,
+        )
+
         doc_a = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="ADR-012", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="ADR-012", parent_id=None, block_id=block_id),
         )
         doc_b = await doc_svc.create_document(
             db_pool, ws_slug,
-            DocumentCreate(title="Spec auth", parent_id=None, functional_type_slug=None),
+            DocumentCreate(title="Spec auth", parent_id=None, block_id=block_id),
         )
 
+        # Le contenu doit être réellement persisté (pas juste injecté dans
+        # document_reference) : un renommage ultérieur relit le contenu courant
+        # via document_version et rejoue refresh_references dessus.
         content = f"[Spec](docflow://doc/{doc_b.doc_technical_key})"
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                await refresh_references(conn, doc_a.doc_technical_key, wk, content)
+        doc_a = await doc_svc.update_document(
+            db_pool, ws_slug, doc_a.doc_technical_key,
+            DocumentUpdate(content=content, expected_version=doc_a.version),
+        )
 
         # Renomme A
-        await doc_svc.patch_document(
+        await doc_svc.update_document(
             db_pool, ws_slug, doc_a.doc_technical_key,
             DocumentUpdate(title="ADR-012 — Keycloak", expected_version=doc_a.version),
         )

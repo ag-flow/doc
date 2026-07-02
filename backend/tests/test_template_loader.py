@@ -66,9 +66,9 @@ def test_load_templates_dossier_inexistant(tmp_path: pathlib.Path) -> None:
 def test_load_agile_basic_résumé() -> None:
     templates_dir = pathlib.Path(__file__).parent.parent.parent / "templates"
     result = load_templates(templates_dir)
-    assert len(result) == 1
-    info = result[0]
-    assert info.template == "agile-basic"
-    assert info.version == 1
-    assert info.concrete_types == 4
-    assert set(info.type_slugs) == {"epic", "feature", "story", "atdd"}
+    info = next(t for t in result if t.template == "agile-basic")
+    assert info.version == 2
+    assert info.concrete_types == 7
+    assert set(info.type_slugs) == {
+        "personne", "epic", "feature", "story", "atdd", "bug", "enabler",
+    }

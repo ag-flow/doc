@@ -13,14 +13,14 @@ from docflow.documents import service as doc_svc
 
 
 async def test_export_workspace_returns_zip(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     doc_a = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Doc Alpha", parent_id=None)
+        db_pool, ws, DocumentCreate(title="Doc Alpha", parent_id=None, block_id=test_block["id"])
     )
     doc_b = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Doc Bêta", parent_id=None)
+        db_pool, ws, DocumentCreate(title="Doc Bêta", parent_id=None, block_id=test_block["id"])
     )
     zip_bytes = await build_export_zip(db_pool, ws)
     assert len(zip_bytes) > 0
@@ -32,11 +32,11 @@ async def test_export_workspace_returns_zip(
 
 
 async def test_export_frontmatter_contains_docflow_id(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
     doc = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Doc Frontmatter", parent_id=None)
+        db_pool, ws, DocumentCreate(title="Doc Frontmatter", parent_id=None, block_id=test_block["id"])
     )
     doc_id = str(doc.doc_technical_key)
     zip_bytes = await build_export_zip(db_pool, ws)
@@ -49,17 +49,21 @@ async def test_export_frontmatter_contains_docflow_id(
 
 
 async def test_export_link_rewrite(
-    db_pool: asyncpg.Pool, test_workspace: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     """Lien docflow:// interne réécrit en [[wikilink]]."""
     ws = "test-ws"
     doc_target = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Cible", parent_id=None)
+        db_pool, ws, DocumentCreate(title="Cible", parent_id=None, block_id=test_block["id"])
     )
     target_id = doc_target.doc_technical_key
     content_with_link = f"Voir [Cible](docflow://doc/{target_id})"
     doc_src = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Source", parent_id=None, content=content_with_link)
+        db_pool, ws,
+        DocumentCreate(
+            title="Source", parent_id=None, content=content_with_link,
+            block_id=test_block["id"],
+        ),
     )
     zip_bytes = await build_export_zip(db_pool, ws)
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
