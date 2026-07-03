@@ -17,7 +17,7 @@ La colonne **Modèle** de chaque tableau propose le modèle à utiliser pour le 
 - **Opus** — correctifs complexes mais bien cadrés : multi-fichiers, logique non triviale, refactor, intégrité du versioning frontend.
 - **Sonnet** — correctifs localisés / mécaniques : config, doc, une seule fonction, regex, ajout de validation, clé manquante.
 
-Récapitulatif : **Fable** 5 bugs · **Opus** 24 bugs · **Sonnet** 43 bugs.
+Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 
 ## Bugs critiques
 
@@ -109,4 +109,4 @@ Récapitulatif : **Fable** 5 bugs · **Opus** 24 bugs · **Sonnet** 43 bugs.
 ---
 
 **Totaux** : 10 critiques, 33 majeurs, 29 mineurs — 72 bugs documentés.
-**Répartition modèles** : Fable 5 · Opus 24 · Sonnet 43.
+**Répartition modèles** : Fable 6 · Opus 22 · Sonnet 44.
