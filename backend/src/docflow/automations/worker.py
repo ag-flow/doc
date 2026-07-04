@@ -176,6 +176,17 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
             natures,
         )
 
+        # Le curseur représente le plus petit `seq` non encore traité. On
+        # l'avance au fil des changements tant qu'aucun document « chaud »
+        # (dans sa fenêtre de debounce) n'a été rencontré. Dès qu'on diffère
+        # un document chaud, on gèle le curseur (`deferred = True`) afin de le
+        # retraiter à un tick ultérieur, tout en CONTINUANT à traiter les
+        # autres documents du batch : un seul document fréquemment édité ne
+        # doit pas affamer les automations du reste du workspace. Les
+        # changements traités au-delà du curseur gelé sont protégés contre un
+        # double traitement par la table `automation_run` (already_done).
+        deferred = False
+
         for row in rows:
             doc = await conn.fetchrow(
                 "SELECT doc_technical_key, version, title "
@@ -183,7 +194,8 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 row["document_ref"],
             )
             if doc is None:
-                await _advance(conn, automation["id"], row["seq"])
+                if not deferred:
+                    await _advance(conn, automation["id"], row["seq"])
                 continue
 
             version: int = doc["version"]
@@ -200,7 +212,8 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 version,
             )
             if already_done:
-                await _advance(conn, automation["id"], row["seq"])
+                if not deferred:
+                    await _advance(conn, automation["id"], row["seq"])
                 continue
 
             if automation["delay_minutes"] > 0:
@@ -215,7 +228,10 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                     str(automation["delay_minutes"]),
                 )
                 if hot:
-                    break
+                    # Document chaud : on le laisse mûrir sans avancer le
+                    # curseur au-delà de lui, mais on ne bloque pas le batch.
+                    deferred = True
+                    continue
 
             status = await execute(conn, automation, doc, version, pool, settings)
 
@@ -232,7 +248,8 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 row["seq"],
                 status,
             )
-            await _advance(conn, automation["id"], row["seq"])
+            if not deferred:
+                await _advance(conn, automation["id"], row["seq"])
 
 
 # ── Boucle principale ─────────────────────────────────────────────────────────

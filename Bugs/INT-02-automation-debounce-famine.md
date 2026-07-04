@@ -1,4 +1,5 @@
 # INT-02 — Debounce d'automation : famine de tout le workspace
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
 
 - **Gravité** : 🟠 MAJEUR (logique)
 - **Confiance** : haute
