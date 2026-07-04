@@ -22,6 +22,11 @@ _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"
 _Auth = Depends(require_admin)
 
+# Référence forte sur les tasks webhook en cours : asyncio ne garde qu'une
+# référence faible sur les tasks créées par create_task, un objet non
+# référencé ailleurs peut être ramassé par le GC avant son exécution.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def _enc_key(request: Request) -> str | None:
     key = request.app.state.settings.encryption_key
@@ -30,7 +35,7 @@ def _enc_key(request: Request) -> str | None:
 
 def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) -> None:
     """Lance l'émission webhook en fire-and-forget."""
-    asyncio.create_task(
+    task = asyncio.create_task(
         wh_service.emit_event(
             request.app.state.pool,
             ws_slug,
@@ -39,6 +44,8 @@ def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) 
             encryption_key=_enc_key(request),
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 class _ChangeEntry(BaseModel):

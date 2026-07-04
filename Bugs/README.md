@@ -86,7 +86,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DOC-10](DOC-10-workspace-archive-modifiable.md) | Workspace archivé encore entièrement modifiable | `workspaces/service.py`, `db/helpers.py` | **Opus** |
 | [DOC-11](DOC-11-viewupdate-layout-non-valide.md) | ✅ `ViewUpdate.layout` non validé → 500 au lieu de 422 | `views/service.py` | **Sonnet** |
 | [DOC-12](DOC-12-allowed-types-parent-id-cross-workspace.md) | ✅ `allowed_types` avec `parent_id` : fuite inter-workspace | `documents/block_ops.py` | **Sonnet** |
-| [DOC-13](DOC-13-webhook-fire-create-task-gc.md) | `_fire` webhooks : `asyncio.create_task` sans référence conservée | `documents/router.py` | **Sonnet** |
+| [DOC-13](DOC-13-webhook-fire-create-task-gc.md) | ✅ `_fire` webhooks : `asyncio.create_task` sans référence conservée | `documents/router.py` | **Sonnet** |
 | [DOC-14](DOC-14-incoherences-domaine-diverses.md) | Incohérences domaine diverses (template bloc, cursor, bloc_ref FK, default NULL) | `documents/`, `views/`, `properties/` | **Opus** |
 | [DB-12](DB-12-cle-ssh-world-readable.md) | ✅ Clé privée SSH : fenêtre world-readable, jamais supprimée | `backup/worker.py` | **Sonnet** |
 | [DB-13](DB-13-sftp-autoaddpolicy-host-key.md) | ✅ SFTP : `AutoAddPolicy`, host key jamais vérifiée | `backup/db_dump.py` | **Sonnet** |

@@ -1,5 +1,7 @@
 # DOC-13 — `_fire` webhooks : `asyncio.create_task` sans référence conservée
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : moyenne
 - **Zone** : domaine / documents (déclenchement webhooks)
