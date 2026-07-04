@@ -245,7 +245,9 @@ async def test_update_document_metadata_no_version(
         db_pool, _WS, FunctionalTypeCreate(slug="bug", label="Bug", parent_slug=root_slug)
     )
     parent = await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
+        db_pool,
+        _WS,
+        DocumentCreate(title="Parent", block_id=test_block["id"], functional_type_slug=root_slug),
     )
     doc = await doc_svc.create_document(
         db_pool,
