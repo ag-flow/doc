@@ -59,7 +59,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DB-09](DB-09-job-echec-retry-30s.md) | ✅ Job en échec : retry toutes les 30 s au lieu de l'intervalle | `backup/worker.py` | **Sonnet** |
 | [DB-10](DB-10-ftps-port-990-incompatible.md) | ✅ FTPS : port par défaut 990 incompatible avec le TLS explicite | `backup/db_dump.py` | **Sonnet** |
 | [DB-11](DB-11-url-ssh-git-malformee.md) | ✅ URL SSH git malformée (`git@host/repo` au lieu de `:`) | `backup/worker.py` | **Sonnet** |
-| [DEP-01](DEP-01-identifiants-admin-bootstrap-morts.md) | Identifiants admin bootstrap morts affichés par le déploiement | `scripts/dev-deploy.sh`, `deploy/DEPLOY.md` | **Sonnet** |
+| [DEP-01](DEP-01-identifiants-admin-bootstrap-morts.md) | ✅ Identifiants admin bootstrap morts affichés par le déploiement | `scripts/dev-deploy.sh`, `deploy/DEPLOY.md` | **Sonnet** |
 | [DEP-02](DEP-02-scripts-sql-doublons-divergents.md) | `scripts/*.sql` : copies périmées et divergentes des migrations | `scripts/*.sql` | **Sonnet** |
 | [DEP-03](DEP-03-ports-0000-contournent-tls.md) | Ports publiés sur `0.0.0.0` contournant le TLS | `deploy/docker-compose*.yml` | **Sonnet** |
 | [DEP-04](DEP-04-image-tourne-en-root.md) | L'image de prod tourne en root | `deploy/Dockerfile` | **Sonnet** |

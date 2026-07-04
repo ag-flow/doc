@@ -20,10 +20,10 @@ Le script `prod-deploy.sh` effectue automatiquement :
 1. Création de `/opt/docflow/` et `/data/`
 2. Téléchargement de `docker-compose.prod.yml` (toujours la dernière version depuis `main`)
 3. Génération des secrets (`pg_password`, `JWT_SECRET`, `ENCRYPTION_KEY`) et pré-remplissage de `/data/.env`
-4. Pause pour que l'opérateur renseigne `ADMIN_EMAIL` et `ADMIN_PASSWORD` dans `/data/.env`
-5. Pull de l'image `ghcr.io/ag-flow/doc:latest`
-6. Démarrage de la stack (app + postgres)
-7. Smoke test sur `/health`
+4. Pull de l'image `ghcr.io/ag-flow/doc:latest`
+5. Démarrage de la stack (app + postgres)
+6. Smoke test sur `/health`
+7. Création du premier compte admin via le wizard `POST /api/setup/init-admin` (voir § Premier accès)
 
 ---
 
@@ -46,15 +46,21 @@ Si le pull échoue avec une erreur d'accès, authentifier Docker auprès de GHCR
 
 ---
 
+## Premier accès — création du compte admin
+
+Le script pré-remplit automatiquement `DATABASE_URL`, `JWT_SECRET` et `ENCRYPTION_KEY` dans `/data/.env`. Aucun identifiant admin n'est généré ni requis dans ce fichier : il n'existe **aucun bootstrap admin par variable d'environnement**.
+
+Le premier compte admin se crée via le wizard exposé par l'application, tant qu'aucun utilisateur n'existe en base :
+
+```bash
+curl -X POST https://docflow.exemple.fr/api/setup/init-admin \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "email": "admin@exemple.fr", "password": "un-mot-de-passe-fort"}'
+```
+
+Ce endpoint se désactive automatiquement dès qu'un utilisateur existe (voir `GET /api/setup/status`).
+
 ## Variables de `/data/.env`
-
-Le script pré-remplit automatiquement `DATABASE_URL`, `JWT_SECRET` et `ENCRYPTION_KEY`.  
-L'opérateur doit uniquement renseigner :
-
-| Variable | Description |
-|---|---|
-| `ADMIN_EMAIL` | Email du compte admin bootstrap (accès de secours permanent) |
-| `ADMIN_PASSWORD` | Mot de passe fort (≥ 16 caractères) |
 
 Variables optionnelles disponibles dans `/data/.env` :
 

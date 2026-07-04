@@ -51,22 +51,20 @@ PG_PASSWORD="$(cat /data/pg_password.txt)"
 if [[ ! -f /data/.env ]]; then
     echo "  → Génération de /data/.env avec des secrets aléatoires (dev)..."
     JWT_SECRET="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
-    ADMIN_PASSWORD="$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")"
     cat > /data/.env <<EOF
 # Généré automatiquement par dev-deploy.sh — NE PAS COMMITTER
 DATABASE_URL=postgresql://docflow:${PG_PASSWORD}@postgres:5432/docflow
 JWT_SECRET=${JWT_SECRET}
-ADMIN_EMAIL=admin@docflow.local
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
 LOG_LEVEL=INFO
 EOF
     chmod 600 /data/.env
     echo "  ✓ /data/.env créé"
     echo ""
-    echo "  ┌─ Identifiants bootstrap admin ────────────────────┐"
-    echo "  │  Email    : admin@docflow.local                   │"
-    echo "  │  Password : ${ADMIN_PASSWORD}  │"
-    echo "  └───────────────────────────────────────────────────┘"
+    echo "  ┌─ Premier accès ────────────────────────────────────────────────┐"
+    echo "  │  Aucun admin n'est pré-créé. Créer le premier compte via :      │"
+    echo "  │  POST /api/setup/init-admin (wizard exposé par l'app au         │"
+    echo "  │  premier démarrage, tant qu'aucun utilisateur n'existe).        │"
+    echo "  └──────────────────────────────────────────────────────────────────┘"
     echo ""
 else
     echo "  ✓ /data/.env existant conservé"

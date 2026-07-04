@@ -1,5 +1,7 @@
 # DEP-01 — Identifiants admin bootstrap morts affichés par le déploiement
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : déploiement / doc
