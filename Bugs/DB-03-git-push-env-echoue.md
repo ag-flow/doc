@@ -1,5 +1,7 @@
 # DB-03 — `origin.push(env=)` fait échouer tous les push git
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute (vérifié sur GitPython 3.1.50 installé)
 - **Zone** : backup / git_sync

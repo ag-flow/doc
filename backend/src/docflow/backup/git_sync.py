@@ -236,6 +236,7 @@ async def run_git_sync(
                 branch=git_branch,
                 env=env,
             )
+            repo.git.update_environment(**env)
     except GitCommandError as e:
         raise RuntimeError(f"git clone/pull échoué : {e}") from e
 
@@ -273,7 +274,7 @@ async def run_git_sync(
             f"docflow sync — {files_written} écrits, {files_deleted} supprimés"
         )
         try:
-            repo.remotes.origin.push(git_branch, env=env)
+            repo.remotes.origin.push(git_branch)
         except GitCommandError as e:
             raise RuntimeError(f"git push échoué : {e}") from e
         commit_sha = commit.hexsha[:12]
