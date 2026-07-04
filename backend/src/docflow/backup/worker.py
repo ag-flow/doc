@@ -18,7 +18,14 @@ _TICK = 30  # secondes entre deux balayages du scheduler
 
 
 def _is_due(job: dict[str, Any], now: datetime) -> bool:
-    """Vérifie si un job doit être exécuté maintenant."""
+    """Vérifie si un job doit être exécuté maintenant.
+
+    `job["last_run_at"]` doit être le dernier run toutes natures confondues
+    (succès **et** échec) : sinon, un job qui échoue en boucle n'a jamais de
+    `last_run_at` et redéclenche à chaque tick au lieu de respecter
+    l'intervalle configuré. Le curseur incrémental (`last_change_seq`), lui,
+    reste basé sur le dernier succès (`_last_success_seq`).
+    """
     last = job["last_run_at"]
     if job["schedule_every_seconds"]:
         if last is None:
@@ -260,7 +267,7 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
                w.slug AS workspace_slug,
                rp.slug AS remote_point_slug,
                (SELECT r.started_at FROM backup_job_run r
-                WHERE r.job_id = j.id AND r.status = 'success'
+                WHERE r.job_id = j.id
                 ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
                (SELECT COUNT(*) FROM backup_job_run r
                 WHERE r.job_id = j.id AND r.status = 'running') AS running_count

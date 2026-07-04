@@ -56,7 +56,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DB-06](DB-06-pg-dump-mot-de-passe-argv.md) | ✅ `pg_dump` : mot de passe Postgres visible dans `ps` (argv) | `backup/db_dump.py` | **Sonnet** |
 | [DB-07](DB-07-pat-git-en-clair-git-config.md) | PAT git persisté en clair dans `.git/config` | `backup/worker.py`, `backup/git_sync.py` | **Opus** |
 | [DB-08](DB-08-run-running-orphelin-job-bloque.md) | ✅ Run `running` orphelin après crash → job bloqué définitivement | `backup/worker.py` | **Sonnet** |
-| [DB-09](DB-09-job-echec-retry-30s.md) | Job en échec : retry toutes les 30 s au lieu de l'intervalle | `backup/worker.py` | **Sonnet** |
+| [DB-09](DB-09-job-echec-retry-30s.md) | ✅ Job en échec : retry toutes les 30 s au lieu de l'intervalle | `backup/worker.py` | **Sonnet** |
 | [DB-10](DB-10-ftps-port-990-incompatible.md) | FTPS : port par défaut 990 incompatible avec le TLS explicite | `backup/db_dump.py` | **Sonnet** |
 | [DB-11](DB-11-url-ssh-git-malformee.md) | URL SSH git malformée (`git@host/repo` au lieu de `:`) | `backup/worker.py` | **Sonnet** |
 | [DEP-01](DEP-01-identifiants-admin-bootstrap-morts.md) | Identifiants admin bootstrap morts affichés par le déploiement | `scripts/dev-deploy.sh`, `deploy/DEPLOY.md` | **Sonnet** |

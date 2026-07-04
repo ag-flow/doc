@@ -1,5 +1,7 @@
 # DB-09 — Job en échec : retry toutes les 30 s au lieu de l'intervalle configuré
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : backup / worker
