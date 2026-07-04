@@ -178,7 +178,10 @@ export function TypePropertiesPanel({ ws, type }: Props) {
           {t('types.contentTemplate', 'Modèle de contenu')}
         </h3>
         <p className="mb-2 text-xs text-gray-500">
-          {t('types.contentTemplateHint', 'Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide.')}
+          {t('types.contentTemplateHint', {
+            defaultValue: 'Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide.',
+            interpolation: { skipOnVariables: true },
+          })}
         </p>
         <textarea
           className="block w-full rounded border border-gray-300 p-2 font-mono text-xs"

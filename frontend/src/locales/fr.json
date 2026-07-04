@@ -96,7 +96,9 @@
     "deleteConfirmMsg": "Supprimer « {{slug}} » ? Cette action est irréversible. Impossible si le type a des enfants ou des documents associés.",
     "addValue": "Ajouter une valeur",
     "valueLabel": "Libellé",
-    "valueColor": "Couleur"
+    "valueColor": "Couleur",
+    "contentTemplate": "Modèle de contenu",
+    "contentTemplateHint": "Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide."
   },
   "documents": {
     "title": "Documents",

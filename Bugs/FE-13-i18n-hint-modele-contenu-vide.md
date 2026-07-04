@@ -1,5 +1,7 @@
 # FE-13 — i18n : hint du modèle de contenu vidé par l'interpolation
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : moyenne
 - **Zone** : frontend / i18n

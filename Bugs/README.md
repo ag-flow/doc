@@ -99,7 +99,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [FE-10](FE-10-double-submit-entree-creation.md) | ✅ Double-submit par Entrée dans les dialogues de création | `AddDocumentDialog.tsx`, `DocumentChildrenPanel.tsx` | **Sonnet** |
 | [FE-11](FE-11-linksearchpopup-spinner-bloque.md) | ✅ LinkSearchPopup : spinner bloqué et réponses hors-ordre | `LinkSearchPopup.tsx` | **Sonnet** |
 | [FE-12](FE-12-labeltoslug-supprime-chiffres.md) | ✅ `labelToSlug` supprime les chiffres | `lib/slug.ts` | **Sonnet** |
-| [FE-13](FE-13-i18n-hint-modele-contenu-vide.md) | i18n : hint du modèle de contenu vidé par l'interpolation | `TypePropertiesPanel.tsx` | **Sonnet** |
+| [FE-13](FE-13-i18n-hint-modele-contenu-vide.md) | ✅ i18n : hint du modèle de contenu vidé par l'interpolation | `TypePropertiesPanel.tsx` | **Sonnet** |
 | [FE-14](FE-14-typesadmin-fragments-sans-key.md) | TypesAdmin : fragments sans `key` | `TypesAdmin.tsx` | **Sonnet** |
 | [FE-15](FE-15-blocsadmin-export-sans-gestion-erreur.md) | BlocsAdmin `handleExport` : erreurs HTTP non gérées | `BlocsAdmin.tsx` | **Sonnet** |
 | [FE-16](FE-16-pub-non-proxifie-dev.md) | `/pub` non proxifié en dev | `vite.config.ts`, `lib/api.ts` | **Sonnet** |
