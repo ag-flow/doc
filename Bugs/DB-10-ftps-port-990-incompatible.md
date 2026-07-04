@@ -1,5 +1,7 @@
 # DB-10 — FTPS : port par défaut 990 incompatible avec le TLS explicite
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : backup / db_dump

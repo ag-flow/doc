@@ -13,7 +13,10 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_PORTS = {"ftp": 21, "ftps": 990, "sftp": 22}
+# `_upload_ftp` utilise ftplib.FTP_TLS, qui ne fait que du TLS explicite
+# (connexion en clair puis AUTH TLS) : le port par défaut est donc 21, pas 990
+# (TLS implicite, non supporté par ftplib.FTP_TLS).
+_DEFAULT_PORTS = {"ftp": 21, "ftps": 21, "sftp": 22}
 
 
 def _dump_filename(workspace_slug: str | None, job_id: uuid.UUID) -> str:
