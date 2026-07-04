@@ -27,6 +27,27 @@ export class ApiError extends Error {
   }
 }
 
+/** Endpoints d'authentification : un 401 y est un échec de login légitime, pas une
+ *  session expirée. On ne doit ni purger de token ni recharger la page. */
+const AUTH_PATHS = ['/auth/login', '/auth/methods', '/setup/init-admin']
+
+function isAuthPath(path: string): boolean {
+  return AUTH_PATHS.some((p) => path.startsWith(p))
+}
+
+/** Gère un 401 de façon centralisée. On ne purge le token et ne redirige vers /login
+ *  que pour une session réellement expirée : un token était présent ET la requête ne
+ *  vise pas un endpoint d'auth. Sinon (login sans token, mauvais mot de passe…) on
+ *  laisse l'ApiError remonter pour que l'appelant affiche le message d'erreur au lieu
+ *  de recharger brutalement la page. Retourne toujours (throw). */
+function handleUnauthorized(path: string, hadToken: boolean): never {
+  if (hadToken && !isAuthPath(path)) {
+    clearToken()
+    window.location.href = '/login'
+  }
+  throw new ApiError(401, null, 'Unauthorized')
+}
+
 function detailMessage(detail: unknown, fallback: string): string {
   if (typeof detail === 'string') return detail
   if (detail && typeof detail === 'object' && 'message' in detail) {
@@ -43,11 +64,7 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new ApiError(401, null, 'Unauthorized')
-  }
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -64,11 +81,7 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new ApiError(401, null, 'Unauthorized')
-  }
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -86,11 +99,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new ApiError(401, null, 'Unauthorized')
-  }
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null

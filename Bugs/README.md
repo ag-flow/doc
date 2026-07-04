@@ -71,7 +71,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DEP-04](fixed/DEP-04-image-tourne-en-root.md) | ✅ L'image de prod tourne en root | `deploy/Dockerfile` | **Sonnet** |
 | [DEP-05](fixed/DEP-05-procedure-restore-cassee.md) | ✅ Procédure de restauration DEPLOY.md non fonctionnelle/destructrice | `deploy/DEPLOY.md` | **Sonnet** |
 | [FE-03](FE-03-refetch-arriere-plan-verrou-optimiste.md) | ✅ Refetch arrière-plan : verrou optimiste contourné + titre perdu | `DocumentEditor.tsx` | **Opus** |
-| [FE-04](FE-04-login-401-recharge-page.md) | Login : 401 recharge la page au lieu d'afficher l'erreur | `lib/api.ts`, `Login.tsx` | **Opus** |
+| [FE-04](FE-04-login-401-recharge-page.md) | ✅ Login : 401 recharge la page au lieu d'afficher l'erreur | `lib/api.ts`, `Login.tsx` | **Opus** |
 | [FE-05](FE-05-propriete-bool-premier-toggle.md) | Propriété `bool` : le premier toggle n'est jamais persisté | `PropertyField.tsx`, `useFieldState.ts` | **Opus** |
 | [FE-06](fixed/FE-06-secretinput-fuite-secret-changement-mode.md) | ✅ SecretInput : secret exposé en clair lors d'un changement de mode | `SecretInput.tsx` | **Sonnet** |
 | [FE-07](fixed/FE-07-issuperadmin-atob-base64url.md) | ✅ `isSuperAdmin()` : `atob` échoue sur JWT base64url → UI admin masquée | `lib/api.ts` | **Sonnet** |
