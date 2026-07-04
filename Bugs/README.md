@@ -41,7 +41,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DOC-02](fixed/DOC-02-reparentage-sans-anti-cycle.md) | ✅ Reparentage de document sans détection de cycle → boucle infinie Postgres | `documents/service.py` | **Opus** |
 | [DOC-03](fixed/DOC-03-create-document-block-id-cross-workspace.md) | ✅ `create_document` accepte un `block_id` d'un autre workspace | `documents/service.py` | **Opus** |
 | [DB-01](DB-01-pool-asyncpg-cross-loop-git-sync.md) | ✅ Pool asyncpg utilisé depuis un autre event loop (git_sync) | `backup/worker.py` | **Fable** |
-| [DB-02](DB-02-reconciliation-orphelins-suppression-massive.md) | Réconciliation orphelins : suppression massive de workspaces non modifiés | `backup/git_sync.py` | **Fable** |
+| [DB-02](DB-02-reconciliation-orphelins-suppression-massive.md) | ✅ Réconciliation orphelins : suppression massive de workspaces non modifiés | `backup/git_sync.py` | **Fable** |
 | [DB-03](fixed/DB-03-git-push-env-echoue.md) | ✅ `origin.push(env=)` fait échouer tous les push git | `backup/git_sync.py` | **Sonnet** |
 | [DB-04](fixed/DB-04-export-json-uuid-et-valeurs-falsy.md) | ✅ Export JSON : `TypeError` sur UUID + valeurs falsy écrasées | `backup/git_sync.py` | **Sonnet** |
 | [FE-01](fixed/FE-01-editeur-contenu-autre-document.md) | ✅ Éditeur affiche/sauvegarde le contenu d'un autre document | `MarkdownEditor.tsx`, `DocumentEditor.tsx` | **Opus** |

@@ -1,5 +1,7 @@
 # DB-02 — Réconciliation orphelins : suppression massive de workspaces non modifiés
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute
 - **Zone** : backup / git_sync
