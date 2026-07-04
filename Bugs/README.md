@@ -7,16 +7,25 @@ Méthode : 6 revues en parallèle (auth/sécurité, DB/secrets/backup, domaine d
 
 ## État des correctifs
 
-Corrigés le 2026-07-04 par des agents autonomes, fiches déplacées dans **[`fixed/`](fixed/)** :
+**Les 72 bugs sont corrigés (72 / 72).** Corrigés le 2026-07-04 par des agents autonomes et toutes les fiches déplacées dans **[`fixed/`](fixed/)** :
 
 - les **44 bugs Sonnet** (agents Sonnet) ;
-- les **22 bugs Opus** (agents Opus), dont les critiques DOC-02, DOC-03, FE-01, FE-02.
+- les **22 bugs Opus** (agents Opus), dont les critiques DOC-02, DOC-03, FE-01, FE-02 ;
+- les **6 bugs Fable** (agents Fable) : AUTH-01 (signature OIDC, flow authorization-code complet), AUTH-07 (renommage `require_admin`→`require_authenticated`, décision architecte), DB-01/DB-02 (async cross-loop + réconciliation par chemin), DOC-01 (moteur de vues), DOC-07 (cascade assumée + garde `confirm`, décision architecte).
 
-Chaque fiche corrigée porte la mention `✅ CORRIGÉ` en tête, et sa ligne dans les tableaux ci-dessous est préfixée `✅` avec un lien vers `fixed/<fiche>.md`. **66 bugs corrigés / 72.**
+Chaque fiche porte la mention `✅ CORRIGÉ` en tête ; toutes les lignes des tableaux ci-dessous sont préfixées `✅` avec un lien vers `fixed/<fiche>.md`. La racine de `Bugs/` ne contient plus que ce README.
 
-Restent à la racine de `Bugs/`, **non corrigés** : les **6 bugs Fable** (AUTH-01, AUTH-07, DB-01, DB-02, DOC-01, DOC-07) — les plus délicats (vérification de signature OIDC, sémantique RBAC, concurrence async du backup, moteur de vues, cascade FK).
+### Deux décisions d'architecte
 
-> Vérification : `ruff` + `mypy` verts sur les fichiers touchés ; suite pytest exécutée sans régression (les tests nécessitant Postgres sont *skipped* dans le sandbox de dev). Les correctifs à surface DB réelle et le frontend restent **à valider sur test1** avec un vrai Postgres et un build complet.
+- **AUTH-07** : renommage sans changement de comportement (modèle à 2 niveaux confirmé : utilisateur validé = accès contenu, `require_superadmin` = rôle admin).
+- **DOC-07** : cascade de la migration 0011 assumée + garde de confirmation (`?confirm=true`) sur les suppressions destructrices.
+
+### À valider avant merge
+
+> `ruff` + `mypy` verts ; pytest sans régression (tests Postgres *skipped* dans le sandbox, mais DOC-07 a été validé contre un Postgres éphémère : 452 passed). Restent à valider sur test1 avec un vrai Postgres + build frontend, et à traiter côté produit :
+> - **Impacts frontend** de correctifs backend : le callback OIDC attend désormais `{code, redirect_uri, nonce}` (AUTH-01) ; les suppressions bloc/type/def renvoient 409 tant que `confirm=true` n'est pas envoyé (DOC-07) — l'UI doit proposer la confirmation.
+> - La spec `22_MDB_data_block.md` (« RESTRICT ») est à amender pour refléter DOC-07.
+> - Divers périmètres conservateurs documentés dans les fiches (DOC-10, INT-03/04, INT-06, FE-04).
 
 ## Convention de nommage
 
@@ -36,12 +45,12 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 
 | ID | Titre | Fichier principal | Modèle |
 |----|-------|-------------------|--------|
-| [AUTH-01](AUTH-01-oidc-callback-sans-verification-signature.md) | ✅ Callback OIDC émet un JWT sans vérifier la signature de l'id_token | `oidc/router.py`, `oidc/service.py` | **Fable** |
-| [DOC-01](DOC-01-vues-renumerotation-placeholders-cassee.md) | ✅ Renumérotation des placeholders `$n` cassée dans le moteur de vues | `views/service.py` | **Fable** |
+| [AUTH-01](fixed/AUTH-01-oidc-callback-sans-verification-signature.md) | ✅ Callback OIDC émet un JWT sans vérifier la signature de l'id_token | `oidc/router.py`, `oidc/service.py` | **Fable** |
+| [DOC-01](fixed/DOC-01-vues-renumerotation-placeholders-cassee.md) | ✅ Renumérotation des placeholders `$n` cassée dans le moteur de vues | `views/service.py` | **Fable** |
 | [DOC-02](fixed/DOC-02-reparentage-sans-anti-cycle.md) | ✅ Reparentage de document sans détection de cycle → boucle infinie Postgres | `documents/service.py` | **Opus** |
 | [DOC-03](fixed/DOC-03-create-document-block-id-cross-workspace.md) | ✅ `create_document` accepte un `block_id` d'un autre workspace | `documents/service.py` | **Opus** |
-| [DB-01](DB-01-pool-asyncpg-cross-loop-git-sync.md) | ✅ Pool asyncpg utilisé depuis un autre event loop (git_sync) | `backup/worker.py` | **Fable** |
-| [DB-02](DB-02-reconciliation-orphelins-suppression-massive.md) | ✅ Réconciliation orphelins : suppression massive de workspaces non modifiés | `backup/git_sync.py` | **Fable** |
+| [DB-01](fixed/DB-01-pool-asyncpg-cross-loop-git-sync.md) | ✅ Pool asyncpg utilisé depuis un autre event loop (git_sync) | `backup/worker.py` | **Fable** |
+| [DB-02](fixed/DB-02-reconciliation-orphelins-suppression-massive.md) | ✅ Réconciliation orphelins : suppression massive de workspaces non modifiés | `backup/git_sync.py` | **Fable** |
 | [DB-03](fixed/DB-03-git-push-env-echoue.md) | ✅ `origin.push(env=)` fait échouer tous les push git | `backup/git_sync.py` | **Sonnet** |
 | [DB-04](fixed/DB-04-export-json-uuid-et-valeurs-falsy.md) | ✅ Export JSON : `TypeError` sur UUID + valeurs falsy écrasées | `backup/git_sync.py` | **Sonnet** |
 | [FE-01](fixed/FE-01-editeur-contenu-autre-document.md) | ✅ Éditeur affiche/sauvegarde le contenu d'un autre document | `MarkdownEditor.tsx`, `DocumentEditor.tsx` | **Opus** |
@@ -56,14 +65,14 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [AUTH-04](fixed/AUTH-04-anti-lockout-devalidation-et-count.md) | ✅ Anti-lock-out : dévalidation + COUNT qui ignore `validated` | `auth/lockout.py`, `admin/users/service.py` | **Opus** |
 | [AUTH-05](fixed/AUTH-05-scopes-api-key-non-appliques.md) | ✅ Scopes d'API key non appliqués sur documents/properties/types | `documents/router.py`, `properties/router.py`, `types/router.py` | **Opus** |
 | [AUTH-06](fixed/AUTH-06-setup-race-plusieurs-admins.md) | ✅ Race au setup : plusieurs admins créés dans la fenêtre d'init | `setup/service.py` | **Opus** |
-| [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) | ✅ `require_admin` ne vérifie aucun droit admin | `auth/deps.py` (+ surfaces MCP/admin) | **Fable** |
+| [AUTH-07](fixed/AUTH-07-require-admin-ne-verifie-pas-is-admin.md) | ✅ `require_admin` ne vérifie aucun droit admin | `auth/deps.py` (+ surfaces MCP/admin) | **Fable** |
 | [INT-01](fixed/INT-01-path-traversal-template-slug-gallery.md) | ✅ Path traversal / écriture arbitraire via `template_slug` (galerie) | `templates/gallery.py`, `templates/router.py` | **Sonnet** |
 | [INT-02](fixed/INT-02-automation-debounce-famine.md) | ✅ Debounce d'automation : famine de tout le workspace | `automations/worker.py` | **Opus** |
 | [INT-03](fixed/INT-03-mcp-outils-ecriture-identite-superadmin.md) | ✅ Outils MCP d'écriture exécutés sous l'identité du superadmin système | `mcp/server.py` | **Opus** |
 | [DOC-04](fixed/DOC-04-changement-type-valeurs-orphelines.md) | ✅ Changement de type : valeurs de propriétés orphelines conservées | `documents/service.py` | **Opus** |
 | [DOC-05](fixed/DOC-05-parser-references-uuid-laxiste.md) | ✅ Parser de références : regex UUID laxiste → 500 + doublons de casse | `references/parser.py`, `references/service.py` | **Sonnet** |
 | [DOC-06](fixed/DOC-06-create-document-references-non-indexees.md) | ✅ `create_document` n'indexe pas les références du contenu initial | `documents/service.py` | **Sonnet** |
-| [DOC-07](DOC-07-gardes-fk-mortes-cascade-0011.md) | ✅ Gardes FK mortes depuis 0011 → suppressions silencieusement destructrices | `properties/service.py`, `blocks/service.py`, `types/service.py` | **Fable** |
+| [DOC-07](fixed/DOC-07-gardes-fk-mortes-cascade-0011.md) | ✅ Gardes FK mortes depuis 0011 → suppressions silencieusement destructrices | `properties/service.py`, `blocks/service.py`, `types/service.py` | **Fable** |
 | [DOC-08](fixed/DOC-08-vues-collision-slug-partagee-privee.md) | ✅ Vues : collision de slug partagée/privée → résolution indéterminée | `views/service.py` | **Opus** |
 | [DB-05](fixed/DB-05-croniter-dependance-absente.md) | ✅ `croniter` absent des dépendances → jobs cron jamais exécutés | `backup/worker.py`, `pyproject.toml` | **Sonnet** |
 | [DB-06](fixed/DB-06-pg-dump-mot-de-passe-argv.md) | ✅ `pg_dump` : mot de passe Postgres visible dans `ps` (argv) | `backup/db_dump.py` | **Sonnet** |

@@ -22,7 +22,7 @@
 
 ## Description
 
-Plusieurs fetch serveur visent des URLs **arbitraires** fournies par un admin, potentiellement vers le réseau interne (métadonnées cloud, services internes). `gallery._fetch` suit en plus les redirections. Les timeouts sont présents partout (bon point). L'exposition dépend de [AUTH-07](../AUTH-07-require-admin-ne-verifie-pas-is-admin.md) (`require_admin` = tout utilisateur validé).
+Plusieurs fetch serveur visent des URLs **arbitraires** fournies par un admin, potentiellement vers le réseau interne (métadonnées cloud, services internes). `gallery._fetch` suit en plus les redirections. Les timeouts sont présents partout (bon point). L'exposition dépend de [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) (`require_admin` = tout utilisateur validé).
 
 ## Scénario de reproduction
 

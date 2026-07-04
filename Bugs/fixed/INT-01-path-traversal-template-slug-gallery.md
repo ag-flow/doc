@@ -18,7 +18,7 @@
 
 ## Impact
 
-Écriture de fichiers `.yaml` à des chemins arbitraires (écrasement d'autres templates, dépôt de fichiers hors périmètre). Gardé par `require_admin` — donc voir [AUTH-07](../AUTH-07-require-admin-ne-verifie-pas-is-admin.md) pour l'exposition réelle.
+Écriture de fichiers `.yaml` à des chemins arbitraires (écrasement d'autres templates, dépôt de fichiers hors périmètre). Gardé par `require_admin` — donc voir [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) pour l'exposition réelle.
 
 ## Piste de correction
 

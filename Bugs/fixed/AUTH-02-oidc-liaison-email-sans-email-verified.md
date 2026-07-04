@@ -8,7 +8,7 @@
 
 ## Description
 
-Quand aucun compte ne porte le `oidc_subject`, `handle_oidc_callback` rattache le compte existant dont l'**email correspond** (UPDATE `oidc_subject` + `source='oidc'`) et **hérite de son `is_admin`/`validated`**. Le claim `email_verified` n'est **jamais** contrôlé. Un IdP (ou un attaquant, cf. [AUTH-01](../AUTH-01-oidc-callback-sans-verification-signature.md)) présentant un email non vérifié prend le contrôle d'un compte local existant.
+Quand aucun compte ne porte le `oidc_subject`, `handle_oidc_callback` rattache le compte existant dont l'**email correspond** (UPDATE `oidc_subject` + `source='oidc'`) et **hérite de son `is_admin`/`validated`**. Le claim `email_verified` n'est **jamais** contrôlé. Un IdP (ou un attaquant, cf. [AUTH-01](AUTH-01-oidc-callback-sans-verification-signature.md)) présentant un email non vérifié prend le contrôle d'un compte local existant.
 
 ## Scénario de reproduction
 
