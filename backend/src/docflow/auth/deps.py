@@ -83,7 +83,14 @@ async def get_current_user(
     return await _resolve_jwt(request, credentials)
 
 
-async def require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
+async def require_authenticated(
+    user: AuthUser = Depends(get_current_user),
+) -> AuthUser:
+    """Exige un utilisateur authentifié et validé — PAS un contrôle de rôle admin.
+
+    Modèle à deux niveaux : utilisateur validé = accès contenu complet.
+    Pour exiger le rôle admin, utiliser ``require_superadmin``.
+    """
     return user
 
 

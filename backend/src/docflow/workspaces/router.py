@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from docflow.auth.deps import (
     check_api_key_scope,
     filter_workspaces_by_scope,
-    require_admin,
     require_api_key_admin_write,
+    require_authenticated,
 )
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
@@ -14,14 +14,14 @@ from docflow.workspaces import service
 
 router = APIRouter(tags=["workspaces"])
 
-_Admin = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get("/workspaces", response_model=list[WorkspaceOut])
 async def list_workspaces(
     request: Request,
     include_archived: bool = Query(False),
-    _: AuthUser = _Admin,
+    _: AuthUser = _Auth,
 ) -> list[WorkspaceOut]:
     result = await service.list_workspaces(
         request.app.state.pool, include_archived=include_archived
@@ -31,28 +31,28 @@ async def list_workspaces(
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201)
 async def create_workspace(
-    body: WorkspaceCreate, request: Request, current_user: AuthUser = _Admin
+    body: WorkspaceCreate, request: Request, current_user: AuthUser = _Auth
 ) -> WorkspaceOut:
     require_api_key_admin_write(request)
     return await service.create_workspace(request.app.state.pool, body, current_user.id)
 
 
 @router.get("/workspaces/{ws_slug}", response_model=WorkspaceOut)
-async def get_workspace(ws_slug: str, request: Request, _: AuthUser = _Admin) -> WorkspaceOut:
+async def get_workspace(ws_slug: str, request: Request, _: AuthUser = _Auth) -> WorkspaceOut:
     check_api_key_scope(request, ws_slug)
     return await service.get_workspace(request.app.state.pool, ws_slug)
 
 
 @router.patch("/workspaces/{ws_slug}", response_model=WorkspaceOut)
 async def update_workspace(
-    ws_slug: str, body: WorkspaceUpdate, request: Request, _: AuthUser = _Admin
+    ws_slug: str, body: WorkspaceUpdate, request: Request, _: AuthUser = _Auth
 ) -> WorkspaceOut:
     check_api_key_scope(request, ws_slug, write=True)
     return await service.update_workspace(request.app.state.pool, ws_slug, body)
 
 
 @router.post("/workspaces/{ws_slug}/archive", response_model=WorkspaceOut)
-async def archive_workspace(ws_slug: str, request: Request, _: AuthUser = _Admin) -> WorkspaceOut:
+async def archive_workspace(ws_slug: str, request: Request, _: AuthUser = _Auth) -> WorkspaceOut:
     check_api_key_scope(request, ws_slug, write=True)
     return await service.archive_workspace(request.app.state.pool, ws_slug)
 
@@ -62,7 +62,7 @@ async def delete_workspace(
     ws_slug: str,
     request: Request,
     confirm: str = Query(..., description="Re-saisir le slug exact pour confirmer la purge"),
-    _: AuthUser = _Admin,
+    _: AuthUser = _Auth,
 ) -> Response:
     check_api_key_scope(request, ws_slug, write=True)
     await service.delete_workspace(request.app.state.pool, ws_slug, confirm)

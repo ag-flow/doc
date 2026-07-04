@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.contracts import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.contracts import (
@@ -16,7 +16,7 @@ from docflow.schemas.contracts import (
 
 router = APIRouter(tags=["contracts"])
 
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get("/admin/contracts", response_model=list[ContractOut])

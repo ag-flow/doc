@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.reactions import service
 from docflow.reactions.service import CommentCreate, CommentOut, ReactionOut, ReactionSet
 from docflow.schemas.auth import AuthUser
@@ -14,7 +14,7 @@ router = APIRouter(tags=["reactions"])
 _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"
 _CMT = _DOC + "/comments/{comment_id}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 # ── Réactions sur document ────────────────────────────────────────────────────

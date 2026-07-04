@@ -3,13 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.export import service
 from docflow.schemas.auth import AuthUser
 
 router = APIRouter(tags=["export"])
 
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get("/workspaces/{ws_slug}/export")

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from docflow.auth.deps import (
     check_api_key_scope,
     filter_blocks_by_scope,
-    require_admin,
+    require_authenticated,
 )
 from docflow.blocks import service
 from docflow.documents import service as doc_svc
@@ -23,7 +23,7 @@ router = APIRouter(tags=["blocks"])
 
 _WS = "/workspaces/{ws_slug}"
 _BLOCK = _WS + "/blocks/{block_slug}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get(_WS + "/blocks", response_model=list[DataBlockOut])

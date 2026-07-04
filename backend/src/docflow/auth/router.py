@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.auth.jwt import create_token
 from docflow.auth.password import DUMMY_PASSWORD_HASH, verify_password
 from docflow.oidc import service as oidc_service
@@ -68,5 +68,5 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
 
 
 @router.get("/me", response_model=AuthUser)
-async def me(user: AuthUser = Depends(require_admin)) -> AuthUser:
+async def me(user: AuthUser = Depends(require_authenticated)) -> AuthUser:
     return user

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, HttpUrl, field_validator
 
-from docflow.auth.deps import require_admin, require_api_key_admin_write
+from docflow.auth.deps import require_api_key_admin_write, require_authenticated
 from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
 from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
 from docflow.templates.inheritance import resolve
@@ -25,7 +25,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 router = APIRouter(tags=["templates"])
 
-_Admin = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 class TemplateInfo(BaseModel):
@@ -152,7 +152,7 @@ async def list_templates() -> list[TemplateInfo]:
 @router.get("/templates/gallery/sources", response_model=list[GallerySourceOut])
 async def list_gallery_sources(
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> list[GallerySourceOut]:
     """Liste les sources de galerie enregistrées + la source env si non dupliquée."""
     pool = request.app.state.pool
@@ -173,7 +173,7 @@ async def list_gallery_sources(
 async def add_gallery_source(
     body: GallerySourceIn,
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> GallerySourceOut:
     pool = request.app.state.pool
     url_str = str(body.url)
@@ -199,7 +199,7 @@ async def add_gallery_source(
 async def delete_gallery_source(
     source_id: _uuid.UUID,
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> None:
     pool = request.app.state.pool
     deleted = await pool.fetchval(
@@ -216,7 +216,7 @@ async def delete_gallery_source(
 @router.get("/templates/gallery/config", response_model=GalleryConfigOut)
 async def gallery_config(
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> GalleryConfigOut:
     """Retourne l'URL de galerie configurée dans l'env (GALLERY_URL), ou null."""
     return GalleryConfigOut(default_url=request.app.state.settings.gallery_url)
@@ -225,7 +225,7 @@ async def gallery_config(
 @router.get("/templates/gallery", response_model=list[RemoteTemplateInfo])
 async def list_gallery(
     source_url: str = Query(..., description="URL de base de la galerie distante"),
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> list[RemoteTemplateInfo]:
     """Lit toc.txt + les YAMLs distants et les compare aux templates locaux."""
     try:
@@ -256,7 +256,7 @@ async def list_gallery(
 @router.post("/templates/gallery/pull", response_model=TemplateInfo)
 async def pull_from_gallery(
     body: GalleryPullIn,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> TemplateInfo:
     """Télécharge un template depuis la galerie et le sauvegarde localement."""
     try:
@@ -283,7 +283,7 @@ async def pull_from_gallery(
 @router.get("/templates/{template_slug}/yaml", response_class=PlainTextResponse)
 async def get_template_yaml(
     template_slug: str,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> str:
     yaml_file = _find_template_file(template_slug)
     return yaml_file.read_text()
@@ -293,7 +293,7 @@ async def get_template_yaml(
 async def update_template_yaml(
     template_slug: str,
     body: TemplateYamlBody,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> TemplateInfo:
     try:
         raw = yaml.safe_load(body.yaml_content)
@@ -325,7 +325,7 @@ async def update_template_yaml(
 @router.delete("/templates/{template_slug}", status_code=204)
 async def delete_template(
     template_slug: str,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> None:
     yaml_file = _find_template_file(template_slug)
     yaml_file.unlink()
@@ -340,7 +340,7 @@ async def import_template(
     ws_slug: str,
     body: ImportTemplateIn,
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> ImportResultOut:
     require_api_key_admin_write(request)
     yaml_file = _find_template_file(body.template)

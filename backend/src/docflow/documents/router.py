@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from docflow.auth.deps import check_api_key_scope, require_admin
+from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.documents import service
 from docflow.references import service as ref_service
 from docflow.references.service import DocumentSearchResult
@@ -20,7 +20,7 @@ router = APIRouter(tags=["documents"])
 
 _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 # Référence forte sur les tasks webhook en cours : asyncio ne garde qu'une
 # référence faible sur les tasks créées par create_task, un objet non

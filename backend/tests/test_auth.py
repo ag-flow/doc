@@ -228,7 +228,7 @@ def test_get_me_no_token(
     assert resp.status_code == 401
 
 
-def test_require_admin_rejects_non_admin(
+def test_require_superadmin_rejects_non_admin(
     monkeypatch: pytest.MonkeyPatch,
     test_schema_url: str,
     clean_admin_users: None,

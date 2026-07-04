@@ -4,14 +4,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.references import service
 from docflow.references.service import BacklinkOut, BrokenLinkBloc, BrokenLinkDetail
 from docflow.schemas.auth import AuthUser
 
 router = APIRouter(tags=["references"])
 
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get(

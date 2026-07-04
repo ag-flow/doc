@@ -1,5 +1,7 @@
 # AUTH-07 — `require_admin` ne vérifie aucun droit admin
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable. Décision architecte : renommage `require_admin` → `require_authenticated` (le nom mentait), sémantique strictement inchangée — modèle à deux niveaux assumé, `require_superadmin` reste le seul contrôle de rôle admin.
+
 - **Gravité** : 🟠 MAJEUR (à trancher côté architecte selon la sémantique RBAC voulue)
 - **Confiance** : haute sur le comportement, moyenne sur l'intention
 - **Zone** : auth / RBAC — signalé par deux revues indépendantes

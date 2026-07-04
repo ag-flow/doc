@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, status
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.remote import service
 from docflow.remote.schemas import (
     RemoteCertificateCreate,
@@ -14,7 +14,7 @@ from docflow.remote.schemas import (
 
 router = APIRouter(prefix="/admin/remote", tags=["remote"])
 
-_Admin = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 def _fernet(request: Request) -> str | None:
@@ -26,7 +26,7 @@ def _fernet(request: Request) -> str | None:
 
 
 @router.get("/certificates", response_model=list[RemoteCertificateOut])
-async def list_certificates(request: Request, _: None = _Admin) -> list[RemoteCertificateOut]:
+async def list_certificates(request: Request, _: None = _Auth) -> list[RemoteCertificateOut]:
     return await service.list_certificates(request.app.state.pool)
 
 
@@ -38,7 +38,7 @@ async def list_certificates(request: Request, _: None = _Admin) -> list[RemoteCe
 async def create_certificate(
     body: RemoteCertificateCreate,
     request: Request,
-    _: None = _Admin,
+    _: None = _Auth,
 ) -> RemoteCertificateOut:
     key = _fernet(request)
     if not key:
@@ -49,12 +49,12 @@ async def create_certificate(
 
 
 @router.get("/certificates/{slug}", response_model=RemoteCertificateOut)
-async def get_certificate(slug: str, request: Request, _: None = _Admin) -> RemoteCertificateOut:
+async def get_certificate(slug: str, request: Request, _: None = _Auth) -> RemoteCertificateOut:
     return await service.get_certificate(request.app.state.pool, slug)
 
 
 @router.delete("/certificates/{slug}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_certificate(slug: str, request: Request, _: None = _Admin) -> None:
+async def delete_certificate(slug: str, request: Request, _: None = _Auth) -> None:
     await service.delete_certificate(request.app.state.pool, slug)
 
 
@@ -62,7 +62,7 @@ async def delete_certificate(slug: str, request: Request, _: None = _Admin) -> N
 
 
 @router.get("/points", response_model=list[RemotePointOut])
-async def list_points(request: Request, _: None = _Admin) -> list[RemotePointOut]:
+async def list_points(request: Request, _: None = _Auth) -> list[RemotePointOut]:
     return await service.list_points(request.app.state.pool)
 
 
@@ -72,23 +72,23 @@ async def list_points(request: Request, _: None = _Admin) -> list[RemotePointOut
     status_code=status.HTTP_201_CREATED,
 )
 async def create_point(
-    body: RemotePointCreate, request: Request, _: None = _Admin
+    body: RemotePointCreate, request: Request, _: None = _Auth
 ) -> RemotePointOut:
     return await service.create_point(request.app.state.pool, body, _fernet(request))
 
 
 @router.get("/points/{slug}", response_model=RemotePointOut)
-async def get_point(slug: str, request: Request, _: None = _Admin) -> RemotePointOut:
+async def get_point(slug: str, request: Request, _: None = _Auth) -> RemotePointOut:
     return await service.get_point(request.app.state.pool, slug)
 
 
 @router.put("/points/{slug}", response_model=RemotePointOut)
 async def update_point(
-    slug: str, body: RemotePointUpdate, request: Request, _: None = _Admin
+    slug: str, body: RemotePointUpdate, request: Request, _: None = _Auth
 ) -> RemotePointOut:
     return await service.update_point(request.app.state.pool, slug, body, _fernet(request))
 
 
 @router.delete("/points/{slug}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_point(slug: str, request: Request, _: None = _Admin) -> None:
+async def delete_point(slug: str, request: Request, _: None = _Auth) -> None:
     await service.delete_point(request.app.state.pool, slug)

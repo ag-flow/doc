@@ -4,7 +4,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from mcp.server.sse import SseServerTransport
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.mcp.server import mcp_server, reset_current_identity, set_current_identity
 from docflow.schemas.auth import AuthUser
 
@@ -18,7 +18,7 @@ _transport = SseServerTransport("/api/mcp/messages")
 @router.get("/mcp/sse")
 async def mcp_sse(
     request: Request,
-    user: AuthUser = Depends(require_admin),
+    user: AuthUser = Depends(require_authenticated),
 ) -> Response:
     """Point d'entrée SSE du serveur MCP (nécessite JWT admin).
 
@@ -45,7 +45,7 @@ async def mcp_sse(
 @router.post("/mcp/messages")
 async def mcp_messages(
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> Response:
     """Réception des messages MCP (session_id en query param).
 

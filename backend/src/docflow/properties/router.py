@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import check_api_key_scope, require_admin
+from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.properties import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
@@ -21,7 +21,7 @@ _WS = "/workspaces/{ws_slug}"
 _TYPE = _WS + "/types/{type_slug}"
 _PROP = _TYPE + "/properties/{prop_slug}"
 _VAL = _PROP + "/values/{val_slug}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 # ── Properties defs ───────────────────────────────────────────────────────────

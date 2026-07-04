@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from docflow.auth.deps import require_admin, require_superadmin
+from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.vault import (
     VaultSecretCreate,
@@ -17,7 +17,7 @@ from docflow.vault import service
 router = APIRouter(tags=["vault"])
 
 _SuperAdmin = Depends(require_superadmin)
-_Admin = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 def _key(request: Request) -> str:
@@ -51,17 +51,17 @@ async def delete_wallet(wallet_id: uuid.UUID, request: Request, _: AuthUser = _S
 
 
 @router.get("/admin/secrets", response_model=list[VaultSecretOut])
-async def list_secrets(request: Request, user: AuthUser = _Admin) -> list[VaultSecretOut]:
+async def list_secrets(request: Request, user: AuthUser = _Auth) -> list[VaultSecretOut]:
     return await service.list_secrets(request.app.state.pool, user.id)
 
 
 @router.post("/admin/secrets", response_model=VaultSecretOut, status_code=201)
 async def create_secret(
-    body: VaultSecretCreate, request: Request, user: AuthUser = _Admin
+    body: VaultSecretCreate, request: Request, user: AuthUser = _Auth
 ) -> VaultSecretOut:
     return await service.create_secret(request.app.state.pool, user.id, body, _key(request))
 
 
 @router.delete("/admin/secrets/{secret_id}", status_code=204)
-async def delete_secret(secret_id: uuid.UUID, request: Request, user: AuthUser = _Admin) -> None:
+async def delete_secret(secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
     await service.delete_secret(request.app.state.pool, user.id, secret_id)

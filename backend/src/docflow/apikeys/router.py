@@ -16,12 +16,12 @@ from docflow.apikeys.schemas import (
     ApiProfileUpdate,
     ScopesUpdate,
 )
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 
 router = APIRouter(tags=["api-keys"])
 
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get("/user/api-profiles", response_model=list[ApiProfileOut])
