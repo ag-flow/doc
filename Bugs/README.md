@@ -38,7 +38,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DB-03](fixed/DB-03-git-push-env-echoue.md) | ✅ `origin.push(env=)` fait échouer tous les push git | `backup/git_sync.py` | **Sonnet** |
 | [DB-04](fixed/DB-04-export-json-uuid-et-valeurs-falsy.md) | ✅ Export JSON : `TypeError` sur UUID + valeurs falsy écrasées | `backup/git_sync.py` | **Sonnet** |
 | [FE-01](FE-01-editeur-contenu-autre-document.md) | ✅ Éditeur affiche/sauvegarde le contenu d'un autre document | `MarkdownEditor.tsx`, `DocumentEditor.tsx` | **Opus** |
-| [FE-02](FE-02-conflictresolver-fusion-ecrasee.md) | ConflictResolver : la fusion est écrasée par la sauvegarde suivante | `DocumentEditor.tsx` | **Opus** |
+| [FE-02](FE-02-conflictresolver-fusion-ecrasee.md) | ✅ ConflictResolver : la fusion est écrasée par la sauvegarde suivante | `DocumentEditor.tsx` | **Opus** |
 
 ## Bugs majeurs
 

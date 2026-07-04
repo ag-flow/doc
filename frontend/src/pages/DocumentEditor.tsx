@@ -46,6 +46,9 @@ export function DocumentEditor() {
   const [slugEdit, setSlugEdit] = useState(false)
   const [slugValue, setSlugValue] = useState<string>('')
   const [slugError, setSlugError] = useState<string | null>(null)
+  // Incrémenté pour forcer le remontage de l'éditeur après résolution de conflit (FE-02),
+  // afin de recharger le contenu fusionné à la place du brouillon pré-fusion.
+  const [editorEpoch, setEditorEpoch] = useState(0)
 
   const exposeMutation = useMutation({
     mutationFn: (value: boolean) => docsApi.setDocumentExposed(ws!, docId!, value),
@@ -191,7 +194,13 @@ export function DocumentEditor() {
       ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
       setStatus('idle')
       setConflict(null)
-      void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+      // FE-02 : le brouillon pré-fusion est toujours affiché dans l'éditeur. On publie
+      // synchroniquement le contenu fusionné (réponse serveur) dans le cache pour que
+      // `initialContent` soit à jour, puis on force le remontage via editorEpoch. Sans
+      // ça, la sauvegarde suivante renverrait le brouillon pré-fusion avec la bonne
+      // expected_version et écraserait silencieusement les blocs serveur acceptés.
+      queryClient.setQueryData(['document', ws, docId], updated)
+      setEditorEpoch((e) => e + 1)
     },
     [ws, docId, title, queryClient],
   )
@@ -372,7 +381,7 @@ export function DocumentEditor() {
               </div>
             </div>
           )}
-          <MarkdownEditor key={docId} ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
+          <MarkdownEditor key={`${docId}:${editorEpoch}`} ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
           <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
         </div>
         {!focusMode && (

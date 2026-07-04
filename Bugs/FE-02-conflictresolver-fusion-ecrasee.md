@@ -1,5 +1,8 @@
 # FE-02 — ConflictResolver : la fusion est écrasée par la sauvegarde suivante
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Dans `resolveConflict` (`DocumentEditor.tsx`), après le save de la version fusionnée on publie la réponse serveur (`updated`) dans le cache via `queryClient.setQueryData` — pour que `initialContent` reflète le contenu fusionné — puis on incrémente `editorEpoch`, qui entre dans la `key` de `MarkdownEditor` (`key={docId:editorEpoch}`). L'éditeur est donc remonté et recharge le contenu fusionné à la place du brouillon pré-fusion. La sauvegarde suivante ne peut plus réécraser les blocs serveur acceptés. S'appuie sur le mécanisme de remontage introduit en FE-01.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute
 - **Zone** : frontend / versioning
