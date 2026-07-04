@@ -178,16 +178,17 @@ export function LinkSearchPopup({ wsSlug, onSelect, onClose }: LinkSearchPopupPr
   }, [mode])
 
   useEffect(() => {
-    if (!query.trim()) { setResults([]); return }
+    if (!query.trim()) { setResults([]); setLoading(false); return }
     setLoading(true)
+    let cancelled = false
     const t = setTimeout(() => {
       referencesApi
         .searchDocuments(wsSlug, query)
-        .then((r) => { setResults(r); setSelected(0) })
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false))
+        .then((r) => { if (cancelled) return; setResults(r); setSelected(0) })
+        .catch(() => { if (!cancelled) setResults([]) })
+        .finally(() => { if (!cancelled) setLoading(false) })
     }, 200)
-    return () => clearTimeout(t)
+    return () => { cancelled = true; clearTimeout(t) }
   }, [query, wsSlug])
 
   const handleKey = useCallback(

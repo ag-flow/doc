@@ -1,5 +1,7 @@
 # FE-11 — LinkSearchPopup : spinner bloqué et réponses hors-ordre
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / recherche de liens

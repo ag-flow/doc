@@ -97,7 +97,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DEP-08](DEP-08-prod-deploy-source-env-docker.md) | ✅ `prod-deploy.sh` source le `.env` format docker dans bash | `deploy/prod-deploy.sh` | **Sonnet** |
 | [DEP-09](DEP-09-port-dev-8080-vs-8000.md) | ✅ Port de dev : la doc dit `:8080`, uvicorn écoute sur 8000 | `CLAUDE.md`, `vite.config.ts` | **Sonnet** |
 | [FE-10](FE-10-double-submit-entree-creation.md) | ✅ Double-submit par Entrée dans les dialogues de création | `AddDocumentDialog.tsx`, `DocumentChildrenPanel.tsx` | **Sonnet** |
-| [FE-11](FE-11-linksearchpopup-spinner-bloque.md) | LinkSearchPopup : spinner bloqué et réponses hors-ordre | `LinkSearchPopup.tsx` | **Sonnet** |
+| [FE-11](FE-11-linksearchpopup-spinner-bloque.md) | ✅ LinkSearchPopup : spinner bloqué et réponses hors-ordre | `LinkSearchPopup.tsx` | **Sonnet** |
 | [FE-12](FE-12-labeltoslug-supprime-chiffres.md) | `labelToSlug` supprime les chiffres | `lib/slug.ts` | **Sonnet** |
 | [FE-13](FE-13-i18n-hint-modele-contenu-vide.md) | i18n : hint du modèle de contenu vidé par l'interpolation | `TypePropertiesPanel.tsx` | **Sonnet** |
 | [FE-14](FE-14-typesadmin-fragments-sans-key.md) | TypesAdmin : fragments sans `key` | `TypesAdmin.tsx` | **Sonnet** |
