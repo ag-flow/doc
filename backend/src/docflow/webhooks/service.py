@@ -82,7 +82,7 @@ async def create_webhook(
     if data.headers and not encryption_key:
         raise HTTPException(
             status_code=422,
-            detail="DOCFLOW_ENCRYPTION_KEY requis pour stocker des headers chiffrés",
+            detail="ENCRYPTION_KEY requis pour stocker des headers chiffrés",
         )
     enc = encrypt_headers(encryption_key, data.headers) if data.headers and encryption_key else None
     async with pool.acquire() as conn:
@@ -119,7 +119,7 @@ async def update_webhook(
     if "headers" in raw and raw["headers"] and not encryption_key:
         raise HTTPException(
             status_code=422,
-            detail="DOCFLOW_ENCRYPTION_KEY requis pour stocker des headers chiffrés",
+            detail="ENCRYPTION_KEY requis pour stocker des headers chiffrés",
         )
 
     async with pool.acquire() as conn:

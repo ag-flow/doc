@@ -23,7 +23,7 @@ _Admin = Depends(require_admin)
 def _key(request: Request) -> str:
     key = request.app.state.settings.encryption_key
     if key is None:
-        raise HTTPException(500, "DOCFLOW_ENCRYPTION_KEY non configurée.")
+        raise HTTPException(500, "ENCRYPTION_KEY non configurée.")
     return str(key.reveal())
 
 

@@ -1,5 +1,12 @@
 # DB-15 — Messages d'erreur citant `DOCFLOW_ENCRYPTION_KEY` au lieu de `ENCRYPTION_KEY`
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet. Messages d'erreur applicatifs
+> (`vault/router.py`, `webhooks/service.py`) alignés sur `ENCRYPTION_KEY`. Les commentaires
+> dans `migrations/0012_vault_wallets.sql` et `migrations/0017_user_secrets.sql` n'ont
+> **pas** été touchés : CLAUDE.md interdit d'éditer une migration déjà appliquée, même
+> pour un commentaire — une migration corrective devrait porter ce correctif cosmétique
+> si jugé nécessaire.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : db / secrets — cohérence config
