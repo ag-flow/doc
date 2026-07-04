@@ -119,26 +119,47 @@ server {
 
 ## Sauvegarde
 
+> docflow dispose d'un worker de sauvegarde interne (`backup/worker.py`) qui produit des
+> dumps au **format custom** (`pg_dump --format=custom`) et peut les pousser vers
+> FTP/FTPS/SFTP — voir l'administration des jobs de sauvegarde dans l'application.
+> La procédure ci-dessous est la voie **manuelle** (secours / hors worker), alignée
+> sur le même format pour rester compatible avec `pg_restore`.
+
 ```bash
 mkdir -p /data/backups
 docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres \
-  pg_dump -U docflow docflow | gzip > /data/backups/docflow_$(date +%Y%m%d_%H%M).sql.gz
+  pg_dump -U docflow --format=custom docflow > /data/backups/docflow_$(date +%Y%m%d_%H%M).dump
 ```
+
+Le format custom est déjà compressé : pas besoin de `gzip`.
 
 Cron quotidien (2h) :
 
 ```bash
 # crontab -e
-0 2 * * * mkdir -p /data/backups && docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres pg_dump -U docflow docflow | gzip > /data/backups/docflow_$(date +\%Y\%m\%d_\%H\%M).sql.gz
+0 2 * * * mkdir -p /data/backups && docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres pg_dump -U docflow --format=custom docflow > /data/backups/docflow_$(date +\%Y\%m\%d_\%H\%M).dump
 ```
 
 ---
 
 ## Restauration
 
+La restauration **écrase le contenu existant** de la base (`--clean --if-exists`) : elle droppe
+chaque objet avant de le recréer, puis s'arrête à la première erreur (`--exit-on-error`) au lieu
+de continuer silencieusement sur une base dans un état mélangé.
+
 ```bash
 docker compose -f /opt/docflow/docker-compose.prod.yml stop app
-gunzip -c /data/backups/docflow_YYYYMMDD_HHMM.sql.gz | \
-  docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres psql -U docflow -d docflow
+
+docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres \
+  pg_restore -U docflow -d docflow --clean --if-exists --no-owner --exit-on-error \
+  < /data/backups/docflow_YYYYMMDD_HHMM.dump
+echo "code de sortie pg_restore : $?"
+```
+
+Ne redémarrer `app` que si le code de sortie ci-dessus est `0` — une valeur non nulle signale
+une restauration incomplète, à ne pas exposer aux utilisateurs :
+
+```bash
 docker compose -f /opt/docflow/docker-compose.prod.yml start app
 ```

@@ -1,5 +1,7 @@
 # DEP-05 — Procédure de restauration DEPLOY.md non fonctionnelle/destructrice
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : déploiement / doc backup-restore
