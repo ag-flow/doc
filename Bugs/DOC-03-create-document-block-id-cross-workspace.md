@@ -1,5 +1,10 @@
 # DOC-03 — `create_document` accepte un `block_id` d'un autre workspace
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Hypothèse : ce correctif ferme le trou d'isolation (bloc du même workspace + parent
+> dans le même bloc). La validation complète des types autorisés par position reste,
+> comme avant, déléguée à `create_document_in_block` (mentionnée « idéalement » dans la piste).
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute (vérifié par relecture directe)
 - **Zone** : domaine / documents — isolation workspace

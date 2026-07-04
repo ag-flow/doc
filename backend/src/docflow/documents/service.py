@@ -237,6 +237,17 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
+            # Isolation workspace (DOC-03) : le bloc cible doit appartenir à ce workspace.
+            block_ok = await conn.fetchval(
+                "SELECT 1 FROM data_block WHERE id = $1 AND workspace_technical_key = $2",
+                data.block_id,
+                wk,
+            )
+            if not block_ok:
+                raise HTTPException(
+                    status_code=422,
+                    detail="le bloc cible n'appartient pas à ce workspace",
+                )
             ft_id: uuid.UUID | None = None
             content_template: str | None = None
             if data.functional_type_slug:
@@ -249,12 +260,17 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             parent_exposed = False
             if data.parent_id:
                 await _validate_parent(conn, wk, data.parent_id)
-                parent_exposed = bool(
-                    await conn.fetchval(
-                        "SELECT exposed FROM document WHERE doc_technical_key = $1",
-                        data.parent_id,
-                    )
+                parent_row = await conn.fetchrow(
+                    "SELECT exposed, data_block_ref FROM document WHERE doc_technical_key = $1",
+                    data.parent_id,
                 )
+                # Cohérence de l'arbre (DOC-03) : parent et enfant dans le même bloc.
+                if parent_row is None or parent_row["data_block_ref"] != data.block_id:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="le parent doit appartenir au même bloc que le document",
+                    )
+                parent_exposed = bool(parent_row["exposed"])
             # Appliquer le template si corps vide et modèle défini
             initial_content = data.content
             if not initial_content and content_template:
