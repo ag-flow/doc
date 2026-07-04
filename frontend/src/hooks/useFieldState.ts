@@ -22,7 +22,13 @@ export interface FieldState {
 interface UseFieldStateResult {
   state: FieldState
   setValue: (value: string | null) => void
-  save: (ws: string, docId: string, propSlug: string, valueType: ValueType) => Promise<void>
+  save: (
+    ws: string,
+    docId: string,
+    propSlug: string,
+    valueType: ValueType,
+    value?: string | null,
+  ) => Promise<void>
   keepServer: () => void
   keepMine: (ws: string, docId: string, propSlug: string, valueType: ValueType) => Promise<void>
   setEdit: () => void
@@ -104,8 +110,15 @@ export function useFieldState(
   )
 
   const save = useCallback(
-    (ws: string, docId: string, propSlug: string, valueType: ValueType) =>
-      persist(ws, docId, propSlug, valueType, state.value, state.baseVersion),
+    // `value` peut être passé explicitement pour éviter de dépendre de `state.value`
+    // encore périmé dans le rendu courant (ex. commit immédiat d'un toggle bool — FE-05).
+    (
+      ws: string,
+      docId: string,
+      propSlug: string,
+      valueType: ValueType,
+      value: string | null = state.value,
+    ) => persist(ws, docId, propSlug, valueType, value, state.baseVersion),
     [persist, state.value, state.baseVersion],
   )
 

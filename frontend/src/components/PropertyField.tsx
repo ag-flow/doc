@@ -85,8 +85,11 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
             checked={state.value === 'true'}
             disabled={saving}
             onChange={(e) => {
-              setValue(e.target.checked ? 'true' : 'false')
-              setTimeout(commit, 0)
+              // FE-05 : persister la valeur explicite du toggle, pas via `commit` qui
+              // lirait un `state.status`/`state.value` encore périmés dans ce rendu.
+              const next = e.target.checked ? 'true' : 'false'
+              setValue(next)
+              void save(ws, docId, prop.prop_slug, valueType, next)
             }}
             data-testid={`property-input-${prop.prop_slug}`}
           />

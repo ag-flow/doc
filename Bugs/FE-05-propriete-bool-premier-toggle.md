@@ -1,5 +1,8 @@
 # FE-05 — Propriété `bool` : le premier toggle n'est jamais persisté (closure périmée)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> `save` (`hooks/useFieldState.ts`) accepte désormais une valeur explicite optionnelle (`value?`, défaut `state.value`). Le `onChange` du checkbox bool (`PropertyField.tsx`) calcule `next` et appelle directement `save(..., next)` au lieu de `setTimeout(commit, 0)` — on ne dépend plus de `state.status`/`state.value` encore périmés dans le rendu courant. Le premier toggle est donc persisté avec la bonne valeur, sans décalage d'un cran.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : frontend / propriétés
