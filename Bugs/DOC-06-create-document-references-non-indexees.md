@@ -1,5 +1,7 @@
 # DOC-06 — `create_document` n'indexe pas les références du contenu initial
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : domaine / références

@@ -264,6 +264,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                 initial_content,
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
+            await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
