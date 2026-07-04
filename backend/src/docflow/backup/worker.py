@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import pathlib
 import uuid
 from datetime import UTC, datetime
@@ -15,6 +16,24 @@ log = structlog.get_logger(__name__)
 
 _REPOS_ROOT = pathlib.Path("/data/backup-repos")
 _TICK = 30  # secondes entre deux balayages du scheduler
+
+
+def _write_private_key(key_path: pathlib.Path, private_key: str) -> None:
+    """Écrit la clé privée SSH déchiffrée avec permissions 0600 dès la création.
+
+    `write_text` puis `chmod` laisse une fenêtre world-readable (permissions
+    umask, typiquement 644) entre la création et le chmod : on ouvre le
+    fichier directement avec le mode final via `os.open`.
+    """
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(private_key)
+
+
+def _delete_key_file(key_path: str) -> None:
+    """Supprime la clé privée temporaire — ne doit jamais rester sur disque après usage."""
+    pathlib.Path(key_path).unlink(missing_ok=True)
 
 
 def _is_due(job: dict[str, Any], now: datetime) -> bool:
@@ -82,9 +101,7 @@ async def _resolve_git_auth(
             pool, point.certificate_slug, fernet_key
         )
         key_path = _REPOS_ROOT / "keys" / f"{point.certificate_slug}.pem"
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_text(private_key)
-        key_path.chmod(0o600)
+        await asyncio.to_thread(_write_private_key, key_path, private_key)
         # Syntaxe scp-like : `:` (pas `/`) après le host, sinon git traite la
         # chaîne comme un chemin local et le clone échoue.
         remote_url = f"git@{git_host}:{repo}.git"
@@ -132,9 +149,7 @@ async def _resolve_dump_auth(
             pool, point.certificate_slug, fernet_key
         )
         key_path = _REPOS_ROOT / "keys" / f"{point.certificate_slug}.pem"
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_text(private_key)
-        key_path.chmod(0o600)
+        await asyncio.to_thread(_write_private_key, key_path, private_key)
         return point.host, point.port, point.username, None, str(key_path)
 
     secret: str
@@ -167,6 +182,7 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
     async with pool.acquire() as conn:
         run_id = await svc.start_run(conn, job_id)
 
+    ssh_key_path: str | None = None
     try:
         if job["strategy"] == "git_sync":
             remote_url, ssh_key_path = await _resolve_git_auth(
@@ -240,6 +256,10 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
         log.error("backup_job_error", job_slug=job["slug"], error=str(exc))
         async with pool.acquire() as conn:
             await svc.finish_run(conn, run_id, status="error", error_message=str(exc))
+    finally:
+        # La clé privée déchiffrée ne doit jamais rester sur disque au-delà du run.
+        if ssh_key_path:
+            await asyncio.to_thread(_delete_key_file, ssh_key_path)
 
 
 async def _last_success_seq(pool: asyncpg.Pool, job_id: uuid.UUID) -> int:

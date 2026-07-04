@@ -1,5 +1,7 @@
 # DB-12 — Clé privée SSH : fenêtre world-readable, jamais supprimée
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : backup / worker

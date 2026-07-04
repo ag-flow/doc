@@ -88,7 +88,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DOC-12](DOC-12-allowed-types-parent-id-cross-workspace.md) | `allowed_types` avec `parent_id` : fuite inter-workspace | `documents/block_ops.py` | **Sonnet** |
 | [DOC-13](DOC-13-webhook-fire-create-task-gc.md) | `_fire` webhooks : `asyncio.create_task` sans référence conservée | `documents/router.py` | **Sonnet** |
 | [DOC-14](DOC-14-incoherences-domaine-diverses.md) | Incohérences domaine diverses (template bloc, cursor, bloc_ref FK, default NULL) | `documents/`, `views/`, `properties/` | **Opus** |
-| [DB-12](DB-12-cle-ssh-world-readable.md) | Clé privée SSH : fenêtre world-readable, jamais supprimée | `backup/worker.py` | **Sonnet** |
+| [DB-12](DB-12-cle-ssh-world-readable.md) | ✅ Clé privée SSH : fenêtre world-readable, jamais supprimée | `backup/worker.py` | **Sonnet** |
 | [DB-13](DB-13-sftp-autoaddpolicy-host-key.md) | SFTP : `AutoAddPolicy`, host key jamais vérifiée | `backup/db_dump.py` | **Sonnet** |
 | [DB-14](DB-14-apply-sans-verrou.md) | `apply()` sans verrou : course entre instances au boot | `db/apply.py` | **Sonnet** |
 | [DB-15](DB-15-nom-variable-encryption-key.md) | Messages d'erreur citant `DOCFLOW_ENCRYPTION_KEY` au lieu de `ENCRYPTION_KEY` | `vault/router.py`, `webhooks/service.py` | **Sonnet** |
