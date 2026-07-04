@@ -62,7 +62,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DEP-01](DEP-01-identifiants-admin-bootstrap-morts.md) | ✅ Identifiants admin bootstrap morts affichés par le déploiement | `scripts/dev-deploy.sh`, `deploy/DEPLOY.md` | **Sonnet** |
 | [DEP-02](DEP-02-scripts-sql-doublons-divergents.md) | ✅ `scripts/*.sql` : copies périmées et divergentes des migrations | `scripts/*.sql` | **Sonnet** |
 | [DEP-03](DEP-03-ports-0000-contournent-tls.md) | ✅ Ports publiés sur `0.0.0.0` contournant le TLS | `deploy/docker-compose*.yml` | **Sonnet** |
-| [DEP-04](DEP-04-image-tourne-en-root.md) | L'image de prod tourne en root | `deploy/Dockerfile` | **Sonnet** |
+| [DEP-04](DEP-04-image-tourne-en-root.md) | ✅ L'image de prod tourne en root | `deploy/Dockerfile` | **Sonnet** |
 | [DEP-05](DEP-05-procedure-restore-cassee.md) | Procédure de restauration DEPLOY.md non fonctionnelle/destructrice | `deploy/DEPLOY.md` | **Sonnet** |
 | [FE-03](FE-03-refetch-arriere-plan-verrou-optimiste.md) | Refetch arrière-plan : verrou optimiste contourné + titre perdu | `DocumentEditor.tsx` | **Opus** |
 | [FE-04](FE-04-login-401-recharge-page.md) | Login : 401 recharge la page au lieu d'afficher l'erreur | `lib/api.ts`, `Login.tsx` | **Opus** |

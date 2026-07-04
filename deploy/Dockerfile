@@ -38,6 +38,15 @@ COPY --from=frontend-builder /build/dist ./static
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Utilisateur non-root : uvicorn ne doit jamais servir le trafic en root.
+# /data accueille les dumps temporaires de sauvegarde (backup/worker.py) et
+# doit rester writable par cet utilisateur.
+RUN useradd -r -u 10001 -d /app -s /usr/sbin/nologin docflow \
+    && mkdir -p /data \
+    && chown -R docflow:docflow /app /data
+
+USER docflow
+
 EXPOSE 8080
 
 # Aucun secret en ENV — tout vient de /data/.env au runtime

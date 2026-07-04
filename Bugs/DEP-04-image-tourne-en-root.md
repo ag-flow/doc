@@ -1,5 +1,7 @@
 # DEP-04 — L'image de prod tourne en root
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : déploiement / Docker
