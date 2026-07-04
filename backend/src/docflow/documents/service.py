@@ -159,6 +159,64 @@ async def _check_no_document_cycle(
         ancestor = row["parent"]
 
 
+async def _validate_type_position(
+    conn: asyncpg.Connection,
+    block_id: uuid.UUID,
+    parent_id: uuid.UUID | None,
+    new_ft_id: uuid.UUID | None,
+) -> None:
+    """Revalide la position d'un document après changement de type (DOC-04).
+
+    Racine du bloc (parent None) → le type doit être celui du bloc.
+    Sous un parent → le type doit être un fils direct du type du parent.
+    Un document sans type (new_ft_id None) n'est pas contraint.
+    """
+    if new_ft_id is None:
+        return
+    if parent_id is None:
+        block_ft = await conn.fetchval(
+            "SELECT functional_type_ref FROM data_block WHERE id = $1", block_id
+        )
+        if block_ft != new_ft_id:
+            raise HTTPException(
+                status_code=422,
+                detail="type non autorisé à la racine de ce bloc (position)",
+            )
+    else:
+        parent_ft = await conn.fetchval(
+            "SELECT functional_type_ref FROM document WHERE doc_technical_key = $1",
+            parent_id,
+        )
+        new_ft_parent = await conn.fetchval(
+            "SELECT parent FROM functional_type WHERE id = $1", new_ft_id
+        )
+        if new_ft_parent != parent_ft:
+            raise HTTPException(
+                status_code=422,
+                detail="type non autorisé sous ce parent (position)",
+            )
+
+
+async def _purge_orphan_property_values(
+    conn: asyncpg.Connection, doc_id: uuid.UUID, new_ft_id: uuid.UUID | None
+) -> None:
+    """Supprime les valeurs de propriétés qui n'appartiennent plus au nouveau type (DOC-04).
+
+    Purge transactionnelle : quand new_ft_id est None (type retiré), toutes les
+    valeurs sont supprimées ; sinon seules celles dont la def n'est pas rattachée
+    au nouveau type. La FK properties_value_version → properties_values cascade.
+    """
+    await conn.execute(
+        "DELETE FROM properties_values "
+        "WHERE document_ref = $1 "
+        "AND property_def_ref NOT IN ("
+        "    SELECT id FROM properties_defs WHERE functional_type_ref = $2"
+        ")",
+        doc_id,
+        new_ft_id,
+    )
+
+
 async def list_documents(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -349,7 +407,8 @@ async def update_document(
 
             # Existence + verrou optimiste
             head = await conn.fetchrow(
-                "SELECT version, title FROM document "
+                "SELECT version, title, functional_type_ref, parent, data_block_ref "
+                "FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2"
                 + (" FOR UPDATE" if lock_row else ""),
                 doc_id,
@@ -415,10 +474,18 @@ async def update_document(
                 meta["parent"] = pid
             if "functional_type_slug" in raw:
                 ft_slug = raw["functional_type_slug"]
+                new_ft_id: uuid.UUID | None = None
                 if ft_slug is not None:
-                    meta["functional_type_ref"] = await _resolve_functional_type(conn, wk, ft_slug)
-                else:
-                    meta["functional_type_ref"] = None
+                    new_ft_id = await _resolve_functional_type(conn, wk, ft_slug)
+                # Traiter le changement effectif de type (DOC-04)
+                if new_ft_id != head["functional_type_ref"]:
+                    # Parent effectif : celui visé si reparentage simultané, sinon l'actuel.
+                    effective_parent = raw["parent_id"] if "parent_id" in raw else head["parent"]
+                    await _validate_type_position(
+                        conn, head["data_block_ref"], effective_parent, new_ft_id
+                    )
+                    await _purge_orphan_property_values(conn, doc_id, new_ft_id)
+                meta["functional_type_ref"] = new_ft_id
             if "slug" in raw:
                 meta["slug"] = raw["slug"]
             if meta:

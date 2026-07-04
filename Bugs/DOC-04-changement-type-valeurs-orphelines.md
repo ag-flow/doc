@@ -1,5 +1,14 @@
 # DOC-04 — Changement de type : valeurs de propriétés orphelines conservées
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Option retenue : **purge transactionnelle** des `properties_values` orphelines
+> (celles dont la def n'appartient pas au nouveau type ; toutes si le type est retiré),
+> dans la même transaction que le changement de type. Choix motivé : le refus créerait
+> une impasse pour les propriétés `required` (I-4 interdit de supprimer leur valeur),
+> rendant le type non modifiable. La contrainte de position (racine = type du bloc,
+> enfant = fils direct du type du parent) est revalidée ; en cas de reparentage simultané,
+> la validation se fait contre le parent visé.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : domaine / documents — cohérence type ↔ valeurs
