@@ -1,5 +1,8 @@
 # FE-01 — Éditeur affiche/sauvegarde le contenu d'un autre document
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Ajout de `key={docId}` sur `MarkdownEditor` (`DocumentEditor.tsx`) et de `key={docId}` sur `MarkdownViewer` (`PublicDocumentViewer.tsx`) : le changement de `docId` remonte l'instance BlockNote, qui recharge alors `initialContent` du bon document. Le remontage réinitialise `loadedRef`/`settledRef`, garantissant que `initialContent`, le titre et `expectedVersion` correspondent au document réellement affiché. La resync fine du verrou optimiste est traitée en FE-03, la réinjection post-fusion en FE-02.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute
 - **Zone** : frontend / éditeur — intégrité du versioning

@@ -372,7 +372,7 @@ export function DocumentEditor() {
               </div>
             </div>
           )}
-          <MarkdownEditor ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
+          <MarkdownEditor key={docId} ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
           <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
         </div>
         {!focusMode && (
