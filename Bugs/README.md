@@ -31,7 +31,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 |----|-------|-------------------|--------|
 | [AUTH-01](AUTH-01-oidc-callback-sans-verification-signature.md) | Callback OIDC émet un JWT sans vérifier la signature de l'id_token | `oidc/router.py`, `oidc/service.py` | **Fable** |
 | [DOC-01](DOC-01-vues-renumerotation-placeholders-cassee.md) | Renumérotation des placeholders `$n` cassée dans le moteur de vues | `views/service.py` | **Fable** |
-| [DOC-02](DOC-02-reparentage-sans-anti-cycle.md) | Reparentage de document sans détection de cycle → boucle infinie Postgres | `documents/service.py` | **Opus** |
+| [DOC-02](DOC-02-reparentage-sans-anti-cycle.md) | ✅ Reparentage de document sans détection de cycle → boucle infinie Postgres | `documents/service.py` | **Opus** |
 | [DOC-03](DOC-03-create-document-block-id-cross-workspace.md) | `create_document` accepte un `block_id` d'un autre workspace | `documents/service.py` | **Opus** |
 | [DB-01](DB-01-pool-asyncpg-cross-loop-git-sync.md) | Pool asyncpg utilisé depuis un autre event loop (git_sync) | `backup/worker.py` | **Fable** |
 | [DB-02](DB-02-reconciliation-orphelins-suppression-massive.md) | Réconciliation orphelins : suppression massive de workspaces non modifiés | `backup/git_sync.py` | **Fable** |

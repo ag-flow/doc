@@ -131,6 +131,34 @@ async def _validate_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_id: u
         )
 
 
+async def _check_no_document_cycle(
+    conn: asyncpg.Connection, doc_id: uuid.UUID, proposed_parent_id: uuid.UUID
+) -> None:
+    """Refuse un reparentage créant un cycle.
+
+    Miroir de types/service.py::_check_no_cycle : refuse l'auto-parent et
+    refuse si `doc_id` figure dans la chaîne d'ancêtres du nouveau parent
+    (c.-à-d. si le nouveau parent est un descendant de doc_id). Prévient la
+    boucle infinie de la CTE récursive de parcours d'arbre (DOC-02).
+    """
+    if proposed_parent_id == doc_id:
+        raise HTTPException(
+            status_code=422, detail="un document ne peut pas être son propre parent"
+        )
+    ancestor: uuid.UUID | None = proposed_parent_id
+    while ancestor is not None:
+        row = await conn.fetchrow(
+            "SELECT parent FROM document WHERE doc_technical_key = $1", ancestor
+        )
+        if row is None:
+            break
+        if row["parent"] == doc_id:
+            raise HTTPException(
+                status_code=422, detail="cycle détecté dans la hiérarchie des documents"
+            )
+        ancestor = row["parent"]
+
+
 async def list_documents(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -296,6 +324,9 @@ async def update_document(
             detail="expected_version requis pour modifier le titre ou le contenu",
         )
 
+    # Verrouiller la ligne dès qu'on touche au contenu OU au parent (anti-cycle DOC-02).
+    lock_row = has_content or "parent_id" in raw
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug)
@@ -304,7 +335,7 @@ async def update_document(
             head = await conn.fetchrow(
                 "SELECT version, title FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2"
-                + (" FOR UPDATE" if has_content else ""),
+                + (" FOR UPDATE" if lock_row else ""),
                 doc_id,
                 wk,
             )
@@ -364,6 +395,7 @@ async def update_document(
                 pid = raw["parent_id"]
                 if pid is not None:
                     await _validate_parent(conn, wk, pid)
+                    await _check_no_document_cycle(conn, doc_id, pid)
                 meta["parent"] = pid
             if "functional_type_slug" in raw:
                 ft_slug = raw["functional_type_slug"]

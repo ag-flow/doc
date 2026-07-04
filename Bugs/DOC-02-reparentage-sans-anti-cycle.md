@@ -1,5 +1,7 @@
 # DOC-02 — Reparentage de document sans détection de cycle → boucle infinie Postgres
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute (vérifié par relecture directe)
 - **Zone** : domaine / documents
