@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ftplib
+import os
 import pathlib
 import subprocess
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import structlog
 
@@ -20,15 +22,39 @@ def _dump_filename(workspace_slug: str | None, job_id: uuid.UUID) -> str:
     return f"docflow_{scope}_{ts}_{str(job_id)[:8]}.dump"
 
 
+def _strip_password(database_url: str) -> tuple[str, str | None]:
+    """Retire le mot de passe d'un DSN Postgres. Retourne (dsn_sans_mdp, mot_de_passe)."""
+    parts = urlsplit(database_url)
+    if parts.password is None:
+        return database_url, None
+    password = unquote(parts.password)  # le DSN véhicule le mot de passe percent-encodé
+    netloc = quote(parts.username or "", safe="")
+    if parts.hostname:
+        netloc += f"@{parts.hostname}"
+    if parts.port:
+        netloc += f":{parts.port}"
+    stripped = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return stripped, password
+
+
 def _run_pg_dump(database_url: str, dest: pathlib.Path) -> None:
-    """Lance pg_dump --format=custom vers dest (bloquant, appeler depuis executor)."""
-    cmd = ["pg_dump", "--format=custom", "--no-password", f"--dbname={database_url}"]
+    """Lance pg_dump --format=custom vers dest (bloquant, appeler depuis executor).
+
+    Le mot de passe n'est jamais passé en argv (visible via /proc/*/cmdline ou
+    `ps aux`) : le DSN est nettoyé et le mot de passe injecté via l'env PGPASSWORD.
+    """
+    dsn, password = _strip_password(database_url)
+    cmd = ["pg_dump", "--format=custom", "--no-password", f"--dbname={dsn}"]
+    env = dict(os.environ)
+    if password is not None:
+        env["PGPASSWORD"] = password
     result = subprocess.run(  # noqa: S603
         cmd,
         stdout=dest.open("wb"),
         stderr=subprocess.PIPE,
         timeout=3600,
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")

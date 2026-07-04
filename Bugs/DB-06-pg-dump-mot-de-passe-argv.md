@@ -1,5 +1,7 @@
 # DB-06 — `pg_dump` : mot de passe Postgres visible dans `ps` (argv)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute (signalé par deux revues)
 - **Zone** : backup / db_dump
