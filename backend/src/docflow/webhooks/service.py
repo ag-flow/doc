@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from docflow.crypto import decrypt_headers, encrypt_headers
 from docflow.db.helpers import require_workspace
+from docflow.net.ssrf import validate_public_url
 from docflow.schemas.webhook import WebhookCreate, WebhookOut, WebhookUpdate
 
 log = structlog.get_logger(__name__)
@@ -203,6 +204,7 @@ async def test_webhook(
     }
     url = wh.url.replace("{id_document}", "00000000-0000-0000-0000-000000000000")
     try:
+        await validate_public_url(url)
         async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
             resp = await client.post(url, json=payload, headers=wh.headers)
         return resp.status_code, None
@@ -250,6 +252,7 @@ async def emit_event(
                 url = row["url"].replace("{id_document}", doc_id)
                 headers = _decrypt_safe(encryption_key, row["headers_encrypted"])
                 try:
+                    await validate_public_url(url)
                     resp = await client.post(url, json=payload, headers=headers)
                     log.info(
                         "webhook_sent",

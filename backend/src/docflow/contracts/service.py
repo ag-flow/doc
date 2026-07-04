@@ -9,6 +9,7 @@ import httpx
 import structlog
 from fastapi import HTTPException
 
+from docflow.net.ssrf import SSRFError, validate_public_url
 from docflow.schemas.contracts import (
     ContractDetailOut,
     ContractImport,
@@ -179,6 +180,11 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
         raise HTTPException(404, "Contrat introuvable.")
     if not row["source_url"]:
         raise HTTPException(422, "Ce contrat n'a pas de source_url (import manuel).")
+
+    try:
+        await validate_public_url(row["source_url"])
+    except SSRFError as exc:
+        raise HTTPException(422, f"URL de source refusée : {exc}") from exc
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:

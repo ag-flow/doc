@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from docflow.automations.substitution import render_and_validate
+from docflow.net.ssrf import SSRFError, validate_public_url
 
 log = structlog.get_logger(__name__)
 
@@ -112,6 +113,17 @@ async def execute(
             )
             return "failed"
         headers.setdefault("Content-Type", "application/json")
+
+    try:
+        await validate_public_url(automation["url"])
+    except SSRFError as exc:
+        log.warning(
+            "automation_url_rejected",
+            automation_id=str(automation["id"]),
+            doc_id=str(doc["doc_technical_key"]),
+            error=str(exc),
+        )
+        return "failed"
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:

@@ -9,6 +9,7 @@ import httpx
 import structlog
 import yaml
 
+from docflow.net.ssrf import SSRFError, validate_public_url
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import Template
 
@@ -35,9 +36,15 @@ class RemoteTemplateData(TypedDict):
 
 async def _fetch(client: httpx.AsyncClient, url: str) -> str:
     try:
-        resp = await client.get(url, timeout=_TIMEOUT, follow_redirects=True)
+        await validate_public_url(url)
+        # follow_redirects=False : une redirection pourrait viser un hôte interne
+        # non revalidé (contournement SSRF). Une source de galerie sert du contenu
+        # statique en raw HTTP ; suivre les redirections n'est pas nécessaire.
+        resp = await client.get(url, timeout=_TIMEOUT, follow_redirects=False)
         resp.raise_for_status()
         return resp.text
+    except SSRFError as e:
+        raise GalleryError(f"URL refusée : {e}") from e
     except httpx.HTTPStatusError as e:
         raise GalleryError(f"HTTP {e.response.status_code} sur {url}") from e
     except httpx.RequestError as e:
