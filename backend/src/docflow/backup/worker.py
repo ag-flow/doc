@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import pathlib
 import uuid
@@ -70,8 +71,15 @@ def _is_due(job: dict[str, Any], now: datetime) -> bool:
 
 async def _resolve_git_auth(
     pool: asyncpg.Pool, remote_point_slug: str, settings: object
-) -> tuple[str, str | None]:
-    """Retourne (remote_url, ssh_key_path | None)."""
+) -> tuple[str, str | None, dict[str, str]]:
+    """Retourne (remote_url, ssh_key_path | None, git_env).
+
+    Le PAT n'est JAMAIS mis dans l'URL du remote (persistée en clair dans
+    `.git/config`) ni dans l'argv de git. Il est fourni à git via un en-tête
+    `http.extraHeader: Authorization: Basic …` passé par l'environnement du
+    process (`GIT_CONFIG_COUNT/KEY_0/VALUE_0`, git ≥ 2.31) : non persisté sur
+    disque, absent de l'argv. `git_env` contient ces variables (vide pour SSH).
+    """
     from docflow.remote import service as rp_svc
 
     fernet_key_obj = getattr(settings, "encryption_key", None)
@@ -105,9 +113,10 @@ async def _resolve_git_auth(
         # Syntaxe scp-like : `:` (pas `/`) après le host, sinon git traite la
         # chaîne comme un chemin local et le clone échoue.
         remote_url = f"git@{git_host}:{repo}.git"
-        return remote_url, str(key_path)
+        return remote_url, str(key_path), {}
 
-    # PAT : HTTPS avec token dans l'URL
+    # PAT : HTTPS, token injecté par en-tête via l'environnement (jamais dans
+    # l'URL ni l'argv persistant).
     secret: str
     if point.auth_storage == "vault":
         from docflow.secrets.resolver import resolve
@@ -125,8 +134,14 @@ async def _resolve_git_auth(
             raise RuntimeError("encryption_key non configurée")
         secret = await rp_svc.get_point_secret(pool, remote_point_slug, fernet_key)
 
-    remote_url = f"https://{point.username}:{secret}@{base_url}"
-    return remote_url, None
+    remote_url = f"https://{base_url}"
+    token_b64 = base64.b64encode(f"{point.username}:{secret}".encode()).decode()
+    git_env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token_b64}",
+    }
+    return remote_url, None, git_env
 
 
 async def _resolve_dump_auth(
@@ -185,7 +200,7 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
     ssh_key_path: str | None = None
     try:
         if job["strategy"] == "git_sync":
-            remote_url, ssh_key_path = await _resolve_git_auth(
+            remote_url, ssh_key_path, git_http_env = await _resolve_git_auth(
                 pool, job["remote_point_slug"], settings
             )
             point = await _get_point_detail(pool, job["remote_point_slug"])
@@ -209,6 +224,7 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
                         git_branch=point["git_branch"],
                         git_base_path=job.get("git_base_path"),
                         ssh_key_path=ssh_key_path,
+                        git_http_env=git_http_env,
                         repos_root=_REPOS_ROOT,
                     )
                 ),

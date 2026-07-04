@@ -159,6 +159,7 @@ async def run_git_sync(
     git_base_path: str | None,
     ssh_key_path: str | None,
     repos_root: pathlib.Path,
+    git_http_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Exécute une synchronisation git incrémentale.
@@ -220,9 +221,16 @@ async def run_git_sync(
         for ws_id in ws_ids:
             existing_slugs |= await _current_doc_slugs(conn, ws_id)
 
-    # 4. Préparer le répertoire git local
+    # 4. Préparer le répertoire git local.
+    # `env` porte l'authentification hors de l'URL et de l'argv persistant :
+    #   - SSH : GIT_SSH_COMMAND pointe sur la clé privée temporaire ;
+    #   - PAT HTTPS : en-tête Authorization via GIT_CONFIG_* (git_http_env),
+    #     jamais écrit dans `.git/config`.
+    # GIT_TERMINAL_PROMPT=0 : échec propre plutôt qu'un prompt bloquant si
+    # l'auth ne passe pas.
     repo_dir = repos_root / str(job_id)
-    env = {}
+    env: dict[str, str] = {"GIT_TERMINAL_PROMPT": "0"}
+    env.update(git_http_env or {})
     if ssh_key_path:
         env["GIT_SSH_COMMAND"] = f"ssh -i {ssh_key_path} -o StrictHostKeyChecking=no"
 
@@ -230,6 +238,9 @@ async def run_git_sync(
         try:
             repo = Repo(repo_dir)
             repo.git.update_environment(**env)
+            # L'URL du remote ne doit jamais contenir de secret : on la réaligne
+            # sur l'URL sans credentials (scrub d'un éventuel remote hérité).
+            repo.remotes.origin.set_url(remote_url)
             repo.remotes.origin.pull(git_branch, ff_only=True)
         except (InvalidGitRepositoryError, Exception):
             if repo_dir.exists():

@@ -1,4 +1,5 @@
 # DB-07 — PAT git persisté en clair dans `.git/config`
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
 
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
