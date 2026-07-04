@@ -66,11 +66,12 @@ async def _resolve_git_auth(
     host = point.host
     repo = point.git_repo or ""
     if provider == "github":
-        base_url = f"github.com/{repo}.git"
+        git_host = "github.com"
     elif provider == "gitlab":
-        base_url = f"gitlab.com/{repo}.git"
+        git_host = "gitlab.com"
     else:
-        base_url = f"{host}/{repo}.git"
+        git_host = host
+    base_url = f"{git_host}/{repo}.git"
 
     if point.auth_type == "certificate":
         # SSH — clé privée déchiffrée et écrite dans un fichier temporaire
@@ -84,7 +85,9 @@ async def _resolve_git_auth(
         key_path.parent.mkdir(parents=True, exist_ok=True)
         key_path.write_text(private_key)
         key_path.chmod(0o600)
-        remote_url = f"git@{base_url}"
+        # Syntaxe scp-like : `:` (pas `/`) après le host, sinon git traite la
+        # chaîne comme un chemin local et le clone échoue.
+        remote_url = f"git@{git_host}:{repo}.git"
         return remote_url, str(key_path)
 
     # PAT : HTTPS avec token dans l'URL

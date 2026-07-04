@@ -1,5 +1,7 @@
 # DB-11 — URL SSH git malformée (`git@host/repo` au lieu de `:`)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : backup / git_sync (auth certificate)
