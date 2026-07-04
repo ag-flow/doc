@@ -1,5 +1,7 @@
 # FE-10 — Double-submit par Entrée dans les dialogues de création
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / création documents

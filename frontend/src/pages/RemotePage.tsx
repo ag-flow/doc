@@ -307,11 +307,12 @@ const GIT_PROVIDER_HOST: Record<GitProvider, string> = {
   custom: '',
 }
 
-function PointForm({ initial, onSave, onCancel, certs }: {
+function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
   initial?: RemotePointOut
   onSave: (body: RemotePointBody & { slug?: string }) => void
   onCancel: () => void
   certs: RemoteCertificateOut[]
+  submitting?: boolean
 }) {
   const isEdit = !!initial
   const [form, setForm] = useState<RemotePointBody & { slug: string }>({
@@ -427,7 +428,14 @@ function PointForm({ initial, onSave, onCancel, certs }: {
       )}
 
       <div className="flex gap-2 pt-1">
-        <Button size="sm" className="flex-1" onClick={() => onSave(form)}>Enregistrer</Button>
+        <Button
+          size="sm"
+          className="flex-1"
+          onClick={() => { if (submitting) return; onSave(form) }}
+          disabled={submitting}
+        >
+          Enregistrer
+        </Button>
         <Button size="sm" variant="secondary" onClick={onCancel}>Annuler</Button>
       </div>
     </div>
@@ -518,6 +526,7 @@ function RemotePointsTab() {
           certs={certs}
           onSave={(body) => createMut.mutate(body as RemotePointBody & { slug: string })}
           onCancel={() => setCreating(false)}
+          submitting={createMut.isPending}
         />
       )}
 
@@ -549,6 +558,7 @@ function RemotePointsTab() {
                   certs={certs}
                   onSave={(body) => updateMut.mutate({ slug: pt.slug, body })}
                   onCancel={() => setEditing(null)}
+                  submitting={updateMut.isPending}
                 />
               </div>
             )}

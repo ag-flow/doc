@@ -85,6 +85,7 @@ export function AddDocumentDialog({
     : null
 
   async function handleSubmit() {
+    if (submitting) return
     if (!title.trim() || !effectiveType || !slugValid) return
     setSubmitting(true)
     setError(null)

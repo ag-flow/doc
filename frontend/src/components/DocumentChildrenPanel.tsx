@@ -38,6 +38,7 @@ export function DocumentChildrenPanel({ ws, blocSlug, docId }: Props) {
   const docPath = (id: string) => `/ws/${ws}/blocs/${blocSlug}/documents/${id}`
 
   async function createChild() {
+    if (submitting) return
     if (!childTitle.trim() || !creatingChild) return
     setSubmitting(true)
     setCreateError(null)
