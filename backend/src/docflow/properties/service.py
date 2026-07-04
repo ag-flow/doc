@@ -93,16 +93,23 @@ def _val_row(row: asyncpg.Record) -> AllowedValueOut:
     )
 
 
-async def _resolve_type_id(conn: asyncpg.Connection, ws_slug: str, type_slug: str) -> uuid.UUID:
-    wk = await require_workspace(conn, ws_slug)
+async def _resolve_type_id(
+    conn: asyncpg.Connection, ws_slug: str, type_slug: str, *, allow_archived: bool = True
+) -> uuid.UUID:
+    wk = await require_workspace(conn, ws_slug, allow_archived=allow_archived)
     return await require_type(conn, wk, type_slug)
 
 
 async def _resolve_prop_id_rl(
-    conn: asyncpg.Connection, ws_slug: str, type_slug: str, prop_slug: str
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    type_slug: str,
+    prop_slug: str,
+    *,
+    allow_archived: bool = True,
 ) -> uuid.UUID:
     """Résout et valide que la propriété est de type restricted_list."""
-    type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+    type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=allow_archived)
     prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
     if prop_type != "restricted_list":
         raise HTTPException(
@@ -138,7 +145,7 @@ async def create_def(
 ) -> PropertiesDefOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
 
             target_ft_id: uuid.UUID | None = None
@@ -187,7 +194,7 @@ async def update_def(
             raise ValueError(f"champ non modifiable : {k}")
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
@@ -200,7 +207,7 @@ async def update_def(
 async def delete_def(pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
             try:
                 await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
@@ -240,7 +247,9 @@ async def create_allowed_value(
 ) -> AllowedValueOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             try:
                 row = await conn.fetchrow(
                     _INSERT_VAL,
@@ -276,7 +285,9 @@ async def update_allowed_value(
             raise ValueError(f"champ non modifiable : {k}")
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             val_id: uuid.UUID | None = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
@@ -293,7 +304,9 @@ async def delete_allowed_value(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             val_id = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
@@ -341,7 +354,7 @@ async def upsert_constraint(
 ) -> ConstraintOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
             # I-6 : pattern/min_length/max_length réservés à text
             #       min/max acceptés pour int, float, date uniquement
@@ -386,7 +399,7 @@ async def delete_constraint(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
             deleted = await conn.fetchval(
                 "DELETE FROM properties_constraints "

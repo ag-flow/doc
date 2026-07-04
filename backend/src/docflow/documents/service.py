@@ -294,7 +294,7 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
 async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             # Isolation workspace (DOC-03) : le bloc cible doit appartenir à ce workspace.
             block_ok = await conn.fetchval(
                 "SELECT 1 FROM data_block WHERE id = $1 AND workspace_technical_key = $2",
@@ -403,7 +403,7 @@ async def update_document(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
 
             # Existence + verrou optimiste
             head = await conn.fetchrow(
@@ -516,7 +516,7 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             snap = await conn.fetchrow(
                 "SELECT doc_technical_key, title, type FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -536,7 +536,7 @@ async def set_document_exposed(
     """Expose ou masque le document et tous ses descendants (cascade récursive)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             exists = await conn.fetchval(
                 "SELECT 1 FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -830,7 +830,7 @@ async def set_property_value(
 ) -> PropertyValueOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
             prop_id, prop_type, required, prop_label = await _resolve_prop(conn, type_id, prop_slug)
             _validate_value_for_type(prop_type, data, prop_slug)
@@ -1003,7 +1003,7 @@ async def delete_property_value(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
             prop_id, _, required, _ = await _resolve_prop(conn, type_id, prop_slug)
             if required:

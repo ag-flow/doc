@@ -300,7 +300,7 @@ async def create_document_in_block(
     """Création deux temps : validate type autorisé → crée document v1 + valeurs par défaut."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id, block_ft_ref = await _resolve_block_id(conn, wk, block_slug)
 
             # 1. Valider le parent (doit appartenir au même bloc)

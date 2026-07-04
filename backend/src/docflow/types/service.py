@@ -164,7 +164,7 @@ async def create_type(
 ) -> FunctionalTypeOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             parent_id: uuid.UUID | None = None
             if data.parent_slug:
                 parent_id = await _resolve_parent(conn, wk, data.parent_slug)
@@ -208,7 +208,7 @@ async def update_type(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
 
             parent_id: uuid.UUID | None = None
@@ -251,7 +251,7 @@ async def update_type(
 async def delete_type(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
             try:
                 await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)

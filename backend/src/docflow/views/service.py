@@ -115,7 +115,7 @@ async def create_view(
     owner_ref = None if data.shared else caller_id
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             try:
                 row = await conn.fetchrow(
                     """
@@ -200,7 +200,7 @@ async def update_view(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             row = await conn.fetchrow(
                 "SELECT id, owner_ref FROM saved_view "
                 "WHERE workspace_technical_key = $1 AND slug = $2 "
@@ -243,7 +243,7 @@ async def delete_view(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             row = await conn.fetchrow(
                 "SELECT id, owner_ref FROM saved_view "
                 "WHERE workspace_technical_key = $1 AND slug = $2 "

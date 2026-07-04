@@ -114,7 +114,7 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
 async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) -> DataBlockOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id, type_parent_id = await _resolve_type(conn, wk, data.functional_type_slug)
 
             parent_id: uuid.UUID | None = None
@@ -178,7 +178,7 @@ async def update_block(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_row = await conn.fetchrow(
                 "SELECT id, functional_type_ref FROM data_block "
                 "WHERE workspace_technical_key = $1 AND slug = $2",
@@ -231,7 +231,7 @@ async def set_block_exposed(
     """Expose ou masque le bloc entier et tous ses documents (en une transaction)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id: uuid.UUID | None = await conn.fetchval(
                 "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
                 wk,
@@ -255,7 +255,7 @@ async def set_block_exposed(
 async def delete_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id: uuid.UUID | None = await conn.fetchval(
                 "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
                 wk,
