@@ -10,8 +10,9 @@ from joserfc.jwk import OctKey
 from docflow.schemas.auth import AuthUser
 
 _ALG = {"alg": "HS256"}
+_ALLOWED_ALGORITHMS = ["HS256"]
 _TTL = 8 * 3600  # 8 heures en secondes
-_CLAIMS_REGISTRY = jwt.JWTClaimsRegistry()
+_CLAIMS_REGISTRY = jwt.JWTClaimsRegistry(exp={"essential": True})
 
 
 def create_token(user: AuthUser, secret: str) -> str:
@@ -31,7 +32,7 @@ def decode_token(token: str, secret: str) -> dict[str, object]:
     """Decode and validate a JWT. Raises ValueError on any failure."""
     try:
         key = OctKey.import_key(secret)
-        decoded = jwt.decode(token, key)
+        decoded = jwt.decode(token, key, algorithms=_ALLOWED_ALGORITHMS)
         _CLAIMS_REGISTRY.validate(decoded.claims)
         return dict(decoded.claims)
     except JoseError as exc:

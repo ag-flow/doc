@@ -1,5 +1,7 @@
 # AUTH-08 — `decode_token` n'épingle pas la liste d'algorithmes
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : moyenne
 - **Zone** : auth / JWT

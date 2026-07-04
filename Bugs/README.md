@@ -76,7 +76,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 
 | ID | Titre | Fichier principal | Modèle |
 |----|-------|-------------------|--------|
-| [AUTH-08](AUTH-08-jwt-algorithms-non-epingles.md) | `decode_token` n'épingle pas la liste d'algorithmes | `auth/jwt.py` | **Sonnet** |
+| [AUTH-08](AUTH-08-jwt-algorithms-non-epingles.md) | ✅ `decode_token` n'épingle pas la liste d'algorithmes | `auth/jwt.py` | **Sonnet** |
 | [AUTH-09](AUTH-09-login-enumeration-timing.md) | Oracle d'énumération d'utilisateurs sur `/auth/login` (timing) | `auth/router.py` | **Sonnet** |
 | [INT-04](INT-04-mcp-messages-sans-auth.md) | `POST /api/mcp/messages` sans dépendance d'auth | `mcp/router.py` | **Opus** |
 | [INT-05](INT-05-webhook-sentinelle-now.md) | Collision de sentinelle `"now()"` dans l'UPDATE webhook | `webhooks/service.py` | **Sonnet** |
