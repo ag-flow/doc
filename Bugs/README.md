@@ -44,7 +44,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [AUTH-05](AUTH-05-scopes-api-key-non-appliques.md) | Scopes d'API key non appliqués sur documents/properties/types | `documents/router.py`, `properties/router.py`, `types/router.py` | **Opus** |
 | [AUTH-06](AUTH-06-setup-race-plusieurs-admins.md) | Race au setup : plusieurs admins créés dans la fenêtre d'init | `setup/service.py` | **Opus** |
 | [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) | `require_admin` ne vérifie aucun droit admin | `auth/deps.py` (+ surfaces MCP/admin) | **Fable** |
-| [INT-01](INT-01-path-traversal-template-slug-gallery.md) | Path traversal / écriture arbitraire via `template_slug` (galerie) | `templates/gallery.py`, `templates/router.py` | **Sonnet** |
+| [INT-01](INT-01-path-traversal-template-slug-gallery.md) | ✅ Path traversal / écriture arbitraire via `template_slug` (galerie) | `templates/gallery.py`, `templates/router.py` | **Sonnet** |
 | [INT-02](INT-02-automation-debounce-famine.md) | Debounce d'automation : famine de tout le workspace | `automations/worker.py` | **Opus** |
 | [INT-03](INT-03-mcp-outils-ecriture-identite-superadmin.md) | Outils MCP d'écriture exécutés sous l'identité du superadmin système | `mcp/server.py` | **Opus** |
 | [DOC-04](DOC-04-changement-type-valeurs-orphelines.md) | Changement de type : valeurs de propriétés orphelines conservées | `documents/service.py` | **Opus** |

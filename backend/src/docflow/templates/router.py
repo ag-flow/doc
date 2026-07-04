@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import uuid as _uuid
 
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_validator
 
 from docflow.auth.deps import require_admin, require_api_key_admin_write
 from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
@@ -18,6 +19,9 @@ from docflow.templates.models import Template
 log = structlog.get_logger(__name__)
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
+
+# Même regex que `remote/schemas.py::_SLUG_RE` / `templates/gallery.py::_SLUG_RE`.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 router = APIRouter(tags=["templates"])
 
@@ -71,6 +75,13 @@ class GalleryPullIn(BaseModel):
 
     source_url: str
     template_slug: str
+
+    @field_validator("template_slug")
+    @classmethod
+    def _validate_template_slug(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError("template_slug : minuscules, chiffres, tirets, 2-80 chars")
+        return v
 
 
 class GallerySourceIn(BaseModel):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import re
 from typing import TypedDict
 
 import httpx
@@ -14,6 +15,10 @@ from docflow.templates.models import Template
 log = structlog.get_logger(__name__)
 
 _TIMEOUT = 15.0
+
+# Même regex que `remote/schemas.py::_SLUG_RE` — un slug de template ne doit
+# jamais pouvoir contenir de séparateur de chemin (`/`, `..`, etc.).
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 
 class GalleryError(Exception):
@@ -82,6 +87,9 @@ async def pull_template(
     source_url: str, template_slug: str, templates_dir: pathlib.Path
 ) -> Template:
     """Télécharge un template YAML et le sauvegarde dans templates_dir."""
+    if not _SLUG_RE.match(template_slug):
+        raise ValueError(f"template_slug invalide : {template_slug!r}")
+
     base = source_url.rstrip("/")
     async with httpx.AsyncClient() as client:
         yaml_text = await _fetch(client, f"{base}/{template_slug}.yaml")
@@ -89,6 +97,11 @@ async def pull_template(
     # Valider avant d'écrire
     raw = yaml.safe_load(yaml_text)
     tpl = Template.model_validate(raw)
+    if tpl.template != template_slug:
+        raise ValueError(
+            f"le slug du YAML téléchargé ({tpl.template!r}) ne correspond pas "
+            f"au slug demandé ({template_slug!r})"
+        )
 
     dest = templates_dir / f"{template_slug}.yaml"
     dest.write_text(yaml_text, encoding="utf-8")

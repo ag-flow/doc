@@ -1,5 +1,7 @@
 # INT-01 — Path traversal / écriture arbitraire via `template_slug` (galerie)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : intégrations / templates gallery
