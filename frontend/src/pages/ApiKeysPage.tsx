@@ -203,6 +203,7 @@ function ProfileCard({
     onSuccess: () => {
       setSaveMsg('Scopes enregistrés')
       void qc.invalidateQueries({ queryKey: ['api-profiles'] })
+      void qc.invalidateQueries({ queryKey: ['api-profile', profile.id] })
       setTimeout(() => setSaveMsg(null), 2000)
     },
   })

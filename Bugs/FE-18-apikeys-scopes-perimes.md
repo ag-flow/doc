@@ -1,5 +1,7 @@
 # FE-18 — ApiKeysPage : scopes affichés périmés après sauvegarde
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / API keys
