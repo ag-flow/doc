@@ -1,5 +1,8 @@
 # FE-03 — Refetch arrière-plan : verrou optimiste contourné + titre perdu
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Le `useEffect` de resync (`DocumentEditor.tsx`) distingue désormais un vrai changement de document (`loadedDocIdRef` != `docId`) d'un refetch d'arrière-plan du même document. Il ne réapplique `title` / `slug` / `expectedVersion` sur un refetch que si `status === 'idle'` : pendant l'édition (`dirty` / `saving` / `error`), la resync est gelée, donc `expectedVersion` reste sur la base de l'utilisateur et un save concurrent produit bien un 409 (dialogue de conflit) au lieu d'un écrasement silencieux. Un titre en cours d'édition n'est plus réinitialisé. Sur un changement de document, la resync est en revanche forcée et `status` remis à `idle`.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : frontend / versioning

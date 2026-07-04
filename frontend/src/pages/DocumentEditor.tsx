@@ -34,6 +34,10 @@ export function DocumentEditor() {
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const expectedVersion = useRef<number>(0)
   const ancestorRef = useRef<{ title: string; content: string }>({ title: '', content: '' })
+  // Identifiant du document actuellement chargé dans l'état local (titre / version).
+  // Sert à distinguer un changement de document (resync obligatoire) d'un simple
+  // refetch d'arrière-plan (resync gelée pendant l'édition — cf. FE-03).
+  const loadedDocIdRef = useRef<string | null>(null)
 
   const [title, setTitle] = useState('')
   const [status, setStatus] = useState<SaveStatus>('idle')
@@ -93,11 +97,21 @@ export function DocumentEditor() {
 
   useEffect(() => {
     if (!doc) return
+    const isNewDoc = loadedDocIdRef.current !== docId
+    // FE-03 : ne pas resynchroniser titre / expectedVersion lors d'un refetch
+    // d'arrière-plan (retour d'onglet, staleTime) pendant que l'utilisateur édite.
+    // Réaligner expectedVersion sur la version serveur ici contournerait le verrou
+    // optimiste et écraserait des modifications concurrentes sans dialogue de conflit ;
+    // un titre en cours d'édition serait par ailleurs réinitialisé.
+    if (!isNewDoc && status !== 'idle') return
+    loadedDocIdRef.current = docId ?? null
     setTitle(doc.title)
     setSlugValue(doc.slug ?? '')
     expectedVersion.current = doc.version
     ancestorRef.current = { title: doc.title, content: doc.content ?? '' }
-  }, [doc])
+    // Changement de document : repartir d'un état propre (l'éditeur est remonté via key).
+    if (isNewDoc) setStatus('idle')
+  }, [doc, docId, status])
 
   const markDirty = useCallback(() => {
     setStatus((s) => (s === 'saving' ? s : 'dirty'))
