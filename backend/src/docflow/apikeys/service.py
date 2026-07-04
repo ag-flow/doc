@@ -166,9 +166,7 @@ async def set_scopes(
         if not exists:
             raise HTTPException(status_code=404, detail="profil introuvable")
         async with conn.transaction():
-            await conn.execute(
-                "DELETE FROM api_profile_scope WHERE profile_id = $1", profile_id
-            )
+            await conn.execute("DELETE FROM api_profile_scope WHERE profile_id = $1", profile_id)
             rows = []
             for s in scopes:
                 r = await conn.fetchrow(
@@ -190,9 +188,7 @@ async def set_scopes(
     return [ApiProfileScopeOut(**dict(r)) for r in rows]
 
 
-async def delete_profile(
-    pool: asyncpg.Pool, owner_id: uuid.UUID, profile_id: uuid.UUID
-) -> None:
+async def delete_profile(pool: asyncpg.Pool, owner_id: uuid.UUID, profile_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         deleted = await conn.execute(
             "DELETE FROM api_profile WHERE id = $1 AND owner_id = $2",
@@ -262,9 +258,7 @@ async def generate_key(
     return ApiKeyCreated(**dict(row), profile_name=profile["name"], key=raw)
 
 
-async def revoke_key(
-    pool: asyncpg.Pool, owner_id: uuid.UUID, key_id: uuid.UUID
-) -> None:
+async def revoke_key(pool: asyncpg.Pool, owner_id: uuid.UUID, key_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         updated = await conn.execute(
             """
@@ -314,9 +308,7 @@ async def resolve_api_key(
             """,
             key_hash,
         )
-        await conn.execute(
-            "UPDATE api_key SET last_used_at = now() WHERE key_hash = $1", key_hash
-        )
+        await conn.execute("UPDATE api_key SET last_used_at = now() WHERE key_hash = $1", key_hash)
     user = AuthUser(
         id=row["owner_id"],
         email=row["email"],

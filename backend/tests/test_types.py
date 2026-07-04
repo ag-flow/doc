@@ -211,14 +211,18 @@ async def test_delete_type_confirm_guard_via_http(
         hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
         base = f"/api/workspaces/{_WS}/types"
-        assert client.post(
-            base, json={"slug": "g-epic", "label": "Epic"}, headers=hdrs
-        ).status_code == 201
-        assert client.post(
-            base,
-            json={"slug": "g-feature", "label": "Feature", "parent_slug": "g-epic"},
-            headers=hdrs,
-        ).status_code == 201
+        assert (
+            client.post(base, json={"slug": "g-epic", "label": "Epic"}, headers=hdrs).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                base,
+                json={"slug": "g-feature", "label": "Feature", "parent_slug": "g-epic"},
+                headers=hdrs,
+            ).status_code
+            == 201
+        )
 
         r = client.delete(f"{base}/g-epic", headers=hdrs)
         assert r.status_code == 409

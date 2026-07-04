@@ -136,7 +136,10 @@ def _upload_sftp(
         ssh.load_host_keys(str(known_hosts_path))
     ssh.set_missing_host_key_policy(_TofuHostKeyPolicy(known_hosts_path))
     connect_kwargs: dict[str, Any] = {
-        "hostname": host, "port": port, "username": username, "timeout": 60,
+        "hostname": host,
+        "port": port,
+        "username": username,
+        "timeout": 60,
     }
     if ssh_key_path:
         connect_kwargs["key_filename"] = ssh_key_path
@@ -189,9 +192,12 @@ def run_db_dump(
 
         if point_type == "sftp":
             _upload_sftp(
-                dump_path, filename,
-                host=host, port=eff_port,
-                username=username, password=password,
+                dump_path,
+                filename,
+                host=host,
+                port=eff_port,
+                username=username,
+                password=password,
                 ssh_key_path=ssh_key_path,
                 remote_dir=remote_dir,
             )
@@ -199,9 +205,12 @@ def run_db_dump(
             if not password:
                 raise RuntimeError(f"mot de passe requis pour {point_type.upper()}")
             _upload_ftp(
-                dump_path, filename,
-                host=host, port=eff_port,
-                username=username, password=password,
+                dump_path,
+                filename,
+                host=host,
+                port=eff_port,
+                username=username,
+                password=password,
                 remote_dir=remote_dir,
                 tls=(point_type == "ftps"),
             )

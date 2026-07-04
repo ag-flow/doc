@@ -492,9 +492,7 @@ async def update_document(
                     if "slug" in raw:
                         detail = f"slug '{raw['slug']}' déjà utilisé dans ce workspace"
                     else:
-                        detail = (
-                            "un document avec le même slug existe déjà sous le parent visé"
-                        )
+                        detail = "un document avec le même slug existe déjà sous le parent visé"
                     raise HTTPException(status_code=409, detail=detail) from exc
 
     return await get_document(pool, ws_slug, doc_id)
@@ -640,6 +638,7 @@ def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: 
             )
         try:
             import uuid as _uuid
+
             _uuid.UUID(data.value)
         except (ValueError, AttributeError) as exc:
             raise HTTPException(

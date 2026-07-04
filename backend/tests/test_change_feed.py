@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import asyncpg
@@ -10,15 +9,16 @@ from docflow.documents import service as doc_svc
 from docflow.schemas.document import DocumentCreate, DocumentUpdate
 from docflow.schemas.property_value import PropertyValueSet
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 async def cf_ws(db_pool: asyncpg.Pool) -> Any:
     row = await db_pool.fetchrow(
         "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
         "RETURNING workspace_technical_key, slug",
-        "cf-ws", "Change Feed WS",
+        "cf-ws",
+        "Change Feed WS",
     )
     assert row is not None
     yield dict(row)
@@ -37,13 +37,15 @@ async def cf_block(db_pool: asyncpg.Pool, cf_ws: dict[str, Any]) -> Any:
     b = await db_pool.fetchrow(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ('cf-block', 'CF Block', $1, $2) RETURNING id",
-        t["id"], wk,
+        t["id"],
+        wk,
     )
     assert b is not None
     yield {"block_id": b["id"], "type_id": t["id"]}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 async def _changes(
     db_pool: asyncpg.Pool, ws_slug: str, since: int = 0, limit: int = 100
@@ -54,18 +56,26 @@ async def _changes(
     rows = await db_pool.fetch(
         "SELECT seq, nature, document_ref FROM document_change_log "
         "WHERE workspace_technical_key = $1 AND seq > $2 ORDER BY seq LIMIT $3",
-        wk, since, limit,
+        wk,
+        since,
+        limit,
     )
     return [dict(r) for r in rows]
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-async def test_create_logs_C(db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]) -> None:
+
+async def test_create_logs_C(
+    db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
+) -> None:
     """DoD 30 — création → nature C dans le journal."""
     doc = await doc_svc.create_document(
-        db_pool, "cf-ws",
-        DocumentCreate(title="Doc C", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+        db_pool,
+        "cf-ws",
+        DocumentCreate(
+            title="Doc C", block_id=cf_block["block_id"], functional_type_slug="cf-type"
+        ),
     )
     changes = await _changes(db_pool, "cf-ws")
     assert any(c["nature"] == "C" and c["document_ref"] == doc.doc_technical_key for c in changes)
@@ -76,14 +86,19 @@ async def test_update_content_logs_U(
 ) -> None:
     """DoD 30 — modification contenu → nature U."""
     doc = await doc_svc.create_document(
-        db_pool, "cf-ws",
-        DocumentCreate(title="Doc U", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+        db_pool,
+        "cf-ws",
+        DocumentCreate(
+            title="Doc U", block_id=cf_block["block_id"], functional_type_slug="cf-type"
+        ),
     )
     before = await _changes(db_pool, "cf-ws")
     last_seq = max(c["seq"] for c in before)
 
     await doc_svc.update_document(
-        db_pool, "cf-ws", doc.doc_technical_key,
+        db_pool,
+        "cf-ws",
+        doc.doc_technical_key,
         DocumentUpdate(title="Doc U v2", expected_version=1),
     )
     changes_after = await _changes(db_pool, "cf-ws", since=last_seq)
@@ -95,8 +110,11 @@ async def test_delete_logs_D_and_survives(
 ) -> None:
     """DoD 30 — suppression → nature D ; la ligne survit à l'absence du document."""
     doc = await doc_svc.create_document(
-        db_pool, "cf-ws",
-        DocumentCreate(title="Doc D", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+        db_pool,
+        "cf-ws",
+        DocumentCreate(
+            title="Doc D", block_id=cf_block["block_id"], functional_type_slug="cf-type"
+        ),
     )
     doc_id = doc.doc_technical_key
     before = await _changes(db_pool, "cf-ws")
@@ -132,7 +150,8 @@ async def test_change_feed_order_and_pagination(
     docs = []
     for i in range(3):
         d = await doc_svc.create_document(
-            db_pool, "cf-ws",
+            db_pool,
+            "cf-ws",
             DocumentCreate(
                 title=f"Pag {i}", block_id=cf_block["block_id"], functional_type_slug="cf-type"
             ),
@@ -152,7 +171,7 @@ async def test_change_feed_order_and_pagination(
     all_seqs = [c["seq"] for c in p1 + p2]
     assert len(all_seqs) == len(set(all_seqs))
     # Pas de trou (ordre strict croissant)
-    for a, b in zip(all_seqs, all_seqs[1:]):
+    for a, b in zip(all_seqs, all_seqs[1:], strict=False):
         assert a < b
 
 
@@ -160,25 +179,32 @@ async def test_set_property_value_logs_P(
     db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
 ) -> None:
     """DoD 30 — mise à jour valeur propriété → nature P."""
-    from docflow.schemas.properties import PropertiesDefCreate
     from docflow.properties import service as prop_svc
+    from docflow.schemas.properties import PropertiesDefCreate
 
-    wk = cf_ws["workspace_technical_key"]
     # Ajouter une propriété text au type
     await prop_svc.create_def(
-        db_pool, "cf-ws", "cf-type",
+        db_pool,
+        "cf-ws",
+        "cf-type",
         PropertiesDefCreate(slug="notes", label="Notes", type="text"),
     )
 
     doc = await doc_svc.create_document(
-        db_pool, "cf-ws",
-        DocumentCreate(title="PropDoc", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+        db_pool,
+        "cf-ws",
+        DocumentCreate(
+            title="PropDoc", block_id=cf_block["block_id"], functional_type_slug="cf-type"
+        ),
     )
     before = await _changes(db_pool, "cf-ws")
     last_seq = max(c["seq"] for c in before)
 
     await doc_svc.set_property_value(
-        db_pool, "cf-ws", doc.doc_technical_key, "notes",
+        db_pool,
+        "cf-ws",
+        doc.doc_technical_key,
+        "notes",
         PropertyValueSet(value="hello", expected_version=0),
     )
     changes_after = await _changes(db_pool, "cf-ws", since=last_seq)

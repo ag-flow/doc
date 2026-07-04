@@ -4,6 +4,7 @@ Vérifie que les placeholders $n sont émis contigus et correctement mappés,
 y compris avec un offset et pour les opérateurs à occurrences multiples
 (is / is_not / in) qui réutilisent le même placeholder plusieurs fois.
 """
+
 from __future__ import annotations
 
 import re

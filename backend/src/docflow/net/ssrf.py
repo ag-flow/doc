@@ -62,9 +62,7 @@ async def _resolve(host: str) -> list[_IpAddress]:
 
     loop = asyncio.get_running_loop()
     try:
-        infos = await loop.getaddrinfo(
-            host, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
-        )
+        infos = await loop.getaddrinfo(host, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise SSRFError(f"hôte non résolu : {host}") from exc
 

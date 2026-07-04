@@ -10,9 +10,7 @@ from docflow.workspaces import service as ws_svc
 
 
 async def test_create_workspace(db_pool: asyncpg.Pool) -> None:
-    ws = await ws_svc.create_workspace(
-        db_pool, WorkspaceCreate(slug="my-ws", label="My WS"), None
-    )
+    ws = await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="my-ws", label="My WS"), None)
     assert ws.slug == "my-ws"
     assert ws.description is None
     assert ws.archived_at is None

@@ -1,25 +1,25 @@
 """Tests spec 36 — MEXP : export markdown ZIP."""
+
 from __future__ import annotations
 
 import io
 import zipfile
 
 import asyncpg
-import pytest
 
+from docflow.documents import service as doc_svc
 from docflow.export.service import build_export_zip
 from docflow.schemas.document import DocumentCreate
-from docflow.documents import service as doc_svc
 
 
 async def test_export_workspace_returns_zip(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     ws = "test-ws"
-    doc_a = await doc_svc.create_document(
+    await doc_svc.create_document(
         db_pool, ws, DocumentCreate(title="Doc Alpha", parent_id=None, block_id=test_block["id"])
     )
-    doc_b = await doc_svc.create_document(
+    await doc_svc.create_document(
         db_pool, ws, DocumentCreate(title="Doc Bêta", parent_id=None, block_id=test_block["id"])
     )
     zip_bytes = await build_export_zip(db_pool, ws)
@@ -36,7 +36,9 @@ async def test_export_frontmatter_contains_docflow_id(
 ) -> None:
     ws = "test-ws"
     doc = await doc_svc.create_document(
-        db_pool, ws, DocumentCreate(title="Doc Frontmatter", parent_id=None, block_id=test_block["id"])
+        db_pool,
+        ws,
+        DocumentCreate(title="Doc Frontmatter", parent_id=None, block_id=test_block["id"]),
     )
     doc_id = str(doc.doc_technical_key)
     zip_bytes = await build_export_zip(db_pool, ws)
@@ -58,10 +60,13 @@ async def test_export_link_rewrite(
     )
     target_id = doc_target.doc_technical_key
     content_with_link = f"Voir [Cible](docflow://doc/{target_id})"
-    doc_src = await doc_svc.create_document(
-        db_pool, ws,
+    await doc_svc.create_document(
+        db_pool,
+        ws,
         DocumentCreate(
-            title="Source", parent_id=None, content=content_with_link,
+            title="Source",
+            parent_id=None,
+            content=content_with_link,
             block_id=test_block["id"],
         ),
     )

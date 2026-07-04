@@ -1,4 +1,5 @@
 """CRUD et résolution des vues sauvegardées (spec 37 — MVIEW)."""
+
 from __future__ import annotations
 
 import json
@@ -91,6 +92,7 @@ class ViewResults(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _row_to_out(r: asyncpg.Record) -> ViewOut:
     return ViewOut(
         id=r["id"],
@@ -109,6 +111,7 @@ def _row_to_out(r: asyncpg.Record) -> ViewOut:
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
+
 
 async def create_view(
     pool: asyncpg.Pool, ws_slug: str, caller_id: uuid.UUID, data: ViewCreate
@@ -159,9 +162,7 @@ async def create_view(
     return _row_to_out(row)
 
 
-async def list_views(
-    pool: asyncpg.Pool, ws_slug: str, caller_id: uuid.UUID
-) -> list[ViewOut]:
+async def list_views(pool: asyncpg.Pool, ws_slug: str, caller_id: uuid.UUID) -> list[ViewOut]:
     """Retourne les vues partagées + les vues privées de l'appelant."""
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
@@ -180,9 +181,7 @@ async def list_views(
     return [_row_to_out(r) for r in rows]
 
 
-async def get_view(
-    pool: asyncpg.Pool, ws_slug: str, slug: str, caller_id: uuid.UUID
-) -> ViewOut:
+async def get_view(pool: asyncpg.Pool, ws_slug: str, slug: str, caller_id: uuid.UUID) -> ViewOut:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
@@ -251,9 +250,7 @@ async def update_view(
     return _row_to_out(updated)
 
 
-async def delete_view(
-    pool: asyncpg.Pool, ws_slug: str, slug: str, caller_id: uuid.UUID
-) -> None:
+async def delete_view(pool: asyncpg.Pool, ws_slug: str, slug: str, caller_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
@@ -275,6 +272,7 @@ async def delete_view(
 
 
 # ── Résolution de la vue ──────────────────────────────────────────────────────
+
 
 async def resolve_view(
     pool: asyncpg.Pool,
@@ -387,6 +385,4 @@ async def resolve_view(
             )
             group_by_values = [dict(r) for r in av_rows]
 
-    return ViewResults(
-        rows=result_rows, group_by_values=group_by_values, has_more=has_more
-    )
+    return ViewResults(rows=result_rows, group_by_values=group_by_values, has_more=has_more)

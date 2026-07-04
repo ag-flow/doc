@@ -22,9 +22,7 @@ async def list_jobs(request: Request, _: None = _Auth) -> list[BackupJobOut]:
 
 
 @router.post("/jobs", response_model=BackupJobOut, status_code=status.HTTP_201_CREATED)
-async def create_job(
-    body: BackupJobCreate, request: Request, _: None = _Auth
-) -> BackupJobOut:
+async def create_job(body: BackupJobCreate, request: Request, _: None = _Auth) -> BackupJobOut:
     return await service.create_job(request.app.state.pool, body)
 
 

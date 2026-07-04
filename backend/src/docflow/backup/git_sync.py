@@ -19,6 +19,7 @@ log = structlog.get_logger(__name__)
 
 # ── Phase git bloquante ───────────────────────────────────────────────────────
 
+
 def _git_phase(
     *,
     repo_dir: pathlib.Path,
@@ -64,7 +65,8 @@ def _git_phase(
                 shutil.rmtree(repo_dir)
             repo_dir.mkdir(parents=True)
             repo = Repo.clone_from(
-                remote_url, repo_dir,
+                remote_url,
+                repo_dir,
                 branch=git_branch,
                 env=env,
             )
@@ -116,6 +118,7 @@ def _git_phase(
 
 # ── Entrée principale ─────────────────────────────────────────────────────────
 
+
 async def run_git_sync(
     pool: asyncpg.Pool,
     *,
@@ -142,9 +145,7 @@ async def run_git_sync(
     """
     async with pool.acquire() as conn:
         # 1. Changements depuis le dernier run
-        where_ws = (
-            "AND workspace_technical_key = $2" if workspace_technical_key else ""
-        )
+        where_ws = "AND workspace_technical_key = $2" if workspace_technical_key else ""
         params: list[Any] = [last_change_seq]
         if workspace_technical_key:
             params.append(workspace_technical_key)

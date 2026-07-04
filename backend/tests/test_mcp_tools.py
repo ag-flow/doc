@@ -3,6 +3,7 @@
 Chaque test appelle les handlers directement (pas via SSE) pour isoler la logique.
 Couverture : chemin nominal, erreur métier, idempotence, guard admin.
 """
+
 from __future__ import annotations
 
 import json
@@ -164,9 +165,7 @@ async def test_list_workspaces_contient_workspace(
 # ---------------------------------------------------------------------------
 
 
-async def test_list_types_retourne_epic(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_list_types_retourne_epic(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(await _list_types(db_pool, mcp_ws["ws_slug"]))  # type: ignore[arg-type]
     slugs = [t["slug"] for t in data]
     assert "epic" in slugs
@@ -199,9 +198,7 @@ async def test_list_documents_workspace_inconnu(db_pool: asyncpg.Pool) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_document_nominal(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_get_document_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"])  # type: ignore[arg-type]
     )
@@ -210,9 +207,7 @@ async def test_get_document_nominal(
     assert data["functional_type_slug"] == "epic"  # type: ignore[index]
 
 
-async def test_get_document_inconnu(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_get_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], str(uuid.uuid4())))  # type: ignore[arg-type]
     assert "error" in data  # type: ignore[operator]
 
@@ -222,9 +217,7 @@ async def test_get_document_inconnu(
 # ---------------------------------------------------------------------------
 
 
-async def test_create_document_nominal(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_create_document_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _create_document(
             db_pool,
@@ -263,9 +256,7 @@ async def test_create_document_type_inconnu(
 # ---------------------------------------------------------------------------
 
 
-async def test_update_document_titre(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_update_document_titre(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _update_document(
             db_pool,
@@ -282,9 +273,7 @@ async def test_update_document_titre(
     assert check["title"] == "Epic A — modifié"  # type: ignore[index]
 
 
-async def test_update_document_inconnu(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _update_document(
             db_pool,
@@ -308,7 +297,9 @@ async def test_list_property_values_retourne_prop(
 ) -> None:
     data = _json(
         await _list_property_values(
-            db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]  # type: ignore[arg-type]
+            db_pool,
+            mcp_ws["ws_slug"],
+            mcp_ws["doc_id"],  # type: ignore[arg-type]
         )
     )
     assert isinstance(data, list)
@@ -321,9 +312,7 @@ async def test_list_property_values_retourne_prop(
 # ---------------------------------------------------------------------------
 
 
-async def test_get_property_value_vide(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_get_property_value_vide(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _get_property_value(
             db_pool,
@@ -341,7 +330,10 @@ async def test_get_property_value_introuvable(
 ) -> None:
     data = _json(
         await _get_property_value(
-            db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"], "inexistant"  # type: ignore[arg-type]
+            db_pool,
+            mcp_ws["ws_slug"],
+            mcp_ws["doc_id"],
+            "inexistant",  # type: ignore[arg-type]
         )
     )
     assert "error" in data  # type: ignore[operator]
@@ -370,7 +362,10 @@ async def test_set_then_get_property_value(
 
     get_result = _json(
         await _get_property_value(
-            db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"], "priority"  # type: ignore[arg-type]
+            db_pool,
+            mcp_ws["ws_slug"],
+            mcp_ws["doc_id"],
+            "priority",  # type: ignore[arg-type]
         )
     )
     assert get_result["value"] == "haute"  # type: ignore[index]
@@ -431,11 +426,7 @@ async def test_create_workspace_nominal(db_pool: asyncpg.Pool) -> None:
 async def test_create_workspace_slug_duplique(
     db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
 ) -> None:
-    data = _json(
-        await _create_workspace(
-            db_pool, {"slug": mcp_ws["ws_slug"], "label": "Doublon"}
-        )
-    )
+    data = _json(await _create_workspace(db_pool, {"slug": mcp_ws["ws_slug"], "label": "Doublon"}))
     assert "error" in data  # type: ignore[operator]
 
 
@@ -444,9 +435,7 @@ async def test_create_workspace_slug_duplique(
 # ---------------------------------------------------------------------------
 
 
-async def test_import_template_idempotent(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_import_template_idempotent(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     """Si aucun template installé, le test passe en no-op ; sinon vérifie l'idempotence."""
     configure(db_pool)
     templates_data = _json(await _list_templates())
@@ -464,9 +453,7 @@ async def test_import_template_idempotent(
     assert r2["no_op"] is True  # type: ignore[index]
 
 
-async def test_import_template_inconnu(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_import_template_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     configure(db_pool)
     data = _json(
         await _import_template(
@@ -477,9 +464,7 @@ async def test_import_template_inconnu(
     assert "error" in data  # type: ignore[operator]
 
 
-async def test_create_block_nominal(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_create_block_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     configure(db_pool)
     data = _json(
         await _create_block(
@@ -496,9 +481,7 @@ async def test_create_block_nominal(
     assert data["slug"] == "mcp-bloc-camp"  # type: ignore[index]
 
 
-async def test_create_block_type_inconnu(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_create_block_type_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     configure(db_pool)
     data = _json(
         await _create_block(
@@ -514,9 +497,7 @@ async def test_create_block_type_inconnu(
     assert "error" in data  # type: ignore[operator]
 
 
-async def test_create_block_avec_template(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_create_block_avec_template(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     """create_block avec template_slug importe le template puis crée le bloc."""
     configure(db_pool)
     templates_data = _json(await _list_templates())
@@ -553,9 +534,7 @@ async def test_call_tool_outil_inconnu(db_pool: asyncpg.Pool) -> None:
     assert "error" in data  # type: ignore[operator]
 
 
-async def test_call_tool_list_workspaces(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
-) -> None:
+async def test_call_tool_list_workspaces(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     configure(db_pool)
     data = _json(await _call_tool("list_workspaces", {}))
     assert isinstance(data, list)
@@ -575,7 +554,12 @@ async def test_api_profile_is_admin_defaut_false(db_pool: asyncpg.Pool) -> None:
     await db_pool.execute(
         "INSERT INTO app_user (id, email, label, password_hash, is_admin, validated) "
         "VALUES ($1, $2, $3, $4, $5, $6)",
-        owner_id, f"{owner_id}@test.local", "Test", "x", False, True,
+        owner_id,
+        f"{owner_id}@test.local",
+        "Test",
+        "x",
+        False,
+        True,
     )
     body = ApiProfileCreate(name="profil-non-admin", description=None)
     profile = await create_profile(db_pool, owner_id, body)
@@ -593,7 +577,12 @@ async def test_api_profile_is_admin_true(db_pool: asyncpg.Pool) -> None:
     await db_pool.execute(
         "INSERT INTO app_user (id, email, label, password_hash, is_admin, validated) "
         "VALUES ($1, $2, $3, $4, $5, $6)",
-        owner_id, f"{owner_id}@test.local", "Test Admin", "x", False, True,
+        owner_id,
+        f"{owner_id}@test.local",
+        "Test Admin",
+        "x",
+        False,
+        True,
     )
     body = ApiProfileCreate(name="profil-admin", description=None, is_admin=True)
     profile = await create_profile(db_pool, owner_id, body)
@@ -621,7 +610,12 @@ async def test_resolve_api_key_retourne_profile_is_admin(db_pool: asyncpg.Pool) 
     await db_pool.execute(
         "INSERT INTO app_user (id, email, label, password_hash, is_admin, validated) "
         "VALUES ($1, $2, $3, $4, $5, $6)",
-        owner_id, f"{owner_id}@resolvetest.local", "Resolve", "x", False, True,
+        owner_id,
+        f"{owner_id}@resolvetest.local",
+        "Resolve",
+        "x",
+        False,
+        True,
     )
     profile = await create_profile(
         db_pool, owner_id, ApiProfileCreate(name="admin-prof", is_admin=True)

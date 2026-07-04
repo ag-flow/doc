@@ -9,14 +9,17 @@ from fastapi import HTTPException
 from docflow.admin.users import service as svc
 from docflow.schemas.admin_user import AdminUserCreate, AdminUserUpdate
 
-
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+
 def _create(email: str, *, is_admin: bool = False, password: str = "s3cr3t") -> AdminUserCreate:
-    return AdminUserCreate(email=email, label=email.split("@")[0], password=password, is_admin=is_admin)
+    return AdminUserCreate(
+        email=email, label=email.split("@")[0], password=password, is_admin=is_admin
+    )
 
 
 # ── CRUD basique ──────────────────────────────────────────────────────────────
+
 
 async def test_create_user_nominal(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
     u = await svc.create_user(db_pool, _create("alice@test.local"))
@@ -93,6 +96,7 @@ async def test_delete_user_introuvable(db_pool: asyncpg.Pool) -> None:
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
+
 async def test_validate_user(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
     u = await svc.create_user(db_pool, _create("v@test.local"))
     assert u.validated is True  # créé validé par l'admin
@@ -118,6 +122,7 @@ async def test_validate_user_introuvable(db_pool: asyncpg.Pool) -> None:
 
 # ── Mot de passe ──────────────────────────────────────────────────────────────
 
+
 async def test_set_password(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
     u = await svc.create_user(db_pool, _create("pwd@test.local"))
     updated = await svc.set_password(db_pool, u.id, "nouveau-mdp-fort")
@@ -132,7 +137,10 @@ async def test_set_password_introuvable(db_pool: asyncpg.Pool) -> None:
 
 # ── Garde-fou anti-lock-out ───────────────────────────────────────────────────
 
-async def test_anti_lockout_disable_dernier_admin(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
+
+async def test_anti_lockout_disable_dernier_admin(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
     """Désactiver le dernier admin local connectable doit être refusé (422)."""
     admin = await svc.create_user(db_pool, _create("last-admin@test.local", is_admin=True))
     with pytest.raises(HTTPException) as exc:
@@ -143,7 +151,9 @@ async def test_anti_lockout_disable_dernier_admin(db_pool: asyncpg.Pool, clean_a
     assert detail["code"] == "last_local_admin"
 
 
-async def test_anti_lockout_delete_dernier_admin(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
+async def test_anti_lockout_delete_dernier_admin(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
     """Supprimer le dernier admin local connectable doit être refusé (422)."""
     admin = await svc.create_user(db_pool, _create("last-del@test.local", is_admin=True))
     with pytest.raises(HTTPException) as exc:
@@ -151,14 +161,18 @@ async def test_anti_lockout_delete_dernier_admin(db_pool: asyncpg.Pool, clean_ad
     assert exc.value.status_code == 422
 
 
-async def test_anti_lockout_ok_si_autre_admin(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
+async def test_anti_lockout_ok_si_autre_admin(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
     """Supprimer un admin est autorisé s'il en reste un autre."""
     a1 = await svc.create_user(db_pool, _create("adm-a@test.local", is_admin=True))
     await svc.create_user(db_pool, _create("adm-b@test.local", is_admin=True))
     await svc.delete_user(db_pool, a1.id)  # ne doit pas lever d'exception
 
 
-async def test_anti_lockout_ok_si_admin_non_local(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
+async def test_anti_lockout_ok_si_admin_non_local(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
     """Un admin OIDC (sans password_hash) ne compte pas comme admin local connectable."""
     local_admin = await svc.create_user(db_pool, _create("local@test.local", is_admin=True))
     # Insérer un admin OIDC sans password_hash

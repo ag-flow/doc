@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from docflow.crypto import decrypt_headers, encrypt_headers
 
@@ -32,5 +32,5 @@ def test_encrypted_blob_differs_from_plaintext() -> None:
 def test_wrong_key_raises() -> None:
     key1, key2 = _fresh_key(), _fresh_key()
     blob = encrypt_headers(key1, {"a": "b"})
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         decrypt_headers(key2, blob)

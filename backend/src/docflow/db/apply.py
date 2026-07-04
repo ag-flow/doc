@@ -41,13 +41,10 @@ async def apply(pool: asyncpg.Pool) -> None:
         try:
             await conn.execute(_CREATE_MIGRATIONS_TABLE)
             applied: set[str] = {
-                row["version"]
-                for row in await conn.fetch("SELECT version FROM schema_migrations")
+                row["version"] for row in await conn.fetch("SELECT version FROM schema_migrations")
             }
 
-            pending = sorted(
-                p for p in _MIGRATIONS_DIR.glob("*.sql") if p.stem not in applied
-            )
+            pending = sorted(p for p in _MIGRATIONS_DIR.glob("*.sql") if p.stem not in applied)
 
             if not pending:
                 log.info("migrations_up_to_date", count=len(applied))

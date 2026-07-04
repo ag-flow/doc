@@ -80,9 +80,7 @@ async def delete_def(
     """DOC-07 : 409 si la propriété porte des valeurs de documents et que
     ``confirm`` n'est pas fourni ; avec ``?confirm=true``, cascade assumée."""
     check_api_key_scope(request, ws_slug, write=True)
-    await service.delete_def(
-        request.app.state.pool, ws_slug, type_slug, prop_slug, confirm=confirm
-    )
+    await service.delete_def(request.app.state.pool, ws_slug, type_slug, prop_slug, confirm=confirm)
 
 
 # ── Allowed values ────────────────────────────────────────────────────────────

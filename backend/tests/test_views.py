@@ -1,16 +1,17 @@
 """Tests spec 37 — MVIEW : vues sauvegardées."""
+
 from __future__ import annotations
 
 import uuid
 
 import asyncpg
 import pytest
+from pydantic import ValidationError
 
+from docflow.documents import service as doc_svc
+from docflow.schemas.document import DocumentCreate
 from docflow.views import service as view_svc
 from docflow.views.service import ViewCreate, ViewUpdate
-from docflow.schemas.document import DocumentCreate
-from docflow.documents import service as doc_svc
-
 
 _CALLER = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -18,7 +19,9 @@ _CALLER = uuid.UUID("00000000-0000-0000-0000-000000000001")
 async def test_create_view_shared(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     ws = "test-ws"
     view = await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="shared-view", label="Partagée", layout="table", shared=True),
     )
     assert view.slug == "shared-view"
@@ -28,7 +31,9 @@ async def test_create_view_shared(db_pool: asyncpg.Pool, test_workspace: dict) -
 async def test_create_view_private(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     ws = "test-ws"
     view = await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="private-view", label="Privée", layout="table", shared=False),
     )
     assert view.owner_ref == _CALLER
@@ -40,15 +45,21 @@ async def test_list_views_includes_shared_and_own(
     ws = "test-ws"
     other = uuid.UUID("00000000-0000-0000-0000-000000000002")
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="shared-lv", label="Partagée", layout="table", shared=True),
     )
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="mine-lv", label="La mienne", layout="table", shared=False),
     )
     await view_svc.create_view(
-        db_pool, ws, other,
+        db_pool,
+        ws,
+        other,
         ViewCreate(slug="others-lv", label="Autre user", layout="table", shared=False),
     )
     views = await view_svc.list_views(db_pool, ws, _CALLER)
@@ -62,14 +73,19 @@ async def test_create_view_duplicate_slug_raises(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
     from fastapi import HTTPException
+
     ws = "test-ws"
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="dup-view", label="Dup", layout="table", shared=True),
     )
     with pytest.raises(HTTPException) as exc:
         await view_svc.create_view(
-            db_pool, ws, _CALLER,
+            db_pool,
+            ws,
+            _CALLER,
             ViewCreate(slug="dup-view", label="Dup2", layout="table", shared=True),
         )
     assert exc.value.status_code == 409
@@ -78,7 +94,9 @@ async def test_create_view_duplicate_slug_raises(
 async def test_update_view_label(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     ws = "test-ws"
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="upd-view", label="Initial", layout="table", shared=True),
     )
     updated = await view_svc.update_view(
@@ -89,9 +107,12 @@ async def test_update_view_label(db_pool: asyncpg.Pool, test_workspace: dict) ->
 
 async def test_delete_view(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     from fastapi import HTTPException
+
     ws = "test-ws"
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="del-view", label="À supprimer", layout="table", shared=True),
     )
     await view_svc.delete_view(db_pool, ws, "del-view", _CALLER)
@@ -108,7 +129,9 @@ async def test_resolve_view_empty_returns_all(
         db_pool, ws, DocumentCreate(title="Résolvable", parent_id=None, block_id=test_block["id"])
     )
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(slug="resolve-all", label="Tous", layout="table", shared=True),
     )
     results = await view_svc.resolve_view(db_pool, ws, "resolve-all", _CALLER)
@@ -120,11 +143,14 @@ async def test_resolve_view_filter_title(
 ) -> None:
     ws = "test-ws"
     await doc_svc.create_document(
-        db_pool, ws,
+        db_pool,
+        ws,
         DocumentCreate(title="XYZ Spécifique", parent_id=None, block_id=test_block["id"]),
     )
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(
             slug="filter-title",
             label="Filtré titre",
@@ -141,9 +167,12 @@ async def test_resolve_view_invalid_filter_op_raises(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
     from fastapi import HTTPException
+
     ws = "test-ws"
     await view_svc.create_view(
-        db_pool, ws, _CALLER,
+        db_pool,
+        ws,
+        _CALLER,
         ViewCreate(
             slug="bad-op",
             label="Mauvais op",
@@ -158,5 +187,5 @@ async def test_resolve_view_invalid_filter_op_raises(
 
 
 async def test_view_layout_board_invalid(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ViewCreate(slug="bad", label="Bad", layout="kanban")

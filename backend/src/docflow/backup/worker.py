@@ -121,6 +121,7 @@ async def _resolve_git_auth(
     if point.auth_storage == "vault":
         from docflow.secrets.resolver import resolve
         from docflow.secrets.secret import Secret
+
         enc_key_obj = getattr(settings, "encryption_key", None)
         enc_key: str | None = enc_key_obj.reveal() if enc_key_obj else None
         secret = await resolve(
@@ -171,6 +172,7 @@ async def _resolve_dump_auth(
     if point.auth_storage == "vault":
         from docflow.secrets.resolver import resolve
         from docflow.secrets.secret import Secret
+
         enc_key_obj = getattr(settings, "encryption_key", None)
         enc_key: str | None = enc_key_obj.reveal() if enc_key_obj else None
         secret = await resolve(
@@ -259,7 +261,8 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
 
         async with pool.acquire() as conn:
             await svc.finish_run(
-                conn, run_id,
+                conn,
+                run_id,
                 status="success",
                 last_change_seq=result["last_change_seq"],
                 files_written=result["files_written"],

@@ -156,12 +156,9 @@ async def list_gallery_sources(
 ) -> list[GallerySourceOut]:
     """Liste les sources de galerie enregistrées + la source env si non dupliquée."""
     pool = request.app.state.pool
-    rows = await pool.fetch(
-        "SELECT id, label, url FROM gallery_source ORDER BY created_at"
-    )
+    rows = await pool.fetch("SELECT id, label, url FROM gallery_source ORDER BY created_at")
     result: list[GallerySourceOut] = [
-        GallerySourceOut(id=row["id"], label=row["label"], url=row["url"])
-        for row in rows
+        GallerySourceOut(id=row["id"], label=row["label"], url=row["url"]) for row in rows
     ]
     default_url = request.app.state.settings.gallery_url
     if default_url and not any(s.url == default_url for s in result):
@@ -177,9 +174,7 @@ async def add_gallery_source(
 ) -> GallerySourceOut:
     pool = request.app.state.pool
     url_str = str(body.url)
-    exists = await pool.fetchval(
-        "SELECT 1 FROM gallery_source WHERE url = $1", url_str
-    )
+    exists = await pool.fetchval("SELECT 1 FROM gallery_source WHERE url = $1", url_str)
     if exists:
         raise HTTPException(status_code=409, detail="cette source est déjà enregistrée")
     try:

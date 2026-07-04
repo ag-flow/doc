@@ -21,6 +21,7 @@ _WS = "test-ws"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 async def _setup_agile_block(
     pool: asyncpg.Pool,
 ) -> tuple[uuid.UUID, dict[str, uuid.UUID]]:
@@ -28,9 +29,7 @@ async def _setup_agile_block(
 
     Retourne (block_id, {slug: type_id}).
     """
-    epic = await type_svc.create_type(
-        pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic")
-    )
+    epic = await type_svc.create_type(pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     feature = await type_svc.create_type(
         pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature", parent_slug="epic")
     )
@@ -46,7 +45,10 @@ async def _setup_agile_block(
     block_id: uuid.UUID = await pool.fetchval(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4) RETURNING id",
-        "agile-board", "Agile Board", epic.id, wk,
+        "agile-board",
+        "Agile Board",
+        epic.id,
+        wk,
     )
     return block_id, {
         "epic": epic.id,
@@ -58,6 +60,7 @@ async def _setup_agile_block(
 
 # ── DoD 2 : bloc 'epic', Add racine → crée un epic (implicite) ────────────────
 
+
 async def test_dod2_create_root_document_implicit_type(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
@@ -66,7 +69,9 @@ async def test_dod2_create_root_document_implicit_type(
 
     # Racine : 1 seul type autorisé (epic) → pas besoin de spécifier
     doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Mon Epic", slug="mon-epic"),
     )
     assert doc.functional_type_slug == "epic"
@@ -75,13 +80,13 @@ async def test_dod2_create_root_document_implicit_type(
     assert doc.version == 1
 
 
-async def test_dod2_list_block_after_creation(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+async def test_dod2_list_block_after_creation(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 2 : après création, list_block_documents retourne le document."""
     block_id, _ = await _setup_agile_block(db_pool)
     doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic 1", slug="epic-1"),
     )
     docs = await doc_svc.list_block_documents(db_pool, _WS, "agile-board")
@@ -89,9 +94,7 @@ async def test_dod2_list_block_after_creation(
     assert doc.doc_technical_key in ids
 
 
-async def test_dod2_allowed_types_root(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+async def test_dod2_allowed_types_root(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 2 : allowed_types à la racine retourne [epic] (type du bloc)."""
     await _setup_agile_block(db_pool)
     types = await doc_svc.allowed_types(db_pool, _WS, "agile-board", parent_id=None)
@@ -100,6 +103,7 @@ async def test_dod2_allowed_types_root(
 
 # ── DoD 3 : sous feature, types autorisés = story|atdd ───────────────────────
 
+
 async def test_dod3_allowed_types_under_feature(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
@@ -107,14 +111,19 @@ async def test_dod3_allowed_types_under_feature(
     await _setup_agile_block(db_pool)
     # Créer un epic racine
     epic_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic parent", slug="epic-parent"),
     )
     # Créer un feature sous l'epic
     feature_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Feature 1", slug="feature-1",
+            title="Feature 1",
+            slug="feature-1",
             parent_id=epic_doc.doc_technical_key,
         ),
     )
@@ -132,21 +141,29 @@ async def test_dod3_create_without_type_under_feature_rejected(
     """DoD 3 : sous feature, Add sans type → 422 (2+ choix)."""
     await _setup_agile_block(db_pool)
     epic_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic", slug="epic"),
     )
     feature_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Feature", slug="feature",
+            title="Feature",
+            slug="feature",
             parent_id=epic_doc.doc_technical_key,
         ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.create_document_in_block(
-            db_pool, _WS, "agile-board",
+            db_pool,
+            _WS,
+            "agile-board",
             DocumentCreateInBlock(
-                title="Ambiguous", slug="ambiguous",
+                title="Ambiguous",
+                slug="ambiguous",
                 parent_id=feature_doc.doc_technical_key,
             ),
         )
@@ -159,20 +176,28 @@ async def test_dod3_create_story_under_feature_ok(
     """DoD 3 : sous feature, Add type=story → OK."""
     await _setup_agile_block(db_pool)
     epic_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic", slug="epic"),
     )
     feature_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Feature", slug="feature",
+            title="Feature",
+            slug="feature",
             parent_id=epic_doc.doc_technical_key,
         ),
     )
     story_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Story 1", slug="story-1",
+            title="Story 1",
+            slug="story-1",
             parent_id=feature_doc.doc_technical_key,
             functional_type_slug="story",
         ),
@@ -187,21 +212,29 @@ async def test_dod3_create_epic_under_feature_rejected(
     """DoD 3 : sous feature, Add type=epic → 422 (contrainte miroir)."""
     await _setup_agile_block(db_pool)
     epic_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic", slug="epic"),
     )
     feature_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Feature", slug="feature",
+            title="Feature",
+            slug="feature",
             parent_id=epic_doc.doc_technical_key,
         ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.create_document_in_block(
-            db_pool, _WS, "agile-board",
+            db_pool,
+            _WS,
+            "agile-board",
             DocumentCreateInBlock(
-                title="Bad Epic", slug="bad-epic",
+                title="Bad Epic",
+                slug="bad-epic",
                 parent_id=feature_doc.doc_technical_key,
                 functional_type_slug="epic",
             ),
@@ -211,35 +244,45 @@ async def test_dod3_create_epic_under_feature_rejected(
 
 # ── DoD 4 : sous story (feuille) → 422 ───────────────────────────────────────
 
-async def test_dod4_create_under_leaf_rejected(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+
+async def test_dod4_create_under_leaf_rejected(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 4 : sous story (feuille, 0 types autorisés) → 422."""
     await _setup_agile_block(db_pool)
     epic_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic", slug="epic"),
     )
     feature_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Feature", slug="feature",
+            title="Feature",
+            slug="feature",
             parent_id=epic_doc.doc_technical_key,
         ),
     )
     story_doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Story", slug="story",
+            title="Story",
+            slug="story",
             parent_id=feature_doc.doc_technical_key,
             functional_type_slug="story",
         ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.create_document_in_block(
-            db_pool, _WS, "agile-board",
+            db_pool,
+            _WS,
+            "agile-board",
             DocumentCreateInBlock(
-                title="Under Story", slug="under-story",
+                title="Under Story",
+                slug="under-story",
                 parent_id=story_doc.doc_technical_key,
             ),
         )
@@ -247,6 +290,7 @@ async def test_dod4_create_under_leaf_rejected(
 
 
 # ── DoD 5 : parent d'un autre bloc → 422 ─────────────────────────────────────
+
 
 async def test_dod5_parent_from_other_block_rejected(
     db_pool: asyncpg.Pool, test_workspace: dict
@@ -261,21 +305,29 @@ async def test_dod5_parent_from_other_block_rejected(
     await db_pool.execute(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4)",
-        "other-agile-board", "Other Board", type_ids["epic"], wk,
+        "other-agile-board",
+        "Other Board",
+        type_ids["epic"],
+        wk,
     )
 
     # Créer un epic dans le deuxième bloc
     other_epic = await doc_svc.create_document_in_block(
-        db_pool, _WS, "other-agile-board",
+        db_pool,
+        _WS,
+        "other-agile-board",
         DocumentCreateInBlock(title="Epic in other block", slug="epic-in-other-block"),
     )
 
     # Tenter d'ajouter une feature dans agile-board avec parent dans other-agile-board
     with pytest.raises(HTTPException) as exc:
         await doc_svc.create_document_in_block(
-            db_pool, _WS, "agile-board",
+            db_pool,
+            _WS,
+            "agile-board",
             DocumentCreateInBlock(
-                title="Feature cross-block", slug="feature-cross-block",
+                title="Feature cross-block",
+                slug="feature-cross-block",
                 parent_id=other_epic.doc_technical_key,
             ),
         )
@@ -284,32 +336,42 @@ async def test_dod5_parent_from_other_block_rejected(
 
 # ── DoD 2 bis : instanciation valeurs par défaut ──────────────────────────────
 
-async def test_dod2_default_value_instantiated(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+
+async def test_dod2_default_value_instantiated(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 2 : après création, statut par défaut 'a_cadrer' est instancié dans properties_values."""
     block_id, _ = await _setup_agile_block(db_pool)
 
     # Ajouter une propriété statut de type restricted_list sur epic
     await prop_svc.create_def(
-        db_pool, _WS, "epic",
+        db_pool,
+        _WS,
+        "epic",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
 
     # Ajouter un allowed_value puis définir comme default
     from docflow.schemas.properties import PropertiesDefUpdate
+
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "epic", "statut",
+        db_pool,
+        _WS,
+        "epic",
+        "statut",
         AllowedValueCreate(slug="a-cadrer", label="À cadrer", position=0),
     )
     await prop_svc.update_def(
-        db_pool, _WS, "epic", "statut",
+        db_pool,
+        _WS,
+        "epic",
+        "statut",
         PropertiesDefUpdate(default_value="a-cadrer"),
     )
 
     # Créer un document → doit instancier le statut par défaut
     doc = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="Epic avec statut", slug="epic-avec-statut"),
     )
 
@@ -332,46 +394,64 @@ async def test_dod2_default_value_instantiated(
 
 # ── DoD 5 : filtre préservant le chemin ───────────────────────────────────────
 
-async def test_dod5_filter_path_preserving(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+
+async def test_dod5_filter_path_preserving(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """DoD 5 : filtre statut=done sur atdd → atdd + ses ancêtres (feature, epic) visibles."""
     block_id, type_ids = await _setup_agile_block(db_pool)
 
     # Ajouter statut sur atdd (type feuille)
     await prop_svc.create_def(
-        db_pool, _WS, "atdd",
+        db_pool,
+        _WS,
+        "atdd",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "atdd", "statut",
+        db_pool,
+        _WS,
+        "atdd",
+        "statut",
         AllowedValueCreate(slug="done", label="Terminé", position=1),
     )
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "atdd", "statut",
+        db_pool,
+        _WS,
+        "atdd",
+        "statut",
         AllowedValueCreate(slug="in-progress", label="En cours", position=0),
     )
 
     # Créer l'arbre : epic ← feature ← atdd(done) + story(in-progress)
     epic = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board", DocumentCreateInBlock(title="E1", slug="e1"),
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(title="E1", slug="e1"),
     )
     feature = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(title="F1", slug="f1", parent_id=epic.doc_technical_key),
     )
     atdd_done = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="ATDD done", slug="atdd-done",
+            title="ATDD done",
+            slug="atdd-done",
             parent_id=feature.doc_technical_key,
             functional_type_slug="atdd",
         ),
     )
     story_ip = await doc_svc.create_document_in_block(
-        db_pool, _WS, "agile-board",
+        db_pool,
+        _WS,
+        "agile-board",
         DocumentCreateInBlock(
-            title="Story in-progress", slug="story-in-progress",
+            title="Story in-progress",
+            slug="story-in-progress",
             parent_id=feature.doc_technical_key,
             functional_type_slug="story",
         ),
@@ -382,32 +462,36 @@ async def test_dod5_filter_path_preserving(
         "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
     )
     pd_id: uuid.UUID = await db_pool.fetchval(
-        "SELECT id FROM properties_defs WHERE slug = 'statut' "
-        "AND functional_type_ref = $1",
+        "SELECT id FROM properties_defs WHERE slug = 'statut' AND functional_type_ref = $1",
         type_ids["atdd"],
     )
     av_done_id: uuid.UUID = await db_pool.fetchval(
-        "SELECT id FROM properties_allowed_values WHERE slug = 'done' "
-        "AND property_def_ref = $1",
+        "SELECT id FROM properties_allowed_values WHERE slug = 'done' AND property_def_ref = $1",
         pd_id,
     )
     pv_id: uuid.UUID = await db_pool.fetchval(
         "INSERT INTO properties_values "
         "(document_ref, property_def_ref, version, workspace_technical_key) "
         "VALUES ($1, $2, 1, $3) RETURNING id",
-        atdd_done.doc_technical_key, pd_id, wk,
+        atdd_done.doc_technical_key,
+        pd_id,
+        wk,
     )
     await db_pool.execute(
         "INSERT INTO properties_value_version "
         "(property_value_ref, version_number, value, allowed_value_ref) "
         "VALUES ($1, 1, NULL, $2)",
-        pv_id, av_done_id,
+        pv_id,
+        av_done_id,
     )
 
     # Filtre statut=done → doit retourner atdd_done + feature + epic (ancêtres) mais PAS story
     filtered = await list_block_documents(
-        db_pool, _WS, "agile-board",
-        prop_slug="statut", allowed_value_slug="done",
+        db_pool,
+        _WS,
+        "agile-board",
+        prop_slug="statut",
+        allowed_value_slug="done",
     )
     filtered_ids = {d.doc_technical_key for d in filtered}
 
@@ -423,7 +507,10 @@ async def test_dod5_filter_no_match_returns_empty(
     """DoD 5 : filtre sur valeur inexistante → liste vide."""
     await _setup_agile_block(db_pool)
     filtered = await list_block_documents(
-        db_pool, _WS, "agile-board",
-        prop_slug="statut", allowed_value_slug="inexistant",
+        db_pool,
+        _WS,
+        "agile-board",
+        prop_slug="statut",
+        allowed_value_slug="inexistant",
     )
     assert filtered == []

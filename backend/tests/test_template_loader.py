@@ -38,9 +38,7 @@ def test_load_templates_résumé_correct(tmp_path: pathlib.Path) -> None:
 
 
 def test_load_templates_fichier_cassé_ignoré(tmp_path: pathlib.Path) -> None:
-    (tmp_path / "good.yaml").write_text(
-        yaml.dump(_VALID_TEMPLATE, allow_unicode=True)
-    )
+    (tmp_path / "good.yaml").write_text(yaml.dump(_VALID_TEMPLATE, allow_unicode=True))
     (tmp_path / "broken.yaml").write_text("version: 1\n  invalid: yaml: [[[")
     result = load_templates(tmp_path)
     assert len(result) == 1
@@ -70,5 +68,11 @@ def test_load_agile_basic_résumé() -> None:
     assert info.version == 2
     assert info.concrete_types == 7
     assert set(info.type_slugs) == {
-        "personne", "epic", "feature", "story", "atdd", "bug", "enabler",
+        "personne",
+        "epic",
+        "feature",
+        "story",
+        "atdd",
+        "bug",
+        "enabler",
     }

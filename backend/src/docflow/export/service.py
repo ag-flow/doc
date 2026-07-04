@@ -2,6 +2,7 @@
 
 Projette le store en arbre de fichiers markdown sans modifier la base.
 """
+
 from __future__ import annotations
 
 import io
@@ -49,6 +50,7 @@ def _unique_path(base: str, seen: set[str], suffix: str) -> str:
 
 # ── Sérialisation YAML ────────────────────────────────────────────────────────
 
+
 def _yaml_value(prop_type: str, value: str | None, allowed_label: str | None) -> object:
     """Convertit une valeur de propriété en scalaire YAML."""
     if prop_type == "restricted_list":
@@ -92,13 +94,12 @@ def _build_frontmatter(
 
 # ── Réécriture des liens ──────────────────────────────────────────────────────
 
-_DOCFLOW_LINK_RE = re.compile(
-    r"\[([^\]]*)\]\(docflow://doc/([0-9a-f-]{36})\)"
-)
+_DOCFLOW_LINK_RE = re.compile(r"\[([^\]]*)\]\(docflow://doc/([0-9a-f-]{36})\)")
 
 
 def _rewrite_links(content: str, in_scope: dict[uuid.UUID, str]) -> str:
     """Remplace les liens docflow:// in-scope par [[wikilink]], conserve les autres."""
+
     def _replace(m: re.Match[str]) -> str:
         try:
             target_id = uuid.UUID(m.group(2))
@@ -112,6 +113,7 @@ def _rewrite_links(content: str, in_scope: dict[uuid.UUID, str]) -> str:
 
 
 # ── Projection arbre → fichiers ───────────────────────────────────────────────
+
 
 async def build_export_zip(
     pool: asyncpg.Pool,
@@ -238,7 +240,8 @@ async def build_export_zip(
             bloc_folder = f"{ws_slug}/{br['slug']}"
             # Racines = documents du bloc sans parent (ou avec parent hors-bloc)
             root_ids = [
-                did for did in children_of.get(None, [])
+                did
+                for did in children_of.get(None, [])
                 if docs_by_id.get(did, {}).get("data_block_ref") == bloc_id
             ]
             # Plus les documents du bloc avec parent hors-scope de ce bloc

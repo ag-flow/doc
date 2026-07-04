@@ -37,9 +37,7 @@ def write_doc(
     return md_path, json_path
 
 
-def expected_file_paths(
-    workspace_slug: str, docs: list[dict[str, Any]]
-) -> set[str]:
+def expected_file_paths(workspace_slug: str, docs: list[dict[str, Any]]) -> set[str]:
     """Chemins relatifs POSIX attendus (.md/.json) de TOUS les documents du workspace.
 
     Les slugs ne sont uniques que par fratrie (cf. 0030_document_slug.sql) :

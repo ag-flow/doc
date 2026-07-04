@@ -18,12 +18,14 @@ def _key() -> str:
 
 # ── Fixtures DB ───────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 async def ws(db_pool: asyncpg.Pool) -> dict[str, Any]:
     row = await db_pool.fetchrow(
         "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
         "RETURNING workspace_technical_key, slug",
-        "hook-ws", "Hook Workspace",
+        "hook-ws",
+        "Hook Workspace",
     )
     assert row is not None
     yield dict(row)
@@ -31,6 +33,7 @@ async def ws(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 # ── Tests CRUD ────────────────────────────────────────────────────────────────
+
 
 async def test_create_and_list_webhook(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None:
     key = _key()
@@ -77,19 +80,23 @@ async def test_headers_encrypted_at_rest(db_pool: asyncpg.Pool, ws: dict[str, An
     assert raw is not None
     assert b"topsecret" not in raw  # pas en clair
     import json as _json
-    with pytest.raises(Exception):
+
+    with pytest.raises(_json.JSONDecodeError):
         _json.loads(raw)  # ce n'est pas du JSON valide (c'est chiffré)
 
 
 async def test_update_webhook(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None:
     key = _key()
     wh = await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(label="Before", url="https://a.com/", events=["document.created"]),
         encryption_key=key,
     )
     updated = await svc.update_webhook(
-        db_pool, "hook-ws", wh.id,
+        db_pool,
+        "hook-ws",
+        wh.id,
         WebhookUpdate(label="After", active=False),
         encryption_key=key,
     )
@@ -100,7 +107,8 @@ async def test_update_webhook(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None
 async def test_delete_webhook(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None:
     key = _key()
     wh = await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(label="Del", url="https://b.com/", events=[]),
         encryption_key=key,
     )
@@ -114,7 +122,8 @@ async def test_create_webhook_without_headers_no_key(
 ) -> None:
     """Pas de clé, pas de headers → OK."""
     wh = await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(label="NoKey", url="https://c.com/", events=[]),
         encryption_key=None,
     )
@@ -125,9 +134,11 @@ async def test_create_webhook_with_headers_requires_key(
     db_pool: asyncpg.Pool, ws: dict[str, Any]
 ) -> None:
     from fastapi import HTTPException
+
     with pytest.raises(HTTPException) as exc:
         await svc.create_webhook(
-            db_pool, "hook-ws",
+            db_pool,
+            "hook-ws",
             WebhookCreate(label="Bad", url="https://d.com/", headers={"H": "v"}, events=[]),
             encryption_key=None,
         )
@@ -136,6 +147,7 @@ async def test_create_webhook_with_headers_requires_key(
 
 # ── Test fire-and-forget ──────────────────────────────────────────────────────
 
+
 async def test_emit_event_fires_post(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None:
     """DoD 29.2 — abonnement created+updated → POST reçu avec substitution {id_document}."""
     key = _key()
@@ -143,7 +155,8 @@ async def test_emit_event_fires_post(db_pool: asyncpg.Pool, ws: dict[str, Any]) 
 
     # Abonnement actif
     wh = await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(
             label="Fire",
             url="https://example.com/{id_document}",
@@ -185,12 +198,14 @@ async def test_emit_event_external_down_does_not_raise(
     """DoD 29.3 — externe injoignable → pas d'exception propagée."""
     key = _key()
     await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(label="Down", url="https://nowhere.invalid/", events=["document.created"]),
         encryption_key=key,
     )
 
     import httpx as httpx_mod
+
     with patch("httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
         instance.__aenter__ = AsyncMock(return_value=instance)
@@ -200,19 +215,20 @@ async def test_emit_event_external_down_does_not_raise(
 
         # Ne doit pas lever d'exception
         await svc.emit_event(
-            db_pool, "hook-ws", "document.created",
+            db_pool,
+            "hook-ws",
+            "document.created",
             {"id": str(uuid.uuid4()), "title": "T", "type": "page", "version": 1},
             encryption_key=key,
         )
 
 
-async def test_test_webhook_returns_status_code(
-    db_pool: asyncpg.Pool, ws: dict[str, Any]
-) -> None:
+async def test_test_webhook_returns_status_code(db_pool: asyncpg.Pool, ws: dict[str, Any]) -> None:
     """DoD 29.6 — test webhook renvoie le code HTTP."""
     key = _key()
     wh = await svc.create_webhook(
-        db_pool, "hook-ws",
+        db_pool,
+        "hook-ws",
         WebhookCreate(label="Test", url="https://example.com/", events=["document.created"]),
         encryption_key=key,
     )

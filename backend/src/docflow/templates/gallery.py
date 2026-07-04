@@ -58,9 +58,7 @@ def _parse_tpl(yaml_text: str) -> tuple[Template, list[str]]:
     return tpl, [r.slug for r in resolved]
 
 
-async def _fetch_one(
-    client: httpx.AsyncClient, base: str, slug: str
-) -> RemoteTemplateData | None:
+async def _fetch_one(client: httpx.AsyncClient, base: str, slug: str) -> RemoteTemplateData | None:
     try:
         yaml_text = await _fetch(client, f"{base}/{slug}.yaml")
         tpl, type_slugs = _parse_tpl(yaml_text)
@@ -82,9 +80,7 @@ async def fetch_gallery(source_url: str) -> list[RemoteTemplateData]:
     async with httpx.AsyncClient() as client:
         toc = await _fetch(client, f"{base}/toc.txt")
         slugs = [
-            line.strip()
-            for line in toc.splitlines()
-            if line.strip() and not line.startswith("#")
+            line.strip() for line in toc.splitlines() if line.strip() and not line.startswith("#")
         ]
         results = await asyncio.gather(*[_fetch_one(client, base, s) for s in slugs])
     return [r for r in results if r is not None]

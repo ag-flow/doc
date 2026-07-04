@@ -1,4 +1,5 @@
 """Substitution des variables de template de contenu (spec 35 — MTPL)."""
+
 from __future__ import annotations
 
 import datetime

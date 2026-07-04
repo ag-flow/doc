@@ -15,9 +15,7 @@ import asyncpg
 from docflow.backup.git_files import SLUG_SAFE
 
 
-async def fetch_doc(
-    conn: asyncpg.Connection, doc_id: uuid.UUID
-) -> dict[str, Any] | None:
+async def fetch_doc(conn: asyncpg.Connection, doc_id: uuid.UUID) -> dict[str, Any] | None:
     """Retourne les données brutes d'un document avec son contenu et ses propriétés."""
     row = await conn.fetchrow(
         """

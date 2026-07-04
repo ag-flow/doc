@@ -3,19 +3,35 @@
 Traduit une liste de prédicats JSON en fragments SQL paramétrés (AND-only).
 Jamais d'interpolation de chaîne — tout passe par $n.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 # ── Opérateurs valides par type de champ ─────────────────────────────────────
 
-_SCALAR_OPS: frozenset[str] = frozenset({
-    "=", "!=", "<", "<=", ">", ">=",
-    "contains", "is_empty", "not_empty",
-    "before", "after", "on", "between",
-    "is_true", "is_false",
-    "is", "is_not", "in",
-})
+_SCALAR_OPS: frozenset[str] = frozenset(
+    {
+        "=",
+        "!=",
+        "<",
+        "<=",
+        ">",
+        ">=",
+        "contains",
+        "is_empty",
+        "not_empty",
+        "before",
+        "after",
+        "on",
+        "between",
+        "is_true",
+        "is_false",
+        "is",
+        "is_not",
+        "in",
+    }
+)
 
 
 def _validate_op(op: str) -> None:
@@ -32,6 +48,7 @@ def _validate_field(field: str) -> None:
 
 
 # ── Génération SQL ────────────────────────────────────────────────────────────
+
 
 class FilterBuilder:
     """Construit un WHERE SQL entièrement paramétré depuis une liste de prédicats.

@@ -31,15 +31,18 @@ def _load(path: pathlib.Path) -> Template:
 
 # ── Modèles pydantic ─────────────────────────────────────────────────────────
 
+
 def test_template_model_extra_field_rejected() -> None:
     with pytest.raises(ValueError):
-        Template.model_validate({
-            "version": 1,
-            "template": "t",
-            "label": "T",
-            "functional_types": [],
-            "unexpected": True,
-        })
+        Template.model_validate(
+            {
+                "version": 1,
+                "template": "t",
+                "label": "T",
+                "functional_types": [],
+                "unexpected": True,
+            }
+        )
 
 
 def test_prop_def_type_enum() -> None:
@@ -56,12 +59,16 @@ def test_prop_def_type_accepts_url_and_float() -> None:
 
 # ── Résolution d'héritage ────────────────────────────────────────────────────
 
+
 def test_resolve_excludes_abstract() -> None:
     tpl = Template(
-        version=1, template="t", label="T",
+        version=1,
+        template="t",
+        label="T",
         functional_types=[
             TypeDef(
-                slug="base", abstract=True,
+                slug="base",
+                abstract=True,
                 properties=[PropDef(slug="p", label="P", type="text")],
             ),
             TypeDef(slug="concrete", inherit="base"),
@@ -75,14 +82,24 @@ def test_resolve_excludes_abstract() -> None:
 
 def test_resolve_override_by_slug() -> None:
     tpl = Template(
-        version=1, template="t", label="T",
+        version=1,
+        template="t",
+        label="T",
         functional_types=[
-            TypeDef(slug="base", abstract=True, properties=[
-                PropDef(slug="statut", label="Statut base", type="restricted_list"),
-            ]),
-            TypeDef(slug="child", inherit="base", properties=[
-                PropDef(slug="statut", label="Statut custom", type="restricted_list"),
-            ]),
+            TypeDef(
+                slug="base",
+                abstract=True,
+                properties=[
+                    PropDef(slug="statut", label="Statut base", type="restricted_list"),
+                ],
+            ),
+            TypeDef(
+                slug="child",
+                inherit="base",
+                properties=[
+                    PropDef(slug="statut", label="Statut custom", type="restricted_list"),
+                ],
+            ),
         ],
     )
     resolved = resolve(tpl)
@@ -93,7 +110,9 @@ def test_resolve_override_by_slug() -> None:
 
 def test_resolve_cycle_detected() -> None:
     tpl = Template(
-        version=1, template="t", label="T",
+        version=1,
+        template="t",
+        label="T",
         functional_types=[
             TypeDef(slug="a", inherit="b"),
             TypeDef(slug="b", inherit="a"),
@@ -105,7 +124,9 @@ def test_resolve_cycle_detected() -> None:
 
 def test_resolve_unknown_inherit_raises() -> None:
     tpl = Template(
-        version=1, template="t", label="T",
+        version=1,
+        template="t",
+        label="T",
         functional_types=[TypeDef(slug="a", inherit="ghost")],
     )
     with pytest.raises(ValueError, match="ghost"):
@@ -143,6 +164,7 @@ def test_agile_basic_epic_feature_statut_overridden() -> None:
 
 
 # ── Import (nécessite DB) ────────────────────────────────────────────────────
+
 
 async def test_import_fresh_workspace(db_pool: asyncpg.Pool) -> None:
     await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-test", label="Tpl Test"), None)
@@ -190,7 +212,7 @@ async def test_import_allowed_values_populated(db_pool: asyncpg.Pool) -> None:
         assert count == 4, f"epic.statut devrait avoir 4 allowed_values, got {count}"
 
         async with db_pool.acquire() as conn:
-            # story.statut hérite de base_statusable : 4 valeurs (a_faire, en_cours, en_review, done)
+            # story.statut hérite de base_statusable : 4 valeurs
             count = await conn.fetchval(
                 """
                 SELECT count(*) FROM properties_allowed_values av
@@ -219,7 +241,8 @@ async def test_import_same_version_noop(db_pool: asyncpg.Pool) -> None:
                 JOIN workspace w ON w.workspace_technical_key = wi.workspace_technical_key
                 WHERE w.slug = $1 AND wi.template = $2
                 """,
-                "tpl-noop", tpl.template,
+                "tpl-noop",
+                tpl.template,
             )
 
         report2 = await run_import(db_pool, "tpl-noop", tpl)
@@ -232,7 +255,8 @@ async def test_import_same_version_noop(db_pool: asyncpg.Pool) -> None:
                 JOIN workspace w ON w.workspace_technical_key = wi.workspace_technical_key
                 WHERE w.slug = $1 AND wi.template = $2
                 """,
-                "tpl-noop", tpl.template,
+                "tpl-noop",
+                tpl.template,
             )
         assert before == after  # imported_at inchangé
     finally:
@@ -252,11 +276,13 @@ async def test_import_version_upgrade_additive(db_pool: asyncpg.Pool) -> None:
         raw["version"] = tpl_v1.version + 1
         for td in raw["functional_types"]:
             if td["slug"] == "epic":
-                td.setdefault("properties", []).append({
-                    "slug": "sponsor",
-                    "label": "Sponsor",
-                    "type": "text",
-                })
+                td.setdefault("properties", []).append(
+                    {
+                        "slug": "sponsor",
+                        "label": "Sponsor",
+                        "type": "text",
+                    }
+                )
         tpl_v2 = Template.model_validate(raw)
         report = await run_import(db_pool, "tpl-upgrade", tpl_v2)
         assert report.applied
@@ -268,7 +294,8 @@ async def test_import_version_upgrade_additive(db_pool: asyncpg.Pool) -> None:
                 JOIN workspace w ON w.workspace_technical_key = wi.workspace_technical_key
                 WHERE w.slug = $1 AND wi.template = $2
                 """,
-                "tpl-upgrade", tpl_v2.template,
+                "tpl-upgrade",
+                tpl_v2.template,
             )
         assert version == tpl_v1.version + 1
     finally:
@@ -319,7 +346,8 @@ async def test_import_conflict_blocks_all_writes(db_pool: asyncpg.Pool) -> None:
                 JOIN workspace w ON w.workspace_technical_key = wi.workspace_technical_key
                 WHERE w.slug = $1 AND wi.template = $2
                 """,
-                "tpl-conflict", tpl_v1.template,
+                "tpl-conflict",
+                tpl_v1.template,
             )
         assert version == tpl_v1.version
     finally:
@@ -465,7 +493,8 @@ async def test_import_target_type_change_conflicts(db_pool: asyncpg.Pool) -> Non
                 JOIN workspace w ON w.workspace_technical_key = wi.workspace_technical_key
                 WHERE w.slug = $1 AND wi.template = $2
                 """,
-                "tpl-ref-chg", "ref-test",
+                "tpl-ref-chg",
+                "ref-test",
             )
         assert version == 1  # inchangé
     finally:

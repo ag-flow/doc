@@ -25,9 +25,7 @@ _Auth = Depends(require_authenticated)
 
 
 @router.get("/user/api-profiles", response_model=list[ApiProfileOut])
-async def list_profiles(
-    request: Request, user: AuthUser = _Auth
-) -> list[ApiProfileOut]:
+async def list_profiles(request: Request, user: AuthUser = _Auth) -> list[ApiProfileOut]:
     return await service.list_profiles(request.app.state.pool, user.id)
 
 
@@ -76,16 +74,12 @@ async def set_scopes(
     "/user/api-profiles/{profile_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_profile(
-    profile_id: uuid.UUID, request: Request, user: AuthUser = _Auth
-) -> None:
+async def delete_profile(profile_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
     await service.delete_profile(request.app.state.pool, user.id, profile_id)
 
 
 @router.get("/user/api-keys", response_model=list[ApiKeyOut])
-async def list_keys(
-    request: Request, user: AuthUser = _Auth
-) -> list[ApiKeyOut]:
+async def list_keys(request: Request, user: AuthUser = _Auth) -> list[ApiKeyOut]:
     return await service.list_keys(request.app.state.pool, user.id)
 
 
@@ -101,7 +95,5 @@ async def generate_key(
 
 
 @router.delete("/user/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_key(
-    key_id: uuid.UUID, request: Request, user: AuthUser = _Auth
-) -> None:
+async def revoke_key(key_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
     await service.revoke_key(request.app.state.pool, user.id, key_id)

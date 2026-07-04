@@ -131,7 +131,8 @@ async def test_workspace(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, objec
     row = await db_pool.fetchrow(
         "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
         "RETURNING workspace_technical_key, slug, label",
-        "test-ws", "Test Workspace",
+        "test-ws",
+        "Test Workspace",
     )
     assert row is not None
     yield dict(row)
@@ -153,7 +154,9 @@ async def test_block(
     type_row = await db_pool.fetchrow(
         "INSERT INTO functional_type (slug, label, workspace_technical_key) "
         "VALUES ($1, $2, $3) RETURNING id, slug",
-        "root-type", "Root Type", wk,
+        "root-type",
+        "Root Type",
+        wk,
     )
     assert type_row is not None
     type_id: uuid.UUID = type_row["id"]
@@ -163,7 +166,10 @@ async def test_block(
     block_row = await db_pool.fetchrow(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4) RETURNING id, slug",
-        "test-block", "Test Block", type_id, wk,
+        "test-block",
+        "Test Block",
+        type_id,
+        wk,
     )
     assert block_row is not None
 

@@ -45,6 +45,7 @@ def _require_identity() -> AuthUser:
         raise RuntimeError("identité de session MCP indisponible")
     return user
 
+
 _TOOLS: list[Tool] = [
     Tool(
         name="list_workspaces",
@@ -147,8 +148,7 @@ _TOOLS: list[Tool] = [
                 "functional_type_slug": {
                     "type": "string",
                     "description": (
-                        "Type fonctionnel à associer (optionnel, "
-                        "doit exister dans le workspace)"
+                        "Type fonctionnel à associer (optionnel, doit exister dans le workspace)"
                     ),
                 },
             },
@@ -263,15 +263,13 @@ _TOOLS: list[Tool] = [
                 "allowed_value_slug": {
                     "type": "string",
                     "description": (
-                        "Slug de la valeur autorisée — "
-                        "pour propriétés restricted_list uniquement"
+                        "Slug de la valeur autorisée — pour propriétés restricted_list uniquement"
                     ),
                 },
                 "expected_version": {
                     "type": "integer",
                     "description": (
-                        "Version attendue pour concurrence optimiste "
-                        "(0 = désactivé, défaut)"
+                        "Version attendue pour concurrence optimiste (0 = désactivé, défaut)"
                     ),
                     "default": 0,
                 },
@@ -635,9 +633,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     except HTTPException as e:
         return _text({"error": e.detail})
 
-    return _text(
-        {"created": True, "id": str(doc.doc_technical_key), "title": doc.title}
-    )
+    return _text({"created": True, "id": str(doc.doc_technical_key), "title": doc.title})
 
 
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -803,9 +799,7 @@ def _find_template(template_slug: str) -> object:
     raise ValueError(f"template '{template_slug}' introuvable")
 
 
-async def _create_workspace(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
     from pydantic import ValidationError
 
@@ -834,9 +828,7 @@ async def _create_workspace(
     )
 
 
-async def _import_template(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from docflow.templates.importer import (
         ImportConflictError,
         VersionConflictError,
@@ -867,9 +859,7 @@ async def _import_template(
     )
 
 
-async def _create_block(
-    pool: asyncpg.Pool, args: dict[str, object]
-) -> list[TextContent]:
+async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
     from pydantic import ValidationError
 

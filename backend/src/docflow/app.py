@@ -144,9 +144,7 @@ async def health() -> JSONResponse:
         return JSONResponse({"status": "ok", "db": result == 1})
     except Exception:
         log.error("health_check_failed", exc_info=True)
-        return JSONResponse(
-            {"status": "error", "detail": "service unavailable"}, status_code=503
-        )
+        return JSONResponse({"status": "error", "detail": "service unavailable"}, status_code=503)
 
 
 # Fichiers statiques du frontend (assets JS/CSS)

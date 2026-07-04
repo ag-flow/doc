@@ -22,9 +22,7 @@ from docflow.backup.git_files import expected_file_paths, find_orphan_files
 from docflow.backup.git_sync import _git_phase
 
 
-def _doc(
-    slug: str | None, parent: uuid.UUID | None = None
-) -> dict[str, Any]:
+def _doc(slug: str | None, parent: uuid.UUID | None = None) -> dict[str, Any]:
     return {"id": uuid.uuid4(), "slug": slug, "parent": parent}
 
 
@@ -89,8 +87,9 @@ def test_find_orphans_by_full_path_not_slug(tmp_path: pathlib.Path) -> None:
     _touch(tmp_path, "ws/feat-1.md")
     _touch(tmp_path, "ws/feat-1.json")
     expected = {"ws/feat-1.md", "ws/feat-1.json"}
-    orphans = {p.relative_to(tmp_path).as_posix()
-               for p in find_orphan_files(tmp_path, "ws", expected)}
+    orphans = {
+        p.relative_to(tmp_path).as_posix() for p in find_orphan_files(tmp_path, "ws", expected)
+    }
     assert orphans == {"ws/epic-1/feat-1.md", "ws/epic-1/feat-1.json"}
 
 
@@ -128,20 +127,31 @@ def _seed_remote(tmp_path: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
 def test_git_phase_reconciles_covered_ws_only(tmp_path: pathlib.Path) -> None:
     """Job instance-wide : seul ws-a a des changements. ws-b (non couvert) ne
     doit JAMAIS être touché ; le doc déplacé de ws-a ne laisse pas de doublon."""
-    remote_dir = _seed_remote(tmp_path, {
-        "ws-a/epic-1.md": "epic", "ws-a/epic-1.json": "{}",
-        "ws-a/epic-1/feat-1.md": "old", "ws-a/epic-1/feat-1.json": "{}",
-        "ws-b/doc-b.md": "b", "ws-b/doc-b.json": "{}",
-    })
+    remote_dir = _seed_remote(
+        tmp_path,
+        {
+            "ws-a/epic-1.md": "epic",
+            "ws-a/epic-1.json": "{}",
+            "ws-a/epic-1/feat-1.md": "old",
+            "ws-a/epic-1/feat-1.json": "{}",
+            "ws-b/doc-b.md": "b",
+            "ws-b/doc-b.json": "{}",
+        },
+    )
     doc = {
-        "title": "Feat 1", "content": "moved", "functional_type_slug": None,
-        "updated_at": datetime.now(tz=UTC), "properties": {},
+        "title": "Feat 1",
+        "content": "moved",
+        "functional_type_slug": None,
+        "updated_at": datetime.now(tz=UTC),
+        "properties": {},
     }
     # feat-1 déplacé à la racine de ws-a ; epic-1 inchangé mais toujours attendu
     reconcile = {
         "ws-a": {
-            "ws-a/epic-1.md", "ws-a/epic-1.json",
-            "ws-a/feat-1.md", "ws-a/feat-1.json",
+            "ws-a/epic-1.md",
+            "ws-a/epic-1.json",
+            "ws-a/feat-1.md",
+            "ws-a/feat-1.json",
         }
     }
     written, deleted, sha = _git_phase(

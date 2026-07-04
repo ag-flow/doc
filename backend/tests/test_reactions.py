@@ -1,4 +1,5 @@
 """Régression : reactions/service.py référençait admin_user (renommé app_user en 0027)."""
+
 from __future__ import annotations
 
 import uuid
@@ -16,7 +17,9 @@ async def _make_user(pool: asyncpg.Pool, email: str, label: str) -> uuid.UUID:
     user_id: uuid.UUID = await pool.fetchval(
         "INSERT INTO app_user (username, email, label, is_admin, validated, source) "
         "VALUES ($1, $2, $3, false, true, 'local') RETURNING id",
-        email, email, label,
+        email,
+        email,
+        label,
     )
     return user_id
 
@@ -29,9 +32,7 @@ async def test_doc_reaction_summary_joins_app_user(
     )
     user_id = await _make_user(db_pool, "liker@example.com", "Liker")
 
-    summary = await react_svc.toggle_doc_reaction(
-        db_pool, _WS, doc.doc_technical_key, user_id, 1
-    )
+    summary = await react_svc.toggle_doc_reaction(db_pool, _WS, doc.doc_technical_key, user_id, 1)
     assert summary.likes == 1
     assert summary.dislikes == 0
     assert summary.my_reaction == 1

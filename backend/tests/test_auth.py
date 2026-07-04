@@ -129,14 +129,15 @@ async def test_setup_creates_admin(
     await db_pool.execute(
         "INSERT INTO app_user (username, email, label, password_hash, is_admin, validated, source)"
         " VALUES ($1, $2, $3, $4, true, true, 'local')",
-        "bootstrap", _BOOTSTRAP_EMAIL, "Bootstrap", hashed,
+        "bootstrap",
+        _BOOTSTRAP_EMAIL,
+        "Bootstrap",
+        hashed,
     )
     count_after: int = await db_pool.fetchval("SELECT COUNT(*) FROM app_user")
     assert count_after == 1
 
-    row = await db_pool.fetchrow(
-        "SELECT email, is_admin, validated, disabled FROM app_user"
-    )
+    row = await db_pool.fetchrow("SELECT email, is_admin, validated, disabled FROM app_user")
     assert row is not None
     assert row["email"] == _BOOTSTRAP_EMAIL
     assert row["is_admin"] is True
@@ -164,9 +165,7 @@ def test_login_wrong_password(
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
-        resp = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": "wrong"}
-        )
+        resp = client.post("/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": "wrong"})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "identifiants invalides"
 
@@ -251,9 +250,7 @@ def test_require_superadmin_rejects_non_admin(
         regular_id = uuid.UUID(r.json()["id"])
 
         regular_token = _regular_token(regular_id, email="regular@test.com")
-        resp = client.get(
-            "/api/admin/users", headers={"Authorization": f"Bearer {regular_token}"}
-        )
+        resp = client.get("/api/admin/users", headers={"Authorization": f"Bearer {regular_token}"})
     assert resp.status_code == 403
 
 
@@ -267,9 +264,7 @@ def test_cannot_disable_last_local_admin(
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         token = _setup_admin(client)
-        admins = client.get(
-            "/api/admin/users", headers={"Authorization": f"Bearer {token}"}
-        ).json()
+        admins = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"}).json()
         last_id = admins[0]["id"]
         resp = client.patch(
             f"/api/admin/users/{last_id}",
@@ -287,9 +282,7 @@ def test_cannot_delete_last_local_admin(
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         token = _setup_admin(client)
-        admins = client.get(
-            "/api/admin/users", headers={"Authorization": f"Bearer {token}"}
-        ).json()
+        admins = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"}).json()
         last_id = admins[0]["id"]
         resp = client.delete(
             f"/api/admin/users/{last_id}",

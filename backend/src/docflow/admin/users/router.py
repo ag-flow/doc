@@ -32,9 +32,7 @@ async def create_user(
 
 
 @router.get("/{user_id}", response_model=AdminUserOut)
-async def get_user(
-    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
-) -> AdminUserOut:
+async def get_user(user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin) -> AdminUserOut:
     return await service.get_user(request.app.state.pool, user_id)
 
 
@@ -60,9 +58,7 @@ async def unvalidate_user(
 
 
 @router.delete("/{user_id}", status_code=204)
-async def delete_user(
-    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
-) -> None:
+async def delete_user(user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin) -> None:
     await service.delete_user(request.app.state.pool, user_id)
 
 

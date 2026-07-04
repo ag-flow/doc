@@ -39,17 +39,13 @@ _JOB_SELECT = """
 
 
 async def _resolve_remote_point(conn: asyncpg.Connection, slug: str) -> uuid.UUID:
-    pid: uuid.UUID | None = await conn.fetchval(
-        "SELECT id FROM remote_point WHERE slug = $1", slug
-    )
+    pid: uuid.UUID | None = await conn.fetchval("SELECT id FROM remote_point WHERE slug = $1", slug)
     if pid is None:
         raise HTTPException(422, f"remote point '{slug}' introuvable")
     return pid
 
 
-async def _resolve_workspace(
-    conn: asyncpg.Connection, slug: str | None
-) -> uuid.UUID | None:
+async def _resolve_workspace(conn: asyncpg.Connection, slug: str | None) -> uuid.UUID | None:
     if slug is None:
         return None
     wid: uuid.UUID | None = await conn.fetchval(
@@ -61,6 +57,7 @@ async def _resolve_workspace(
 
 
 # ── CRUD jobs ─────────────────────────────────────────────────────────────────
+
 
 async def list_jobs(pool: asyncpg.Pool) -> list[BackupJobOut]:
     async with pool.acquire() as conn:
@@ -81,8 +78,14 @@ async def create_job(pool: asyncpg.Pool, body: BackupJobCreate) -> BackupJobOut:
                      git_base_path)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                 """,
-                body.slug, body.label, body.strategy, body.enabled, rp_id,
-                ws_id, body.schedule_cron, body.schedule_every_seconds,
+                body.slug,
+                body.label,
+                body.strategy,
+                body.enabled,
+                rp_id,
+                ws_id,
+                body.schedule_cron,
+                body.schedule_every_seconds,
                 body.git_base_path,
             )
         except asyncpg.UniqueViolationError as e:
@@ -100,9 +103,7 @@ async def get_job(pool: asyncpg.Pool, slug: str) -> BackupJobOut:
     return _job_row(row)
 
 
-async def update_job(
-    pool: asyncpg.Pool, slug: str, body: BackupJobUpdate
-) -> BackupJobOut:
+async def update_job(pool: asyncpg.Pool, slug: str, body: BackupJobUpdate) -> BackupJobOut:
     async with pool.acquire() as conn:
         jid: uuid.UUID | None = await conn.fetchval(
             "SELECT id FROM backup_job WHERE slug = $1", slug
@@ -119,8 +120,13 @@ async def update_job(
                 schedule_every_seconds=$7, git_base_path=$8, updated_at=now()
             WHERE slug=$1
             """,
-            slug, body.label, body.enabled, rp_id,
-            ws_id, body.schedule_cron, body.schedule_every_seconds,
+            slug,
+            body.label,
+            body.enabled,
+            rp_id,
+            ws_id,
+            body.schedule_cron,
+            body.schedule_every_seconds,
             body.git_base_path,
         )
         row = await conn.fetchrow(_JOB_SELECT + " WHERE j.slug = $1", slug)
@@ -130,18 +136,15 @@ async def update_job(
 
 async def delete_job(pool: asyncpg.Pool, slug: str) -> None:
     async with pool.acquire() as conn:
-        deleted = await conn.execute(
-            "DELETE FROM backup_job WHERE slug = $1", slug
-        )
+        deleted = await conn.execute("DELETE FROM backup_job WHERE slug = $1", slug)
     if deleted == "DELETE 0":
         raise HTTPException(404, "job introuvable")
 
 
 # ── Historique d'exécution ────────────────────────────────────────────────────
 
-async def list_runs(
-    pool: asyncpg.Pool, job_slug: str, limit: int = 20
-) -> list[BackupJobRunOut]:
+
+async def list_runs(pool: asyncpg.Pool, job_slug: str, limit: int = 20) -> list[BackupJobRunOut]:
     async with pool.acquire() as conn:
         jid: uuid.UUID | None = await conn.fetchval(
             "SELECT id FROM backup_job WHERE slug = $1", job_slug
@@ -155,12 +158,14 @@ async def list_runs(
             FROM backup_job_run WHERE job_id = $1
             ORDER BY started_at DESC LIMIT $2
             """,
-            jid, limit,
+            jid,
+            limit,
         )
     return [_run_row(r) for r in rows]
 
 
 # ── Lifecycle run (appelé par le worker) ─────────────────────────────────────
+
 
 async def reconcile_orphan_runs(pool: asyncpg.Pool) -> int:
     """Marque en erreur tout run resté `running` (orphelin après crash/redéploiement).
@@ -205,6 +210,11 @@ async def finish_run(
             last_change_seq=$4, files_written=$5, files_deleted=$6, commit_sha=$7
         WHERE id=$1
         """,
-        run_id, status, error_message,
-        last_change_seq, files_written, files_deleted, commit_sha,
+        run_id,
+        status,
+        error_message,
+        last_change_seq,
+        files_written,
+        files_deleted,
+        commit_sha,
     )

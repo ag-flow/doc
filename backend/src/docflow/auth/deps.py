@@ -27,9 +27,7 @@ def _jwt_secret(request: Request) -> str:
     return secret
 
 
-async def _resolve_jwt(
-    request: Request, credentials: HTTPAuthorizationCredentials
-) -> AuthUser:
+async def _resolve_jwt(request: Request, credentials: HTTPAuthorizationCredentials) -> AuthUser:
     try:
         claims = decode_token(credentials.credentials, _jwt_secret(request))
     except ValueError as exc:
@@ -57,14 +55,10 @@ async def _resolve_jwt(
     )
 
 
-async def _resolve_api_key(
-    request: Request, credentials: HTTPAuthorizationCredentials
-) -> AuthUser:
+async def _resolve_api_key(request: Request, credentials: HTTPAuthorizationCredentials) -> AuthUser:
     from docflow.apikeys.service import resolve_api_key
 
-    user, scopes, profile_is_admin = await resolve_api_key(
-        _pool(request), credentials.credentials
-    )
+    user, scopes, profile_is_admin = await resolve_api_key(_pool(request), credentials.credentials)
     request.state.api_key_scopes = scopes
     request.state.api_key_is_admin = profile_is_admin
     return user
@@ -120,9 +114,7 @@ def check_api_key_scope(
     """
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
-    scopes: list[ApiProfileScopeOut] | None = getattr(
-        request.state, "api_key_scopes", None
-    )
+    scopes: list[ApiProfileScopeOut] | None = getattr(request.state, "api_key_scopes", None)
     if scopes is None:
         return  # JWT → accès complet
     if _is_api_key_admin(request):
@@ -159,9 +151,7 @@ def filter_workspaces_by_scope(request: Request, workspaces: list) -> list:  # t
     """Filtre la liste des workspaces selon les scopes de l'API key (sans effet si JWT/admin)."""
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
-    scopes: list[ApiProfileScopeOut] | None = getattr(
-        request.state, "api_key_scopes", None
-    )
+    scopes: list[ApiProfileScopeOut] | None = getattr(request.state, "api_key_scopes", None)
     if scopes is None or _is_api_key_admin(request):
         return workspaces
     allowed = {s.workspace_slug for s in scopes}
@@ -169,14 +159,14 @@ def filter_workspaces_by_scope(request: Request, workspaces: list) -> list:  # t
 
 
 def filter_blocks_by_scope(
-    request: Request, ws_slug: str, blocks: list  # type: ignore[type-arg]
+    request: Request,
+    ws_slug: str,
+    blocks: list,  # type: ignore[type-arg]
 ) -> list:  # type: ignore[type-arg]
     """Filtre la liste des blocs selon les scopes de l'API key (sans effet si JWT/admin)."""
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
-    scopes: list[ApiProfileScopeOut] | None = getattr(
-        request.state, "api_key_scopes", None
-    )
+    scopes: list[ApiProfileScopeOut] | None = getattr(request.state, "api_key_scopes", None)
     if scopes is None or _is_api_key_admin(request):
         return blocks
     ws_scopes = [s for s in scopes if s.workspace_slug == ws_slug]
