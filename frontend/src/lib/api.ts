@@ -494,7 +494,10 @@ export function isSuperAdmin(): boolean {
   const token = getToken()
   if (!token) return false
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]))
+    const segment = token.split('.')[1]
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const payload = JSON.parse(atob(padded))
     return Boolean(payload.is_admin)
   } catch {
     return false

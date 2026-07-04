@@ -1,5 +1,7 @@
 # FE-07 — `isSuperAdmin()` : `atob` échoue sur JWT base64url → UI admin masquée
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : frontend / auth
