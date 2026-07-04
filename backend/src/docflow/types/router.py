@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import check_api_key_scope, require_admin
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import (
     FunctionalTypeCreate,
@@ -22,6 +22,7 @@ async def list_types_rich(
     _: AuthUser = Depends(require_admin),
 ) -> list[FunctionalTypeRich]:
     """Retourne les types avec leurs propriétés et allowed_values."""
+    check_api_key_scope(request, ws_slug)
     return await service.list_types_rich(request.app.state.pool, ws_slug)
 
 
@@ -31,6 +32,7 @@ async def list_types(
     request: Request,
     _: AuthUser = Depends(require_admin),
 ) -> list[FunctionalTypeOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_types(request.app.state.pool, ws_slug)
 
 
@@ -41,6 +43,7 @@ async def create_type(
     request: Request,
     _: AuthUser = Depends(require_admin),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.create_type(request.app.state.pool, ws_slug, body)
 
 
@@ -51,6 +54,7 @@ async def get_type(
     request: Request,
     _: AuthUser = Depends(require_admin),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug)
     return await service.get_type(request.app.state.pool, ws_slug, type_slug)
 
 
@@ -62,6 +66,7 @@ async def update_type(
     request: Request,
     _: AuthUser = Depends(require_admin),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.update_type(request.app.state.pool, ws_slug, type_slug, body)
 
 
@@ -72,4 +77,5 @@ async def delete_type(
     request: Request,
     _: AuthUser = Depends(require_admin),
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     await service.delete_type(request.app.state.pool, ws_slug, type_slug)

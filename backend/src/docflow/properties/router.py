@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import check_api_key_scope, require_admin
 from docflow.properties import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
@@ -31,6 +31,7 @@ _Auth = Depends(require_admin)
 async def list_defs(
     ws_slug: str, type_slug: str, request: Request, _: AuthUser = _Auth
 ) -> list[PropertiesDefOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_defs(request.app.state.pool, ws_slug, type_slug)
 
 
@@ -42,6 +43,7 @@ async def create_def(
     request: Request,
     _: AuthUser = _Auth,
 ) -> PropertiesDefOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.create_def(request.app.state.pool, ws_slug, type_slug, body)
 
 
@@ -49,6 +51,7 @@ async def create_def(
 async def get_def(
     ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
 ) -> PropertiesDefOut:
+    check_api_key_scope(request, ws_slug)
     return await service.get_def(request.app.state.pool, ws_slug, type_slug, prop_slug)
 
 
@@ -61,6 +64,7 @@ async def update_def(
     request: Request,
     _: AuthUser = _Auth,
 ) -> PropertiesDefOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.update_def(request.app.state.pool, ws_slug, type_slug, prop_slug, body)
 
 
@@ -68,6 +72,7 @@ async def update_def(
 async def delete_def(
     ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     await service.delete_def(request.app.state.pool, ws_slug, type_slug, prop_slug)
 
 
@@ -78,6 +83,7 @@ async def delete_def(
 async def list_values(
     ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
 ) -> list[AllowedValueOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_allowed_values(request.app.state.pool, ws_slug, type_slug, prop_slug)
 
 
@@ -90,6 +96,7 @@ async def create_value(
     request: Request,
     _: AuthUser = _Auth,
 ) -> AllowedValueOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.create_allowed_value(
         request.app.state.pool, ws_slug, type_slug, prop_slug, body
     )
@@ -104,6 +111,7 @@ async def get_value(
     request: Request,
     _: AuthUser = _Auth,
 ) -> AllowedValueOut:
+    check_api_key_scope(request, ws_slug)
     return await service.get_allowed_value(
         request.app.state.pool, ws_slug, type_slug, prop_slug, val_slug
     )
@@ -119,6 +127,7 @@ async def update_value(
     request: Request,
     _: AuthUser = _Auth,
 ) -> AllowedValueOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.update_allowed_value(
         request.app.state.pool, ws_slug, type_slug, prop_slug, val_slug, body
     )
@@ -133,6 +142,7 @@ async def delete_value(
     request: Request,
     _: AuthUser = _Auth,
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     await service.delete_allowed_value(
         request.app.state.pool, ws_slug, type_slug, prop_slug, val_slug
     )
@@ -147,6 +157,7 @@ _CSTR = _PROP + "/constraints"
 async def list_constraints(
     ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
 ) -> list[ConstraintOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_constraints(request.app.state.pool, ws_slug, type_slug, prop_slug)
 
 
@@ -159,6 +170,7 @@ async def upsert_constraint(
     request: Request,
     _: AuthUser = _Auth,
 ) -> ConstraintOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.upsert_constraint(
         request.app.state.pool, ws_slug, type_slug, prop_slug, body
     )
@@ -173,4 +185,5 @@ async def delete_constraint(
     request: Request,
     _: AuthUser = _Auth,
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     await service.delete_constraint(request.app.state.pool, ws_slug, type_slug, prop_slug, kind)

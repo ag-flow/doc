@@ -47,7 +47,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [AUTH-02](AUTH-02-oidc-liaison-email-sans-email-verified.md) | ✅ Liaison de compte OIDC par email sans `email_verified` | `oidc/service.py` | **Opus** |
 | [AUTH-03](AUTH-03-anti-lockout-demotion-is-admin.md) | ✅ Anti-lock-out contourné : démotion `is_admin` du dernier admin | `admin/users/service.py` | **Opus** |
 | [AUTH-04](AUTH-04-anti-lockout-devalidation-et-count.md) | ✅ Anti-lock-out : dévalidation + COUNT qui ignore `validated` | `auth/lockout.py`, `admin/users/service.py` | **Opus** |
-| [AUTH-05](AUTH-05-scopes-api-key-non-appliques.md) | Scopes d'API key non appliqués sur documents/properties/types | `documents/router.py`, `properties/router.py`, `types/router.py` | **Opus** |
+| [AUTH-05](AUTH-05-scopes-api-key-non-appliques.md) | ✅ Scopes d'API key non appliqués sur documents/properties/types | `documents/router.py`, `properties/router.py`, `types/router.py` | **Opus** |
 | [AUTH-06](AUTH-06-setup-race-plusieurs-admins.md) | Race au setup : plusieurs admins créés dans la fenêtre d'init | `setup/service.py` | **Opus** |
 | [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) | `require_admin` ne vérifie aucun droit admin | `auth/deps.py` (+ surfaces MCP/admin) | **Fable** |
 | [INT-01](fixed/INT-01-path-traversal-template-slug-gallery.md) | ✅ Path traversal / écriture arbitraire via `template_slug` (galerie) | `templates/gallery.py`, `templates/router.py` | **Sonnet** |

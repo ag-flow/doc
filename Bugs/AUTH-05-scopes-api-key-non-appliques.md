@@ -1,4 +1,10 @@
 # AUTH-05 — Scopes d'API key non appliqués sur documents/properties/types (fail-open)
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+>
+> Hypothèse : documents/properties/types sont des ressources de niveau workspace (pas de
+> `block_slug` dans le chemin), donc `check_api_key_scope(request, ws_slug, write=…)` est
+> appelé sans `block_slug` — une clé restreinte à un bloc précis n'y a donc pas accès, ce
+> qui est le comportement conservateur voulu (cohérent avec la sémantique de la fonction).
 
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
