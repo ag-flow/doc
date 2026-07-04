@@ -1,5 +1,7 @@
 # FE-15 — BlocsAdmin `handleExport` : erreurs HTTP non gérées
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / export

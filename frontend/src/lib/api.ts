@@ -56,6 +56,27 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
   return res.text()
 }
 
+/** Requête retournant un Blob (téléchargement de fichier), avec la même gestion 401 / erreurs que `request`. */
+async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string>),
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  if (res.status === 401) {
+    clearToken()
+    window.location.href = '/login'
+    throw new ApiError(401, null, 'Unauthorized')
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const detail = (body as { detail?: unknown }).detail ?? null
+    throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
+  }
+  return res.blob()
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = {
@@ -88,6 +109,7 @@ export const api = {
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: <T = void>(path: string) => request<T>(path, { method: 'DELETE' }),
+  getBlob: (path: string) => requestBlob(path),
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────

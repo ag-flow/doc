@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react'
 import {
-  api, docsApi, referencesApi,
+  api, ApiError, docsApi, referencesApi,
   type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
 } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
@@ -217,24 +217,18 @@ export function BlocsAdmin() {
 
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
 
-  const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') + '/api'
-
   function handleExport() {
-    const url = `${BASE_URL}/workspaces/${wsSlug}/export?scope=workspace`
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${wsSlug}.zip`
-    // Injecte le token en Authorization (fetch redirection non supportée)
-    // Alternative simple : ouvrir en nouvel onglet (le token est Bearer)
-    // Pour un téléchargement propre avec auth, on fetch puis crée un blob.
-    void fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('docflow_token') ?? ''}` } })
-      .then((r) => r.blob())
+    setApiError('')
+    void api.getBlob(`/workspaces/${wsSlug}/export?scope=workspace`)
       .then((blob) => {
         const blobUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
         a.href = blobUrl
+        a.download = `${wsSlug}.zip`
         a.click()
         URL.revokeObjectURL(blobUrl)
       })
+      .catch((e) => setApiError(e instanceof ApiError ? e.message : t('error.generic')))
   }
 
   return (
