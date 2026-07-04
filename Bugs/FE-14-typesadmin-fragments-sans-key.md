@@ -1,5 +1,7 @@
 # FE-14 — TypesAdmin : fragments sans `key`
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / TypesAdmin

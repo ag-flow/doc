@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -181,9 +181,8 @@ export function TypesAdmin() {
         </thead>
         <tbody>
           {types.map((type) => (
-            <>
+            <Fragment key={type.slug}>
               <tr
-                key={type.slug}
                 className="border-b hover:bg-gray-50 cursor-pointer"
                 onClick={() => setExpandedType((v) => (v === type.slug ? null : type.slug))}
                 data-testid={`type-row-${type.slug}`}
@@ -208,13 +207,13 @@ export function TypesAdmin() {
                 </td>
               </tr>
               {expandedType === type.slug && (
-                <tr key={`${type.slug}-props`}>
+                <tr>
                   <td colSpan={4} className="p-0">
                     <TypePropertiesPanel ws={ws!} type={type} />
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
