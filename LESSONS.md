@@ -1,5 +1,8 @@
 # LESSONS — docflow
 
+## [tests] Pytest conteneurisé : monter tout le repo, pas seulement backend/
+Les tests templates lisent `templates/*.yaml` à la racine du repo et GitPython exige le binaire `git`. Monter `/opt/docflow` entier (workdir `backend/`) et installer git dans le conteneur, sinon 14 échecs FileNotFoundError trompeurs.
+
 ## [frontend] SecretInput : toutes les clés à sécuriser utilisent le composant SecretInput
 Chaque champ destiné à stocker un secret (client_secret OIDC, API key, token, password…) doit utiliser le composant `SecretInput` (`components/SecretInput.tsx`) plutôt qu'un `<Input type="password">` brut. Ce composant expose un select "En local | wallet-A | …" + un input : si un wallet est choisi, la valeur produite est `${vault://walletname:/chemin}` ; en local, la valeur brute est stockée chiffrée dans la DB.
 
