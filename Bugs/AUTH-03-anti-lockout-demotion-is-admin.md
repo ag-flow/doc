@@ -1,4 +1,5 @@
 # AUTH-03 — Anti-lock-out contourné : démotion `is_admin` du dernier admin
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
 
 - **Gravité** : 🟠 MAJEUR (viole une exigence non négociable du projet)
 - **Confiance** : haute

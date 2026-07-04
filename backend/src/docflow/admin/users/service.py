@@ -85,7 +85,9 @@ async def update_user(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            if updates.get("disabled") is True:
+            # Toute mutation retirant la qualité d'admin local connectable (désactivation
+            # OU démotion is_admin) doit passer le garde anti-lock-out. Cf. AUTH-03.
+            if updates.get("disabled") is True or updates.get("is_admin") is False:
                 await assert_not_last_local_admin(conn, user_id)
 
             if "email" in updates:
