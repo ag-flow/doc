@@ -1,5 +1,7 @@
 # DEP-03 — Ports publiés sur `0.0.0.0` contournant le TLS
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : déploiement / réseau
