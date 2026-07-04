@@ -51,10 +51,12 @@ PG_PASSWORD="$(cat /data/pg_password.txt)"
 if [[ ! -f /data/.env ]]; then
     echo "  → Génération de /data/.env avec des secrets aléatoires (dev)..."
     JWT_SECRET="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
+    ENCRYPTION_KEY="$(python3 -c "import os, base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")"
     cat > /data/.env <<EOF
 # Généré automatiquement par dev-deploy.sh — NE PAS COMMITTER
 DATABASE_URL=postgresql://docflow:${PG_PASSWORD}@postgres:5432/docflow
 JWT_SECRET=${JWT_SECRET}
+ENCRYPTION_KEY=${ENCRYPTION_KEY}
 LOG_LEVEL=INFO
 EOF
     chmod 600 /data/.env

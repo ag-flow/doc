@@ -1,5 +1,11 @@
 # DEP-06 — `/data/.env` de dev sans `ENCRYPTION_KEY` (divergence dev/prod)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet. Note : `scripts/.env.example`
+> est **conservé** (au lieu d'être supprimé au profit de `deploy/.env.example`) car
+> `CLAUDE.md` et `README.md` le référencent explicitement pour la procédure de dev
+> (cohérent avec le choix fait en DEP-01, qui l'a purgé plutôt que supprimé). Le
+> fichier est corrigé sur place : `ENCRYPTION_KEY` ajoutée, mention JWT 32→64 HEX.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : déploiement / config
