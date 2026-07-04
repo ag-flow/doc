@@ -34,7 +34,9 @@ class BacklinkOut(BaseModel):
     source_id: uuid.UUID
     source_title: str
     source_type: str | None
-    bloc: uuid.UUID | None
+    # Slug du data_block de la source (et non son UUID) : le front en a besoin pour
+    # construire l'URL de navigation vers la source, qui peut appartenir à un autre bloc.
+    bloc: str | None
     target_label: str
 
 
@@ -146,10 +148,11 @@ async def get_backlinks(
             SELECT r.source_ref            AS source_id,
                    src.title               AS source_title,
                    ft.slug                 AS source_type,
-                   src.data_block_ref      AS bloc,
+                   db.slug                 AS bloc,
                    r.target_label
             FROM document_reference r
             JOIN document src         ON src.doc_technical_key = r.source_ref
+            JOIN data_block db        ON db.id = src.data_block_ref
             LEFT JOIN functional_type ft ON ft.id = src.functional_type_ref
             WHERE r.target_ref = $1
               AND r.workspace_technical_key = $2

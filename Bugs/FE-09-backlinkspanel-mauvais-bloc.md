@@ -1,5 +1,9 @@
 # FE-09 — BacklinksPanel : navigation avec le mauvais bloc/workspace
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+> Backend (`references/service.py`) : `get_backlinks` renvoie désormais le **slug** du data_block de la source (`JOIN data_block db ON db.id = src.data_block_ref`, `db.slug AS bloc`) au lieu de l'UUID `data_block_ref` ; `BacklinkOut.bloc` passe de `uuid.UUID | None` à `str | None`. Frontend (`BacklinksPanel.tsx`) : l'URL est construite avec `bl.bloc` (bloc de la source) et non plus `blocSlug` (bloc courant) ; le fallback vers la route inexistante `/ws/${ws}/documents/${id}` est supprimé.
+> ℹ️ Workspace : non problématique. La requête backlinks filtre `r.workspace_technical_key = $2` (workspace courant) et les références sont stockées avec le workspace de la source ; les backlinks retournés sont donc toujours du même workspace que le document consulté. `ws` (courant) est correct pour toutes les sources renvoyées — aucune info workspace supplémentaire n'est requise pour cette vue. (Un backlink cross-workspace n'apparaît pas dans cette liste, par construction de la requête.)
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : moyenne
 - **Zone** : frontend / navigation

@@ -45,10 +45,13 @@ export function BacklinksPanel({ ws, docId, blocSlug }: BacklinksPanelProps) {
             <button
               className="block w-full text-left text-sm font-medium text-blue-600 hover:underline"
               onClick={() => {
-                const path = blocSlug
-                  ? `/ws/${ws}/blocs/${blocSlug}/documents/${bl.source_id}`
-                  : `/ws/${ws}/documents/${bl.source_id}`
-                navigate(path)
+                // FE-09 : naviguer avec le bloc de la SOURCE du backlink (`bl.bloc`),
+                // pas le bloc du document courant. Les backlinks sont scopés au workspace
+                // courant côté API (filtre workspace_technical_key), donc `ws` est correct.
+                // Fallback sur le bloc courant si l'API ne renvoie pas le bloc source.
+                const sourceBloc = bl.bloc ?? blocSlug
+                if (!sourceBloc) return
+                navigate(`/ws/${ws}/blocs/${sourceBloc}/documents/${bl.source_id}`)
               }}
               data-testid={`backlink-${bl.source_id}`}
             >

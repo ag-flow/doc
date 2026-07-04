@@ -76,7 +76,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [FE-06](fixed/FE-06-secretinput-fuite-secret-changement-mode.md) | ✅ SecretInput : secret exposé en clair lors d'un changement de mode | `SecretInput.tsx` | **Sonnet** |
 | [FE-07](fixed/FE-07-issuperadmin-atob-base64url.md) | ✅ `isSuperAdmin()` : `atob` échoue sur JWT base64url → UI admin masquée | `lib/api.ts` | **Sonnet** |
 | [FE-08](fixed/FE-08-templatelist-course-openedit.md) | ✅ TemplateList : course dans `openEdit` → mauvais YAML sauvegardé | `TemplateList.tsx` | **Sonnet** |
-| [FE-09](FE-09-backlinkspanel-mauvais-bloc.md) | BacklinksPanel : navigation avec le mauvais bloc/workspace | `BacklinksPanel.tsx` | **Opus** |
+| [FE-09](FE-09-backlinkspanel-mauvais-bloc.md) | ✅ BacklinksPanel : navigation avec le mauvais bloc/workspace | `BacklinksPanel.tsx` | **Opus** |
 
 ## Bugs mineurs
 
