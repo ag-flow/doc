@@ -1,5 +1,7 @@
 # DEP-09 — Port de dev : la doc dit `:8080`, uvicorn écoute sur 8000
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : déploiement / doc dev

@@ -95,7 +95,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DEP-06](DEP-06-dev-env-sans-encryption-key.md) | ✅ `/data/.env` de dev sans `ENCRYPTION_KEY` (divergence dev/prod) | `scripts/dev-deploy.sh` | **Sonnet** |
 | [DEP-07](DEP-07-pg-dump-version-client-flottante.md) | ✅ Version de `pg_dump` non maîtrisée dans l'image (base flottante) | `deploy/Dockerfile` | **Sonnet** |
 | [DEP-08](DEP-08-prod-deploy-source-env-docker.md) | ✅ `prod-deploy.sh` source le `.env` format docker dans bash | `deploy/prod-deploy.sh` | **Sonnet** |
-| [DEP-09](DEP-09-port-dev-8080-vs-8000.md) | Port de dev : la doc dit `:8080`, uvicorn écoute sur 8000 | `CLAUDE.md`, `vite.config.ts` | **Sonnet** |
+| [DEP-09](DEP-09-port-dev-8080-vs-8000.md) | ✅ Port de dev : la doc dit `:8080`, uvicorn écoute sur 8000 | `CLAUDE.md`, `vite.config.ts` | **Sonnet** |
 | [FE-10](FE-10-double-submit-entree-creation.md) | Double-submit par Entrée dans les dialogues de création | `AddDocumentDialog.tsx`, `DocumentChildrenPanel.tsx` | **Sonnet** |
 | [FE-11](FE-11-linksearchpopup-spinner-bloque.md) | LinkSearchPopup : spinner bloqué et réponses hors-ordre | `LinkSearchPopup.tsx` | **Sonnet** |
 | [FE-12](FE-12-labeltoslug-supprime-chiffres.md) | `labelToSlug` supprime les chiffres | `lib/slug.ts` | **Sonnet** |

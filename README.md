@@ -23,7 +23,7 @@ Application self-hosted de **gestion documentaire et de structures de données p
 ```bash
 # Backend
 cd backend && uv sync
-cd backend && uv run uvicorn docflow.app:app --reload   # :8080
+cd backend && uv run uvicorn docflow.app:app --reload   # :8000
 
 # Migrations (applique les .sql manquants dans l'ordre)
 cd backend && uv run python -m docflow.db.apply

@@ -47,7 +47,7 @@ Code propre et bien fait, jamais la rapidité au détriment de la rigueur. Pas d
 ```bash
 # Backend
 cd backend && uv sync
-cd backend && uv run uvicorn docflow.app:app --reload        # :8080
+cd backend && uv run uvicorn docflow.app:app --reload        # :8000
 cd backend && uv run pytest -v
 cd backend && uv run ruff check src/ tests/
 cd backend && uv run ruff format src/ tests/
