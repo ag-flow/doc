@@ -1,5 +1,7 @@
 # DOC-01 — Renumérotation des placeholders `$n` cassée dans le moteur de vues
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute (reproduit par exécution + relecture directe)
 - **Zone** : domaine / vues sauvegardées

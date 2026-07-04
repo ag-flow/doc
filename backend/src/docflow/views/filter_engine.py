@@ -34,16 +34,25 @@ def _validate_field(field: str) -> None:
 # ── Génération SQL ────────────────────────────────────────────────────────────
 
 class FilterBuilder:
-    """Construit un WHERE SQL entièrement paramétré depuis une liste de prédicats."""
+    """Construit un WHERE SQL entièrement paramétré depuis une liste de prédicats.
 
-    def __init__(self) -> None:
+    `offset` = nombre de placeholders déjà réservés par la requête appelante
+    ($1..$offset) : les placeholders émis commencent à $(offset+1). Les $n sont
+    ainsi corrects dès l'émission — aucune renumérotation a posteriori (fragile
+    avec les occurrences multiples et les numéros ≥ 10, cf. DOC-01).
+    """
+
+    def __init__(self, offset: int = 0) -> None:
+        if offset < 0:
+            raise ValueError("offset doit être >= 0")
+        self._offset = offset
         self._params: list[Any] = []
         self._clauses: list[str] = []
 
     def _p(self, value: Any) -> str:
-        """Enregistre un paramètre et retourne son placeholder $n."""
+        """Enregistre un paramètre et retourne son placeholder $n (décalé de offset)."""
         self._params.append(value)
-        return f"${len(self._params)}"
+        return f"${self._offset + len(self._params)}"
 
     def add(self, predicate: dict[str, Any]) -> None:
         field: str = predicate.get("field", "")

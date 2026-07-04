@@ -286,7 +286,8 @@ async def resolve_view(
 ) -> ViewResults:
     view = await get_view(pool, ws_slug, slug, caller_id)
 
-    fb = FilterBuilder()
+    # $1 = workspace, $2 = bloc_ref → les placeholders du filtre commencent à $3.
+    fb = FilterBuilder(offset=2)
     for pred in view.filter:
         try:
             fb.add(pred)
@@ -328,15 +329,10 @@ async def resolve_view(
         wk = wk_row["workspace_technical_key"]
 
     base_params = [wk, view.bloc_ref]  # $1 = ws, $2 = bloc_ref
+    # Les $n du filtre sont émis déjà décalés (FilterBuilder(offset=2)) :
+    # aucune renumérotation par str.replace (DOC-01).
     filter_sql = fb.where_clause()
     filter_params = fb.params
-
-    # Décalage des $n du filtre et du sort
-    # Les paramètres de base sont $1, $2 ; filtre commence à $3
-    # Renuméroter les placeholders du filtre (ils commencent à $1 dans FilterBuilder)
-    offset = 2  # $1 et $2 sont déjà pris
-    for i, _p in enumerate(filter_params, start=1):
-        filter_sql = filter_sql.replace(f"${i}", f"${i + offset}", 1)
 
     all_params: list[Any] = base_params + filter_params + sort_params
 
