@@ -17,7 +17,7 @@
 
 ## Description
 
-`create_api_profile` et `generate_api_key` via MCP créent des profils/clés attribués à `_system_owner()` (le premier admin local validé), **indépendamment de l'utilisateur qui appelle**. L'accès MCP est gardé par `require_admin`, qui ne vérifie pas `is_admin` (cf. [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md)) : tout utilisateur validé peut donc générer des profils et clés API rattachés au superadmin système, pour n'importe quel workspace.
+`create_api_profile` et `generate_api_key` via MCP créent des profils/clés attribués à `_system_owner()` (le premier admin local validé), **indépendamment de l'utilisateur qui appelle**. L'accès MCP est gardé par `require_admin`, qui ne vérifie pas `is_admin` (cf. [AUTH-07](../AUTH-07-require-admin-ne-verifie-pas-is-admin.md)) : tout utilisateur validé peut donc générer des profils et clés API rattachés au superadmin système, pour n'importe quel workspace.
 
 ## Scénario de reproduction
 

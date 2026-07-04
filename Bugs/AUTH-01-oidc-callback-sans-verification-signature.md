@@ -19,7 +19,7 @@ Même sans compte existant, l'endpoint provisionne un compte (403 PendingValidat
 
 ## Impact
 
-Contournement complet de l'authentification. Escalade jusqu'au compte admin. Aggravé par [AUTH-02](AUTH-02-oidc-liaison-email-sans-email-verified.md).
+Contournement complet de l'authentification. Escalade jusqu'au compte admin. Aggravé par [AUTH-02](fixed/AUTH-02-oidc-liaison-email-sans-email-verified.md).
 
 ## Piste de correction
 

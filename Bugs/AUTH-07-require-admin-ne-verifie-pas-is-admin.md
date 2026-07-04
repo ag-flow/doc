@@ -26,4 +26,4 @@ Selon la sémantique RBAC voulue : soit escalade de privilèges (membre → admi
 
 ## Piste de correction
 
-Si le modèle est bien admin/superadmin : faire vérifier un rôle par `require_admin`. Sinon, renommer en `require_authenticated` pour lever l'ambiguïté et confirmer explicitement que « utilisateur validé = accès admin » est voulu. Impacte directement [INT-03](INT-03-mcp-outils-ecriture-identite-superadmin.md) et [INT-06](INT-06-ssrf-urls-administrees.md).
+Si le modèle est bien admin/superadmin : faire vérifier un rôle par `require_admin`. Sinon, renommer en `require_authenticated` pour lever l'ambiguïté et confirmer explicitement que « utilisateur validé = accès admin » est voulu. Impacte directement [INT-03](fixed/INT-03-mcp-outils-ecriture-identite-superadmin.md) et [INT-06](fixed/INT-06-ssrf-urls-administrees.md).

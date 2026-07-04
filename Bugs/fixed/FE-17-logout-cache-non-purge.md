@@ -23,4 +23,4 @@ Fuite transitoire de données entre comptes sur un poste partagé.
 
 ## Piste de correction
 
-`queryClient.clear()` au logout (et au 401 global — voir [FE-04](../FE-04-login-401-recharge-page.md)).
+`queryClient.clear()` au logout (et au 401 global — voir [FE-04](FE-04-login-401-recharge-page.md)).

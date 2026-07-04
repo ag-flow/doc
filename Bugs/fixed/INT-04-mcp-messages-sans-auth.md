@@ -28,7 +28,7 @@ Quiconque possède/devine un `session_id` actif peut poster des appels d'outils 
 
 ## Impact
 
-Absence de défense en profondeur sur les écritures MCP ; couplé à [AUTH-07](AUTH-07-require-admin-ne-verifie-pas-is-admin.md) et [INT-03](INT-03-mcp-outils-ecriture-identite-superadmin.md).
+Absence de défense en profondeur sur les écritures MCP ; couplé à [AUTH-07](../AUTH-07-require-admin-ne-verifie-pas-is-admin.md) et [INT-03](INT-03-mcp-outils-ecriture-identite-superadmin.md).
 
 ## Piste de correction
 
