@@ -162,6 +162,24 @@ async def list_runs(
 
 # ── Lifecycle run (appelé par le worker) ─────────────────────────────────────
 
+async def reconcile_orphan_runs(pool: asyncpg.Pool) -> int:
+    """Marque en erreur tout run resté `running` (orphelin après crash/redéploiement).
+
+    Sans cela, `_due_jobs` exclut indéfiniment tout job dont le dernier run est
+    resté `running` — le job ne serait plus jamais planifié. À appeler une fois
+    au démarrage du worker, avant toute planification.
+    """
+    result: str = await pool.execute(
+        """
+        UPDATE backup_job_run
+        SET finished_at = now(), status = 'error',
+            error_message = 'run orphelin réconcilié au démarrage du worker'
+        WHERE status = 'running'
+        """
+    )
+    return int(result.split()[-1])
+
+
 async def start_run(conn: asyncpg.Connection, job_id: uuid.UUID) -> uuid.UUID:
     run_id: uuid.UUID = await conn.fetchval(
         "INSERT INTO backup_job_run (job_id) VALUES ($1) RETURNING id", job_id

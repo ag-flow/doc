@@ -1,5 +1,7 @@
 # DB-08 — Run `running` orphelin après crash → job bloqué définitivement
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : backup / worker

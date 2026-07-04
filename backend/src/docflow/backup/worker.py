@@ -276,6 +276,9 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
     _REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     _DUMPS_ROOT.mkdir(parents=True, exist_ok=True)
+    reconciled = await svc.reconcile_orphan_runs(pool)
+    if reconciled:
+        log.warning("backup_orphan_runs_reconciled", count=reconciled)
     log.info("backup_worker_started")
     while True:
         try:
