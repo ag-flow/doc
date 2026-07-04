@@ -10,6 +10,7 @@ SELECT COUNT(*) FROM app_user
 WHERE password_hash IS NOT NULL
   AND disabled = false
   AND is_admin = true
+  AND validated = true
   AND id != $1
 """
 

@@ -1,4 +1,9 @@
 # AUTH-04 — Anti-lock-out : dévalidation + COUNT qui ignore `validated`
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+>
+> Hypothèse : le champ `validated` est aussi mutable via `PATCH update_user`, donc le garde
+> a été ajouté pour `validated=false` dans `update_user` en plus de `validate_user`, pour
+> couvrir le même invariant par tous les chemins.
 
 - **Gravité** : 🟠 MAJEUR (viole une exigence non négociable du projet)
 - **Confiance** : haute

@@ -85,9 +85,14 @@ async def update_user(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Toute mutation retirant la qualité d'admin local connectable (désactivation
-            # OU démotion is_admin) doit passer le garde anti-lock-out. Cf. AUTH-03.
-            if updates.get("disabled") is True or updates.get("is_admin") is False:
+            # Toute mutation retirant la qualité d'admin local connectable (désactivation,
+            # démotion is_admin OU dévalidation) doit passer le garde anti-lock-out.
+            # Cf. AUTH-03 et AUTH-04 (même invariant : validated compte désormais).
+            if (
+                updates.get("disabled") is True
+                or updates.get("is_admin") is False
+                or updates.get("validated") is False
+            ):
                 await assert_not_last_local_admin(conn, user_id)
 
             if "email" in updates:
@@ -112,12 +117,17 @@ async def update_user(
 
 async def validate_user(pool: asyncpg.Pool, user_id: uuid.UUID, *, validated: bool) -> AdminUserOut:
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"UPDATE app_user SET validated = $2, updated_at = now()"
-            f" WHERE id = $1 RETURNING {_COLS}",
-            user_id,
-            validated,
-        )
+        async with conn.transaction():
+            # Dévalider un compte le rend non connectable (403 PendingValidation) : c'est
+            # un chemin de lock-out qui doit passer le garde anti-lock-out. Cf. AUTH-04.
+            if not validated:
+                await assert_not_last_local_admin(conn, user_id)
+            row = await conn.fetchrow(
+                f"UPDATE app_user SET validated = $2, updated_at = now()"
+                f" WHERE id = $1 RETURNING {_COLS}",
+                user_id,
+                validated,
+            )
     if row is None:
         raise HTTPException(status_code=404, detail="utilisateur introuvable")
     return _row_to_out(row)
