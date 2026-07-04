@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.schemas.auth import AuthUser
@@ -76,6 +76,9 @@ async def delete_type(
     type_slug: str,
     request: Request,
     _: AuthUser = Depends(require_authenticated),
+    confirm: bool = Query(default=False),
 ) -> None:
+    """DOC-07 : 409 si le type a des dépendants (types enfants, blocs, documents)
+    et que ``confirm`` n'est pas fourni ; avec ``?confirm=true``, cascade assumée."""
     check_api_key_scope(request, ws_slug, write=True)
-    await service.delete_type(request.app.state.pool, ws_slug, type_slug)
+    await service.delete_type(request.app.state.pool, ws_slug, type_slug, confirm=confirm)

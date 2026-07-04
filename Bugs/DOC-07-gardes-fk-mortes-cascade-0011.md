@@ -1,5 +1,8 @@
 # DOC-07 — Gardes FK mortes depuis 0011 → suppressions silencieusement destructrices
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable.
+> Décision architecte : **cascade 0011 assumée** (pas de retour à RESTRICT, aucune migration) + **garde de confirmation applicative**. Les `except ForeignKeyViolationError` morts de `delete_def` / `delete_block` / `delete_type` sont retirés ; à la place, chaque suppression compte ses dépendants (def : valeurs `properties_values` ; bloc : blocs enfants + documents du sous-arbre, CTE récursive ; type : types descendants + blocs de ces types + documents de ces blocs) et refuse avec **409** `{"detail": ..., "dependents": n, "need_confirm": true}` tant que `?confirm=true` n'est pas fourni (exception `DependentsConflictError` + handler dans `app.py`). Avec `confirm=true`, la cascade DB fait le travail dans la transaction existante. Vérifié sur Postgres éphémère (test1) : suite verte. Note : la spec `22_MDB_data_block.md` (« RESTRICT ») reste à amender, et le frontend devra proposer la confirmation (il recevra désormais 409 sur ces suppressions).
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute (code mort) / moyenne (intention)
 - **Zone** : domaine / properties, blocks, types

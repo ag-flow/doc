@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from docflow.app import app
 from docflow.auth.jwt import create_token
+from docflow.errors import DependentsConflictError
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
 from docflow.types import service as type_svc
@@ -89,16 +90,22 @@ async def test_cycle_detection(db_pool: asyncpg.Pool, test_workspace: dict) -> N
     assert exc.value.status_code == 422
 
 
-async def test_delete_type_with_children_cascades(
+async def test_delete_type_with_children_needs_confirm(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
-    """0011_type_cascade_delete : supprimer un type parent supprime ses enfants
-    (ON DELETE CASCADE), plus de rejet 409 — comportement délibérément inversé."""
+    """DOC-07 : la cascade 0011 est assumée mais gardée par un confirm explicite.
+    Sans confirm → refus (dépendants comptés) ; avec confirm → cascade sur les enfants."""
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     await type_svc.create_type(
         db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature", parent_slug="epic")
     )
-    await type_svc.delete_type(db_pool, _WS, "epic")
+    with pytest.raises(DependentsConflictError) as guard:
+        await type_svc.delete_type(db_pool, _WS, "epic")
+    assert guard.value.dependents == 1
+    # Rien n'a été supprimé tant que confirm n'est pas fourni
+    assert (await type_svc.get_type(db_pool, _WS, "feature")).slug == "feature"
+
+    await type_svc.delete_type(db_pool, _WS, "epic", confirm=True)
     with pytest.raises(HTTPException) as exc:
         await type_svc.get_type(db_pool, _WS, "feature")
     assert exc.value.status_code == 404
@@ -179,3 +186,47 @@ async def test_types_crud_via_http(
 
         r = client.delete(f"/api/workspaces/{_WS}/types/http-epic", headers=hdrs)
         assert r.status_code == 204
+
+
+async def test_delete_type_confirm_guard_via_http(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+    test_workspace: dict,
+) -> None:
+    """DOC-07 : DELETE sans confirm → 409 informatif ; avec ?confirm=true → 204."""
+    with _client(monkeypatch, test_schema_url) as client:
+        setup = client.post(
+            "/api/setup/init-admin",
+            json={
+                "username": "bootstrap",
+                "email": _BOOTSTRAP_EMAIL,
+                "password": _BOOTSTRAP_PW,
+            },
+        )
+        assert setup.status_code == 201
+        login = client.post(
+            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+        )
+        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        base = f"/api/workspaces/{_WS}/types"
+        assert client.post(
+            base, json={"slug": "g-epic", "label": "Epic"}, headers=hdrs
+        ).status_code == 201
+        assert client.post(
+            base,
+            json={"slug": "g-feature", "label": "Feature", "parent_slug": "g-epic"},
+            headers=hdrs,
+        ).status_code == 201
+
+        r = client.delete(f"{base}/g-epic", headers=hdrs)
+        assert r.status_code == 409
+        body = r.json()
+        assert body["need_confirm"] is True
+        assert body["dependents"] == 1
+        assert "confirm=true" in body["detail"]
+
+        r = client.delete(f"{base}/g-epic?confirm=true", headers=hdrs)
+        assert r.status_code == 204
+        assert client.get(f"{base}/g-feature", headers=hdrs).status_code == 404

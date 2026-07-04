@@ -81,10 +81,16 @@ async def set_block_exposed(
 
 @router.delete(_BLOCK, status_code=204)
 async def delete_block(
-    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+    ws_slug: str,
+    block_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    confirm: bool = Query(default=False),
 ) -> None:
+    """DOC-07 : 409 si le bloc a des dépendants (blocs enfants, documents)
+    et que ``confirm`` n'est pas fourni ; avec ``?confirm=true``, cascade assumée."""
     check_api_key_scope(request, ws_slug, block_slug, write=True)
-    await service.delete_block(request.app.state.pool, ws_slug, block_slug)
+    await service.delete_block(request.app.state.pool, ws_slug, block_slug, confirm=confirm)
 
 
 # ── Spec 23 : arbre du bloc ───────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, suppress
 
 import asyncpg
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -25,6 +25,7 @@ from docflow.contracts.router import router as contracts_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
+from docflow.errors import DependentsConflictError
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
@@ -95,6 +96,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
+
+
+@app.exception_handler(DependentsConflictError)
+async def dependents_conflict_handler(_: Request, exc: DependentsConflictError) -> JSONResponse:
+    """DOC-07 : suppression destructrice sans confirm → 409 informatif."""
+    return JSONResponse(
+        {"detail": exc.detail, "dependents": exc.dependents, "need_confirm": True},
+        status_code=409,
+    )
+
+
 _API = "/api"
 app.include_router(setup_router, prefix=_API)
 app.include_router(auth_router, prefix=_API)

@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
     AllowedValueCreate,
@@ -211,18 +212,33 @@ async def update_def(
     return _def_row(row)
 
 
-async def delete_def(pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str) -> None:
+async def delete_def(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str, *, confirm: bool = False
+) -> None:
+    """Supprime une définition de propriété.
+
+    DOC-07 : depuis 0011, ``properties_values.property_def_ref`` est ON DELETE
+    CASCADE — la suppression détruit les valeurs et leur historique. On compte
+    donc les valeurs dépendantes et on refuse (409) tant que ``confirm`` n'est
+    pas fourni ; avec ``confirm``, la cascade DB est assumée.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
-            try:
-                await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
-            except asyncpg.ForeignKeyViolationError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="propriété utilisée par des valeurs existantes",
-                ) from exc
+            dependents: int = await conn.fetchval(
+                "SELECT count(*) FROM properties_values WHERE property_def_ref = $1", prop_id
+            )
+            if dependents > 0 and not confirm:
+                raise DependentsConflictError(
+                    detail=(
+                        f"la propriété '{prop_slug}' est portée par {dependents} valeur(s) "
+                        "de document (historique inclus) qui seraient détruites en cascade ; "
+                        "repasser avec confirm=true pour confirmer la suppression"
+                    ),
+                    dependents=dependents,
+                )
+            await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
 
 
 async def list_allowed_values(

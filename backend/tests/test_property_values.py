@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from docflow.documents import service as doc_svc
+from docflow.errors import DependentsConflictError
 from docflow.properties import service as prop_svc
 from docflow.schemas.constraint import ConstraintCreate
 from docflow.schemas.document import DocumentCreate
@@ -312,3 +313,22 @@ async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_worksp
         await doc_svc.delete_property_value(db_pool, _WS, doc.doc_technical_key, "req-prop")
     assert exc.value.status_code == 422
     assert "I-4" in exc.value.detail
+
+
+async def test_delete_def_with_values_needs_confirm(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DOC-07 : supprimer une def portant des valeurs → refus sans confirm
+    (dépendants comptés), cascade assumée avec confirm=True."""
+    _, doc_id = await _setup(db_pool)
+    await doc_svc.set_property_value(
+        db_pool, _WS, doc_id, "title", PropertyValueSet(value="Hello", expected_version=0)
+    )
+    with pytest.raises(DependentsConflictError) as guard:
+        await prop_svc.delete_def(db_pool, _WS, "task", "title")
+    assert guard.value.dependents == 1
+    # Rien n'a été supprimé tant que confirm n'est pas fourni
+    assert any(d.slug == "title" for d in await prop_svc.list_defs(db_pool, _WS, "task"))
+
+    await prop_svc.delete_def(db_pool, _WS, "task", "title", confirm=True)
+    assert not any(d.slug == "title" for d in await prop_svc.list_defs(db_pool, _WS, "task"))

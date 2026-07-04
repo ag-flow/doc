@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from docflow.blocks import service as block_svc
+from docflow.errors import DependentsConflictError
 from docflow.schemas.block import DataBlockCreate, DataBlockUpdate
 from docflow.schemas.types import FunctionalTypeCreate
 from docflow.types import service as type_svc
@@ -121,11 +122,11 @@ async def test_update_block_label(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert updated.label == "New Label"
 
 
-async def test_delete_block_with_children_cascades(
+async def test_delete_block_with_children_needs_confirm(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
-    """0011_type_cascade_delete : supprimer un bloc parent supprime ses enfants
-    (ON DELETE CASCADE), plus de rejet 409 — comportement délibérément inversé."""
+    """DOC-07 : la cascade 0011 est assumée mais gardée par un confirm explicite.
+    Sans confirm → refus (dépendants comptés) ; avec confirm → cascade sur les enfants."""
     await _make_types(db_pool)
     await block_svc.create_block(
         db_pool, _WS, DataBlockCreate(slug="e-root", label="Root", functional_type_slug="epic")
@@ -135,7 +136,13 @@ async def test_delete_block_with_children_cascades(
         DataBlockCreate(slug="f-child", label="Child", functional_type_slug="feature",
                         parent_slug="e-root"),
     )
-    await block_svc.delete_block(db_pool, _WS, "e-root")
+    with pytest.raises(DependentsConflictError) as guard:
+        await block_svc.delete_block(db_pool, _WS, "e-root")
+    assert guard.value.dependents == 1
+    # Rien n'a été supprimé tant que confirm n'est pas fourni
+    assert (await block_svc.get_block(db_pool, _WS, "f-child")).slug == "f-child"
+
+    await block_svc.delete_block(db_pool, _WS, "e-root", confirm=True)
     with pytest.raises(HTTPException) as exc:
         await block_svc.get_block(db_pool, _WS, "f-child")
     assert exc.value.status_code == 404

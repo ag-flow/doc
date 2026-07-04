@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_type, require_workspace
+from docflow.errors import DependentsConflictError
 from docflow.schemas.types import (
     AllowedValueRich,
     FunctionalTypeCreate,
@@ -248,15 +249,51 @@ async def update_type(
     )
 
 
-async def delete_type(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> None:
+# DOC-07 : dépendants détruits par la cascade 0011 (functional_type.parent CASCADE,
+# data_block.functional_type_ref CASCADE, document.data_block_ref CASCADE) =
+# types descendants + blocs de ces types + documents de ces blocs.
+_COUNT_TYPE_DEPENDENTS = """
+WITH RECURSIVE type_subtree AS (
+    SELECT id FROM functional_type WHERE id = $1
+    UNION ALL
+    SELECT t.id FROM functional_type t JOIN type_subtree s ON t.parent = s.id
+),
+blocks AS (
+    SELECT b.id FROM data_block b
+    WHERE b.functional_type_ref IN (SELECT id FROM type_subtree)
+)
+SELECT (SELECT count(*) FROM type_subtree) - 1 AS child_types,
+       (SELECT count(*) FROM blocks) AS blocks,
+       (SELECT count(*) FROM document d
+        WHERE d.data_block_ref IN (SELECT id FROM blocks)) AS documents
+"""
+
+
+async def delete_type(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, *, confirm: bool = False
+) -> None:
+    """Supprime un type fonctionnel.
+
+    DOC-07 : la cascade 0011 détruit les types descendants, les blocs de ces
+    types et tous les documents de ces blocs (valeurs et historique compris).
+    On refuse (409) tant que ``confirm`` n'est pas fourni s'il existe des
+    dépendants ; avec ``confirm``, la cascade DB est assumée.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
-            try:
-                await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)
-            except (asyncpg.ForeignKeyViolationError, asyncpg.RestrictViolationError) as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="impossible de supprimer ce type : contrainte de référence",
-                ) from exc
+            counts = await conn.fetchrow(_COUNT_TYPE_DEPENDENTS, type_id)
+            assert counts is not None
+            dependents = counts["child_types"] + counts["blocks"] + counts["documents"]
+            if dependents > 0 and not confirm:
+                raise DependentsConflictError(
+                    detail=(
+                        f"la suppression du type '{type_slug}' détruirait en cascade "
+                        f"{counts['child_types']} type(s) enfant(s), {counts['blocks']} bloc(s) "
+                        f"et {counts['documents']} document(s) (valeurs et historique compris) ; "
+                        "repasser avec confirm=true pour confirmer la suppression"
+                    ),
+                    dependents=dependents,
+                )
+            await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)

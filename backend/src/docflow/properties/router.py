@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.properties import service
@@ -70,10 +70,19 @@ async def update_def(
 
 @router.delete(_PROP, status_code=204)
 async def delete_def(
-    ws_slug: str, type_slug: str, prop_slug: str, request: Request, _: AuthUser = _Auth
+    ws_slug: str,
+    type_slug: str,
+    prop_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    confirm: bool = Query(default=False),
 ) -> None:
+    """DOC-07 : 409 si la propriété porte des valeurs de documents et que
+    ``confirm`` n'est pas fourni ; avec ``?confirm=true``, cascade assumée."""
     check_api_key_scope(request, ws_slug, write=True)
-    await service.delete_def(request.app.state.pool, ws_slug, type_slug, prop_slug)
+    await service.delete_def(
+        request.app.state.pool, ws_slug, type_slug, prop_slug, confirm=confirm
+    )
 
 
 # ── Allowed values ────────────────────────────────────────────────────────────
