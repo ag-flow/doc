@@ -48,7 +48,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [INT-02](INT-02-automation-debounce-famine.md) | Debounce d'automation : famine de tout le workspace | `automations/worker.py` | **Opus** |
 | [INT-03](INT-03-mcp-outils-ecriture-identite-superadmin.md) | Outils MCP d'écriture exécutés sous l'identité du superadmin système | `mcp/server.py` | **Opus** |
 | [DOC-04](DOC-04-changement-type-valeurs-orphelines.md) | Changement de type : valeurs de propriétés orphelines conservées | `documents/service.py` | **Opus** |
-| [DOC-05](DOC-05-parser-references-uuid-laxiste.md) | Parser de références : regex UUID laxiste → 500 + doublons de casse | `references/parser.py`, `references/service.py` | **Sonnet** |
+| [DOC-05](DOC-05-parser-references-uuid-laxiste.md) | ✅ Parser de références : regex UUID laxiste → 500 + doublons de casse | `references/parser.py`, `references/service.py` | **Sonnet** |
 | [DOC-06](DOC-06-create-document-references-non-indexees.md) | `create_document` n'indexe pas les références du contenu initial | `documents/service.py` | **Sonnet** |
 | [DOC-07](DOC-07-gardes-fk-mortes-cascade-0011.md) | Gardes FK mortes depuis 0011 → suppressions silencieusement destructrices | `properties/service.py`, `blocks/service.py`, `types/service.py` | **Fable** |
 | [DOC-08](DOC-08-vues-collision-slug-partagee-privee.md) | Vues : collision de slug partagée/privée → résolution indéterminée | `views/service.py` | **Opus** |

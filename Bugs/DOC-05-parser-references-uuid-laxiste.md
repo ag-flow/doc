@@ -1,5 +1,7 @@
 # DOC-05 — Parser de références : regex UUID laxiste → 500 + doublons de casse
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute (reproduit par exécution)
 - **Zone** : domaine / références
