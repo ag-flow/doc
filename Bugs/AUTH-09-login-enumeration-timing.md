@@ -1,5 +1,7 @@
 # AUTH-09 — Oracle d'énumération d'utilisateurs sur `/auth/login` (timing)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : moyenne
 - **Zone** : auth / login

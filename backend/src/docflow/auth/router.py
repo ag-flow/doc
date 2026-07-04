@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from docflow.auth.deps import require_admin
 from docflow.auth.jwt import create_token
-from docflow.auth.password import verify_password
+from docflow.auth.password import DUMMY_PASSWORD_HASH, verify_password
 from docflow.oidc import service as oidc_service
 from docflow.schemas.auth import AuthUser, LoginRequest, TokenResponse
 from docflow.schemas.setup import AuthMethodsOut
@@ -45,6 +45,9 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
     _invalid = HTTPException(status_code=401, detail="identifiants invalides")
 
     if row is None or row["password_hash"] is None or row["disabled"]:
+        # Hachage factice pour uniformiser le temps de réponse avec le cas
+        # « email connu » et éviter un oracle d'énumération par timing.
+        verify_password(body.password, DUMMY_PASSWORD_HASH)
         raise _invalid
 
     if not verify_password(body.password, row["password_hash"]):
