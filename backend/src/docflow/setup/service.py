@@ -12,6 +12,11 @@ log = structlog.get_logger(__name__)
 
 _COUNT = "SELECT COUNT(*) FROM app_user"
 
+# Clé de verrou consultatif dédiée au bootstrap admin. Constante arbitraire mais stable :
+# deux appels concurrents à init_admin se sérialisent sur ce verrou transactionnel, ce qui
+# empêche la course « deux lectures count=0 → deux insertions » (cf. AUTH-06).
+_SETUP_LOCK_KEY = 947_223_115
+
 _INSERT = """
 INSERT INTO app_user (username, email, label, password_hash, is_admin, validated, disabled, source)
 VALUES ($1, $2, $3, $4, true, true, false, 'local')
@@ -30,6 +35,9 @@ async def init_admin(pool: asyncpg.Pool, body: InitAdminRequest) -> AdminUserOut
     hashed = hash_password(body.password)
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Sérialiser tout le check-then-insert : le second appelant concurrent bloque
+            # ici jusqu'au commit du premier, puis lit count>0 → 409. Fail closed.
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", _SETUP_LOCK_KEY)
             count: int = await conn.fetchval(_COUNT)
             if count > 0:
                 raise HTTPException(status_code=409, detail="SetupAlreadyDone")

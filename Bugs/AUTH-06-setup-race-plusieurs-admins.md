@@ -1,4 +1,5 @@
 # AUTH-06 — Race au setup : plusieurs admins créés dans la fenêtre d'init
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
 
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : moyenne
