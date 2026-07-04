@@ -95,6 +95,9 @@ async def handle_oidc_callback(
     name = str(id_token_claims.get("name", email))
     if not email or not sub:
         raise HTTPException(status_code=422, detail="claims OIDC manquants (email/sub)")
+    # email_verified peut être un booléen (standard OIDC) ou une chaîne "true" selon l'IdP.
+    email_verified_raw = id_token_claims.get("email_verified")
+    email_verified = email_verified_raw is True or str(email_verified_raw).lower() == "true"
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -119,6 +122,14 @@ async def handle_oidc_callback(
                     email,
                 )
                 if user_row is not None:
+                    # Ne lier un compte existant par email que si l'IdP a vérifié cet email,
+                    # sinon un sub attaquant portant l'email d'un compte local (admin) en
+                    # prendrait le contrôle (account takeover). Cf. AUTH-02.
+                    if not email_verified:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="liaison OIDC refusée: email non vérifié par l'IdP",
+                        )
                     await conn.execute(
                         "UPDATE app_user SET oidc_subject = $1, source = 'oidc' WHERE id = $2",
                         sub,

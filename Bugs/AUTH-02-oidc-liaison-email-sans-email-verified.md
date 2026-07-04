@@ -1,4 +1,5 @@
 # AUTH-02 — Liaison de compte OIDC par email sans `email_verified`
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
 
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
