@@ -52,7 +52,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [DOC-06](DOC-06-create-document-references-non-indexees.md) | `create_document` n'indexe pas les références du contenu initial | `documents/service.py` | **Sonnet** |
 | [DOC-07](DOC-07-gardes-fk-mortes-cascade-0011.md) | Gardes FK mortes depuis 0011 → suppressions silencieusement destructrices | `properties/service.py`, `blocks/service.py`, `types/service.py` | **Fable** |
 | [DOC-08](DOC-08-vues-collision-slug-partagee-privee.md) | Vues : collision de slug partagée/privée → résolution indéterminée | `views/service.py` | **Opus** |
-| [DB-05](DB-05-croniter-dependance-absente.md) | `croniter` absent des dépendances → jobs cron jamais exécutés | `backup/worker.py`, `pyproject.toml` | **Sonnet** |
+| [DB-05](DB-05-croniter-dependance-absente.md) | ✅ `croniter` absent des dépendances → jobs cron jamais exécutés | `backup/worker.py`, `pyproject.toml` | **Sonnet** |
 | [DB-06](DB-06-pg-dump-mot-de-passe-argv.md) | `pg_dump` : mot de passe Postgres visible dans `ps` (argv) | `backup/db_dump.py` | **Sonnet** |
 | [DB-07](DB-07-pat-git-en-clair-git-config.md) | PAT git persisté en clair dans `.git/config` | `backup/worker.py`, `backup/git_sync.py` | **Opus** |
 | [DB-08](DB-08-run-running-orphelin-job-bloque.md) | Run `running` orphelin après crash → job bloqué définitivement | `backup/worker.py` | **Sonnet** |

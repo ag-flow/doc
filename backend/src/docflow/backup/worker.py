@@ -28,9 +28,17 @@ def _is_due(job: dict[str, Any], now: datetime) -> bool:
     if job["schedule_cron"]:
         try:
             from croniter import croniter  # type: ignore[import-untyped]
-            return bool(croniter.match(job["schedule_cron"], now))
         except ImportError:
             log.warning("backup_cron_croniter_missing")
+            return False
+        if not croniter.match(job["schedule_cron"], now):
+            return False
+        if last is None:
+            return True
+        # `match` reste vrai pendant toute la minute : ne redéclencher que si
+        # aucun run n'a déjà eu lieu depuis la dernière occurrence cron.
+        prev_occurrence = croniter(job["schedule_cron"], now).get_prev(datetime)
+        return bool(last.replace(tzinfo=UTC) < prev_occurrence)
     return False
 
 

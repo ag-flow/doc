@@ -1,5 +1,7 @@
 # DB-05 — `croniter` absent des dépendances → jobs cron jamais exécutés
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute (vérifié : `import croniter` → `ModuleNotFoundError`)
 - **Zone** : backup / scheduler
