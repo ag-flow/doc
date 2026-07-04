@@ -52,6 +52,13 @@ class ViewUpdate(BaseModel):
     columns: list[str] | None = None
     shared: bool | None = None
 
+    @field_validator("layout")
+    @classmethod
+    def _layout_valid(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"table", "board"}:
+            raise ValueError("layout doit être 'table' ou 'board'")
+        return v
+
 
 class ViewOut(BaseModel):
     id: uuid.UUID
