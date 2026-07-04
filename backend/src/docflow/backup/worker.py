@@ -211,23 +211,23 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
 
             from docflow.backup.git_sync import run_git_sync
 
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: asyncio.run(
-                    run_git_sync(
-                        pool,
-                        job_id=job_id,
-                        workspace_technical_key=ws_id,
-                        workspace_slug=ws_slug,
-                        last_change_seq=last_seq,
-                        remote_url=remote_url,
-                        git_branch=point["git_branch"],
-                        git_base_path=job.get("git_base_path"),
-                        ssh_key_path=ssh_key_path,
-                        git_http_env=git_http_env,
-                        repos_root=_REPOS_ROOT,
-                    )
-                ),
+            # `run_git_sync` est async et DOIT tourner dans le loop principal :
+            # le pool asyncpg est lié à son event loop, l'utiliser depuis un
+            # autre loop (asyncio.run dans un executor) corrompt son état.
+            # La phase git bloquante est déportée en interne via
+            # asyncio.to_thread — même découpage que run_db_dump.
+            result = await run_git_sync(
+                pool,
+                job_id=job_id,
+                workspace_technical_key=ws_id,
+                workspace_slug=ws_slug,
+                last_change_seq=last_seq,
+                remote_url=remote_url,
+                git_branch=point["git_branch"],
+                git_base_path=job.get("git_base_path"),
+                ssh_key_path=ssh_key_path,
+                git_http_env=git_http_env,
+                repos_root=_REPOS_ROOT,
             )
         else:
             host, port, username, password, ssh_key_path = await _resolve_dump_auth(

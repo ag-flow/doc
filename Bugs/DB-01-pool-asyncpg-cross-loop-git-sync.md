@@ -1,5 +1,7 @@
 # DB-01 — Pool asyncpg utilisé depuis un autre event loop (git_sync)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute
 - **Zone** : backup / git_sync
