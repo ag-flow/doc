@@ -1,5 +1,19 @@
 # AUTH-01 — Callback OIDC émet un JWT sans vérifier la signature de l'id_token
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Fable.
+> Flow authorization-code complet côté serveur : `POST /api/auth/oidc/callback` accepte
+> désormais `{code, redirect_uri, nonce?}` (plus jamais de claims bruts). Le backend
+> échange le `code` au token endpoint (client_secret résolu via vault, auth basic),
+> puis vérifie lui-même l'id_token : signature contre le JWKS découvert via
+> `.well-known/openid-configuration` (cache 300 s, re-fetch unique sur rotation de kid),
+> `iss`, `aud` (= client_id), `exp` (leeway 60 s), `azp`, et `nonce` si fourni.
+> Algorithmes asymétriques uniquement (pas de HS*/none). Garde SSRF sur toutes les URLs
+> sortantes. Voir `backend/src/docflow/oidc/verify.py` + `tests/test_oidc_verify.py`
+> (17 tests unitaires sans DB : mauvaise signature, iss/aud/exp/nonce/azp, alg=none).
+> **Contrat frontend** : aucun appelant existant à adapter (le flow de login OIDC n'est
+> pas encore câblé dans l'UI). À l'implémentation : rediriger vers l'authorization
+> endpoint avec `state`+`nonce`, puis poster `{code, redirect_uri, nonce}` au callback.
+
 - **Gravité** : 🔴 CRITIQUE
 - **Confiance** : haute (vérifié par relecture directe)
 - **Zone** : auth / OIDC

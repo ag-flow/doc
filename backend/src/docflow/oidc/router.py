@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from docflow.auth.deps import require_superadmin
 from docflow.oidc import service
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.oidc import OidcConfigOut, OidcConfigSet, OidcPublicConfig
+from docflow.schemas.oidc import OidcCallbackIn, OidcConfigOut, OidcConfigSet, OidcPublicConfig
 
 router = APIRouter(tags=["oidc"])
 
@@ -30,12 +30,11 @@ async def get_public_oidc_config(request: Request) -> OidcPublicConfig | None:
 
 
 @router.post("/auth/oidc/callback")
-async def oidc_callback(body: dict[str, object], request: Request) -> dict[str, str]:
-    """Reçoit les claims id_token (après vérification externe) et émet un JWT docflow."""
-    settings = request.app.state.settings
+async def oidc_callback(body: OidcCallbackIn, request: Request) -> dict[str, str]:
+    """Échange le code OIDC côté serveur, vérifie l'id_token, émet un JWT docflow."""
     token = await service.handle_oidc_callback(
         request.app.state.pool,
-        settings.jwt_secret.reveal(),
+        request.app.state.settings,
         body,
     )
     return {"access_token": token, "token_type": "bearer"}

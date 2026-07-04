@@ -5,8 +5,10 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.auth.jwt import create_token
+from docflow.config.settings import Settings
+from docflow.oidc.verify import OidcVerifyError, exchange_code, verify_id_token
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.oidc import OidcConfigOut, OidcConfigSet, OidcPublicConfig
+from docflow.schemas.oidc import OidcCallbackIn, OidcConfigOut, OidcConfigSet, OidcPublicConfig
 from docflow.secrets.resolver import resolve
 from docflow.secrets.secret import Secret
 
@@ -86,10 +88,52 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
     return _to_out(row)
 
 
-async def handle_oidc_callback(
+async def handle_oidc_callback(pool: asyncpg.Pool, settings: Settings, body: OidcCallbackIn) -> str:
+    """Flow authorization-code : échange le code, vérifie l'id_token, émet un JWT docflow.
+
+    Aucun claim n'est accepté sans vérification serveur de la signature de
+    l'id_token contre le JWKS de l'issuer configuré (AUTH-01).
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_SELECT)
+    if row is None or not row["enabled"]:
+        raise HTTPException(status_code=403, detail="OIDC non activé")
+    issuer: str = row["issuer"]
+    client_id: str = row["client_id"]
+
+    enc = settings.encryption_key
+    client_secret = await resolve(
+        Secret(row["client_secret_ref"]),
+        harpocrate_url=settings.harpocrate_url,
+        pool=pool,
+        enc_key=enc.reveal() if enc is not None else None,
+    )
+    try:
+        id_token = await exchange_code(
+            issuer=issuer,
+            code=body.code,
+            redirect_uri=body.redirect_uri,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        claims = await verify_id_token(
+            id_token, issuer=issuer, client_id=client_id, nonce=body.nonce
+        )
+    except OidcVerifyError as exc:
+        # Le message d'OidcVerifyError ne contient ni token, ni claims, ni secret.
+        log.warning("oidc_callback_rejected", reason=str(exc))
+        raise HTTPException(status_code=401, detail="échec de vérification OIDC") from exc
+    return await issue_token_for_verified_claims(pool, settings.jwt_secret.reveal(), claims)
+
+
+async def issue_token_for_verified_claims(
     pool: asyncpg.Pool, jwt_secret: str, id_token_claims: dict[str, object]
 ) -> str:
-    """Provisionne ou lie l'app_user depuis les claims OIDC, retourne un JWT docflow."""
+    """Provisionne ou lie l'app_user depuis des claims OIDC **déjà vérifiés**.
+
+    Ne jamais appeler avec des claims non vérifiés : la vérification de
+    signature/iss/aud/exp est faite en amont par `handle_oidc_callback`.
+    """
     email = str(id_token_claims.get("email", ""))
     sub = str(id_token_claims.get("sub", ""))
     name = str(id_token_claims.get("name", email))

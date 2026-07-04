@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OidcConfigSet(BaseModel):
@@ -34,3 +34,19 @@ class OidcPublicConfig(BaseModel):
     issuer: str
     client_id: str
     enabled: bool
+
+
+class OidcCallbackIn(BaseModel):
+    """Corps de POST /auth/oidc/callback — flow authorization-code.
+
+    Le backend échange lui-même le `code` au token endpoint de l'issuer
+    configuré puis vérifie l'id_token (signature JWKS, iss, aud, exp, nonce).
+    Aucun claim posté par le client n'est accepté tel quel (AUTH-01).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    code: str = Field(min_length=1, max_length=4096)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+    # Nonce généré par le client au départ du flow, pour lier l'id_token à sa session.
+    nonce: str | None = Field(default=None, max_length=512)

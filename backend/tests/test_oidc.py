@@ -90,7 +90,7 @@ async def test_oidc_callback_rejected_when_disabled(db_pool: asyncpg.Pool) -> No
         ),
     )
     with pytest.raises(HTTPException) as exc:
-        await oidc_svc.handle_oidc_callback(
+        await oidc_svc.issue_token_for_verified_claims(
             db_pool, "jwt-secret",
             {"email": "user@example.com", "sub": "keycloak-sub-1"},
         )
@@ -111,7 +111,7 @@ async def test_oidc_provisioning_new_user(db_pool: asyncpg.Pool, clean_admin_use
         ),
     )
     with pytest.raises(HTTPException) as exc:
-        await oidc_svc.handle_oidc_callback(
+        await oidc_svc.issue_token_for_verified_claims(
             db_pool, "test-secret-key-for-unit-tests-hs256",
             {"email": "oidc-user@example.com", "sub": "sub-new-user", "name": "OIDC User"},
         )
@@ -147,9 +147,10 @@ async def test_oidc_link_existing_user_preserves_password(
             enabled=True,
         ),
     )
-    await oidc_svc.handle_oidc_callback(
+    # email_verified=True requis pour lier un compte existant par email (AUTH-02)
+    await oidc_svc.issue_token_for_verified_claims(
         db_pool, "test-secret-key-for-unit-tests-hs256",
-        {"email": "existing@example.com", "sub": "keycloak-sub-existing"},
+        {"email": "existing@example.com", "sub": "keycloak-sub-existing", "email_verified": True},
     )
     row = await db_pool.fetchrow(
         "SELECT password_hash, oidc_subject FROM app_user WHERE email = $1",

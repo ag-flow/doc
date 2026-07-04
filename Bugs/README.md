@@ -36,7 +36,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 
 | ID | Titre | Fichier principal | Modèle |
 |----|-------|-------------------|--------|
-| [AUTH-01](AUTH-01-oidc-callback-sans-verification-signature.md) | Callback OIDC émet un JWT sans vérifier la signature de l'id_token | `oidc/router.py`, `oidc/service.py` | **Fable** |
+| [AUTH-01](AUTH-01-oidc-callback-sans-verification-signature.md) | ✅ Callback OIDC émet un JWT sans vérifier la signature de l'id_token | `oidc/router.py`, `oidc/service.py` | **Fable** |
 | [DOC-01](DOC-01-vues-renumerotation-placeholders-cassee.md) | ✅ Renumérotation des placeholders `$n` cassée dans le moteur de vues | `views/service.py` | **Fable** |
 | [DOC-02](fixed/DOC-02-reparentage-sans-anti-cycle.md) | ✅ Reparentage de document sans détection de cycle → boucle infinie Postgres | `documents/service.py` | **Opus** |
 | [DOC-03](fixed/DOC-03-create-document-block-id-cross-workspace.md) | ✅ `create_document` accepte un `block_id` d'un autre workspace | `documents/service.py` | **Opus** |
