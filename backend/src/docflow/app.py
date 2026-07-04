@@ -130,9 +130,11 @@ async def health() -> JSONResponse:
     try:
         result = await _check_db(app.state.pool)
         return JSONResponse({"status": "ok", "db": result == 1})
-    except Exception as exc:
-        log.error("health_check_failed", error=str(exc))
-        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+    except Exception:
+        log.error("health_check_failed", exc_info=True)
+        return JSONResponse(
+            {"status": "error", "detail": "service unavailable"}, status_code=503
+        )
 
 
 # Fichiers statiques du frontend (assets JS/CSS)

@@ -1,5 +1,7 @@
 # INT-07 — `/health` fuit `str(exc)` dans la réponse 503
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : intégrations / app
