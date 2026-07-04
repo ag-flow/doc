@@ -14,6 +14,7 @@ function LocalLibrary() {
   const qc = useQueryClient()
   const editorRef = useRef<YamlEditorHandle>(null)
 
+  const editRequestRef = useRef(0)
   const [editTarget, setEditTarget] = useState<TemplateInfo | null>(null)
   const [yamlContent, setYamlContent] = useState<string | null>(null)
   const [yamlLoadError, setYamlLoadError] = useState<string | null>(null)
@@ -30,19 +31,23 @@ function LocalLibrary() {
   })
 
   async function openEdit(tpl: TemplateInfo) {
+    const requestId = ++editRequestRef.current
     setEditTarget(tpl)
     setYamlContent(null)
     setYamlLoadError(null)
     setEditSaveError(null)
     try {
       const content = await templatesApi.getYaml(tpl.template)
+      if (editRequestRef.current !== requestId) return // réponse hors-ordre : abandonnée
       setYamlContent(content)
     } catch (e) {
+      if (editRequestRef.current !== requestId) return
       setYamlLoadError((e as Error).message)
     }
   }
 
   function closeEdit() {
+    editRequestRef.current++ // invalide toute requête d'édition en vol
     setEditTarget(null)
     setYamlContent(null)
     setYamlLoadError(null)

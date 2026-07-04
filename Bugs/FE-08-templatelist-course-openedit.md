@@ -1,5 +1,7 @@
 # FE-08 — TemplateList : course dans `openEdit` → mauvais YAML sauvegardé
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : moyenne
 - **Zone** : frontend / templates
