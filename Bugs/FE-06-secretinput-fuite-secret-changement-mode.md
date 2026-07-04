@@ -1,5 +1,7 @@
 # FE-06 — SecretInput : secret exposé en clair lors d'un changement de mode
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : frontend / secrets

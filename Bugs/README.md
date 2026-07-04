@@ -67,9 +67,9 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [FE-03](FE-03-refetch-arriere-plan-verrou-optimiste.md) | Refetch arrière-plan : verrou optimiste contourné + titre perdu | `DocumentEditor.tsx` | **Opus** |
 | [FE-04](FE-04-login-401-recharge-page.md) | Login : 401 recharge la page au lieu d'afficher l'erreur | `lib/api.ts`, `Login.tsx` | **Opus** |
 | [FE-05](FE-05-propriete-bool-premier-toggle.md) | Propriété `bool` : le premier toggle n'est jamais persisté | `PropertyField.tsx`, `useFieldState.ts` | **Opus** |
-| [FE-06](FE-06-secretinput-fuite-secret-changement-mode.md) | SecretInput : secret exposé en clair lors d'un changement de mode | `SecretInput.tsx` | **Sonnet** |
-| [FE-07](FE-07-issuperadmin-atob-base64url.md) | `isSuperAdmin()` : `atob` échoue sur JWT base64url → UI admin masquée | `lib/api.ts` | **Sonnet** |
-| [FE-08](FE-08-templatelist-course-openedit.md) | TemplateList : course dans `openEdit` → mauvais YAML sauvegardé | `TemplateList.tsx` | **Sonnet** |
+| [FE-06](FE-06-secretinput-fuite-secret-changement-mode.md) | ✅ SecretInput : secret exposé en clair lors d'un changement de mode | `SecretInput.tsx` | **Sonnet** |
+| [FE-07](FE-07-issuperadmin-atob-base64url.md) | ✅ `isSuperAdmin()` : `atob` échoue sur JWT base64url → UI admin masquée | `lib/api.ts` | **Sonnet** |
+| [FE-08](FE-08-templatelist-course-openedit.md) | ✅ TemplateList : course dans `openEdit` → mauvais YAML sauvegardé | `TemplateList.tsx` | **Sonnet** |
 | [FE-09](FE-09-backlinkspanel-mauvais-bloc.md) | BacklinksPanel : navigation avec le mauvais bloc/workspace | `BacklinksPanel.tsx` | **Opus** |
 
 ## Bugs mineurs
