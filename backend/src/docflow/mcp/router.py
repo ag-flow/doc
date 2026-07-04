@@ -43,7 +43,15 @@ async def mcp_sse(
 
 
 @router.post("/mcp/messages")
-async def mcp_messages(request: Request) -> Response:
-    """Endpoint de réception des messages MCP (session_id en query param)."""
+async def mcp_messages(
+    request: Request,
+    _: AuthUser = Depends(require_admin),
+) -> Response:
+    """Réception des messages MCP (session_id en query param).
+
+    Défense en profondeur (INT-04) : cet endpoint reçoit toutes les invocations
+    d'outils, y compris les écritures. Il applique la même dépendance d'auth que
+    le canal SSE au lieu de se reposer uniquement sur le secret du session_id.
+    """
     await _transport.handle_post_message(request.scope, request.receive, request._send)
     return Response()

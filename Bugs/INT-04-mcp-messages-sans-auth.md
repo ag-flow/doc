@@ -1,4 +1,17 @@
 # INT-04 — `POST /api/mcp/messages` sans dépendance d'auth
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+>
+> `POST /mcp/messages` applique désormais la même dépendance `require_admin` que
+> le canal SSE (défense en profondeur : un JWT/clé API valide est exigé, plus
+> seulement le secret du `session_id`). Couplé à INT-03, l'identité utilisée pour
+> les écritures reste celle du propriétaire de la session SSE.
+>
+> ⚠️ Résiduel documenté : la liaison stricte « message ↔ propriétaire de session »
+> du SDK MCP (`_session_owners`) repose sur `scope["user"]` peuplé par le
+> middleware d'auth MCP, non branché ici (on utilise les dépendances FastAPI).
+> Fermer totalement cette fenêtre imposerait de câbler le middleware Bearer du
+> SDK MCP — refonte hors périmètre. La combinaison require_admin + attribution à
+> l'identité SSE (INT-03) couvre l'escalade d'attribution et exige un JWT valide.
 
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute (sur l'absence de contrôle) / moyenne (exploitabilité)
