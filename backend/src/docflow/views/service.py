@@ -179,6 +179,8 @@ async def get_view(
             FROM saved_view
             WHERE workspace_technical_key = $1 AND slug = $2
               AND (owner_ref IS NULL OR owner_ref = $3)
+            ORDER BY owner_ref NULLS LAST
+            LIMIT 1
             """,
             wk,
             slug,
@@ -201,9 +203,13 @@ async def update_view(
             wk = await require_workspace(conn, ws_slug)
             row = await conn.fetchrow(
                 "SELECT id, owner_ref FROM saved_view "
-                "WHERE workspace_technical_key = $1 AND slug = $2 FOR UPDATE",
+                "WHERE workspace_technical_key = $1 AND slug = $2 "
+                "  AND (owner_ref IS NULL OR owner_ref = $3) "
+                "ORDER BY owner_ref NULLS LAST "
+                "LIMIT 1 FOR UPDATE",
                 wk,
                 slug,
+                caller_id,
             )
             if row is None:
                 raise HTTPException(status_code=404, detail=f"vue '{slug}' introuvable")
@@ -240,9 +246,13 @@ async def delete_view(
             wk = await require_workspace(conn, ws_slug)
             row = await conn.fetchrow(
                 "SELECT id, owner_ref FROM saved_view "
-                "WHERE workspace_technical_key = $1 AND slug = $2",
+                "WHERE workspace_technical_key = $1 AND slug = $2 "
+                "  AND (owner_ref IS NULL OR owner_ref = $3) "
+                "ORDER BY owner_ref NULLS LAST "
+                "LIMIT 1 FOR UPDATE",
                 wk,
                 slug,
+                caller_id,
             )
             if row is None:
                 raise HTTPException(status_code=404, detail=f"vue '{slug}' introuvable")

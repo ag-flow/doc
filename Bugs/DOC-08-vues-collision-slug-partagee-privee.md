@@ -1,5 +1,7 @@
 # DOC-08 — Vues : collision de slug partagée/privée → résolution indéterminée
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : domaine / vues sauvegardées
