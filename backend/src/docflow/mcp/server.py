@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import pathlib
 import uuid
@@ -9,12 +10,40 @@ import structlog
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
+from docflow.schemas.auth import AuthUser
+
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
 log = structlog.get_logger(__name__)
 
 # Pool injecté au démarrage par configure()
 _pool: asyncpg.Pool | None = None
+
+# Identité authentifiée de la session MCP courante. Positionnée par le routeur
+# SSE (`mcp/router.py`) juste avant `mcp_server.run` ; comme la boucle de
+# dispatch des messages tourne dans des tâches filles de ce contexte, la
+# ContextVar est héritée jusqu'aux handlers d'outils. Chaque connexion SSE
+# vit dans sa propre tâche/contexte : aucune contamination entre sessions.
+_current_identity: contextvars.ContextVar[AuthUser | None] = contextvars.ContextVar(
+    "mcp_current_identity", default=None
+)
+
+
+def set_current_identity(user: AuthUser | None) -> contextvars.Token[AuthUser | None]:
+    """Lie l'identité authentifiée à la session MCP courante (appelé par le SSE)."""
+    return _current_identity.set(user)
+
+
+def reset_current_identity(token: contextvars.Token[AuthUser | None]) -> None:
+    _current_identity.reset(token)
+
+
+def _require_identity() -> AuthUser:
+    """Identité de l'appelant MCP ; erreur si la session n'est pas authentifiée."""
+    user = _current_identity.get()
+    if user is None:
+        raise RuntimeError("identité de session MCP indisponible")
+    return user
 
 _TOOLS: list[Tool] = [
     Tool(
@@ -893,21 +922,6 @@ async def _create_block(
     )
 
 
-async def _system_owner(pool: asyncpg.Pool) -> uuid.UUID:
-    """Retourne l'id du premier admin local validé — propriétaire système pour les ops MCP."""
-    uid: uuid.UUID | None = await pool.fetchval(
-        """
-        SELECT id FROM app_user
-        WHERE is_admin = true AND password_hash IS NOT NULL
-          AND disabled = false AND validated = true
-        ORDER BY created_at LIMIT 1
-        """
-    )
-    if uid is None:
-        raise RuntimeError("Aucun admin local disponible pour les opérations MCP")
-    return uid
-
-
 async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
 
@@ -919,7 +933,10 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
     read_only = bool(args.get("read_only", True))
     description = str(args["description"]) if "description" in args else None
 
-    owner_id = await _system_owner(pool)
+    # Le profil est rattaché à l'identité authentifiée de la session MCP —
+    # jamais au premier superadmin système (alignement sur le parcours REST,
+    # qui scope les clés à owner_id = l'appelant).
+    owner_id = _require_identity().id
 
     try:
         profile = await ak_svc.create_profile(
@@ -956,7 +973,9 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
     profile_id_str = str(args.get("profile_id", ""))
     label = str(args.get("label", ""))
 
-    owner_id = await _system_owner(pool)
+    # Clé rattachée à l'appelant authentifié ; generate_key filtre déjà par
+    # owner_id, donc un profil d'un autre utilisateur n'est pas exploitable.
+    owner_id = _require_identity().id
 
     try:
         created = await ak_svc.generate_key(

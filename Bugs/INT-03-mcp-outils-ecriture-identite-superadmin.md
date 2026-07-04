@@ -1,4 +1,14 @@
 # INT-03 — Outils MCP d'écriture exécutés sous l'identité du superadmin système
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus.
+>
+> Propagation de l'identité de session MCP implémentée via une `ContextVar`
+> (`mcp/server.py`) positionnée par le routeur SSE (`mcp/router.py`) juste avant
+> `mcp_server.run`. La boucle de dispatch des messages tourne dans des tâches
+> filles héritant de ce contexte, si bien que `create_api_profile` /
+> `generate_api_key` utilisent désormais `owner_id = identité authentifiée de
+> l'appelant` (fermeture stricte si absente) au lieu du premier superadmin
+> système. Chaque connexion SSE vit dans son propre contexte : pas de
+> contamination entre sessions concurrentes.
 
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : moyenne
