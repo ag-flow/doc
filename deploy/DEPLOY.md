@@ -111,7 +111,9 @@ Il est idempotent et effectue :
      `JWT_SECRET`, `ENCRYPTION_KEY`). Un `.env` partiel est complété, jamais
      écrasé : les valeurs existantes ne sont pas touchées.
 3. **Build + redémarrage** : `docker compose build` / `down` / `up -d`.
-4. **Smoke test** : `GET /health` (timeout 90 s), échec du script si KO, puis logs.
+4. **Smoke test** : `GET /health` (timeout 90 s), échec du script si KO, puis un
+   récapitulatif : URL d'accès, état du compte admin (commande wizard si aucun
+   compte), chemins `/data`, commande pour suivre les logs.
 
 L'app est ensuite joignable en HTTP direct sur le LAN : `http://<ip-vm>:8080`
 (stack de test sans reverse proxy — contrairement à la prod, qui reste bindée

@@ -157,19 +157,41 @@ main() {
         ELAPSED=$(( ELAPSED + 5 ))
     done
 
-    if [[ $SMOKE_OK -eq 1 ]]; then
-        echo ""
-        echo "  ✓ docflow opérationnel — http://localhost:8080/health"
-    else
+    if [[ $SMOKE_OK -ne 1 ]]; then
         echo "" >&2
         echo "  ✗ /health ne répond pas après 90s" >&2
         echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
         exit 1
     fi
 
+    # ─── Récapitulatif ────────────────────────────────────────────────────────
+    local IP ADMIN_INFO
+    IP="$(hostname -I | awk '{print $1}')"
+    # docflow n'a pas de mot de passe bootstrap : le premier compte se crée via
+    # le wizard init-admin, qui se désactive dès qu'un utilisateur existe.
+    if curl -sf -m 3 "http://localhost:8080/api/setup/status" 2>/dev/null \
+            | grep -q '"needs_setup": *true'; then
+        ADMIN_INFO="aucun compte — créer le premier admin :
+            curl -X POST http://${IP}:8080/api/setup/init-admin \\
+                 -H 'Content-Type: application/json' \\
+                 -d '{\"username\":\"admin\",\"email\":\"admin@example.org\",\"password\":\"...\"}'"
+    else
+        ADMIN_INFO="compte admin déjà initialisé (wizard désactivé)"
+    fi
+
     echo ""
-    echo "==> Logs (80 dernières lignes) :"
-    docker compose -f "$COMPOSE_FILE" logs --tail=80
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "  ✓ docflow opérationnel"
+    echo ""
+    echo "  Accès : http://${IP}:8080"
+    echo "  Santé : http://${IP}:8080/health"
+    echo "  Admin : ${ADMIN_INFO}"
+    echo "  Env   : ${ENV_FILE} (+ ${PG_PASSWORD_FILE})"
+    echo ""
+    echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
 }
 
 main "$@"
