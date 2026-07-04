@@ -1,4 +1,5 @@
 import { useNavigate, useMatch, NavLink } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Layers,
   LayoutTemplate,
@@ -70,6 +71,7 @@ function Divider() {
 
 export function Sidebar() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const superAdmin = isSuperAdmin()
 
   const wsMatch = useMatch('/ws/:wsSlug/*')
@@ -80,6 +82,7 @@ export function Sidebar() {
 
   function logout() {
     clearToken()
+    queryClient.clear()
     void navigate('/login')
   }
 

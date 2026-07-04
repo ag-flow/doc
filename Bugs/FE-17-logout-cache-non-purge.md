@@ -1,5 +1,7 @@
 # FE-17 — Logout : cache TanStack Query non purgé
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / auth
