@@ -1,5 +1,7 @@
 # DEP-08 — `prod-deploy.sh` source le `.env` format docker dans bash
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : déploiement / script

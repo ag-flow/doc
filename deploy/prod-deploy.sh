@@ -74,10 +74,18 @@ if [[ ! -f "$DATA/.env" ]]; then
 fi
 
 # ── Vérifier que les variables obligatoires sont renseignées ───────────────────
-set -a; source "$DATA/.env"; set +a
-: "${DATABASE_URL:?'DATABASE_URL manquant dans $DATA/.env'}"
-: "${JWT_SECRET:?'JWT_SECRET manquant dans $DATA/.env'}"
-: "${ENCRYPTION_KEY:?'ENCRYPTION_KEY manquant dans $DATA/.env'}"
+# $DATA/.env est un fichier env_file docker (valeurs brutes, non quotées) : une
+# valeur contenant un espace, un `$`, un backtick ou un `#` y est parfaitement
+# valide pour docker, mais sourcer ce fichier en bash la ferait interpréter par
+# le shell (au mieux une erreur de syntaxe, au pire l'exécution de son contenu).
+# On valide donc ligne à ligne, sans jamais interpréter le fichier comme du bash.
+require_env_var() {
+    local var="$1"
+    grep -Eq "^${var}=.+" "$DATA/.env" || die "${var} manquant ou vide dans $DATA/.env"
+}
+require_env_var DATABASE_URL
+require_env_var JWT_SECRET
+require_env_var ENCRYPTION_KEY
 ok "Configuration validée"
 
 # ── Tirer l'image ──────────────────────────────────────────────────────────────
