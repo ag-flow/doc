@@ -113,6 +113,10 @@ Il est idempotent et effectue :
 3. **Build + redémarrage** : `docker compose build` / `down` / `up -d`.
 4. **Smoke test** : `GET /health` (timeout 90 s), échec du script si KO, puis logs.
 
+L'app est ensuite joignable en HTTP direct sur le LAN : `http://<ip-vm>:8080`
+(stack de test sans reverse proxy — contrairement à la prod, qui reste bindée
+sur `127.0.0.1` derrière le proxy TLS, cf. DEP-03).
+
 ---
 
 ## Exposition HTTPS
