@@ -161,6 +161,22 @@ async def test_anti_lockout_delete_dernier_admin(
     assert exc.value.status_code == 422
 
 
+async def test_anti_lockout_noop_si_cible_non_admin(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Dévalider/désactiver/supprimer un non-admin est permis même sans admin local en base.
+
+    Le garde ne concerne que les cibles qui sont elles-mêmes des admins locaux
+    connectables ; sinon une base sans admin local (tout-OIDC) serait figée.
+    """
+    u = await svc.create_user(db_pool, _create("plain@test.local"))
+    unv = await svc.validate_user(db_pool, u.id, validated=False)
+    assert unv.validated is False
+    upd = await svc.update_user(db_pool, u.id, AdminUserUpdate(disabled=True))
+    assert upd.disabled is True
+    await svc.delete_user(db_pool, u.id)  # ne doit pas lever d'exception
+
+
 async def test_anti_lockout_ok_si_autre_admin(
     db_pool: asyncpg.Pool, clean_admin_users: None
 ) -> None:

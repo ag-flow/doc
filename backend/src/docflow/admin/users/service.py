@@ -136,14 +136,13 @@ async def validate_user(pool: asyncpg.Pool, user_id: uuid.UUID, *, validated: bo
 async def delete_user(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow(
-                "SELECT password_hash, disabled, is_admin FROM app_user WHERE id = $1",
-                user_id,
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM app_user WHERE id = $1)", user_id
             )
-            if row is None:
+            if not exists:
                 raise HTTPException(status_code=404, detail="utilisateur introuvable")
-            if row["password_hash"] is not None and not row["disabled"] and row["is_admin"]:
-                await assert_not_last_local_admin(conn, user_id)
+            # Le garde est no-op si la cible n'est pas un admin local connectable.
+            await assert_not_last_local_admin(conn, user_id)
             await conn.execute("DELETE FROM app_user WHERE id = $1", user_id)
 
 

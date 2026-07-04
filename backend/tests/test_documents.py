@@ -232,19 +232,57 @@ async def test_update_document_content_requires_expected_version(
 async def test_update_document_metadata_no_version(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
-    """Mise à jour des métadonnées (type fonctionnel) sans expected_version."""
-    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
+    """Mise à jour des métadonnées (type fonctionnel) sans expected_version.
+
+    Le changement de type doit respecter l'invariant de position (DOC-04) : on passe
+    d'un type fils du type du parent à un autre type fils (story → bug).
+    """
+    root_slug: str = test_block["type_slug"]
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story", parent_slug=root_slug)
+    )
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="bug", label="Bug", parent_slug=root_slug)
+    )
+    parent = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
+    )
     doc = await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Doc", block_id=test_block["id"])
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Doc",
+            block_id=test_block["id"],
+            parent_id=parent.doc_technical_key,
+            functional_type_slug="story",
+        ),
     )
     updated = await doc_svc.update_document(
         db_pool,
         _WS,
         doc.doc_technical_key,
-        DocumentUpdate(functional_type_slug="story"),
+        DocumentUpdate(functional_type_slug="bug"),
     )
-    assert updated.functional_type_slug == "story"
+    assert updated.functional_type_slug == "bug"
     assert updated.version == 1  # pas de bump de version
+
+
+async def test_update_document_type_racine_invalide(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """DOC-04 : à la racine d'un bloc, changer le type hors type du bloc → 422."""
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
+    doc = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Doc racine", block_id=test_block["id"])
+    )
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.update_document(
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
+            DocumentUpdate(functional_type_slug="story"),
+        )
+    assert exc.value.status_code == 422
 
 
 async def test_update_document_no_changes(
