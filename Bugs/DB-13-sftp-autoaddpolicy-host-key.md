@@ -1,5 +1,7 @@
 # DB-13 — SFTP : `AutoAddPolicy`, host key jamais vérifiée
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR (sécurité : MITM sur l'upload du dump)
 - **Confiance** : haute (signalé par deux revues)
 - **Zone** : backup / db_dump

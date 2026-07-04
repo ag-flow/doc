@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
+import paramiko  # type: ignore[import-untyped]
 import structlog
 
 log = structlog.get_logger(__name__)
@@ -17,6 +18,37 @@ log = structlog.get_logger(__name__)
 # (connexion en clair puis AUTH TLS) : le port par défaut est donc 21, pas 990
 # (TLS implicite, non supporté par ftplib.FTP_TLS).
 _DEFAULT_PORTS = {"ftp": 21, "ftps": 21, "sftp": 22}
+
+# Fichier known_hosts dédié au worker de backup (TOFU — trust on first use).
+_KNOWN_HOSTS_PATH = pathlib.Path("/data/backup-known-hosts")
+
+
+class _TofuHostKeyPolicy(paramiko.MissingHostKeyPolicy):  # type: ignore[misc]
+    """Trust On First Use : épingle la clé d'un hôte SFTP inconnu.
+
+    `AutoAddPolicy` accepte silencieusement N'IMPORTE QUELLE clé à CHAQUE
+    connexion (aucune protection MITM). Ici, seule la toute première
+    connexion à un hôte donné passe par `missing_host_key` (paramiko ne
+    l'appelle que si l'hôte n'a pas déjà une entrée chargée) ; la clé est
+    alors mémorisée sur disque. Si la clé d'un hôte déjà connu change
+    ensuite, `SSHClient.connect` lève `BadHostKeyException` avant même
+    d'atteindre cette policy — l'upload du dump est bloqué.
+    """
+
+    def __init__(self, known_hosts_path: pathlib.Path) -> None:
+        self._known_hosts_path = known_hosts_path
+
+    def missing_host_key(
+        self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
+    ) -> None:
+        log.warning(
+            "sftp_host_key_tofu_pinned",
+            hostname=hostname,
+            fingerprint=key.get_fingerprint().hex(),
+        )
+        client.get_host_keys().add(hostname, key.get_name(), key)
+        self._known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
+        client.save_host_keys(str(self._known_hosts_path))
 
 
 def _dump_filename(workspace_slug: str | None, job_id: uuid.UUID) -> str:
@@ -97,11 +129,12 @@ def _upload_sftp(
     password: str | None,
     ssh_key_path: str | None,
     remote_dir: str | None,
+    known_hosts_path: pathlib.Path = _KNOWN_HOSTS_PATH,
 ) -> None:
-    import paramiko  # type: ignore[import-untyped]
-
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if known_hosts_path.exists():
+        ssh.load_host_keys(str(known_hosts_path))
+    ssh.set_missing_host_key_policy(_TofuHostKeyPolicy(known_hosts_path))
     connect_kwargs: dict[str, Any] = {
         "hostname": host, "port": port, "username": username, "timeout": 60,
     }
