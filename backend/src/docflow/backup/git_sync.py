@@ -46,18 +46,22 @@ async def _fetch_doc(
     prop_rows = await conn.fetch(
         """
         SELECT pd.slug AS prop_slug, pd.type AS prop_type,
-               pvv.value, pvv.allowed_value_ref
+               pvv.value, pav.slug AS allowed_value_slug
         FROM properties_values pv
         JOIN properties_defs pd ON pd.id = pv.property_def_ref
         JOIN properties_value_version pvv
                ON pvv.property_value_ref = pv.id
               AND pvv.version_number = pv.version
+        LEFT JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
         WHERE pv.document_ref = $1
         ORDER BY pd.slug
         """,
         doc_id,
     )
-    doc["properties"] = {r["prop_slug"]: r["value"] or r["allowed_value_ref"] for r in prop_rows}
+    doc["properties"] = {
+        r["prop_slug"]: r["value"] if r["value"] is not None else r["allowed_value_slug"]
+        for r in prop_rows
+    }
     return doc
 
 

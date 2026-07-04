@@ -1,5 +1,7 @@
 # DB-04 — Export JSON : `TypeError` sur UUID + valeurs falsy écrasées
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🔴 CRITIQUE (fait échouer tout le run)
 - **Confiance** : haute
 - **Zone** : backup / git_sync
