@@ -1,5 +1,7 @@
 # DEP-02 — `scripts/*.sql` : copies périmées et divergentes des migrations
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟠 MAJEUR
 - **Confiance** : haute
 - **Zone** : déploiement / migrations
