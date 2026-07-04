@@ -20,10 +20,19 @@ Chaque fiche porte la mention `✅ CORRIGÉ` en tête ; toutes les lignes des ta
 - **AUTH-07** : renommage sans changement de comportement (modèle à 2 niveaux confirmé : utilisateur validé = accès contenu, `require_superadmin` = rôle admin).
 - **DOC-07** : cascade de la migration 0011 assumée + garde de confirmation (`?confirm=true`) sur les suppressions destructrices.
 
-### À valider avant merge
+### Validation sur test1 (2026-07-04)
 
-> `ruff` + `mypy` verts ; pytest sans régression (tests Postgres *skipped* dans le sandbox, mais DOC-07 a été validé contre un Postgres éphémère : 452 passed). Restent à valider sur test1 avec un vrai Postgres + build frontend, et à traiter côté produit :
-> - **Impacts frontend** de correctifs backend : le callback OIDC attend désormais `{code, redirect_uri, nonce}` (AUTH-01) ; les suppressions bloc/type/def renvoient 409 tant que `confirm=true` n'est pas envoyé (DOC-07) — l'UI doit proposer la confirmation.
+> Validé sur test1 avec un vrai Postgres : `ruff` + `mypy` verts, **suite complète 457 passed / 0 failed** (Postgres 16 éphémère, migrations rejouées sur base vierge à chaque run), build frontend OK, déploiement docker + `/health` vert, `apply` idempotent confirmé sur base existante (`migrations_up_to_date`, 32 migrations).
+>
+> Vérifications fonctionnelles sur l'instance déployée (10/10) :
+> - **AUTH-01** : ancien payload (`id_token`/claims) → 422 ; payload vide → 422 ; `{code, redirect_uri, nonce}` avec code bidon → erreur contrôlée (403, jamais 200 ni 500).
+> - **DOC-07** : DELETE bloc avec contenu sans `confirm` → 409 ; avec `?confirm=true` → 204 (idem type).
+>
+> La validation a débusqué un bug résiduel du correctif AUTH-04, corrigé (`0fa023f`) : le garde anti-lock-out bloquait toute dévalidation/désactivation/suppression d'utilisateur dès qu'aucun admin local n'existait en base (p. ex. tout-OIDC), même pour des cibles non-admin. Le garde est désormais no-op quand la cible n'est pas elle-même un admin local connectable.
+
+### Reste à traiter côté produit
+
+> - **UI** : les suppressions bloc/type/def ne passent pas `confirm=true` (409 garanti sur contenu non vide) — l'UI doit proposer la confirmation (DOC-07). Pas de flow de login OIDC dans l'UI à ce jour, donc pas d'impact AUTH-01 côté frontend tant qu'il n'existe pas.
 > - La spec `22_MDB_data_block.md` (« RESTRICT ») est à amender pour refléter DOC-07.
 > - Divers périmètres conservateurs documentés dans les fiches (DOC-10, INT-03/04, INT-06, FE-04).
 
