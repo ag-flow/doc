@@ -1,5 +1,7 @@
 # DOC-12 — `allowed_types` avec `parent_id` : fuite inter-workspace
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : domaine / blocks

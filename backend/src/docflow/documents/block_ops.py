@@ -160,14 +160,26 @@ async def allowed_types(
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
             return [{"slug": row["slug"], "label": row["label"]}]
         else:
-            rows = await conn.fetch(
+            block_id, _ = await _resolve_block_id(conn, wk, block_slug)
+            parent_ft: uuid.UUID | None = await conn.fetchval(
                 """
-                SELECT ft.slug, ft.label FROM functional_type ft
-                WHERE ft.parent = (
-                    SELECT d.functional_type_ref FROM document d WHERE d.doc_technical_key = $1
-                )
+                SELECT d.functional_type_ref FROM document d
+                WHERE d.doc_technical_key = $1
+                  AND d.workspace_technical_key = $2
+                  AND d.data_block_ref = $3
                 """,
                 parent_id,
+                wk,
+                block_id,
+            )
+            if parent_ft is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"document parent {parent_id} introuvable dans ce bloc",
+                )
+            rows = await conn.fetch(
+                "SELECT ft.slug, ft.label FROM functional_type ft WHERE ft.parent = $1",
+                parent_ft,
             )
             return [{"slug": r["slug"], "label": r["label"]} for r in rows]
 
