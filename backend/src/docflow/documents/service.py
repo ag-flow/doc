@@ -383,10 +383,13 @@ async def update_document(
                         *list(meta.values()),
                     )
                 except asyncpg.UniqueViolationError as exc:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"slug '{raw['slug']}' déjà utilisé dans ce workspace",
-                    ) from exc
+                    if "slug" in raw:
+                        detail = f"slug '{raw['slug']}' déjà utilisé dans ce workspace"
+                    else:
+                        detail = (
+                            "un document avec le même slug existe déjà sous le parent visé"
+                        )
+                    raise HTTPException(status_code=409, detail=detail) from exc
 
     return await get_document(pool, ws_slug, doc_id)
 

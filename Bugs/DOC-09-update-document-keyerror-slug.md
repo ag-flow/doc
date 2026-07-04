@@ -1,5 +1,7 @@
 # DOC-09 — `update_document` : `KeyError` sur conflit de slug lors d'un déplacement
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : domaine / documents

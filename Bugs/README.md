@@ -82,7 +82,7 @@ Récapitulatif : **Fable** 6 bugs · **Opus** 22 bugs · **Sonnet** 44 bugs.
 | [INT-05](INT-05-webhook-sentinelle-now.md) | Collision de sentinelle `"now()"` dans l'UPDATE webhook | `webhooks/service.py` | **Sonnet** |
 | [INT-06](INT-06-ssrf-urls-administrees.md) | SSRF via URLs administrées (webhooks/automations/contracts/galerie) | `webhooks/`, `automations/`, `contracts/`, `templates/` | **Opus** |
 | [INT-07](INT-07-health-fuite-exception.md) | `/health` fuit `str(exc)` dans la réponse 503 | `app.py` | **Sonnet** |
-| [DOC-09](DOC-09-update-document-keyerror-slug.md) | `update_document` : `KeyError` sur conflit de slug lors d'un déplacement | `documents/service.py` | **Sonnet** |
+| [DOC-09](DOC-09-update-document-keyerror-slug.md) | ✅ `update_document` : `KeyError` sur conflit de slug lors d'un déplacement | `documents/service.py` | **Sonnet** |
 | [DOC-10](DOC-10-workspace-archive-modifiable.md) | Workspace archivé encore entièrement modifiable | `workspaces/service.py`, `db/helpers.py` | **Opus** |
 | [DOC-11](DOC-11-viewupdate-layout-non-valide.md) | `ViewUpdate.layout` non validé → 500 au lieu de 422 | `views/service.py` | **Sonnet** |
 | [DOC-12](DOC-12-allowed-types-parent-id-cross-workspace.md) | `allowed_types` avec `parent_id` : fuite inter-workspace | `documents/block_ops.py` | **Sonnet** |
