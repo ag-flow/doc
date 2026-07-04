@@ -1,5 +1,7 @@
 # DEP-07 — Version de `pg_dump` non maîtrisée dans l'image (base flottante)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : moyenne
 - **Zone** : déploiement / Docker
