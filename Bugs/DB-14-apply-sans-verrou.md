@@ -1,5 +1,7 @@
 # DB-14 — `apply()` sans verrou : course entre instances au boot
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR (déploiement mono-instance actuel)
 - **Confiance** : haute
 - **Zone** : db / apply (runner de migrations)
