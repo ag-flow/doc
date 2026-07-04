@@ -1,5 +1,7 @@
 # FE-16 — `/pub` non proxifié en dev
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : frontend / dev proxy
