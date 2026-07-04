@@ -1,5 +1,7 @@
 # INT-05 — Collision de sentinelle `"now()"` dans l'UPDATE webhook
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Sonnet.
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : intégrations / webhooks

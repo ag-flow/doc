@@ -146,17 +146,17 @@ async def update_webhook(
             sets["events"] = raw["events"]
         if "active" in raw:
             sets["active"] = raw["active"]
-        sets["updated_at"] = "now()"
 
-        # Construction sécurisée de la clause SET (clés connues, pas d'interpolation user)
-        parts = []
+        # Construction sécurisée de la clause SET (clés connues, valeurs toujours
+        # paramétrées). `updated_at` est géré hors boucle, sans comparaison de
+        # valeur, pour ne jamais confondre une donnée utilisateur avec la
+        # fonction SQL `now()` (cf. automations/service.py::update_automation).
+        parts: list[str] = []
         values: list[object] = [webhook_id]
         for k, v in sets.items():
-            if v == "now()":
-                parts.append(f"{k} = now()")
-            else:
-                values.append(v)
-                parts.append(f"{k} = ${len(values)}")
+            values.append(v)
+            parts.append(f"{k} = ${len(values)}")
+        parts.append("updated_at = now()")
 
         row = await conn.fetchrow(
             "UPDATE webhook_subscription SET " + ", ".join(parts) + " WHERE id = $1 "
