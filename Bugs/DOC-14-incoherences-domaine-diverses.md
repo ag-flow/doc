@@ -1,5 +1,14 @@
 # DOC-14 — Incohérences domaine diverses (groupées)
 
+> ✅ **CORRIGÉ** le 2026-07-04 par agent autonome Opus. Les 4 sous-correctifs sont appliqués :
+> 1. Helper `compute_initial_content` factorisé (template_apply) et utilisé par
+>    `create_document` et `create_document_in_block`.
+> 2. `resolve_view` charge `limit+1` et expose `has_more` (troncature signalée) ;
+>    pagination cursor complète non implémentée (option « au minimum has_more » retenue).
+> 3. `create_view` valide l'appartenance de `bloc_ref` au workspace (422 sinon).
+> 4. `update_def` distingue champ absent / champ = null → `default_value` peut être
+>    remis à NULL (label/required NOT NULL restent protégés).
+
 - **Gravité** : 🟡 MINEUR
 - **Confiance** : haute
 - **Zone** : domaine / documents, vues, properties

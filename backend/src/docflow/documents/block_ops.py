@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
 from docflow.documents.changelog import log_change
+from docflow.documents.template_apply import compute_initial_content
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
 log = structlog.get_logger(__name__)
@@ -420,11 +421,14 @@ async def create_document_in_block(
             assert row is not None
             doc_id: uuid.UUID = row["doc_technical_key"]
 
+            # Appliquer le content_template du type (DOC-14 #1)
+            initial_content = await compute_initial_content(conn, ft_id, body.title)
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, 1, $2, NULL)",
+                "VALUES ($1, 1, $2, $3)",
                 doc_id,
                 body.title,
+                initial_content,
             )
 
             # 5. Instancier les valeurs par défaut

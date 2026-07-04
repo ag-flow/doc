@@ -185,13 +185,20 @@ async def update_def(
     prop_slug: str,
     data: PropertiesDefUpdate,
 ) -> PropertiesDefOut:
-    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
-    if not updates:
-        return await get_def(pool, ws_slug, type_slug, prop_slug)
+    # DOC-14 #4 : distinguer « champ absent » (exclude_unset) de « champ = null ».
+    # default_value peut être remis explicitement à NULL ; label/required (NOT NULL)
+    # ne peuvent pas devenir null → on ignore un null envoyé sur ces champs.
+    raw = data.model_dump(exclude_unset=True)
     _ALLOWED = frozenset({"label", "default_value", "required"})
-    for k in updates:
+    updates: dict[str, object | None] = {}
+    for k, v in raw.items():
         if k not in _ALLOWED:
             raise ValueError(f"champ non modifiable : {k}")
+        if k in {"label", "required"} and v is None:
+            continue
+        updates[k] = v
+    if not updates:
+        return await get_def(pool, ws_slug, type_slug, prop_slug)
     async with pool.acquire() as conn:
         async with conn.transaction():
             type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)

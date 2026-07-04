@@ -86,6 +86,7 @@ class ViewResults(BaseModel):
     rows: list[ViewResultRow]
     group_by_values: list[dict[str, Any]] = []  # allowed_values ordonnés pour board
     next_cursor: str | None = None
+    has_more: bool = False  # DOC-14 #2 : signale une troncature (page suivante existe)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -116,6 +117,18 @@ async def create_view(
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            # DOC-14 #3 : bloc_ref doit appartenir à ce workspace (pas de FK en DB).
+            if data.bloc_ref is not None:
+                block_ok = await conn.fetchval(
+                    "SELECT 1 FROM data_block WHERE id = $1 AND workspace_technical_key = $2",
+                    data.bloc_ref,
+                    wk,
+                )
+                if not block_ok:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="bloc_ref introuvable dans ce workspace",
+                    )
             try:
                 row = await conn.fetchrow(
                     """
@@ -342,11 +355,14 @@ async def resolve_view(
         {order_by}
         LIMIT ${len(all_params) + 1}
     """
-    all_params.append(limit)
+    # Charger limit+1 lignes pour détecter une page suivante (DOC-14 #2).
+    all_params.append(limit + 1)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *all_params)
 
+    has_more = len(rows) > limit
+    rows = rows[:limit]
     result_rows = [
         ViewResultRow(
             doc_id=r["doc_id"],
@@ -375,4 +391,6 @@ async def resolve_view(
             )
             group_by_values = [dict(r) for r in av_rows]
 
-    return ViewResults(rows=result_rows, group_by_values=group_by_values)
+    return ViewResults(
+        rows=result_rows, group_by_values=group_by_values, has_more=has_more
+    )

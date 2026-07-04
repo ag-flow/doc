@@ -16,7 +16,7 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
-from docflow.documents.template_apply import apply_content_template
+from docflow.documents.template_apply import compute_initial_content
 from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
@@ -307,14 +307,8 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                     detail="le bloc cible n'appartient pas à ce workspace",
                 )
             ft_id: uuid.UUID | None = None
-            content_template: str | None = None
             if data.functional_type_slug:
                 ft_id = await _resolve_functional_type(conn, wk, data.functional_type_slug)
-                ct_row = await conn.fetchrow(
-                    "SELECT content_template FROM functional_type WHERE id = $1", ft_id
-                )
-                if ct_row:
-                    content_template = ct_row["content_template"]
             parent_exposed = False
             if data.parent_id:
                 await _validate_parent(conn, wk, data.parent_id)
@@ -330,10 +324,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                     )
                 parent_exposed = bool(parent_row["exposed"])
             # Appliquer le template si corps vide et modèle défini
-            initial_content = data.content
-            if not initial_content and content_template:
-                today = datetime.date.today().isoformat()
-                initial_content = apply_content_template(content_template, data.title, today)
+            initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
             try:
                 row = await conn.fetchrow(
                     """
