@@ -1,4 +1,7 @@
-# Déploiement de docflow en production
+# Déploiement de docflow
+
+> Ce document couvre la **production** (image GHCR, `prod-deploy.sh`) puis le
+> **déploiement dev sur la VM de test** (build local, `./dev-deploy.sh`).
 
 ## Prérequis
 
@@ -81,6 +84,34 @@ bash /opt/docflow/prod-deploy.sh
 ```
 
 Le script télécharge la dernière version de `docker-compose.prod.yml`, tire la nouvelle image et redémarre uniquement le conteneur app. Les migrations sont appliquées automatiquement.
+
+---
+
+## Déploiement dev (VM de test)
+
+Le script `dev-deploy.sh` vit à la **racine du repo** — geste opérateur homogène
+avec les autres repos yoops :
+
+```bash
+cd /opt/docflow
+sudo ./dev-deploy.sh [BRANCH]     # ex : sudo ./dev-deploy.sh dev
+```
+
+Il est idempotent et effectue :
+
+1. **Git sync** : `git fetch` + `checkout [BRANCH]` + `reset --hard origin/[BRANCH]`
+   (robuste même quand le script se met à jour lui-même lors de la synchro).
+2. **Init/réparation de `/data`** :
+   - `/data/pg_password.txt` généré s'il est absent **ou vide** (fichier séparé :
+     docker compose le consomme via `secrets:`/`POSTGRES_PASSWORD_FILE`) ;
+   - `/data/.env` initialisé par copie de [`deploy/.env.example`](./.env.example)
+     s'il est absent — le wizard `init-admin` est rappelé à ce moment ;
+   - **réparation clé par clé** : chaque secret manquant ou vide est régénéré
+     individuellement (`DATABASE_URL` reconstruite depuis `pg_password.txt`,
+     `JWT_SECRET`, `ENCRYPTION_KEY`). Un `.env` partiel est complété, jamais
+     écrasé : les valeurs existantes ne sont pas touchées.
+3. **Build + redémarrage** : `docker compose build` / `down` / `up -d`.
+4. **Smoke test** : `GET /health` (timeout 90 s), échec du script si KO, puis logs.
 
 ---
 

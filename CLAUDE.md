@@ -85,31 +85,24 @@ git clone git@github.com:ag-flow/doc.git /opt/docflow
 cd /opt/docflow
 git checkout dev
 
-# 5. Initialiser /data/.env (secrets, jamais commités)
-mkdir -p /data
-cp scripts/.env.example /data/.env
-# Éditer /data/.env : DATABASE_URL, JWT_SECRET, BOOTSTRAP_ADMIN_*
-
-# 6. Créer /data/pg_password.txt (mot de passe Postgres)
-echo "MOT_DE_PASSE_POSTGRES" > /data/pg_password.txt
-chmod 600 /data/pg_password.txt
-
-# 7. Lancer le déploiement
-chmod +x scripts/dev-deploy.sh
-./scripts/dev-deploy.sh dev
+# 5. Lancer le déploiement — /data/.env et /data/pg_password.txt sont
+#    initialisés automatiquement (copie de deploy/.env.example + secrets générés)
+sudo ./dev-deploy.sh dev
 ```
 
 ### Redéploiement (après chaque push sur dev)
 
 ```bash
 ssh test1
-cd /opt/docflow && ./scripts/dev-deploy.sh dev
+cd /opt/docflow && sudo ./dev-deploy.sh dev
 ```
 
-Le script `scripts/dev-deploy.sh` :
-1. `git pull --ff-only origin dev`
-2. `docker compose build` + `down` + `up -d`
-3. Smoke test `GET /health` (timeout 60 s)
+Le script `dev-deploy.sh` (racine du repo) :
+1. `git fetch` + `checkout` + `reset --hard origin/dev`
+2. Init/réparation de `/data` : `.env` copié depuis `deploy/.env.example` si absent,
+   puis **réparation clé par clé** (tout secret manquant ou vide est régénéré)
+3. `docker compose build` + `down` + `up -d`
+4. Smoke test `GET /health` (timeout 90 s)
 
 ## Layout du code
 
@@ -137,10 +130,12 @@ docflow/
 ├── frontend/                     # Vite + React + TS (écran admin types & statuts en premier)
 ├── deploy/
 │   ├── Dockerfile                # AUCUN secret dans l'image
-│   └── docker-compose.yml        # app + postgres (ou schéma dédié dans l'instance existante)
-├── scripts/
-│   ├── backup.sh                 # pg_dump chiffré (age/gpg)
-│   └── restore.sh
+│   ├── docker-compose.yml        # app + postgres (dev/test, build local)
+│   ├── docker-compose.prod.yml   # app + postgres (prod, image GHCR)
+│   ├── .env.example              # modèle de /data/.env (toutes les clés, secrets vides)
+│   ├── DEPLOY.md                 # procédures prod + dev
+│   └── prod-deploy.sh            # déploiement prod (image GHCR)
+├── dev-deploy.sh                 # déploiement dev VM de test (sudo ./dev-deploy.sh [BRANCH])
 ├── specs/                        # ce corpus (00 → milestones)
 └── CLAUDE.md
 ```
