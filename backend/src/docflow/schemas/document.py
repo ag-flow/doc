@@ -18,6 +18,10 @@ class DocumentCreate(BaseModel):
     content: str | None = None
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
+    # Valeurs initiales de propriétés (slug → valeur ; restricted_list = slug
+    # de la valeur autorisée). Les propriétés required sans default ni behavior
+    # DOIVENT y figurer : la création est refusée (422) sinon.
+    properties: dict[str, str] | None = None
 
     @field_validator("slug")
     @classmethod
@@ -37,6 +41,8 @@ class DocumentCreateInBlock(BaseModel):
     slug: str
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
+    # Valeurs initiales de propriétés — même contrat que DocumentCreate.
+    properties: dict[str, str] | None = None
 
     @field_validator("slug")
     @classmethod

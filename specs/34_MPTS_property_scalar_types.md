@@ -99,3 +99,23 @@ Dérouler ces étapes dans un workspace de test prouve la valeur de bout en bout
 - **`pattern` sur `url`** (restreindre à un domaine) : hors V1, additif si besoin réel.
 - **`datetime` / fuseau** : type distinct futur, ne pas surcharger `date`.
 - **Localisation de saisie de la date** : le picker affiche au format local mais **stocke ISO** ; vérifier qu'aucune conversion de fuseau ne décale le jour (piège classique — à tester explicitement).
+
+## Amendement 2026-07-05 — contrat dur `required` et comportements (`behavior`)
+
+> Décisions d'architecte, implémentées avec la migration `0034` :
+>
+> 1. **`required` est contraignant à l'écriture.** La création d'un document
+>    (REST `POST …/documents`, bloc `POST …/blocks/{slug}/documents`, outil MCP
+>    `create_document`) accepte des valeurs initiales `properties: {slug → valeur}`
+>    et **échoue en 422** — message listant les slugs manquants — si une propriété
+>    `required` sans `default_value` ni `behavior` n'est pas fournie. Un changement
+>    de type revalide le même contrat pour le nouveau type. La suppression de la
+>    valeur d'une `required` reste refusée (I-4).
+> 2. **`behavior`** (`properties_defs.behavior`, réservé au type `date`) :
+>    `auto_now` = le serveur pose la date courante à **chaque enregistrement** du
+>    document (création, contenu/titre, valeur de propriété, suppression de
+>    valeur) ; `auto_now_create` = posée à la création (ou au changement de type),
+>    jamais retouchée. Une propriété à `behavior` est **refusée en écriture et en
+>    suppression manuelles** (422 « gérée automatiquement ») et satisfait
+>    d'office le contrat `required`. Déclarable dans un template :
+>    `behavior: auto_now` sur la propriété (conflit d'import si modifié).

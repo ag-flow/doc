@@ -10,6 +10,7 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
     allowed_types,
     create_document_in_block,
@@ -358,6 +359,32 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
             await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
+
+            # Valeurs initiales de propriétés + contrat required (contrat dur :
+            # la création échoue si une required sans default/behavior manque).
+            new_doc_id: uuid.UUID = row["doc_technical_key"]
+            if data.properties:
+                if ft_id is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="properties fourni mais le document n'a pas de type fonctionnel",
+                    )
+                for prop_slug, prop_value in data.properties.items():
+                    prop_id, prop_type, _, _, behavior = await _resolve_prop(conn, ft_id, prop_slug)
+                    if behavior is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"propriété '{prop_slug}' gérée automatiquement "
+                                f"({behavior}) : écriture manuelle refusée"
+                            ),
+                        )
+                    await prop_writes.upsert_value(
+                        conn, wk, new_doc_id, prop_id, prop_type, prop_value, prop_slug
+                    )
+            if ft_id is not None:
+                await prop_writes.apply_behaviors(conn, wk, new_doc_id, ft_id)
+                await prop_writes.assert_required_satisfied(conn, new_doc_id, ft_id)
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
@@ -529,6 +556,19 @@ async def update_document(
                 # une mutation de métadonnées alimente aussi le change feed.
                 await log_change(conn, wk, doc_id, "U")
 
+            # Contrat dur + comportements : tout enregistrement vaut révision.
+            # auto_now est reposée ; après un changement de type, les required
+            # du nouveau type doivent être satisfaits (valeur, default ou
+            # behavior) — sinon refus 422 listant les manquants.
+            mutated = bool(meta) or "content" in raw or "title" in raw
+            if mutated:
+                effective_ft: uuid.UUID | None = (
+                    new_ft_id if retyped else head["functional_type_ref"]
+                )
+                await prop_writes.apply_behaviors(conn, wk, doc_id, effective_ft)
+                if type_changed and effective_ft is not None:
+                    await prop_writes.assert_required_satisfied(conn, doc_id, effective_ft)
+
     return await get_document(pool, ws_slug, doc_id)
 
 
@@ -613,9 +653,9 @@ async def _get_doc_type_id(conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid
 
 async def _resolve_prop(
     conn: asyncpg.Connection, type_id: uuid.UUID, prop_slug: str
-) -> tuple[uuid.UUID, str, bool, str]:
+) -> tuple[uuid.UUID, str, bool, str, str | None]:
     row = await conn.fetchrow(
-        "SELECT id, type, required, label "
+        "SELECT id, type, required, label, behavior "
         "FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2",
         type_id,
         prop_slug,
@@ -625,7 +665,7 @@ async def _resolve_prop(
             status_code=422,
             detail=f"propriété '{prop_slug}' inconnue pour ce type fonctionnel (I-2)",
         )
-    return row["id"], row["type"], row["required"], row["label"]
+    return row["id"], row["type"], row["required"], row["label"], row["behavior"]
 
 
 _SCALAR_TYPES = frozenset({"text", "int", "date", "bool", "url", "float"})
@@ -808,7 +848,7 @@ async def list_property_values(
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label AS prop_label, pd.type, pd.required,
-                   pd.default_value,
+                   pd.behavior, pd.default_value,
                    pv.version AS pv_version,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
@@ -844,6 +884,7 @@ async def list_property_values(
                 allowed_value_slug=av_slug,
                 allowed_value_label=av_label,
                 required=r["required"],
+                behavior=r["behavior"],
             )
         )
     return result
@@ -856,7 +897,17 @@ async def set_property_value(
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
-            prop_id, prop_type, required, prop_label = await _resolve_prop(conn, type_id, prop_slug)
+            prop_id, prop_type, required, prop_label, behavior = await _resolve_prop(
+                conn, type_id, prop_slug
+            )
+            if behavior is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"propriété '{prop_slug}' gérée automatiquement ({behavior}) : "
+                        "écriture manuelle refusée"
+                    ),
+                )
             _validate_value_for_type(prop_type, data, prop_slug)
 
             allowed_value_ref: uuid.UUID | None = None
@@ -1003,6 +1054,8 @@ async def set_property_value(
                 )
                 return_version = new_v
             await log_change(conn, wk, doc_id, "P")
+            # Tout enregistrement vaut révision : reposer les auto_now du type.
+            await prop_writes.apply_behaviors(conn, wk, doc_id, type_id)
 
     allowed_label: str | None = None
     if allowed_value_ref is not None:
@@ -1029,7 +1082,15 @@ async def delete_property_value(
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
-            prop_id, _, required, _ = await _resolve_prop(conn, type_id, prop_slug)
+            prop_id, _, required, _, behavior = await _resolve_prop(conn, type_id, prop_slug)
+            if behavior is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"propriété '{prop_slug}' gérée automatiquement ({behavior}) : "
+                        "suppression manuelle refusée"
+                    ),
+                )
             if required:
                 raise HTTPException(
                     status_code=422,

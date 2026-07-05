@@ -24,6 +24,28 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
     prop.version,
   )
 
+  // Propriété gérée par le serveur (behavior auto_now / auto_now_create) :
+  // lecture seule — le backend refuse de toute façon l'écriture manuelle.
+  if (prop.behavior) {
+    return (
+      <div className="mb-4" data-testid={`property-${prop.prop_slug}`}>
+        <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+          {prop.prop_label}
+          <span
+            className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600"
+            title={t('properties.autoHint')}
+            data-testid={`property-auto-badge-${prop.prop_slug}`}
+          >
+            {t('properties.auto')}
+          </span>
+        </label>
+        <p className="text-sm text-gray-700" data-testid={`property-input-${prop.prop_slug}`}>
+          {prop.value ?? '—'}
+        </p>
+      </div>
+    )
+  }
+
   const commit = () => {
     if (state.status === 'dirty') void save(ws, docId, prop.prop_slug, valueType)
   }

@@ -109,7 +109,7 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                 updated_at=tr["updated_at"],
             )
             defs = await conn.fetch(
-                "SELECT id, slug, label, type, default_value, required "
+                "SELECT id, slug, label, type, default_value, required, behavior "
                 "FROM properties_defs WHERE functional_type_ref = $1 ORDER BY created_at",
                 tr["id"],
             )
@@ -138,6 +138,7 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                         type=d["type"],
                         default_value=d["default_value"],
                         required=d["required"],
+                        behavior=d["behavior"],
                         allowed_values=avs,
                     )
                 )

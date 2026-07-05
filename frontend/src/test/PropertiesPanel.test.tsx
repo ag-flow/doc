@@ -30,6 +30,7 @@ const baseValues: PropertyValueOut[] = [
     allowed_value_slug: null,
     allowed_value_label: null,
     required: false,
+      behavior: null,
   },
   {
     prop_slug: 'status',
@@ -110,6 +111,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])
@@ -146,6 +148,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])
@@ -160,6 +163,7 @@ describe('PropertiesPanel', () => {
       allowed_value_slug: null,
       allowed_value_label: null,
       required: false,
+      behavior: null,
     }
 
     // Premier appel → 409, deuxième → succès
@@ -203,6 +207,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
       {
         prop_slug: 'title2',
@@ -213,6 +218,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])

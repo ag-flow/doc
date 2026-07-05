@@ -134,6 +134,18 @@ _TOOLS: list[Tool] = [
                         "UUID du document parent (optionnel, même bloc) ; omis = racine du bloc"
                     ),
                 },
+                "properties": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": (
+                        "Valeurs initiales de propriétés : slug → valeur (pour une "
+                        "restricted_list, slug de la valeur autorisée). REQUIS pour "
+                        "toute propriété obligatoire sans valeur par défaut : la "
+                        "création est refusée (422) sinon, avec la liste des slugs "
+                        "manquants. Les propriétés à comportement automatique "
+                        "(auto_now...) sont gérées par le serveur et refusées ici."
+                    ),
+                },
             },
             "required": ["workspace_slug", "block_slug", "title"],
         },
@@ -693,6 +705,12 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
     except ValueError:
         return _text({"error": "parent_id : UUID invalide"})
+    raw_props = args.get("properties")
+    properties: dict[str, str] | None = None
+    if raw_props is not None:
+        if not isinstance(raw_props, dict):
+            return _text({"error": "properties : objet {slug: valeur} attendu"})
+        properties = {str(k): str(v) for k, v in raw_props.items()}
 
     async with pool.acquire() as conn:
         block_id: uuid.UUID | None = await conn.fetchval(
@@ -714,6 +732,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             content=contenu,
             functional_type_slug=type_slug,
             parent_id=parent_id,
+            properties=properties,
         )
         doc = await doc_svc.create_document(pool, ws_slug, data)
     except HTTPException as e:

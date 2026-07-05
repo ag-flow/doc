@@ -121,7 +121,8 @@
     "openNewTab": "Ouvrir dans un nouvel onglet",
     "deleteConfirmTitle": "Supprimer ce document ?",
     "deleteConfirmMsg": "Cette action est irréversible. Le document et ses enfants seront supprimés.",
-    "deleteConfirm": "Supprimer définitivement"
+    "deleteConfirm": "Supprimer définitivement",
+    "selectValue": "— choisir une valeur —"
   },
   "editor": {
     "save": "Enregistrer",
@@ -154,7 +155,9 @@
       "desc": "Valeur serveur : {{server}}. Choisissez la version à conserver.",
       "keepServer": "Garder le serveur",
       "keepMine": "Garder le mien"
-    }
+    },
+    "auto": "auto",
+    "autoHint": "Propriété gérée automatiquement par le serveur (date d'enregistrement)"
   },
   "webhooks": {
     "title": "Webhooks sortants",

@@ -136,8 +136,8 @@ async def _write_props(
                 """
                 INSERT INTO properties_defs
                     (slug, label, functional_type_ref, type, default_value, required,
-                     target_functional_type_ref)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     target_functional_type_ref, behavior)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
                 prop.slug,
@@ -147,6 +147,7 @@ async def _write_props(
                 prop.default,
                 prop.required,
                 target_id,
+                prop.behavior,
             )
             assert row is not None
             prop_id = row["id"]

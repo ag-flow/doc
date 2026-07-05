@@ -115,6 +115,10 @@ def _diff_prop(
         )
         return
 
+    if db_prop.behavior != tp.behavior:
+        result.items.append(DiffItem(kind="conflict", path=path, detail="behavior modifié"))
+        return
+
     if db_prop.target_type != tp.target_type:
         result.items.append(DiffItem(kind="conflict", path=path, detail="target_type modifié"))
         return
@@ -148,7 +152,8 @@ async def _fetch_db_snapshot(conn: asyncpg.Connection, wk: str) -> dict[str, Res
     snapshot: dict[str, ResolvedType] = {}
     for r in rows:
         pd_rows = await conn.fetch(
-            "SELECT id, slug, label, type, default_value, required, target_functional_type_ref"
+            "SELECT id, slug, label, type, default_value, required, behavior,"
+            " target_functional_type_ref"
             " FROM properties_defs WHERE functional_type_ref = $1",
             r["id"],
         )
@@ -171,6 +176,7 @@ async def _fetch_db_snapshot(conn: asyncpg.Connection, wk: str) -> dict[str, Res
                     type=pd["type"],
                     required=pd["required"],
                     default=pd["default_value"],
+                    behavior=pd["behavior"],
                     target_type=id_to_slug.get(pd["target_functional_type_ref"]),
                     constraints=[
                         ConstraintDef(kind=c["kind"], value=c["value"], message=c["message"])

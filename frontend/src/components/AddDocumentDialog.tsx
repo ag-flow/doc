@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ApiError, docsApi, type AllowedTypeOut, type DocumentOut } from '../lib/api'
+import {
+  ApiError,
+  docsApi,
+  type AllowedTypeOut,
+  type DocumentOut,
+  type FunctionalTypeRich,
+  type PropertyDefRich,
+} from '../lib/api'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 
@@ -71,6 +78,20 @@ export function AddDocumentDialog({
 
   const effectiveType = types.length === 1 ? types[0].slug : selectedType
 
+  // Contrat dur : les propriétés required (sans défaut ni behavior) du type
+  // choisi doivent être fournies à la création — le backend refuse sinon.
+  const { data: richTypes = [] } = useQuery<FunctionalTypeRich[]>({
+    queryKey: ['types-rich', ws],
+    queryFn: () => docsApi.getTypesRich(ws),
+  })
+  const requiredProps: PropertyDefRich[] = effectiveType
+    ? (richTypes.find((rt) => rt.slug === effectiveType)?.properties ?? []).filter(
+        (pd) => pd.required && pd.default_value === null && !pd.behavior,
+      )
+    : []
+  const [propValues, setPropValues] = useState<Record<string, string>>({})
+  const requiredFilled = requiredProps.every((pd) => (propValues[pd.slug] ?? '') !== '')
+
   const slugTrimmed = slug.trim()
   const formatOk = slugTrimmed !== '' && SLUG_RE.test(slugTrimmed)
   const notDuplicate = !siblingSlugSet.has(slugTrimmed)
@@ -86,15 +107,19 @@ export function AddDocumentDialog({
 
   async function handleSubmit() {
     if (submitting) return
-    if (!title.trim() || !effectiveType || !slugValid) return
+    if (!title.trim() || !effectiveType || !slugValid || !requiredFilled) return
     setSubmitting(true)
     setError(null)
     try {
+      const filled = Object.fromEntries(
+        Object.entries(propValues).filter(([, v]) => v !== ''),
+      )
       const doc: DocumentOut = await docsApi.createDocument(ws, block, {
         title: title.trim(),
         functional_type_slug: effectiveType,
         parent_id: parentId,
         slug: slugTrimmed,
+        ...(Object.keys(filled).length > 0 ? { properties: filled } : {}),
       })
       onCreated(doc.doc_technical_key)
     } catch (err) {
@@ -160,6 +185,59 @@ export function AddDocumentDialog({
                 <p className="mt-1 text-xs text-red-500">{slugError}</p>
               )}
             </div>
+            {requiredProps.map((pd) => (
+              <div key={pd.slug}>
+                <label className="mb-1 block text-sm font-medium">
+                  {pd.label} <span className="text-red-500">*</span>
+                </label>
+                {pd.type === 'restricted_list' ? (
+                  <select
+                    className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    value={propValues[pd.slug] ?? ''}
+                    onChange={(e) =>
+                      setPropValues((pv) => ({ ...pv, [pd.slug]: e.target.value }))
+                    }
+                    data-testid={`add-document-prop-${pd.slug}`}
+                  >
+                    <option value="">{t('documents.selectValue')}</option>
+                    {pd.allowed_values.map((av) => (
+                      <option key={av.slug} value={av.slug}>
+                        {av.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : pd.type === 'bool' ? (
+                  <select
+                    className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    value={propValues[pd.slug] ?? ''}
+                    onChange={(e) =>
+                      setPropValues((pv) => ({ ...pv, [pd.slug]: e.target.value }))
+                    }
+                    data-testid={`add-document-prop-${pd.slug}`}
+                  >
+                    <option value="">{t('documents.selectValue')}</option>
+                    <option value="true">{t('common.yes', 'Oui')}</option>
+                    <option value="false">{t('common.no', 'Non')}</option>
+                  </select>
+                ) : (
+                  <Input
+                    type={
+                      pd.type === 'date'
+                        ? 'date'
+                        : pd.type === 'int' || pd.type === 'float'
+                          ? 'number'
+                          : 'text'
+                    }
+                    step={pd.type === 'float' ? 'any' : undefined}
+                    value={propValues[pd.slug] ?? ''}
+                    onChange={(e) =>
+                      setPropValues((pv) => ({ ...pv, [pd.slug]: e.target.value }))
+                    }
+                    data-testid={`add-document-prop-${pd.slug}`}
+                  />
+                )}
+              </div>
+            ))}
           </>
         )}
 
@@ -171,7 +249,7 @@ export function AddDocumentDialog({
           </Button>
           <Button
             onClick={() => void handleSubmit()}
-            disabled={submitting || isLoading || types.length === 0 || !title.trim() || !effectiveType || !slugValid}
+            disabled={submitting || isLoading || types.length === 0 || !title.trim() || !effectiveType || !slugValid || !requiredFilled}
             data-testid="add-document-submit"
           >
             {t('common.save')}

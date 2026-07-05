@@ -9,6 +9,7 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
 from docflow.documents.template_apply import compute_initial_content
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
@@ -433,6 +434,35 @@ async def create_document_in_block(
 
             # 5. Instancier les valeurs par défaut
             await _instantiate_default_values(conn, wk, doc_id, ft_id)
+
+            # 5bis. Valeurs initiales fournies + contrat dur (required) +
+            # comportements automatiques — même contrat que create_document.
+            if body.properties:
+                for prop_slug, prop_value in body.properties.items():
+                    prop_row = await conn.fetchrow(
+                        "SELECT id, type, behavior FROM properties_defs "
+                        "WHERE functional_type_ref = $1 AND slug = $2",
+                        ft_id,
+                        prop_slug,
+                    )
+                    if prop_row is None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"propriété '{prop_slug}' inconnue pour ce type (I-2)",
+                        )
+                    if prop_row["behavior"] is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"propriété '{prop_slug}' gérée automatiquement "
+                                f"({prop_row['behavior']}) : écriture manuelle refusée"
+                            ),
+                        )
+                    await prop_writes.upsert_value(
+                        conn, wk, doc_id, prop_row["id"], prop_row["type"], prop_value, prop_slug
+                    )
+            await prop_writes.apply_behaviors(conn, wk, doc_id, ft_id)
+            await prop_writes.assert_required_satisfied(conn, doc_id, ft_id)
 
             # 6. Journaliser la création (spec 30)
             await log_change(conn, wk, doc_id, "C")

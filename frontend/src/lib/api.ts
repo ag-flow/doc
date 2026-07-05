@@ -232,6 +232,8 @@ export interface PropertyValueOut {
   allowed_value_slug: string | null
   allowed_value_label: string | null
   required: boolean
+  /** 'auto_now' | 'auto_now_create' : propriété gérée par le serveur (lecture seule). */
+  behavior: string | null
 }
 
 /** Corps renvoyé dans `detail` d'un 409 sur PUT value. */
@@ -268,9 +270,10 @@ export interface AllowedValueRich {
 export interface PropertyDefRich {
   slug: string
   label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   default_value: string | null
   required: boolean
+  behavior: string | null
   allowed_values: AllowedValueRich[]
 }
 
@@ -301,7 +304,14 @@ export const docsApi = {
   createDocument: (
     ws: string,
     block: string,
-    body: { title: string; functional_type_slug: string; parent_id?: string; slug?: string },
+    body: {
+      title: string
+      functional_type_slug: string
+      parent_id?: string
+      slug?: string
+      /** Valeurs initiales : requises pour les propriétés required sans défaut. */
+      properties?: Record<string, string>
+    },
   ) => api.post<DocumentOut>(`/workspaces/${ws}/blocks/${block}/documents`, body),
 
   listDocuments: (ws: string) =>

@@ -48,6 +48,7 @@ class PropertyDefRich(BaseModel):
     type: str
     default_value: str | None
     required: bool
+    behavior: str | None = None
     allowed_values: list[AllowedValueRich] = []
 
 

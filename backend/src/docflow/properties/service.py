@@ -21,14 +21,14 @@ from docflow.schemas.properties import (
 # ── Properties defs ───────────────────────────────────────────────────────────
 
 _SELECT_DEF = """
-SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required,
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required, pd.behavior,
        ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
 FROM properties_defs pd
 LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
 WHERE pd.functional_type_ref = $1 AND pd.slug = $2
 """
 _SELECT_ALL_DEFS = """
-SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required,
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required, pd.behavior,
        ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
 FROM properties_defs pd
 LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
@@ -36,13 +36,14 @@ WHERE pd.functional_type_ref = $1 ORDER BY pd.created_at
 """
 _INSERT_DEF = """
 INSERT INTO properties_defs
-    (slug, label, functional_type_ref, type, default_value, required, target_functional_type_ref)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, slug, label, type, default_value, required, created_at, updated_at
+    (slug, label, functional_type_ref, type, default_value, required,
+     target_functional_type_ref, behavior)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, slug, label, type, default_value, required, behavior, created_at, updated_at
 """
 _UPDATE_DEF = (
     "UPDATE properties_defs SET {cols}, updated_at = now() WHERE id = $1 "
-    "RETURNING id, slug, label, type, default_value, required, created_at, updated_at"
+    "RETURNING id, slug, label, type, default_value, required, behavior, created_at, updated_at"
 )
 
 # ── Allowed values ────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ def _def_row(row: asyncpg.Record) -> PropertiesDefOut:
         type=row["type"],
         default_value=row["default_value"],
         required=row["required"],
+        behavior=row["behavior"] if "behavior" in row.keys() else None,
         target_functional_type_slug=row.get("target_functional_type_slug"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -186,6 +188,7 @@ async def create_def(
                     data.default_value,
                     data.required,
                     target_ft_id,
+                    data.behavior,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -209,7 +212,7 @@ async def update_def(
     # default_value peut être remis explicitement à NULL ; label/required (NOT NULL)
     # ne peuvent pas devenir null → on ignore un null envoyé sur ces champs.
     raw = data.model_dump(exclude_unset=True)
-    _ALLOWED = frozenset({"label", "default_value", "required"})
+    _ALLOWED = frozenset({"label", "default_value", "required", "behavior"})
     updates: dict[str, object | None] = {}
     for k, v in raw.items():
         if k not in _ALLOWED:
@@ -222,7 +225,12 @@ async def update_def(
     async with pool.acquire() as conn:
         async with conn.transaction():
             type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
-            prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
+            prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
+            if updates.get("behavior") is not None and prop_type != "date":
+                raise HTTPException(
+                    status_code=422,
+                    detail="behavior est réservé aux propriétés de type 'date'",
+                )
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())
