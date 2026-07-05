@@ -9,7 +9,7 @@ from typing import Any
 
 import asyncpg
 import structlog
-from git import GitCommandError, InvalidGitRepositoryError, Repo
+from git import Git, GitCommandError, InvalidGitRepositoryError, Repo
 
 from docflow.backup.git_files import expected_file_paths, find_orphan_files, write_doc
 from docflow.backup.git_queries import build_path, fetch_doc, fetch_ws_documents
@@ -114,6 +114,26 @@ def _git_phase(
         commit_sha = None
 
     return files_written, files_deleted, commit_sha
+
+
+def test_git_connection(
+    remote_url: str, *, ssh_key_path: str | None, git_http_env: dict[str, str]
+) -> None:
+    """Vérifie la connectivité + authentification via `git ls-remote` (lecture seule, pas de clone).
+
+    Bloquant — à appeler via asyncio.to_thread. Même construction d'environnement
+    que `_git_phase` (secrets hors argv/URL persistante).
+    """
+    env: dict[str, str] = {"GIT_TERMINAL_PROMPT": "0"}
+    env.update(git_http_env)
+    if ssh_key_path:
+        env["GIT_SSH_COMMAND"] = f"ssh -i {ssh_key_path} -o StrictHostKeyChecking=no"
+    git_cmd = Git()
+    git_cmd.update_environment(**env)
+    try:
+        git_cmd.ls_remote(remote_url)
+    except GitCommandError as e:
+        raise RuntimeError(f"git ls-remote échoué : {e}") from e
 
 
 # ── Entrée principale ─────────────────────────────────────────────────────────

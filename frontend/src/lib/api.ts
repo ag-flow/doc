@@ -898,6 +898,11 @@ export interface RemotePointBody {
   certificate_slug?: string | null
 }
 
+export interface RemotePointTestResult {
+  ok: boolean
+  detail: string
+}
+
 export const remotePointsApi = {
   list: () => api.get<RemotePointOut[]>('/admin/remote/points'),
   create: (body: RemotePointBody & { slug: string }) =>
@@ -906,6 +911,7 @@ export const remotePointsApi = {
   update: (slug: string, body: RemotePointBody) =>
     api.put<RemotePointOut>(`/admin/remote/points/${slug}`, body),
   delete: (slug: string) => api.delete(`/admin/remote/points/${slug}`),
+  test: (slug: string) => api.post<RemotePointTestResult>(`/admin/remote/points/${slug}/test`, {}),
 }
 
 // ── Backup jobs ───────────────────────────────────────────────────────────────

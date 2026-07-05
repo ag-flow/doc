@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Cpu, GitBranch,
-  Globe, HardDrive, KeyRound, Loader2, Network, Plus, ShieldCheck,
+  Globe, HardDrive, KeyRound, Loader2, Network, Plug, Plus, ShieldCheck,
   Trash2, Wand2, XCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -334,6 +334,10 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
 
   const isGit = form.point_type === 'git'
 
+  const testMut = useMutation({
+    mutationFn: () => remotePointsApi.test(initial!.slug),
+  })
+
   function setProvider(p: GitProvider) {
     const h = GIT_PROVIDER_HOST[p]
     setForm(f => ({ ...f, git_provider: p, host: h || f.host }))
@@ -425,6 +429,38 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
       )}
       {form.auth_type !== 'certificate' && form.auth_storage === 'local' && (
         <Input type="password" placeholder={isEdit ? 'Laisser vide pour conserver le secret existant' : 'Secret (chiffré en base)'} value={form.auth_secret ?? ''} onChange={e => setForm(p => ({ ...p, auth_secret: e.target.value || null }))} />
+      )}
+
+      {isEdit && (
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => testMut.mutate()}
+            disabled={testMut.isPending}
+            data-testid="test-connection-btn"
+          >
+            {testMut.isPending
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+              : <Plug className="h-3.5 w-3.5 mr-1" />}
+            Tester la connexion
+          </Button>
+          {testMut.data && (
+            <span
+              className={`flex items-center gap-1 text-xs ${testMut.data.ok ? 'text-green-600' : 'text-red-600'}`}
+              data-testid="test-connection-result"
+            >
+              {testMut.data.ok ? <CheckCircle className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
+              {testMut.data.detail}
+            </span>
+          )}
+          {testMut.isError && (
+            <span className="flex items-center gap-1 text-xs text-red-600" data-testid="test-connection-result">
+              <XCircle className="h-3.5 w-3.5 shrink-0" />
+              {(testMut.error as Error).message}
+            </span>
+          )}
+        </div>
       )}
 
       <div className="flex gap-2 pt-1">
@@ -545,7 +581,13 @@ function RemotePointsTab() {
                 <CopyableUrl url={connectionUrl(pt)} />
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => setEditing(e => e === pt.slug ? null : pt.slug)} className="text-xs text-indigo-600 hover:underline px-2 py-1">Éditer</button>
+                <button
+                  onClick={() => setEditing(e => e === pt.slug ? null : pt.slug)}
+                  className="text-xs text-indigo-600 hover:underline px-2 py-1"
+                  data-testid={`edit-point-${pt.slug}`}
+                >
+                  Éditer
+                </button>
                 <button onClick={() => delMut.mutate(pt.slug)} className="text-gray-300 hover:text-red-500 transition-colors p-1">
                   <Trash2 className="h-4 w-4" />
                 </button>

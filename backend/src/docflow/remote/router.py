@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, status
 
 from docflow.auth.deps import require_authenticated
 from docflow.remote import service
+from docflow.remote.probe import probe_connection
 from docflow.remote.schemas import (
     RemoteCertificateCreate,
     RemoteCertificateOut,
@@ -92,3 +93,9 @@ async def update_point(
 @router.delete("/points/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_point(slug: str, request: Request, _: None = _Auth) -> None:
     await service.delete_point(request.app.state.pool, slug)
+
+
+@router.post("/points/{slug}/test")
+async def test_point(slug: str, request: Request, _: None = _Auth) -> dict[str, object]:
+    """Teste la connexion du point tel que sauvegardé (pas les valeurs non enregistrées)."""
+    return await probe_connection(request.app.state.pool, slug, request.app.state.settings)

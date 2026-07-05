@@ -96,6 +96,16 @@ def _run_pg_dump(database_url: str, dest: pathlib.Path) -> None:
         raise RuntimeError(f"pg_dump a échoué (code {result.returncode}): {stderr[:500]}")
 
 
+def _connect_ftp(*, host: str, port: int, username: str, password: str, tls: bool) -> ftplib.FTP:
+    cls = ftplib.FTP_TLS if tls else ftplib.FTP
+    ftp = cls()
+    ftp.connect(host, port, timeout=60)
+    ftp.login(username, password)
+    if tls:
+        ftp.prot_p()  # type: ignore[attr-defined]
+    return ftp
+
+
 def _upload_ftp(
     dump_path: pathlib.Path,
     filename: str,
@@ -107,30 +117,28 @@ def _upload_ftp(
     remote_dir: str | None,
     tls: bool,
 ) -> None:
-    cls = ftplib.FTP_TLS if tls else ftplib.FTP
-    with cls() as ftp:
-        ftp.connect(host, port, timeout=60)
-        ftp.login(username, password)
-        if tls:
-            ftp.prot_p()  # type: ignore[attr-defined]
+    with _connect_ftp(host=host, port=port, username=username, password=password, tls=tls) as ftp:
         if remote_dir:
             ftp.cwd(remote_dir)
         with dump_path.open("rb") as f:
             ftp.storbinary(f"STOR {filename}", f)
 
 
-def _upload_sftp(
-    dump_path: pathlib.Path,
-    filename: str,
+def test_ftp_connection(*, host: str, port: int, username: str, password: str, tls: bool) -> None:
+    """Connexion + authentification seules — aucune écriture distante."""
+    with _connect_ftp(host=host, port=port, username=username, password=password, tls=tls):
+        pass
+
+
+def _connect_sftp(
     *,
     host: str,
     port: int,
     username: str,
     password: str | None,
     ssh_key_path: str | None,
-    remote_dir: str | None,
-    known_hosts_path: pathlib.Path = _KNOWN_HOSTS_PATH,
-) -> None:
+    known_hosts_path: pathlib.Path,
+) -> paramiko.SSHClient:
     ssh = paramiko.SSHClient()
     if known_hosts_path.exists():
         ssh.load_host_keys(str(known_hosts_path))
@@ -147,14 +155,61 @@ def _upload_sftp(
     else:
         connect_kwargs["password"] = password
         connect_kwargs["look_for_keys"] = False
+    ssh.connect(**connect_kwargs)
+    return ssh
+
+
+def _upload_sftp(
+    dump_path: pathlib.Path,
+    filename: str,
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str | None,
+    ssh_key_path: str | None,
+    remote_dir: str | None,
+    known_hosts_path: pathlib.Path = _KNOWN_HOSTS_PATH,
+) -> None:
+    ssh = _connect_sftp(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        ssh_key_path=ssh_key_path,
+        known_hosts_path=known_hosts_path,
+    )
     try:
-        ssh.connect(**connect_kwargs)
         sftp = ssh.open_sftp()
         try:
             remote_path = f"{remote_dir}/{filename}" if remote_dir else filename
             sftp.put(str(dump_path), remote_path)
         finally:
             sftp.close()
+    finally:
+        ssh.close()
+
+
+def test_sftp_connection(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str | None,
+    ssh_key_path: str | None,
+    known_hosts_path: pathlib.Path = _KNOWN_HOSTS_PATH,
+) -> None:
+    """Connexion + authentification seules — aucun transfert distant."""
+    ssh = _connect_sftp(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        ssh_key_path=ssh_key_path,
+        known_hosts_path=known_hosts_path,
+    )
+    try:
+        ssh.open_sftp().close()
     finally:
         ssh.close()
 
