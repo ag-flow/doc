@@ -113,6 +113,7 @@ describe('BlockDocumentList', () => {
             label: 'Budget (jours)',
             type: 'int',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [],
           },
@@ -169,6 +170,7 @@ describe('BlockDocumentList', () => {
             label: 'Budget (jours)',
             type: 'int',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [],
           },
@@ -228,6 +230,7 @@ describe('BlockDocumentList', () => {
             label: 'Statut',
             type: 'restricted_list',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [
               { slug: 'done', label: 'Terminé', position: 1, color: '#22c55e' },

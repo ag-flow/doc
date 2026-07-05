@@ -41,6 +41,7 @@ const baseValues: PropertyValueOut[] = [
     allowed_value_slug: 'todo',
     allowed_value_label: 'À faire',
     required: true,
+  behavior: null,
   },
 ]
 
@@ -54,6 +55,7 @@ const richTypes = [
         label: 'Statut',
         type: 'restricted_list',
         required: true,
+  behavior: null,
         allowed_values: [
           { slug: 'todo', label: 'À faire', color: '#3b82f6', position: 0 },
           { slug: 'done', label: 'Terminé', color: '#22c55e', position: 1 },
