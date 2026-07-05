@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_type, require_workspace
+from docflow.documents.changelog import log_structure_change
 from docflow.errors import DependentsConflictError
 from docflow.schemas.types import (
     AllowedValueRich,
@@ -187,7 +188,8 @@ async def create_type(
                     status_code=409,
                     detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await log_structure_change(conn, wk, "type", "C", row["id"])
     return FunctionalTypeOut(
         id=row["id"],
         slug=row["slug"],
@@ -227,6 +229,7 @@ async def update_type(
                 type_id,
                 *vals,
             )
+            await log_structure_change(conn, wk, "type", "U", type_id)
 
     assert row is not None
     parent_slug_out: str | None = None
@@ -297,3 +300,4 @@ async def delete_type(
                     dependents=dependents,
                 )
             await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)
+            await log_structure_change(conn, wk, "type", "D", type_id)

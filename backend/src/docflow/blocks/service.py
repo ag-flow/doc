@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.documents.changelog import log_structure_change
 from docflow.errors import DependentsConflictError
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 
@@ -156,7 +157,8 @@ async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) 
                     status_code=409,
                     detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await log_structure_change(conn, wk, "block", "C", row["id"])
     return DataBlockOut(
         id=row["id"],
         slug=row["slug"],
@@ -222,6 +224,7 @@ async def update_block(
                 block_id,
                 *list(db_updates.values()),
             )
+            await log_structure_change(conn, wk, "block", "U", block_id)
 
     return await get_block(pool, ws_slug, block_slug)
 
@@ -250,6 +253,7 @@ async def set_block_exposed(
                 block_id,
                 value,
             )
+            await log_structure_change(conn, wk, "block", "U", block_id)
     return await get_block(pool, ws_slug, block_slug)
 
 
@@ -301,3 +305,4 @@ async def delete_block(
                     dependents=dependents,
                 )
             await conn.execute("DELETE FROM data_block WHERE id = $1", block_id)
+            await log_structure_change(conn, wk, "block", "D", block_id)

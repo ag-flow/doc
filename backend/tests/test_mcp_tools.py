@@ -27,6 +27,7 @@ from docflow.mcp.server import (
     _list_templates,
     _list_types,
     _list_workspaces,
+    _set_document_parent,
     _set_property_value,
     _update_document,
     configure,
@@ -143,6 +144,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "create_block",
         "create_api_profile",
         "generate_api_key",
+        "set_document_parent",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 
@@ -631,3 +633,185 @@ async def test_resolve_api_key_retourne_profile_is_admin(db_pool: asyncpg.Pool) 
 
     await delete_profile(db_pool, owner_id, profile.id)
     await db_pool.execute("DELETE FROM app_user WHERE id = $1", owner_id)
+
+
+# ---------------------------------------------------------------------------
+# set_document_parent
+# ---------------------------------------------------------------------------
+
+
+async def test_set_parent_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    """Reparente une story (type fils d'epic) d'un epic vers un autre."""
+    ws = str(mcp_ws["ws_slug"])
+    # type story, fils de epic → valide sous un document epic
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('story', 'Story', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    child = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Story 1",
+                "functional_type_slug": "story",
+                "parent_id": str(mcp_ws["doc_id"]),
+            },
+        )
+    )
+    assert child.get("created") is True, child
+    # Nouveau parent epic à la racine
+    parent2 = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Epic B",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    moved = _json(
+        await _set_document_parent(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(child["id"]),
+                "parent_id": str(parent2["id"]),
+            },
+        )
+    )
+    assert moved == {
+        "updated": True,
+        "id": str(child["id"]),
+        "parent_id": str(parent2["id"]),
+        "functional_type_slug": "story",
+    }
+
+
+async def test_set_parent_type_invalide_guide(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Déplacer un epic racine sous un autre epic → 422 guidant (epic n'est pas fils d'epic)."""
+    ws = str(mcp_ws["ws_slug"])
+    autre = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Epic C",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    result = _json(
+        await _set_document_parent(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(mcp_ws["doc_id"]),
+                "parent_id": str(autre["id"]),
+            },
+        )
+    )
+    assert "re-préciser functional_type_slug" in str(result["error"])
+
+
+async def test_set_parent_avec_retype_atomique(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le même déplacement passe quand le type est re-précisé dans le même appel."""
+    ws = str(mcp_ws["ws_slug"])
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('feature', 'Feature', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    autre = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Epic D",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    moved = _json(
+        await _set_document_parent(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(mcp_ws["doc_id"]),
+                "parent_id": str(autre["id"]),
+                "functional_type_slug": "feature",
+            },
+        )
+    )
+    assert moved["updated"] is True
+    assert moved["functional_type_slug"] == "feature"
+    # Retour à la racine : le type doit redevenir celui du bloc (epic)
+    back = _json(
+        await _set_document_parent(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(mcp_ws["doc_id"]),
+                "parent_id": None,
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    assert back["updated"] is True
+    assert back["parent_id"] is None
+
+
+async def test_set_parent_cycle_refuse(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    """Un document ne peut pas devenir enfant de sa descendance."""
+    ws = str(mcp_ws["ws_slug"])
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('sub', 'Sub', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    child = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Sub 1",
+                "functional_type_slug": "sub",
+                "parent_id": str(mcp_ws["doc_id"]),
+            },
+        )
+    )
+    result = _json(
+        await _set_document_parent(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(mcp_ws["doc_id"]),
+                "parent_id": str(child["id"]),
+            },
+        )
+    )
+    assert "error" in result
+
+
+async def test_set_parent_uuid_invalide(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    result = _json(
+        await _set_document_parent(
+            db_pool,
+            {"workspace_slug": str(mcp_ws["ws_slug"]), "doc_id": "pas-un-uuid"},
+        )
+    )
+    assert result == {"error": "doc_id / parent_id : UUID invalide"}

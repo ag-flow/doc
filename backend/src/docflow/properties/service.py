@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.documents.changelog import log_structure_change
 from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
@@ -123,6 +124,23 @@ async def _resolve_prop_id_rl(
     return prop_id
 
 
+async def _log_property_change(
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    nature: str,
+    entity_ref: uuid.UUID | None = None,
+) -> None:
+    """Alimente le change feed (kind='property') dans la transaction courante.
+
+    Couvre defs, allowed_values et contraintes : pour les sessions actives,
+    toute évolution du modèle de propriétés invalide les mêmes vues.
+    """
+    wk: uuid.UUID = await conn.fetchval(
+        "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+    )
+    await log_structure_change(conn, wk, "property", nature, entity_ref)
+
+
 async def list_defs(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> list[PropertiesDefOut]:
     async with pool.acquire() as conn:
         type_id = await _resolve_type_id(conn, ws_slug, type_slug)
@@ -174,7 +192,8 @@ async def create_def(
                     status_code=409,
                     detail=f"propriété '{data.slug}' déjà définie sur ce type",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await _log_property_change(conn, ws_slug, "C", row["id"])
     # Recharger pour avoir target_functional_type_slug via le SELECT avec JOIN
     return await get_def(pool, ws_slug, type_slug, data.slug)
 
@@ -208,6 +227,7 @@ async def update_def(
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())
             )
+            await _log_property_change(conn, ws_slug, "U", prop_id)
     assert row is not None
     return _def_row(row)
 
@@ -239,6 +259,7 @@ async def delete_def(
                     dependents=dependents,
                 )
             await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
+            await _log_property_change(conn, ws_slug, "D", prop_id)
 
 
 async def list_allowed_values(
@@ -287,7 +308,8 @@ async def create_allowed_value(
                     status_code=409,
                     detail=f"valeur '{data.slug}' déjà définie",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await _log_property_change(conn, ws_slug, "C", row["id"])
     return _val_row(row)
 
 
@@ -318,6 +340,7 @@ async def update_allowed_value(
             row = await conn.fetchrow(
                 _UPDATE_VAL.format(cols=cols), val_id, *list(updates.values())
             )
+            await _log_property_change(conn, ws_slug, "U", val_id)
     assert row is not None
     return _val_row(row)
 
@@ -340,6 +363,7 @@ async def delete_allowed_value(
                     status_code=409,
                     detail="valeur utilisée par des documents existants",
                 ) from exc
+            await _log_property_change(conn, ws_slug, "D", val_id)
 
 
 # ── Constraints ───────────────────────────────────────────────────────────────
@@ -407,6 +431,7 @@ async def upsert_constraint(
                 data.value,
                 data.message,
             )
+            await _log_property_change(conn, ws_slug, "U", prop_id)
     assert row is not None
     return ConstraintOut(
         id=row["id"],
@@ -432,3 +457,4 @@ async def delete_constraint(
             )
             if deleted is None:
                 raise HTTPException(status_code=404, detail=f"contrainte '{kind}' introuvable")
+            await _log_property_change(conn, ws_slug, "U", prop_id)

@@ -457,26 +457,57 @@ async def update_document(
 
             # Métadonnées (parent, type, slug) — sans versioning
             meta: dict[str, object] = {}
-            if "parent_id" in raw:
+            reparented = "parent_id" in raw
+            if reparented:
                 pid = raw["parent_id"]
                 if pid is not None:
                     await _validate_parent(conn, wk, pid)
                     await _check_no_document_cycle(conn, doc_id, pid)
+                    # Cohérence de l'arbre (miroir DOC-03 du create) : parent
+                    # et enfant dans le même bloc.
+                    parent_block = await conn.fetchval(
+                        "SELECT data_block_ref FROM document WHERE doc_technical_key = $1",
+                        pid,
+                    )
+                    if parent_block != head["data_block_ref"]:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="le parent doit appartenir au même bloc que le document",
+                        )
                 meta["parent"] = pid
-            if "functional_type_slug" in raw:
+            retyped = "functional_type_slug" in raw
+            new_ft_id: uuid.UUID | None = head["functional_type_ref"]
+            if retyped:
                 ft_slug = raw["functional_type_slug"]
-                new_ft_id: uuid.UUID | None = None
+                new_ft_id = None
                 if ft_slug is not None:
                     new_ft_id = await _resolve_functional_type(conn, wk, ft_slug)
-                # Traiter le changement effectif de type (DOC-04)
-                if new_ft_id != head["functional_type_ref"]:
-                    # Parent effectif : celui visé si reparentage simultané, sinon l'actuel.
-                    effective_parent = raw["parent_id"] if "parent_id" in raw else head["parent"]
+                meta["functional_type_ref"] = new_ft_id
+            # DOC-04 : revalider la position dès que le parent OU le type change —
+            # un reparentage seul peut invalider le type courant (à la racine le
+            # type doit être celui du bloc ; sous un parent, un fils direct du
+            # type du parent). Refus explicite plutôt qu'invariant violé en silence.
+            type_changed = retyped and new_ft_id != head["functional_type_ref"]
+            if reparented or type_changed:
+                effective_parent = raw["parent_id"] if reparented else head["parent"]
+                try:
                     await _validate_type_position(
                         conn, head["data_block_ref"], effective_parent, new_ft_id
                     )
-                    await _purge_orphan_property_values(conn, doc_id, new_ft_id)
-                meta["functional_type_ref"] = new_ft_id
+                except HTTPException as exc:
+                    if reparented and not retyped:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "reparentage refusé : le type actuel du document n'est pas "
+                                "autorisé à cette position — re-préciser functional_type_slug "
+                                "(type du bloc à la racine, type fils du type du parent sinon) "
+                                "dans la même requête"
+                            ),
+                        ) from exc
+                    raise
+            if type_changed:
+                await _purge_orphan_property_values(conn, doc_id, new_ft_id)
             if "slug" in raw:
                 meta["slug"] = raw["slug"]
             if meta:
@@ -494,6 +525,9 @@ async def update_document(
                     else:
                         detail = "un document avec le même slug existe déjà sous le parent visé"
                     raise HTTPException(status_code=409, detail=detail) from exc
+                # Les sessions actives doivent voir les déplacements/retypages :
+                # une mutation de métadonnées alimente aussi le change feed.
+                await log_change(conn, wk, doc_id, "U")
 
     return await get_document(pool, ws_slug, doc_id)
 

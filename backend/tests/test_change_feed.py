@@ -209,3 +209,90 @@ async def test_set_property_value_logs_P(
     )
     changes_after = await _changes(db_pool, "cf-ws", since=last_seq)
     assert any(c["nature"] == "P" for c in changes_after)
+
+
+# ── Feed structure (0033) ─────────────────────────────────────────────────────
+
+
+async def test_create_type_logs_structure(db_pool: asyncpg.Pool, cf_ws: dict[str, Any]) -> None:
+    """Créer un type alimente le feed avec kind='type', sans document_ref."""
+    from docflow.schemas.types import FunctionalTypeCreate
+    from docflow.types import service as type_svc
+
+    await type_svc.create_type(db_pool, "cf-ws", FunctionalTypeCreate(slug="cf-nt", label="NT"))
+    row = await db_pool.fetchrow(
+        "SELECT nature, entity_kind, document_ref, entity_ref FROM document_change_log "
+        "WHERE workspace_technical_key = $1 ORDER BY seq DESC LIMIT 1",
+        cf_ws["workspace_technical_key"],
+    )
+    assert row is not None
+    assert (row["nature"], row["entity_kind"], row["document_ref"]) == ("C", "type", None)
+    assert row["entity_ref"] is not None
+
+
+async def test_delete_block_logs_structure(
+    db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
+) -> None:
+    from docflow.blocks import service as block_svc
+
+    await block_svc.delete_block(db_pool, "cf-ws", "cf-block", confirm=True)
+    row = await db_pool.fetchrow(
+        "SELECT nature, entity_kind, entity_ref FROM document_change_log "
+        "WHERE workspace_technical_key = $1 AND entity_kind = 'block' "
+        "ORDER BY seq DESC LIMIT 1",
+        cf_ws["workspace_technical_key"],
+    )
+    assert row is not None
+    assert (row["nature"], row["entity_ref"]) == ("D", cf_block["block_id"])
+
+
+async def test_reparentage_logs_U(
+    db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
+) -> None:
+    """Un déplacement (métadonnées) alimente le feed — les sessions voient le move."""
+    parent = await doc_svc.create_document(
+        db_pool,
+        "cf-ws",
+        DocumentCreate(title="P", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+    )
+    child = await doc_svc.create_document(
+        db_pool, "cf-ws", DocumentCreate(title="C", block_id=cf_block["block_id"])
+    )
+    before = await _changes(db_pool, "cf-ws")
+    await doc_svc.update_document(
+        db_pool,
+        "cf-ws",
+        child.doc_technical_key,
+        DocumentUpdate(parent_id=parent.doc_technical_key),
+    )
+    after = await _changes(db_pool, "cf-ws", since=int(before[-1]["seq"]))
+    assert [(c["nature"], c["document_ref"]) for c in after] == [("U", child.doc_technical_key)]
+
+
+async def test_reparentage_type_invalide_refuse(
+    db_pool: asyncpg.Pool, cf_ws: dict[str, Any], cf_block: dict[str, Any]
+) -> None:
+    """DOC-04 au reparentage : type courant invalide à la position cible → 422 guidant."""
+    from fastapi import HTTPException
+
+    parent = await doc_svc.create_document(
+        db_pool,
+        "cf-ws",
+        DocumentCreate(title="P2", block_id=cf_block["block_id"], functional_type_slug="cf-type"),
+    )
+    doc = await doc_svc.create_document(
+        db_pool,
+        "cf-ws",
+        DocumentCreate(
+            title="Racine", block_id=cf_block["block_id"], functional_type_slug="cf-type"
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.update_document(
+            db_pool,
+            "cf-ws",
+            doc.doc_technical_key,
+            DocumentUpdate(parent_id=parent.doc_technical_key),
+        )
+    assert exc.value.status_code == 422
+    assert "re-préciser functional_type_slug" in str(exc.value.detail)

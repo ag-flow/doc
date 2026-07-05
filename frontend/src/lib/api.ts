@@ -342,6 +342,28 @@ export const docsApi = {
 
 // ── API publique (sans authentification) ────────────────────────────────────
 
+export type ChangeEntityKind = 'document' | 'type' | 'property' | 'block' | 'template'
+
+export interface ChangeEntry {
+  seq: number
+  nature: string
+  entity_kind: ChangeEntityKind
+  entity_id: string | null
+  document_id: string | null
+  occurred_at: string
+}
+
+export interface ChangeFeedOut {
+  changes: ChangeEntry[]
+  next_cursor: number
+  has_more: boolean
+}
+
+export const changesApi = {
+  get: (ws: string, since: number, limit = 200) =>
+    api.get<ChangeFeedOut>(`/workspaces/${ws}/changes?since=${since}&limit=${limit}`),
+}
+
 async function pubGet<T>(path: string): Promise<T> {
   const res = await fetch(`/pub${path}`)
   if (!res.ok) {

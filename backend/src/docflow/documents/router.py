@@ -51,7 +51,13 @@ def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) 
 class _ChangeEntry(BaseModel):
     seq: int
     nature: str
-    document_id: str
+    # 'document' | 'type' | 'property' | 'block' | 'template'
+    entity_kind: str
+    # UUID du document (kind=document) ou de l'entité structure ; None pour
+    # une entrée globale (import de template).
+    entity_id: str | None
+    # Compat : ancien nom, renseigné pour kind=document uniquement.
+    document_id: str | None
     occurred_at: str
 
 
@@ -184,7 +190,7 @@ async def get_changes(
 
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT seq, nature, document_ref, occurred_at "
+            "SELECT seq, nature, entity_kind, document_ref, entity_ref, occurred_at "
             "FROM document_change_log "
             "WHERE workspace_technical_key = $1 AND seq > $2 "
             "ORDER BY seq LIMIT $3",
@@ -200,7 +206,13 @@ async def get_changes(
             _ChangeEntry(
                 seq=int(r["seq"]),
                 nature=r["nature"],
-                document_id=str(r["document_ref"]),
+                entity_kind=r["entity_kind"],
+                entity_id=(
+                    str(r["document_ref"])
+                    if r["document_ref"] is not None
+                    else (str(r["entity_ref"]) if r["entity_ref"] is not None else None)
+                ),
+                document_id=str(r["document_ref"]) if r["document_ref"] is not None else None,
                 occurred_at=r["occurred_at"].isoformat(),
             )
             for r in page

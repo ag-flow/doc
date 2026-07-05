@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import asyncpg
 import structlog
 
+from docflow.documents.changelog import log_structure_change
 from docflow.templates.diff import DiffResult, compute_diff
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import AllowedValueDef, ConstraintDef, PropDef, ResolvedType, Template
@@ -306,6 +307,9 @@ async def run_import(
 
         async with conn.transaction():
             await _write_types(conn, wk, resolved, diff)
+            # Une seule entrée feed par import : signal d'invalidation globale
+            # (types/propriétés créés par _write_types en SQL direct).
+            await log_structure_change(conn, wk_row["workspace_technical_key"], "template", "U")
             await conn.execute(
                 """
                 INSERT INTO workspace_template_import

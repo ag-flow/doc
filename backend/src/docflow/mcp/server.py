@@ -127,6 +127,13 @@ _TOOLS: list[Tool] = [
                         "Type fonctionnel à associer (optionnel, doit exister dans le workspace)"
                     ),
                 },
+                "parent_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": (
+                        "UUID du document parent (optionnel, même bloc) ; omis = racine du bloc"
+                    ),
+                },
             },
             "required": ["workspace_slug", "block_slug", "title"],
         },
@@ -157,6 +164,49 @@ _TOOLS: list[Tool] = [
                 "contenu": {
                     "type": "string",
                     "description": "Nouveau contenu markdown (omis = inchangé)",
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
+    Tool(
+        name="set_document_parent",
+        description=(
+            "Déplace un document dans l'arborescence : définit son parent "
+            "(parent_id d'un document du même bloc) ou le remonte à la racine "
+            "du bloc (parent_id omis ou null). "
+            "ÉCRITURE : mise à jour immédiate, sans bump de version. "
+            "Contrainte de position : à la racine, le type du document doit être "
+            "celui du bloc ; sous un parent, un fils direct du type du parent. "
+            "Si le déplacement invalide le type actuel, l'appel échoue (422) — "
+            "re-appeler en précisant functional_type_slug (nouveau type valide à "
+            "la position cible) : reparentage + retypage sont alors atomiques. "
+            "Les cycles sont refusés (un document ne peut devenir enfant de sa "
+            "propre descendance)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document à déplacer",
+                },
+                "parent_id": {
+                    "type": ["string", "null"],
+                    "format": "uuid",
+                    "description": (
+                        "UUID du nouveau document parent (même bloc) ; "
+                        "omis ou null = racine du bloc"
+                    ),
+                },
+                "functional_type_slug": {
+                    "type": "string",
+                    "description": (
+                        "Nouveau type fonctionnel à appliquer dans le même mouvement "
+                        "(requis si le type actuel n'est pas valide à la position cible)"
+                    ),
                 },
             },
             "required": ["workspace_slug", "doc_id"],
@@ -466,6 +516,7 @@ _WS_TOOLS: dict[str, bool] = {
     "get_property_value": False,
     "create_document": True,
     "update_document": True,
+    "set_document_parent": True,
     "set_property_value": True,
     "create_block": True,
 }
@@ -524,6 +575,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _create_document(pool, arguments)
     if name == "update_document":
         return await _update_document(pool, arguments)
+    if name == "set_document_parent":
+        return await _set_document_parent(pool, arguments)
     if name == "list_property_values":
         return await _list_property_values(
             pool,
@@ -636,6 +689,10 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     title = str(args.get("title", ""))
     contenu = str(args["contenu"]) if "contenu" in args else None
     type_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
+    try:
+        parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
+    except ValueError:
+        return _text({"error": "parent_id : UUID invalide"})
 
     async with pool.acquire() as conn:
         block_id: uuid.UUID | None = await conn.fetchval(
@@ -656,6 +713,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             block_id=block_id,
             content=contenu,
             functional_type_slug=type_slug,
+            parent_id=parent_id,
         )
         doc = await doc_svc.create_document(pool, ws_slug, data)
     except HTTPException as e:
@@ -703,6 +761,43 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         return _text({"error": e.detail})
 
     return _text({"updated": True, "title": doc.title, "version": doc.version})
+
+
+async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentUpdate
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+        raw_parent = args.get("parent_id")
+        parent_id = uuid.UUID(str(raw_parent)) if raw_parent else None
+    except ValueError:
+        return _text({"error": "doc_id / parent_id : UUID invalide"})
+    ft_slug = str(args["functional_type_slug"]) if args.get("functional_type_slug") else None
+
+    # parent_id est TOUJOURS posé explicitement (None = racine) ; le type ne
+    # l'est que s'il est fourni — update_document valide la position combinée.
+    data = (
+        DocumentUpdate(parent_id=parent_id, functional_type_slug=ft_slug)
+        if ft_slug is not None
+        else DocumentUpdate(parent_id=parent_id)
+    )
+    try:
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text(
+        {
+            "updated": True,
+            "id": str(doc.doc_technical_key),
+            "parent_id": str(doc.parent_id) if doc.parent_id else None,
+            "functional_type_slug": doc.functional_type_slug,
+        }
+    )
 
 
 async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
