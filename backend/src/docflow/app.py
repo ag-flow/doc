@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
 from docflow.apikeys.router import router as apikeys_router
+from docflow.artifacts.router import router as artifacts_router
+from docflow.artifacts.worker import purge_loop as artifact_purge_loop
 from docflow.auth.router import router as auth_router
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
@@ -76,21 +78,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
-    configure_mcp(pool)
+    configure_mcp(pool, settings)
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))
     backup_task = asyncio.create_task(backup_worker_loop(pool, settings))
+    artifact_task = asyncio.create_task(artifact_purge_loop(pool, settings))
     log.info("docflow_started")
     try:
         yield
     finally:
         worker_task.cancel()
         backup_task.cancel()
+        artifact_task.cancel()
         with suppress(asyncio.CancelledError):
             await worker_task
         with suppress(asyncio.CancelledError):
             await backup_task
+        with suppress(asyncio.CancelledError):
+            await artifact_task
         await close_pool(pool)
         log.info("docflow_stopped")
 
@@ -116,6 +122,7 @@ app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
 app.include_router(documents_router, prefix=_API)
+app.include_router(artifacts_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)

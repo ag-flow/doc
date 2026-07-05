@@ -18,7 +18,7 @@ from docflow.mcp.server import (
 
 
 async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
-    """list_tools retourne bien les 20 outils définis (liste exhaustive : test_mcp_tools.py)."""
+    """list_tools retourne bien les 23 outils définis (liste exhaustive : test_mcp_tools.py)."""
     tool_names = {t.name for t in _TOOLS}
     assert "list_workspaces" in tool_names
     assert "list_types" in tool_names
@@ -28,7 +28,10 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "update_document" in tool_names
     assert "list_property_values" in tool_names
     assert "set_property_value" in tool_names
-    assert len(_TOOLS) == 20
+    assert "create_artifact" in tool_names
+    assert "get_artifact" in tool_names
+    assert "get_artifact_link" in tool_names
+    assert len(_TOOLS) == 23
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:

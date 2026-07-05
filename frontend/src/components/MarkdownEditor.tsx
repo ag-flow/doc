@@ -15,6 +15,7 @@ import {
   type MarkdownEditorApi,
 } from '../lib/mermaidMarkdown'
 import { type DocumentSearchResult } from '../lib/api'
+import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
 
 function filterItems<T extends { title: string; aliases?: string[] }>(
@@ -48,7 +49,18 @@ interface MarkdownEditorProps {
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   ({ initialContent, onDirty, wsSlug }, ref) => {
-    const editor = useCreateBlockNote({ schema })
+    // uploadFile : collage/drop d'une image → POST artefact, l'URL retournée est
+    // stockée dans le bloc image et sérialisée en markdown ![nom](url).
+    // resolveFileUrl : l'endpoint est authentifié Bearer, l'affichage passe par
+    // un fetch authentifié + object URL (une <img> ne porte pas de header).
+    const editor = useCreateBlockNote(
+      {
+        schema,
+        uploadFile: wsSlug ? makeUploadFile(wsSlug) : undefined,
+        resolveFileUrl: resolveArtifactUrl,
+      },
+      [wsSlug],
+    )
     const loadedRef = useRef(false)
     const settledRef = useRef(false)
     const onDirtyRef = useRef(onDirty)

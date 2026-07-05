@@ -9,6 +9,11 @@ import asyncpg
 import structlog
 from fastapi import HTTPException
 
+from docflow.artifacts.service import (
+    collect_subtree_artifacts,
+    purge_unreferenced,
+    refresh_artifact_references,
+)
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
@@ -359,6 +364,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
             await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
+            await refresh_artifact_references(conn, row["doc_technical_key"], wk, initial_content)
 
             # Valeurs initiales de propriétés + contrat required (contrat dur :
             # la création échoue si une required sans default/behavior manque).
@@ -481,6 +487,7 @@ async def update_document(
                 )
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
+                await refresh_artifact_references(conn, doc_id, wk, new_content)
 
             # Métadonnées (parent, type, slug) — sans versioning
             meta: dict[str, object] = {}
@@ -620,7 +627,11 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             )
             if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+            # Capturés AVANT la suppression : les références partent en cascade
+            # avec le document et ses descendants.
+            artifact_candidates = await collect_subtree_artifacts(conn, doc_id)
             await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
+            await purge_unreferenced(conn, artifact_candidates)
             await log_change(conn, wk, doc_id, "D")
     return {"id": str(snap["doc_technical_key"]), "title": snap["title"], "type": snap["type"]}
 

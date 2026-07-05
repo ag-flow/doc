@@ -10,14 +10,17 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
+from docflow.config.settings import Settings
+from docflow.mcp import artifact_tools
 from docflow.mcp.session import current_session, require_identity
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
 log = structlog.get_logger(__name__)
 
-# Pool injecté au démarrage par configure()
+# Pool + settings injectés au démarrage par configure()
 _pool: asyncpg.Pool | None = None
+_settings: Settings | None = None
 
 _require_identity = require_identity
 
@@ -589,14 +592,16 @@ _TOOLS: list[Tool] = [
             "required": ["profile_id", "label"],
         },
     ),
+    *artifact_tools.ARTIFACT_TOOLS,
 ]
 
 mcp_server = Server("docflow")
 
 
-def configure(pool: asyncpg.Pool) -> None:
-    global _pool
+def configure(pool: asyncpg.Pool, settings: Settings | None = None) -> None:
+    global _pool, _settings
     _pool = pool
+    _settings = settings
 
 
 def _get_pool() -> asyncpg.Pool:
@@ -631,6 +636,7 @@ _WS_TOOLS: dict[str, bool] = {
     "get_block_type": False,
     "set_property_value": True,
     "create_block": True,
+    **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
 # Outils structurels : réservés aux profils admin quand la session vient d'une clé API.
@@ -732,6 +738,12 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
         return await _generate_api_key(pool, arguments)
+    if name == "create_artifact":
+        return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
+    if name == "get_artifact":
+        return await artifact_tools.handle_get_artifact(pool, arguments)
+    if name == "get_artifact_link":
+        return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
     return _text({"error": f"outil inconnu : {name}"})
 
 

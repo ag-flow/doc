@@ -117,6 +117,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** Requête multipart (upload de fichier) : pas de Content-Type manuel, le
+ *  navigateur pose lui-même la boundary du FormData. */
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: form, headers })
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const detail = (body as { detail?: unknown }).detail ?? null
+    throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
+  }
+  return res.json() as Promise<T>
+}
+
 export const api = {
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
@@ -356,6 +372,29 @@ export const docsApi = {
 
   setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+}
+
+// ── Artefacts (images des documents) ────────────────────────────────────────
+
+export interface ArtifactCreatedOut {
+  id: string
+  url: string
+  deduplicated: boolean
+  filename: string
+  extension: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  crc32: number
+}
+
+export const artifactsApi = {
+  upload: (ws: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return requestForm<ArtifactCreatedOut>(`/workspaces/${ws}/artifacts`, form)
+  },
+  getBlob: (ws: string, id: string) => requestBlob(`/workspaces/${ws}/artifacts/${id}`),
 }
 
 // ── API publique (sans authentification) ────────────────────────────────────

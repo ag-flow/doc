@@ -20,3 +20,11 @@ class Settings(BaseSettings):
     automation_tick_seconds: int = 60
     # URL de base d'une galerie de templates distante (toc.txt + *.yaml)
     gallery_url: str | None = None
+    # Artefacts binaires (images collées dans les documents)
+    artifact_max_bytes: int = 10 * 1024 * 1024
+    # Durée de validité des liens de téléchargement signés (MCP get_artifact_link)
+    artifact_link_ttl_seconds: int = 900
+    # Purge des artefacts jamais référencés (brouillons abandonnés)
+    artifact_purge_after_hours: int = 24
+    # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
+    public_base_url: str | None = None

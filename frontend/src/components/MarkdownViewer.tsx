@@ -4,6 +4,7 @@ import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import { MermaidBlock } from './MermaidBlock'
+import { resolveArtifactUrl } from '../lib/artifacts'
 import { parseMarkdownWithMermaid, type MarkdownEditorApi } from '../lib/mermaidMarkdown'
 
 const schema = BlockNoteSchema.create({
@@ -15,7 +16,7 @@ interface MarkdownViewerProps {
 }
 
 export function MarkdownViewer({ content }: MarkdownViewerProps) {
-  const editor = useCreateBlockNote({ schema })
+  const editor = useCreateBlockNote({ schema, resolveFileUrl: resolveArtifactUrl })
   const loadedRef = useRef(false)
 
   useEffect(() => {
