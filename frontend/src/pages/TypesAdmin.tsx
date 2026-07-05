@@ -260,7 +260,7 @@ export function TypesAdmin() {
               <option value="">{t('tpl.selectTemplate')}</option>
               {templates.map(tpl => (
                 <option key={tpl.template} value={tpl.template}>
-                  {tpl.label} (v{tpl.version})
+                  {tpl.label} (v{tpl.version}) — {tpl.template}
                 </option>
               ))}
             </select>
