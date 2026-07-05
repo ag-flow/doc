@@ -95,13 +95,18 @@ def test_is_due_cron_no_match() -> None:
 def test_is_due_cron_import_error() -> None:
     """Si croniter n'est pas installé, _is_due retourne False sans lever d'exception."""
     now = datetime.now(tz=UTC)
-    # Forcer ImportError en masquant le module
+    # Forcer ImportError : None dans sys.modules fait échouer l'import ; un
+    # simple pop ne suffit pas (le module installé serait ré-importé, et le
+    # test évaluerait le vrai cron — flaky dans la minute :00 de chaque heure).
     original = sys.modules.pop("croniter", None)
+    sys.modules["croniter"] = None  # type: ignore[assignment]
     try:
         result = _is_due(_job(schedule_cron="0 * * * *"), now)
     finally:
         if original is not None:
             sys.modules["croniter"] = original
+        else:
+            sys.modules.pop("croniter", None)
     assert result is False
 
 
