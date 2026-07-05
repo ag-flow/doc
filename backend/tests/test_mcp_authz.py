@@ -166,3 +166,27 @@ async def test_list_workspaces_complet_en_jwt(
     result = await _call_tool("list_workspaces", {})
     slugs = {w["slug"] for w in json.loads(result[0].text)}
     assert _WS in slugs
+
+
+# ── Montage des endpoints ASGI purs ───────────────────────────────────────────
+
+
+def test_mcp_endpoints_montes_et_proteges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Les routes MCP (ASGI pur, hors OpenAPI) sont montées et exigent l'auth.
+
+    Régression : elles ne doivent JAMAIS redevenir des routes FastAPI
+    classiques — le transport SSE répond lui-même sur le cycle ASGI, une
+    réponse FastAPI supplémentaire casse le keep-alive des clients MCP
+    (second http.response.start).
+    """
+    from fastapi.testclient import TestClient
+
+    from docflow.app import app
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://invalide/x")
+    monkeypatch.setenv("JWT_SECRET", "s" * 64)
+    client = TestClient(app)  # sans lifespan : pas de DB requise pour le 401
+    r_sse = client.get("/api/mcp/sse")
+    r_msg = client.post("/api/mcp/messages?session_id=deadbeef")
+    assert (r_sse.status_code, r_sse.json()["detail"]) == (401, "token manquant")
+    assert (r_msg.status_code, r_msg.json()["detail"]) == (401, "token manquant")
