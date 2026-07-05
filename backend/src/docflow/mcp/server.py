@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextvars
 import json
 import pathlib
 import uuid
@@ -10,7 +9,8 @@ import structlog
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
-from docflow.schemas.auth import AuthUser
+from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
+from docflow.mcp.session import current_session, require_identity
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
@@ -19,31 +19,7 @@ log = structlog.get_logger(__name__)
 # Pool injecté au démarrage par configure()
 _pool: asyncpg.Pool | None = None
 
-# Identité authentifiée de la session MCP courante. Positionnée par le routeur
-# SSE (`mcp/router.py`) juste avant `mcp_server.run` ; comme la boucle de
-# dispatch des messages tourne dans des tâches filles de ce contexte, la
-# ContextVar est héritée jusqu'aux handlers d'outils. Chaque connexion SSE
-# vit dans sa propre tâche/contexte : aucune contamination entre sessions.
-_current_identity: contextvars.ContextVar[AuthUser | None] = contextvars.ContextVar(
-    "mcp_current_identity", default=None
-)
-
-
-def set_current_identity(user: AuthUser | None) -> contextvars.Token[AuthUser | None]:
-    """Lie l'identité authentifiée à la session MCP courante (appelé par le SSE)."""
-    return _current_identity.set(user)
-
-
-def reset_current_identity(token: contextvars.Token[AuthUser | None]) -> None:
-    _current_identity.reset(token)
-
-
-def _require_identity() -> AuthUser:
-    """Identité de l'appelant MCP ; erreur si la session n'est pas authentifiée."""
-    user = _current_identity.get()
-    if user is None:
-        raise RuntimeError("identité de session MCP indisponible")
-    return user
+_require_identity = require_identity
 
 
 _TOOLS: list[Tool] = [
@@ -480,10 +456,57 @@ async def _list_tools() -> list[Tool]:
     return _TOOLS
 
 
+# Autorisations par outil pour les sessions ouvertes par clé API : outil → écriture ?
+# Le périmètre visé vient de arguments["workspace_slug"] (+ block_slug si l'outil le porte).
+_WS_TOOLS: dict[str, bool] = {
+    "list_types": False,
+    "list_documents": False,
+    "get_document": False,
+    "list_property_values": False,
+    "get_property_value": False,
+    "create_document": True,
+    "update_document": True,
+    "set_property_value": True,
+    "create_block": True,
+}
+
+# Outils structurels : réservés aux profils admin quand la session vient d'une clé API.
+# create_api_profile / generate_api_key permettraient sinon à une clé scopée de
+# fabriquer un profil admin et d'escalader hors de son périmètre.
+_ADMIN_TOOLS = frozenset(
+    {"create_workspace", "import_template", "create_api_profile", "generate_api_key"}
+)
+
+
+def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextContent] | None:
+    """Applique le profil de la clé API à l'outil demandé ; None = autorisé.
+
+    Session JWT (ou profil admin) → aucune restriction, comme sur l'API REST.
+    Miroir de check_api_key_scope / require_api_key_admin_write (auth/deps.py).
+    """
+    session = current_session()
+    if session is None or session.unrestricted:
+        return None
+    if name in _ADMIN_TOOLS:
+        return _text({"error": f"outil {name} : clé API non-admin, opération interdite"})
+    if name in _WS_TOOLS:
+        ws_slug = str(arguments.get("workspace_slug", ""))
+        raw_block = arguments.get("block_slug")
+        block_slug = str(raw_block) if raw_block else None
+        assert session.api_key_scopes is not None  # unrestricted a déjà filtré None
+        if not scope_allows(session.api_key_scopes, ws_slug, block_slug, _WS_TOOLS[name]):
+            return _text({"error": f"outil {name} : hors du périmètre de la clé API"})
+    return None
+
+
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
 async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
     pool = _get_pool()
     log.info("mcp_call_tool", tool=name)
+
+    denied = _check_tool_authz(name, arguments)
+    if denied is not None:
+        return denied
 
     if name == "list_workspaces":
         return await _list_workspaces(pool)
@@ -533,6 +556,11 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
 
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
     rows = await pool.fetch("SELECT slug, label, description FROM workspace ORDER BY slug")
+    session = current_session()
+    if session is not None and not session.unrestricted:
+        assert session.api_key_scopes is not None
+        allowed = allowed_workspace_slugs(session.api_key_scopes)
+        rows = [r for r in rows if r["slug"] in allowed]
     return _text([dict(r) for r in rows])
 
 

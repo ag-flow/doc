@@ -227,6 +227,36 @@ def test_get_me_no_token(
     assert resp.status_code == 401
 
 
+def test_bearer_sans_points_route_vers_cle_api(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+) -> None:
+    """Un bearer sans '.' (clé API, quel que soit son préfixe) ne part pas en décodage JWT.
+
+    Une clé inconnue doit produire « clé API invalide ou révoquée », pas le
+    « token invalide ou expiré » trompeur de la voie JWT (bug portail mcpk_).
+    """
+    with _make_client(monkeypatch, test_schema_url) as client:
+        _setup_admin(client)
+        for raw in ("mcpk_inconnu", "dfk_inconnu", "nimportequoi"):
+            resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {raw}"})
+            assert resp.status_code == 401, raw
+            assert resp.json()["detail"] == "clé API invalide ou révoquée", raw
+
+
+def test_bearer_jwt_malforme_reste_voie_jwt(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+) -> None:
+    with _make_client(monkeypatch, test_schema_url) as client:
+        _setup_admin(client)
+        resp = client.get("/api/auth/me", headers={"Authorization": "Bearer a.b.c"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "token invalide ou expiré"
+
+
 def test_require_superadmin_rejects_non_admin(
     monkeypatch: pytest.MonkeyPatch,
     test_schema_url: str,

@@ -71,7 +71,12 @@ async def get_current_user(
     if credentials is None:
         raise HTTPException(status_code=401, detail="token manquant")
 
-    if credentials.credentials.startswith("dfk_"):
+    # Routage par forme de token : un JWT contient toujours deux points
+    # (header.payload.signature), une clé API (token_urlsafe) jamais. Router
+    # sur la forme plutôt que sur le seul préfixe dfk_ évite qu'une clé d'un
+    # autre préfixe parte en décodage JWT avec un 401 trompeur
+    # (« token invalide ou expiré » au lieu de « clé API invalide »).
+    if "." not in credentials.credentials:
         return await _resolve_api_key(request, credentials)
 
     return await _resolve_jwt(request, credentials)
@@ -112,6 +117,7 @@ def check_api_key_scope(
 
     Sans effet pour les requêtes JWT et pour les clés API de profil admin.
     """
+    from docflow.apikeys.authz import scope_allows
     from docflow.apikeys.schemas import ApiProfileScopeOut
 
     scopes: list[ApiProfileScopeOut] | None = getattr(request.state, "api_key_scopes", None)
@@ -120,16 +126,8 @@ def check_api_key_scope(
     if _is_api_key_admin(request):
         return  # profil admin → accès complet
 
-    for scope in scopes:
-        if scope.workspace_slug != ws_slug:
-            continue
-        if scope.block_slug is not None and scope.block_slug != block_slug:
-            continue
-        if write and scope.read_only:
-            continue
-        return
-
-    raise HTTPException(status_code=403, detail="hors du périmètre de la clé API")
+    if not scope_allows(scopes, ws_slug, block_slug, write):
+        raise HTTPException(status_code=403, detail="hors du périmètre de la clé API")
 
 
 def require_api_key_admin_write(request: Request) -> None:
