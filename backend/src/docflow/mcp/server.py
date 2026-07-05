@@ -225,6 +225,102 @@ _TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="delete_document",
+        description=(
+            "Supprime définitivement un document. "
+            "SUPPRESSION EN CASCADE : tous les documents descendants (enfants, "
+            "petits-enfants, etc.) sont supprimés avec lui, ainsi que leurs valeurs "
+            "de propriétés, commentaires, réactions et références sortantes vers "
+            "d'autres documents. Cette cascade est irréversible. "
+            "Ne supprime ni le bloc contenant le document, ni les autres documents "
+            "du même bloc. "
+            "GARDE : si le document a au moins un descendant, l'appel est refusé "
+            "(erreur avec dependents = nombre de documents qui seraient perdus) "
+            "tant que confirm=true n'est pas fourni ; relire cette valeur avant de "
+            "confirmer. Un document sans descendant se supprime sans confirm. "
+            "Retourne {deleted: true, id, title, type} du document supprimé "
+            "(instantané capturé avant suppression) en cas de succès."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document à supprimer",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "true pour confirmer la suppression en cascade quand le "
+                        "document a des descendants (défaut false ; cf. dependents "
+                        "dans la réponse d'erreur pour connaître le nombre concerné)"
+                    ),
+                    "default": False,
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
+    Tool(
+        name="workspace_exists",
+        description=(
+            "Vérifie si un workspace existe (par son slug). "
+            "Ne lève jamais d'erreur si le slug est absent — retourne "
+            "{exists: false}. Un workspace archivé compte comme existant "
+            "(exists=true) ; utiliser list_workspaces pour distinguer les "
+            "workspaces actifs des archivés. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace à vérifier",
+                },
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="block_exists",
+        description=(
+            "Vérifie si un bloc existe (par son slug) dans un workspace. "
+            "Ne lève jamais d'erreur si le workspace ou le bloc est absent — "
+            "retourne {exists: false} dans les deux cas. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc à vérifier"},
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
+        name="get_block_type",
+        description=(
+            "Retourne le type fonctionnel d'un bloc (functional_type_slug, "
+            "functional_type_label), identifié par son slug dans un workspace. "
+            "Retourne {error: ...} si le workspace ou le bloc est introuvable "
+            "(utiliser block_exists pour vérifier au préalable sans provoquer "
+            "d'erreur). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
         name="list_property_values",
         description=(
             "Retourne toutes les propriétés du type fonctionnel du document avec "
@@ -529,6 +625,10 @@ _WS_TOOLS: dict[str, bool] = {
     "create_document": True,
     "update_document": True,
     "set_document_parent": True,
+    "delete_document": True,
+    "workspace_exists": False,
+    "block_exists": False,
+    "get_block_type": False,
     "set_property_value": True,
     "create_block": True,
 }
@@ -589,6 +689,22 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _update_document(pool, arguments)
     if name == "set_document_parent":
         return await _set_document_parent(pool, arguments)
+    if name == "delete_document":
+        return await _delete_document(pool, arguments)
+    if name == "workspace_exists":
+        return await _workspace_exists(pool, str(arguments.get("workspace_slug", "")))
+    if name == "block_exists":
+        return await _block_exists(
+            pool,
+            str(arguments.get("workspace_slug", "")),
+            str(arguments.get("block_slug", "")),
+        )
+    if name == "get_block_type":
+        return await _get_block_type(
+            pool,
+            str(arguments.get("workspace_slug", "")),
+            str(arguments.get("block_slug", "")),
+        )
     if name == "list_property_values":
         return await _list_property_values(
             pool,
@@ -817,6 +933,78 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
             "functional_type_slug": doc.functional_type_slug,
         }
     )
+
+
+async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents import service as doc_svc
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+    confirm = bool(args.get("confirm", False))
+
+    try:
+        dependents = await doc_svc.count_document_descendants(pool, ws_slug, doc_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    if dependents > 0 and not confirm:
+        return _text(
+            {
+                "error": (
+                    f"la suppression de ce document détruirait en cascade {dependents} "
+                    "document(s) descendant(s) (valeurs, commentaires, réactions "
+                    "compris) ; rappeler avec confirm=true pour confirmer"
+                ),
+                "dependents": dependents,
+            }
+        )
+
+    try:
+        snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text({"deleted": True, **snapshot})
+
+
+async def _workspace_exists(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
+    exists: object | None = await pool.fetchval("SELECT 1 FROM workspace WHERE slug = $1", ws_slug)
+    return _text({"exists": exists is not None})
+
+
+async def _block_exists(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> list[TextContent]:
+    exists: object | None = await pool.fetchval(
+        """
+        SELECT 1 FROM data_block b
+        JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
+        WHERE w.slug = $1 AND b.slug = $2
+        """,
+        ws_slug,
+        block_slug,
+    )
+    return _text({"exists": exists is not None})
+
+
+async def _get_block_type(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> list[TextContent]:
+    row = await pool.fetchrow(
+        """
+        SELECT ft.slug AS functional_type_slug, ft.label AS functional_type_label
+        FROM data_block b
+        JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
+        JOIN functional_type ft ON ft.id = b.functional_type_ref
+        WHERE w.slug = $1 AND b.slug = $2
+        """,
+        ws_slug,
+        block_slug,
+    )
+    if row is None:
+        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+    return _text(dict(row))
 
 
 async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:

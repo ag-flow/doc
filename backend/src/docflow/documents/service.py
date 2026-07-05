@@ -572,6 +572,38 @@ async def update_document(
     return await get_document(pool, ws_slug, doc_id)
 
 
+_COUNT_DOCUMENT_DESCENDANTS = """
+WITH RECURSIVE descendants AS (
+    SELECT doc_technical_key FROM document WHERE doc_technical_key = $1
+    UNION ALL
+    SELECT d.doc_technical_key
+    FROM document d
+    JOIN descendants p ON d.parent = p.doc_technical_key
+)
+SELECT count(*) - 1 AS descendants FROM descendants
+"""
+
+
+async def count_document_descendants(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> int:
+    """Compte les documents descendants d'un document (lui-même exclu).
+
+    Miroir de blocks/service.py::_COUNT_BLOCK_DEPENDENTS — sert de garde
+    « confirm si dépendants » côté appelant (primitive MCP delete_document) ;
+    delete_document lui-même reste sans garde (comportement REST inchangé).
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+        count = await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id)
+    return int(count)
+
+
 async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
     """Supprime le document et tous ses descendants (ON DELETE CASCADE sur document.parent).
 

@@ -1,4 +1,4 @@
-"""Campagne de tests complète des 15 outils MCP + flag is_admin sur les profils API.
+"""Campagne de tests complète des 20 outils MCP + flag is_admin sur les profils API.
 
 Chaque test appelle les handlers directement (pas via SSE) pour isoler la logique.
 Couverture : chemin nominal, erreur métier, idempotence, guard admin.
@@ -15,10 +15,13 @@ import pytest
 
 from docflow.mcp.server import (
     _TOOLS,
+    _block_exists,
     _call_tool,
     _create_block,
     _create_document,
     _create_workspace,
+    _delete_document,
+    _get_block_type,
     _get_document,
     _get_property_value,
     _import_template,
@@ -30,6 +33,7 @@ from docflow.mcp.server import (
     _set_document_parent,
     _set_property_value,
     _update_document,
+    _workspace_exists,
     configure,
 )
 
@@ -145,6 +149,10 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "create_api_profile",
         "generate_api_key",
         "set_document_parent",
+        "delete_document",
+        "workspace_exists",
+        "block_exists",
+        "get_block_type",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 
@@ -523,6 +531,147 @@ async def test_create_block_avec_template(db_pool: asyncpg.Pool, mcp_ws: dict[st
         )
     )
     assert data["created"] is True  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# delete_document
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_document_sans_descendant(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un document sans enfant se supprime sans confirm."""
+    ws = str(mcp_ws["ws_slug"])
+    data = _json(
+        await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
+    )
+    assert data["deleted"] is True  # type: ignore[index]
+    assert data["id"] == mcp_ws["doc_id"]  # type: ignore[index]
+
+    check = _json(await _get_document(db_pool, ws, str(mcp_ws["doc_id"])))
+    assert "error" in check  # type: ignore[operator]
+
+
+async def test_delete_document_avec_descendants_refuse_sans_confirm(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un document avec descendants est refusé tant que confirm=true n'est pas fourni."""
+    ws = str(mcp_ws["ws_slug"])
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('story', 'Story', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    child = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Story 1",
+                "functional_type_slug": "story",
+                "parent_id": str(mcp_ws["doc_id"]),
+            },
+        )
+    )
+    assert child.get("created") is True, child
+
+    refused = _json(
+        await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
+    )
+    assert refused["dependents"] == 1  # type: ignore[index]
+    assert "confirm" in str(refused["error"])
+
+    # Le document et son enfant existent toujours
+    still_there = _json(await _get_document(db_pool, ws, str(mcp_ws["doc_id"])))
+    assert "error" not in still_there  # type: ignore[operator]
+
+    confirmed = _json(
+        await _delete_document(
+            db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"], "confirm": True}
+        )
+    )
+    assert confirmed["deleted"] is True  # type: ignore[index]
+
+    # Cascade DB : l'enfant a disparu avec le parent
+    child_gone = _json(await _get_document(db_pool, ws, str(child["id"])))
+    assert "error" in child_gone  # type: ignore[operator]
+
+
+async def test_delete_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    data = _json(
+        await _delete_document(
+            db_pool, {"workspace_slug": mcp_ws["ws_slug"], "doc_id": str(uuid.uuid4())}
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_delete_document_uuid_invalide(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _delete_document(
+            db_pool, {"workspace_slug": mcp_ws["ws_slug"], "doc_id": "pas-un-uuid"}
+        )
+    )
+    assert data == {"error": "doc_id : UUID invalide"}
+
+
+# ---------------------------------------------------------------------------
+# workspace_exists
+# ---------------------------------------------------------------------------
+
+
+async def test_workspace_exists_vrai(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    data = _json(await _workspace_exists(db_pool, str(mcp_ws["ws_slug"])))
+    assert data == {"exists": True}
+
+
+async def test_workspace_exists_faux(db_pool: asyncpg.Pool) -> None:
+    data = _json(await _workspace_exists(db_pool, "workspace-qui-nexiste-pas"))
+    assert data == {"exists": False}
+
+
+# ---------------------------------------------------------------------------
+# block_exists
+# ---------------------------------------------------------------------------
+
+
+async def test_block_exists_vrai(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    data = _json(await _block_exists(db_pool, str(mcp_ws["ws_slug"]), str(mcp_ws["block_slug"])))
+    assert data == {"exists": True}
+
+
+async def test_block_exists_faux_bloc_inconnu(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(await _block_exists(db_pool, str(mcp_ws["ws_slug"]), "bloc-inexistant"))
+    assert data == {"exists": False}
+
+
+async def test_block_exists_faux_workspace_inconnu(db_pool: asyncpg.Pool) -> None:
+    data = _json(await _block_exists(db_pool, "ws-inexistant", "peu-importe"))
+    assert data == {"exists": False}
+
+
+# ---------------------------------------------------------------------------
+# get_block_type
+# ---------------------------------------------------------------------------
+
+
+async def test_get_block_type_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    data = _json(await _get_block_type(db_pool, str(mcp_ws["ws_slug"]), str(mcp_ws["block_slug"])))
+    assert data["functional_type_slug"] == "epic"  # type: ignore[index]
+
+
+async def test_get_block_type_bloc_inconnu(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(await _get_block_type(db_pool, str(mcp_ws["ws_slug"]), "bloc-inexistant"))
+    assert "error" in data  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
