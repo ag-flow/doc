@@ -143,8 +143,12 @@ async def delete_job(pool: asyncpg.Pool, slug: str) -> None:
 
 # ── Historique d'exécution ────────────────────────────────────────────────────
 
+RUN_RETENTION = 15  # nombre de runs conservés par job — les plus anciens sont purgés
 
-async def list_runs(pool: asyncpg.Pool, job_slug: str, limit: int = 20) -> list[BackupJobRunOut]:
+
+async def list_runs(
+    pool: asyncpg.Pool, job_slug: str, limit: int = RUN_RETENTION
+) -> list[BackupJobRunOut]:
     async with pool.acquire() as conn:
         jid: uuid.UUID | None = await conn.fetchval(
             "SELECT id FROM backup_job WHERE slug = $1", job_slug
@@ -190,6 +194,29 @@ async def start_run(conn: asyncpg.Connection, job_id: uuid.UUID) -> uuid.UUID:
         "INSERT INTO backup_job_run (job_id) VALUES ($1) RETURNING id", job_id
     )
     return run_id
+
+
+async def prune_old_runs(
+    conn: asyncpg.Connection, job_id: uuid.UUID, *, keep: int = RUN_RETENTION
+) -> None:
+    """Ne conserve que les `keep` runs les plus récents d'un job — purge les plus anciens.
+
+    À appeler après chaque finish_run : l'historique ne doit pas croître sans borne.
+    """
+    await conn.execute(
+        """
+        DELETE FROM backup_job_run
+        WHERE job_id = $1
+          AND id NOT IN (
+              SELECT id FROM backup_job_run
+              WHERE job_id = $1
+              ORDER BY started_at DESC
+              LIMIT $2
+          )
+        """,
+        job_id,
+        keep,
+    )
 
 
 async def finish_run(

@@ -130,12 +130,14 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
                 files_deleted=result["files_deleted"],
                 commit_sha=result["commit_sha"],
             )
+            await svc.prune_old_runs(conn, job_id)
         log.info("backup_job_success", job_slug=job["slug"], **result)
 
     except Exception as exc:
         log.error("backup_job_error", job_slug=job["slug"], error=str(exc))
         async with pool.acquire() as conn:
             await svc.finish_run(conn, run_id, status="error", error_message=str(exc))
+            await svc.prune_old_runs(conn, job_id)
     finally:
         # La clé privée déchiffrée ne doit jamais rester sur disque au-delà du run.
         if ssh_key_path:

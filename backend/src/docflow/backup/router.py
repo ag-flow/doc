@@ -47,7 +47,7 @@ async def delete_job(slug: str, request: Request, _: None = _Auth) -> None:
 async def list_runs(
     slug: str,
     request: Request,
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=service.RUN_RETENTION, ge=1, le=100),
     _: None = _Auth,
 ) -> list[BackupJobRunOut]:
     return await service.list_runs(request.app.state.pool, slug, limit)

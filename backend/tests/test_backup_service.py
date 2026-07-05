@@ -208,6 +208,45 @@ async def test_list_runs_order_desc(db_pool: asyncpg.Pool, test_job: uuid.UUID) 
         assert runs[i].started_at >= runs[i + 1].started_at
 
 
+async def test_prune_old_runs_keeps_only_retention_count(
+    db_pool: asyncpg.Pool, test_job: uuid.UUID
+) -> None:
+    """Au-delà de RUN_RETENTION runs, les plus anciens sont purgés."""
+    for _ in range(svc.RUN_RETENTION + 5):
+        async with db_pool.acquire() as conn:
+            run_id = await svc.start_run(conn, test_job)
+        async with db_pool.acquire() as conn:
+            await svc.finish_run(conn, run_id, status="success")
+            await svc.prune_old_runs(conn, test_job)
+
+    count: int = await db_pool.fetchval(
+        "SELECT count(*) FROM backup_job_run WHERE job_id = $1", test_job
+    )
+    assert count == svc.RUN_RETENTION
+
+
+async def test_prune_old_runs_keeps_the_most_recent(
+    db_pool: asyncpg.Pool, test_job: uuid.UUID
+) -> None:
+    """La purge garde les runs les plus récents, pas les plus anciens."""
+    run_ids = []
+    for _ in range(svc.RUN_RETENTION + 2):
+        async with db_pool.acquire() as conn:
+            run_id = await svc.start_run(conn, test_job)
+            run_ids.append(run_id)
+        async with db_pool.acquire() as conn:
+            await svc.finish_run(conn, run_id, status="success")
+            await svc.prune_old_runs(conn, test_job)
+
+    remaining = {
+        r["id"]
+        for r in await db_pool.fetch(
+            "SELECT id FROM backup_job_run WHERE job_id = $1", test_job
+        )
+    }
+    assert remaining == set(run_ids[-svc.RUN_RETENTION :])
+
+
 async def test_list_runs_job_not_found(db_pool: asyncpg.Pool) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await svc.list_runs(db_pool, "missing-job")
