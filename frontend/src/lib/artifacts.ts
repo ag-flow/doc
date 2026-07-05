@@ -25,9 +25,10 @@ export async function resolveArtifactUrl(url: string): Promise<string> {
   if (!match) return url
   const cached = objectUrlCache.get(url)
   if (cached) return cached
-  // Visiteur non authentifié (page publique) : laisser l'URL telle quelle
-  // plutôt que déclencher un fetch voué au 401.
-  if (!getToken()) return url
+  // Visiteur non authentifié (page publique /pub) : router vers l'endpoint
+  // public — il ne sert que les artefacts référencés par un document exposé,
+  // et une <img> peut le charger directement (pas de header requis).
+  if (!getToken()) return `/pub/artifacts/${match[2]}`
   try {
     const blob = await artifactsApi.getBlob(match[1], match[2])
     const objectUrl = URL.createObjectURL(blob)

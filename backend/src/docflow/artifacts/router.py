@@ -18,7 +18,7 @@ _ART = _WS + "/artifacts/{artifact_id}"
 _Auth = Depends(require_authenticated)
 
 
-def _binary_response(data: bytes, media_type: str, filename: str, *, attachment: bool) -> Response:
+def binary_response(data: bytes, media_type: str, filename: str, *, attachment: bool) -> Response:
     disposition = "attachment" if attachment else "inline"
     # filename* RFC 5987 inutile ici : le nom est déjà restreint au basename ;
     # on neutralise guillemets et retours pour éviter toute injection d'en-tête.
@@ -66,7 +66,7 @@ async def serve_artifact(
     data, media_type, filename = await service.fetch_artifact_content(
         request.app.state.pool, ws_slug, artifact_id
     )
-    return _binary_response(data, media_type, filename, attachment=False)
+    return binary_response(data, media_type, filename, attachment=False)
 
 
 @router.get(_ART + "/download")
@@ -91,4 +91,4 @@ async def download_artifact_signed(
     data, media_type, filename = await service.fetch_artifact_content(
         request.app.state.pool, ws_slug, artifact_id
     )
-    return _binary_response(data, media_type, filename, attachment=True)
+    return binary_response(data, media_type, filename, attachment=True)

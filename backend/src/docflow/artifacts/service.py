@@ -176,6 +176,34 @@ async def fetch_artifact_content(
     return bytes(row["data"]), row["media_type"], row["filename"]
 
 
+async def fetch_public_artifact_content(
+    pool: asyncpg.Pool, artifact_id: uuid.UUID
+) -> tuple[bytes, str, str]:
+    """Version publique (sans auth) : servi ssi ≥1 document exposé le référence.
+
+    Miroir de la règle des endpoints /pub : `exposed = true` est la seule
+    porte d'entrée publique. Un artefact non référencé, ou référencé
+    uniquement par des documents privés, reste introuvable (404).
+    """
+    row = await pool.fetchrow(
+        """
+        SELECT a.data, a.media_type, a.filename
+        FROM artifact a
+        WHERE a.id = $1
+          AND EXISTS (
+              SELECT 1
+              FROM artifact_reference r
+              JOIN document d ON d.doc_technical_key = r.document_ref
+              WHERE r.artifact_ref = a.id AND d.exposed = true
+          )
+        """,
+        artifact_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="artefact introuvable ou non public")
+    return bytes(row["data"]), row["media_type"], row["filename"]
+
+
 # ── Références + cycle de vie ────────────────────────────────────────────────
 
 

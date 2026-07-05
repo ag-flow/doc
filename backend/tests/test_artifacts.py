@@ -400,6 +400,83 @@ async def test_purge_stale_only_old_unreferenced(
     assert await db_pool.fetchval("SELECT 1 FROM artifact WHERE id = $1", referenced.id) == 1
 
 
+# ── Accès public (documents exposés) ─────────────────────────────────────────
+
+
+async def test_public_fetch_requires_exposed_reference(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Un artefact n'est servi publiquement que si un document exposé le référence."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="pub.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+    doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc public")
+    async with db_pool.acquire() as conn:
+        await service.refresh_artifact_references(
+            conn, doc_id, wk, f"![p](/api/workspaces/test-ws/artifacts/{created.id})"
+        )
+
+    # Document non exposé → 404
+    with pytest.raises(HTTPException) as exc:
+        await service.fetch_public_artifact_content(db_pool, created.id)
+    assert exc.value.status_code == 404
+
+    # Document exposé → servi
+    await db_pool.execute("UPDATE document SET exposed = true WHERE doc_technical_key = $1", doc_id)
+    data, media_type, filename = await service.fetch_public_artifact_content(db_pool, created.id)
+    assert data == _PNG
+    assert media_type == "image/png"
+    assert filename == "pub.png"
+
+    # Ré-masqué → de nouveau 404
+    await db_pool.execute(
+        "UPDATE document SET exposed = false WHERE doc_technical_key = $1", doc_id
+    )
+    with pytest.raises(HTTPException) as exc:
+        await service.fetch_public_artifact_content(db_pool, created.id)
+    assert exc.value.status_code == 404
+
+
+async def test_public_fetch_unreferenced_artifact_404(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Un artefact sans référence (même existant) n'est jamais servi publiquement."""
+    from docflow.artifacts import service
+
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="orph.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+    with pytest.raises(HTTPException) as exc:
+        await service.fetch_public_artifact_content(db_pool, created.id)
+    assert exc.value.status_code == 404
+
+
+async def test_public_fetch_one_exposed_reference_suffices(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Référencé par un doc exposé ET un doc privé → servi (le doc exposé suffit)."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="mix.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+    url = f"/api/workspaces/test-ws/artifacts/{created.id}"
+    doc_pub = await _create_doc(db_pool, test_workspace, test_block, "Doc exposé")
+    doc_priv = await _create_doc(db_pool, test_workspace, test_block, "Doc privé")
+    async with db_pool.acquire() as conn:
+        await service.refresh_artifact_references(conn, doc_pub, wk, f"![m]({url})")
+        await service.refresh_artifact_references(conn, doc_priv, wk, f"![m]({url})")
+    await db_pool.execute(
+        "UPDATE document SET exposed = true WHERE doc_technical_key = $1", doc_pub
+    )
+    data, _, _ = await service.fetch_public_artifact_content(db_pool, created.id)
+    assert data == _PNG
+
+
 # ── Tools MCP ─────────────────────────────────────────────────────────────────
 
 
