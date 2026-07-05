@@ -50,6 +50,14 @@ function handleUnauthorized(path: string, hadToken: boolean): never {
 
 function detailMessage(detail: unknown, fallback: string): string {
   if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // Corps d'erreur de validation FastAPI/Pydantic : liste de {msg, loc, type}.
+    const msgs = detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? (d as { msg?: unknown }).msg : null))
+      .filter((m): m is string => typeof m === 'string')
+      .map((m) => m.replace(/^Value error, /, ''))
+    if (msgs.length > 0) return msgs.join(' ; ')
+  }
   if (detail && typeof detail === 'object' && 'message' in detail) {
     const m = (detail as { message?: unknown }).message
     if (typeof m === 'string') return m

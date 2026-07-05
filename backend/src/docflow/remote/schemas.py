@@ -54,6 +54,42 @@ AuthStorage = Literal["local", "vault"]
 GitProvider = Literal["github", "gitlab", "gitea", "custom"]
 
 
+def _check_git_fields(point_type: str, git_provider: str | None, git_repo: str | None) -> None:
+    if point_type == "git":
+        if not git_provider:
+            raise ValueError("git_provider requis pour le type git")
+        if not git_repo:
+            raise ValueError("git_repo requis pour le type git")
+
+
+def _check_auth_fields(
+    auth_type: str,
+    auth_storage: str | None,
+    auth_secret: str | None,
+    auth_vault_ref: str | None,
+    certificate_slug: str | None,
+    *,
+    require_local_secret: bool,
+) -> None:
+    """Règles communes Create/Update.
+
+    `require_local_secret` : côté création, un secret local doit toujours être
+    fourni. Côté mise à jour, un `auth_secret` omis signifie « conserver le
+    secret existant » (géré par service.update_point) — l'exiger ici rendrait
+    cette conservation impossible à déclencher via l'API.
+    """
+    if auth_type in ("password", "pat"):
+        if not auth_storage:
+            raise ValueError("auth_storage requis pour password/pat")
+        if auth_storage == "local" and require_local_secret and not auth_secret:
+            raise ValueError("auth_secret requis quand auth_storage=local")
+        if auth_storage == "vault" and not auth_vault_ref:
+            raise ValueError("auth_vault_ref requis quand auth_storage=vault")
+    elif auth_type == "certificate":
+        if not certificate_slug:
+            raise ValueError("certificate_slug requis pour l'auth par certificat")
+
+
 class RemotePointCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -79,28 +115,16 @@ class RemotePointCreate(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> RemotePointCreate:
         _valid_slug(self.slug)
-        self._check_git()
-        self._check_auth()
+        _check_git_fields(self.point_type, self.git_provider, self.git_repo)
+        _check_auth_fields(
+            self.auth_type,
+            self.auth_storage,
+            self.auth_secret,
+            self.auth_vault_ref,
+            self.certificate_slug,
+            require_local_secret=True,
+        )
         return self
-
-    def _check_git(self) -> None:
-        if self.point_type == "git":
-            if not self.git_provider:
-                raise ValueError("git_provider requis pour le type git")
-            if not self.git_repo:
-                raise ValueError("git_repo requis pour le type git")
-
-    def _check_auth(self) -> None:
-        if self.auth_type in ("password", "pat"):
-            if not self.auth_storage:
-                raise ValueError("auth_storage requis pour password/pat")
-            if self.auth_storage == "local" and not self.auth_secret:
-                raise ValueError("auth_secret requis quand auth_storage=local")
-            if self.auth_storage == "vault" and not self.auth_vault_ref:
-                raise ValueError("auth_vault_ref requis quand auth_storage=vault")
-        elif self.auth_type == "certificate":
-            if not self.certificate_slug:
-                raise ValueError("certificate_slug requis pour l'auth par certificat")
 
 
 class RemotePointUpdate(BaseModel):
@@ -124,23 +148,15 @@ class RemotePointUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> RemotePointUpdate:
-        tmp = RemotePointCreate(
-            slug="placeholder",
-            label=self.label,
-            point_type=self.point_type,
-            host=self.host,
-            port=self.port,
-            username=self.username,
-            git_provider=self.git_provider,
-            git_repo=self.git_repo,
-            git_branch=self.git_branch,
-            auth_type=self.auth_type,
-            auth_storage=self.auth_storage,
-            auth_secret=self.auth_secret,
-            auth_vault_ref=self.auth_vault_ref,
-            certificate_slug=self.certificate_slug,
+        _check_git_fields(self.point_type, self.git_provider, self.git_repo)
+        _check_auth_fields(
+            self.auth_type,
+            self.auth_storage,
+            self.auth_secret,
+            self.auth_vault_ref,
+            self.certificate_slug,
+            require_local_secret=False,
         )
-        _ = tmp  # validation déléguée à RemotePointCreate
         return self
 
 

@@ -177,12 +177,36 @@ async def test_update_point_label_only(db_pool: asyncpg.Pool) -> None:
         username="user2",
         auth_type="password",
         auth_storage="local",
-        auth_secret="s3cr3t",  # reprécisé, Pydantic l'exige pour auth_storage=local
+        auth_secret="s3cr3t",
     )
     updated = await svc.update_point(db_pool, "pt-01", update, _FERNET_KEY)
     assert updated.label == "Updated"
     assert updated.username == "user2"
     assert updated.has_local_secret is True
+
+
+async def test_update_point_blank_secret_keeps_existing(db_pool: asyncpg.Pool) -> None:
+    """auth_secret omis (placeholder « laisser vide ») : ne doit PAS 422, garde le secret existant.
+
+    Régression : RemotePointUpdate déléguait sa validation à RemotePointCreate, qui exige
+    un auth_secret non vide pour auth_storage=local — rendant impossible, via l'API, le
+    scénario que le formulaire promet explicitement (secret vide = inchangé).
+    """
+    await svc.create_point(db_pool, _point(), _FERNET_KEY)
+    update = RemotePointUpdate(
+        label="Updated",
+        point_type="ftp",
+        host="ftp.example.com",
+        username="user",
+        auth_type="password",
+        auth_storage="local",
+        auth_secret=None,
+    )
+    updated = await svc.update_point(db_pool, "pt-01", update, _FERNET_KEY)
+    assert updated.label == "Updated"
+    assert updated.has_local_secret is True
+    secret = await svc.get_point_secret(db_pool, "pt-01", _FERNET_KEY)
+    assert secret == "s3cr3t"
 
 
 async def test_update_point_replaces_secret(db_pool: asyncpg.Pool) -> None:
@@ -270,6 +294,57 @@ def test_point_certificate_requires_slug() -> None:
     with pytest.raises(ValueError, match="certificate_slug"):
         RemotePointCreate(
             slug="pt-cert",
+            label="Cert",
+            point_type="sftp",
+            host="sftp.example.com",
+            username="user",
+            auth_type="certificate",
+        )
+
+
+# ── Validation Pydantic — RemotePointUpdate ──────────────────────────────────
+
+
+def test_update_local_storage_does_not_require_secret() -> None:
+    """Contrairement à Create, Update accepte un auth_secret omis (I-conservation)."""
+    RemotePointUpdate(
+        label="X",
+        point_type="ftp",
+        host="ftp.example.com",
+        username="user",
+        auth_type="password",
+        auth_storage="local",
+    )
+
+
+def test_update_git_requires_provider() -> None:
+    with pytest.raises(ValueError, match="git_provider"):
+        RemotePointUpdate(
+            label="Git",
+            point_type="git",
+            host="github.com",
+            username="user",
+            auth_type="pat",
+            auth_storage="vault",
+            auth_vault_ref="${vault://token}",
+            git_repo="org/repo",
+        )
+
+
+def test_update_password_requires_auth_storage() -> None:
+    with pytest.raises(ValueError, match="auth_storage"):
+        RemotePointUpdate(
+            label="X",
+            point_type="ftp",
+            host="ftp.example.com",
+            username="user",
+            auth_type="password",
+        )
+
+
+def test_update_certificate_requires_slug() -> None:
+    with pytest.raises(ValueError, match="certificate_slug"):
+        RemotePointUpdate(
             label="Cert",
             point_type="sftp",
             host="sftp.example.com",
