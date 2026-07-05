@@ -338,17 +338,16 @@ async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_worksp
     block_id: uuid.UUID = await db_pool.fetchval(
         "SELECT id FROM data_block WHERE slug = $1", "setup-block"
     )
+    # Contrat dur : la required doit être fournie dès la création
     doc = await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(title="Req doc", functional_type_slug="req-type", block_id=block_id),
-    )
-    await doc_svc.set_property_value(
-        db_pool,
-        _WS,
-        doc.doc_technical_key,
-        "req-prop",
-        PropertyValueSet(value="val", expected_version=0),
+        DocumentCreate(
+            title="Req doc",
+            functional_type_slug="req-type",
+            block_id=block_id,
+            properties={"req-prop": "val"},
+        ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.delete_property_value(db_pool, _WS, doc.doc_technical_key, "req-prop")
