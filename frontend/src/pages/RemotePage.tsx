@@ -59,7 +59,7 @@ function _derTlv(b: Uint8Array, off: number): [number, number, number] {
 }
 
 // Convertit une clé publique RSA exportée au format SPKI (DER) → ssh-rsa <b64>
-function _spkiToSshRsa(spki: Uint8Array): string {
+function _spkiToSshRsa(spki: Uint8Array, identity: string): string {
   let o = 0
   const [, , s1] = _derTlv(spki, o); o = s1           // outer SEQUENCE
   const [, al, ad] = _derTlv(spki, o); o = ad + al     // AlgorithmIdentifier (skip)
@@ -86,10 +86,24 @@ function _spkiToSshRsa(spki: Uint8Array): string {
   const parts = [sshStr('ssh-rsa'), mpint(exp), mpint(mod)]
   const blob = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
   let pos = 0; for (const p of parts) { blob.set(p, pos); pos += p.length }
-  return `ssh-rsa ${_abToB64(blob.buffer)} docflow-generated`
+  return `ssh-rsa ${_abToB64(blob.buffer)} ${identity || 'docflow-generated'}`
 }
 
-async function _generateSshKeyPair(): Promise<{ publicKey: string; privateKey: string }> {
+// WebCrypto (crypto.subtle) n'existe que dans un contexte sécurisé (HTTPS ou
+// localhost) — sur un déploiement dev en HTTP simple (LAN, sans proxy TLS),
+// `crypto.subtle` est `undefined` et generateKey plante avec une erreur
+// cryptique. Fonction (pas une constante figée à l'import) pour rester
+// testable et refléter l'état réel au moment de l'appel.
+function cryptoAvailable(): boolean {
+  return typeof window !== 'undefined' && window.isSecureContext && !!window.crypto?.subtle
+}
+
+async function _generateSshKeyPair(identity: string): Promise<{ publicKey: string; privateKey: string }> {
+  if (!cryptoAvailable()) {
+    throw new Error(
+      "génération indisponible hors HTTPS/localhost (contexte non sécurisé) — générez la paire de clés ailleurs (ex. ssh-keygen) et collez-la ci-dessous",
+    )
+  }
   const kp = await window.crypto.subtle.generateKey(
     { name: 'RSASSA-PKCS1-v1_5', modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
     true, ['sign', 'verify'],
@@ -99,7 +113,7 @@ async function _generateSshKeyPair(): Promise<{ publicKey: string; privateKey: s
     window.crypto.subtle.exportKey('spki', kp.publicKey),
   ])
   return {
-    publicKey: _spkiToSshRsa(new Uint8Array(pubDer)),
+    publicKey: _spkiToSshRsa(new Uint8Array(pubDer), identity),
     privateKey: _pemWrap(_abToB64(privDer), 'PRIVATE KEY'),
   }
 }
@@ -110,11 +124,13 @@ async function _generateSshKeyPair(): Promise<{ publicKey: string; privateKey: s
 
 function CertificatesTab() {
   const qc = useQueryClient()
+  const cryptoOk = cryptoAvailable()
   const { data: certs = [] } = useQuery({ queryKey: ['remote-certs'], queryFn: remoteCertsApi.list })
   const [showForm, setShowForm] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [gitIdentity, setGitIdentity] = useState('')
   const [form, setForm] = useState({ slug: '', label: '', cert_type: 'ssh_key' as 'ssh_key' | 'tls', public_part: '', private_key: '' })
 
   const createMut = useMutation({
@@ -123,6 +139,7 @@ function CertificatesTab() {
       void qc.invalidateQueries({ queryKey: ['remote-certs'] })
       setShowForm(false)
       setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' })
+      setGitIdentity('')
     },
     onError: (e) => setErr((e as Error).message),
   })
@@ -134,7 +151,7 @@ function CertificatesTab() {
   function handleGenerate() {
     setGenerating(true)
     setErr(null)
-    void _generateSshKeyPair()
+    void _generateSshKeyPair(gitIdentity.trim())
       .then(({ publicKey, privateKey }) => {
         setForm(p => ({ ...p, public_part: publicKey, private_key: privateKey }))
       })
@@ -175,7 +192,13 @@ function CertificatesTab() {
               <option value="tls">Certificat TLS (FTPS)</option>
             </select>
             {form.cert_type === 'ssh_key' && (
-              <Button size="sm" variant="secondary" onClick={handleGenerate} disabled={generating}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleGenerate}
+                disabled={generating || !cryptoOk}
+                title={cryptoOk ? undefined : 'Indisponible hors HTTPS/localhost — collez une clé générée ailleurs (ex. ssh-keygen)'}
+              >
                 {generating
                   ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Génération…</>
                   : <><Wand2 className="h-3.5 w-3.5 mr-1" />{form.public_part ? 'Regénérer' : 'Générer'}</>
@@ -183,6 +206,15 @@ function CertificatesTab() {
               </Button>
             )}
           </div>
+
+          {form.cert_type === 'ssh_key' && (
+            <Input
+              placeholder="Identité git (commentaire de la clé, ex. deploy@docflow) — optionnel"
+              value={gitIdentity}
+              onChange={e => setGitIdentity(e.target.value)}
+              data-testid="cert-git-identity"
+            />
+          )}
 
           <div className="relative">
             <textarea
@@ -655,7 +687,7 @@ function JobCard({ job }: { job: BackupJobOut }) {
           <p className="text-xs text-gray-500">
             {job.strategy} · {job.remote_point_slug}
             {job.workspace_slug ? ` · ws:${job.workspace_slug}` : ' · toute instance'}
-            {job.schedule_cron ? ` · cron: ${job.schedule_cron}` : ` · toutes les ${job.schedule_every_seconds}s`}
+            {' · '}{describeSchedule(job.schedule_cron, job.schedule_every_seconds)}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -701,6 +733,33 @@ function JobCard({ job }: { job: BackupJobOut }) {
   )
 }
 
+type ScheduleMode = 'interval' | 'daily' | 'hourly'
+
+/** Cron minute/heure fixes → mode + heure "HH:MM" pour l'input time ; sinon `null`. */
+function cronToDailyTime(cron: string): string | null {
+  const m = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(cron)
+  if (!m) return null
+  const minute = Number(m[1])
+  const hour = Number(m[2])
+  if (minute > 59 || hour > 23) return null
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function dailyTimeToCron(time: string): string {
+  const [hour, minute] = time.split(':').map(Number)
+  return `${minute} ${hour} * * *`
+}
+
+/** Résumé lisible d'une planification pour l'affichage — retombe sur le cron brut si non reconnu. */
+function describeSchedule(cron: string | null, everySeconds: number | null): string {
+  if (cron === '0 * * * *') return 'toutes les heures'
+  if (cron) {
+    const time = cronToDailyTime(cron)
+    return time ? `tous les jours à ${time}` : `cron: ${cron}`
+  }
+  return `toutes les ${everySeconds}s`
+}
+
 function BackupTab() {
   const qc = useQueryClient()
   const { data: jobs = [] } = useQuery({ queryKey: ['backup-jobs'], queryFn: backupApi.listJobs, refetchInterval: 15000 })
@@ -713,11 +772,17 @@ function BackupTab() {
     schedule_cron: null, schedule_every_seconds: 3600,
     git_base_path: null,
   })
-  const [scheduleMode, setScheduleMode] = useState<'interval' | 'cron'>('interval')
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('daily')
+  const [dailyTime, setDailyTime] = useState('03:00')
 
   const createMut = useMutation({
     mutationFn: () => {
-      const body = { ...form, schedule_cron: scheduleMode === 'cron' ? form.schedule_cron : null, schedule_every_seconds: scheduleMode === 'interval' ? form.schedule_every_seconds : null }
+      const schedule = scheduleMode === 'interval'
+        ? { schedule_cron: null, schedule_every_seconds: form.schedule_every_seconds }
+        : scheduleMode === 'daily'
+          ? { schedule_cron: dailyTimeToCron(dailyTime), schedule_every_seconds: null }
+          : { schedule_cron: '0 * * * *', schedule_every_seconds: null }
+      const body = { ...form, ...schedule }
       return backupApi.createJob(body as BackupJobBody & { slug: string })
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['backup-jobs'] }); setShowForm(false) },
@@ -766,14 +831,35 @@ function BackupTab() {
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Planification</label>
             <div className="flex gap-2">
-              <select className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={scheduleMode} onChange={e => setScheduleMode(e.target.value as 'interval' | 'cron')}>
+              <select
+                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+                value={scheduleMode}
+                onChange={e => setScheduleMode(e.target.value as ScheduleMode)}
+                data-testid="schedule-mode-select"
+              >
+                <option value="daily">Quotidien (heure de démarrage)</option>
+                <option value="hourly">Toutes les heures</option>
                 <option value="interval">Intervalle (secondes)</option>
-                <option value="cron">Expression cron</option>
               </select>
-              {scheduleMode === 'interval'
-                ? <Input type="number" placeholder="3600" value={form.schedule_every_seconds ?? ''} onChange={e => setForm(p => ({ ...p, schedule_every_seconds: Number(e.target.value) || null }))} />
-                : <Input placeholder="0 3 * * *" value={form.schedule_cron ?? ''} onChange={e => setForm(p => ({ ...p, schedule_cron: e.target.value || null }))} />
-              }
+              {scheduleMode === 'interval' && (
+                <Input
+                  type="number"
+                  placeholder="3600"
+                  value={form.schedule_every_seconds ?? ''}
+                  onChange={e => setForm(p => ({ ...p, schedule_every_seconds: Number(e.target.value) || null }))}
+                />
+              )}
+              {scheduleMode === 'daily' && (
+                <Input
+                  type="time"
+                  value={dailyTime}
+                  onChange={e => setDailyTime(e.target.value)}
+                  data-testid="schedule-daily-time"
+                />
+              )}
+              {scheduleMode === 'hourly' && (
+                <p className="flex items-center text-xs text-gray-500">S'exécute au début de chaque heure (HH:00).</p>
+              )}
             </div>
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}

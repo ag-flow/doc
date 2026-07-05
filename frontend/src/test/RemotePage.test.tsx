@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -32,7 +32,7 @@ vi.mock('../lib/api', async () => {
   }
 })
 
-import { remotePointsApi, remoteCertsApi, backupApi, type RemotePointOut } from '../lib/api'
+import { remotePointsApi, remoteCertsApi, backupApi, type RemotePointOut, type BackupJobOut } from '../lib/api'
 import { RemotePage } from '../pages/RemotePage'
 
 const pt1: RemotePointOut = {
@@ -114,5 +114,153 @@ describe('RemotePage — test connection', () => {
 
     await waitFor(() => expect(screen.getByTestId('test-connection-result')).toBeInTheDocument())
     expect(screen.getByTestId('test-connection-result')).toHaveTextContent('Authentication failed.')
+  })
+})
+
+describe('RemotePage — génération de clé SSH', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(remotePointsApi.list).mockResolvedValue([])
+    vi.mocked(remoteCertsApi.list).mockResolvedValue([])
+    vi.mocked(backupApi.listJobs).mockResolvedValue([])
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  async function openCertForm() {
+    renderPage()
+    fireEvent.click(screen.getByText('Ajouter'))
+    await waitFor(() => expect(screen.getByPlaceholderText('Label')).toBeInTheDocument())
+  }
+
+  it('disables Générer and explains why outside a secure context (no isSecureContext in jsdom)', async () => {
+    await openCertForm()
+    const btn = screen.getByRole('button', { name: /Générer/ })
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('title', expect.stringContaining('HTTPS'))
+  })
+
+  it('uses the git identity field as the generated key comment when crypto is available', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    await openCertForm()
+
+    const btn = screen.getByRole('button', { name: /Générer/ })
+    await waitFor(() => expect(btn).not.toBeDisabled())
+
+    fireEvent.change(screen.getByTestId('cert-git-identity'), { target: { value: 'deploy@docflow' } })
+    fireEvent.click(btn)
+
+    await waitFor(
+      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
+      { timeout: 10000 },
+    )
+    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
+    expect(publicKey.startsWith('ssh-rsa ')).toBe(true)
+    expect(publicKey.endsWith('deploy@docflow')).toBe(true)
+  }, 15000)
+
+  it('falls back to the default comment when no identity is given', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    await openCertForm()
+
+    const btn = screen.getByRole('button', { name: /Générer/ })
+    await waitFor(() => expect(btn).not.toBeDisabled())
+    fireEvent.click(btn)
+
+    await waitFor(
+      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
+      { timeout: 10000 },
+    )
+    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
+    expect(publicKey.endsWith('docflow-generated')).toBe(true)
+  }, 15000)
+})
+
+const gitPoint: RemotePointOut = {
+  ...pt1,
+  id: 'pt-git',
+  slug: 'gh-deploy',
+  label: 'GitHub deploy',
+  point_type: 'git',
+  git_provider: 'github',
+  git_repo: 'org/repo',
+}
+
+const jobBase: BackupJobOut = {
+  id: 'job-1',
+  slug: 'job-1',
+  label: 'Job 1',
+  strategy: 'git_sync',
+  enabled: true,
+  remote_point_slug: 'gh-deploy',
+  workspace_slug: null,
+  schedule_cron: null,
+  schedule_every_seconds: 3600,
+  git_base_path: null,
+  created_at: '',
+  updated_at: '',
+  last_run_at: null,
+  last_run_status: null,
+}
+
+describe('RemotePage — planification de sauvegarde', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(remotePointsApi.list).mockResolvedValue([gitPoint])
+    vi.mocked(remoteCertsApi.list).mockResolvedValue([])
+  })
+
+  async function openBackupForm() {
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+    await waitFor(() => expect(screen.getByText('Nouveau job')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Nouveau job'))
+    await waitFor(() => expect(screen.getByTestId('schedule-mode-select')).toBeInTheDocument())
+  }
+
+  it('defaults to daily scheduling and sends the matching cron expression', async () => {
+    vi.mocked(backupApi.listJobs).mockResolvedValue([])
+    vi.mocked(backupApi.createJob).mockResolvedValue(jobBase)
+    await openBackupForm()
+
+    expect(screen.getByTestId('schedule-daily-time')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('schedule-daily-time'), { target: { value: '04:30' } })
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Nightly' } })
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'gh-deploy' } })
+    fireEvent.click(screen.getByText('Créer le job'))
+
+    await waitFor(() => expect(backupApi.createJob).toHaveBeenCalled())
+    expect(backupApi.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ schedule_cron: '30 4 * * *', schedule_every_seconds: null }),
+    )
+  })
+
+  it('sends "0 * * * *" for the hourly preset', async () => {
+    vi.mocked(backupApi.listJobs).mockResolvedValue([])
+    vi.mocked(backupApi.createJob).mockResolvedValue(jobBase)
+    await openBackupForm()
+
+    fireEvent.change(screen.getByTestId('schedule-mode-select'), { target: { value: 'hourly' } })
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Hourly job' } })
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'gh-deploy' } })
+    fireEvent.click(screen.getByText('Créer le job'))
+
+    await waitFor(() => expect(backupApi.createJob).toHaveBeenCalled())
+    expect(backupApi.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ schedule_cron: '0 * * * *', schedule_every_seconds: null }),
+    )
+  })
+
+  it('shows a friendly schedule summary on job cards instead of raw cron', async () => {
+    vi.mocked(backupApi.listJobs).mockResolvedValue([
+      { ...jobBase, slug: 'daily-job', schedule_cron: '30 4 * * *', schedule_every_seconds: null },
+      { ...jobBase, slug: 'hourly-job', schedule_cron: '0 * * * *', schedule_every_seconds: null },
+      { ...jobBase, slug: 'interval-job', schedule_cron: null, schedule_every_seconds: 120 },
+    ])
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+
+    await waitFor(() => expect(screen.getByText(/tous les jours à 04:30/)).toBeInTheDocument())
+    expect(screen.getByText(/toutes les heures/)).toBeInTheDocument()
+    expect(screen.getByText(/toutes les 120s/)).toBeInTheDocument()
   })
 })
