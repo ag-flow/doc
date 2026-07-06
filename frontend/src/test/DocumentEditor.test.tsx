@@ -30,6 +30,13 @@ vi.mock('../components/DocumentChildrenPanel', () => ({
   DocumentChildrenPanel: () => <div data-testid="children-panel-mock" />,
 }))
 
+// MarkdownViewer (mode lecture) monte BlockNote, lourd en jsdom : on le mocke.
+vi.mock('../components/MarkdownViewer', () => ({
+  MarkdownViewer: ({ content }: { content: string }) => (
+    <div data-testid="markdown-viewer-mock">{content}</div>
+  ),
+}))
+
 // CodeMirror ne fonctionne pas en jsdom : on substitue des implémentations minimales.
 vi.mock('@codemirror/merge', () => ({
   unifiedMergeView: () => [],
@@ -79,6 +86,20 @@ function renderEditor() {
   )
 }
 
+// Le mode lecture « wiki » est celui par défaut : on bascule en édition pour
+// exercer les scénarios d'édition / sauvegarde / conflit.
+async function enterEditMode() {
+  await waitFor(() =>
+    expect(screen.getByTestId('document-edit-btn')).toBeInTheDocument(),
+  )
+  await act(async () => {
+    fireEvent.click(screen.getByTestId('document-edit-btn'))
+  })
+  await waitFor(() =>
+    expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
+  )
+}
+
 const doc: DocumentOut = {
   doc_technical_key: 'd1',
   title: 'Mon document',
@@ -98,13 +119,24 @@ const doc: DocumentOut = {
 describe('DocumentEditor', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  // DoD 24.1 — chargement + affichage
-  it('loads the document and shows the title', async () => {
+  // Lecture « wiki » par défaut à l'ouverture
+  it('opens in read mode by default and renders the title as a heading', async () => {
     vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
     renderEditor()
     await waitFor(() =>
-      expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
+      expect(screen.getByTestId('document-reader')).toBeInTheDocument(),
     )
+    expect(screen.getByRole('heading', { name: 'Mon document' })).toBeInTheDocument()
+    expect(screen.getByTestId('markdown-viewer-mock')).toBeInTheDocument()
+    // Pas d'éditeur tant qu'on n'a pas cliqué sur « Éditer »
+    expect(screen.queryByTestId('document-editor')).not.toBeInTheDocument()
+  })
+
+  // DoD 24.1 — chargement + affichage (après passage en édition)
+  it('loads the document and shows the title', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await enterEditMode()
     expect(screen.getByDisplayValue('Mon document')).toBeInTheDocument()
     expect(screen.getByTestId('markdown-editor-mock')).toBeInTheDocument()
     expect(screen.getByTestId('document-save-btn')).toBeInTheDocument()
@@ -116,9 +148,7 @@ describe('DocumentEditor', () => {
     vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
 
     renderEditor()
-    await waitFor(() =>
-      expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
-    )
+    await enterEditMode()
 
     // Modifier le titre pour passer en dirty (le bouton devient actif)
     fireEvent.change(screen.getByTestId('document-title-input'), {
@@ -153,9 +183,7 @@ describe('DocumentEditor', () => {
     )
 
     renderEditor()
-    await waitFor(() =>
-      expect(screen.getByTestId('document-editor')).toBeInTheDocument(),
-    )
+    await enterEditMode()
 
     // Modifier le titre pour passer en dirty
     fireEvent.change(screen.getByTestId('document-title-input'), {

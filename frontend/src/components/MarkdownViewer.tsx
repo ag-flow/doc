@@ -13,9 +13,11 @@ const schema = BlockNoteSchema.create({
 
 interface MarkdownViewerProps {
   content: string
+  /** Rendu sans cadre (bordure / fond) — pour la lecture prose « wiki ». */
+  bare?: boolean
 }
 
-export function MarkdownViewer({ content }: MarkdownViewerProps) {
+export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
   const editor = useCreateBlockNote({ schema, resolveFileUrl: resolveArtifactUrl })
   const loadedRef = useRef(false)
 
@@ -35,7 +37,7 @@ export function MarkdownViewer({ content }: MarkdownViewerProps) {
   }, [editor, content])
 
   return (
-    <div className="rounded border border-gray-100 bg-white">
+    <div className={bare ? 'wiki-prose' : 'rounded border border-gray-100 bg-white'}>
       <BlockNoteView editor={editor} editable={false} />
     </div>
   )

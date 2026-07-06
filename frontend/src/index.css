@@ -8,3 +8,26 @@ body {
   margin: 0;
   font-family: system-ui, sans-serif;
 }
+
+/* Lecture « wiki » : prose aérée pour le rendu lecture seule d'un document.
+   BlockNote (mantine) rend le contenu sous .bn-editor ; on élargit l'interligne
+   et l'espacement vertical des blocs, et on aère les titres. */
+.wiki-prose .bn-editor {
+  padding-inline: 0;
+}
+.wiki-prose .bn-block-content {
+  line-height: 1.75;
+  font-size: 1.05rem;
+}
+.wiki-prose .bn-block-group .bn-block-group {
+  /* léger retrait des listes / blocs imbriqués */
+  margin-left: 0.25rem;
+}
+.wiki-prose h1.bn-block-content,
+.wiki-prose h2.bn-block-content,
+.wiki-prose h3.bn-block-content,
+.wiki-prose [data-content-type="heading"] {
+  line-height: 1.3;
+  margin-top: 1.6em;
+  margin-bottom: 0.4em;
+}

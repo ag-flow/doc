@@ -128,6 +128,9 @@
     "save": "Enregistrer",
     "saving": "Enregistrement…",
     "dirty": "Modifications non enregistrées",
+    "read": "Lecture",
+    "edit": "Éditer",
+    "readEmpty": "Ce document est vide. Cliquez sur « Éditer » pour commencer à écrire.",
     "leaveConfirm": {
       "title": "Modifications non enregistrées",
       "message": "Voulez-vous enregistrer vos modifications avant de quitter ?",
