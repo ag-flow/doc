@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.webhook import WebhookCreate, WebhookOut, WebhookTestOut, WebhookUpdate
 from docflow.webhooks import service
@@ -13,7 +13,7 @@ router = APIRouter(tags=["webhooks"])
 
 _WS = "/workspaces/{ws_slug}"
 _WH = _WS + "/webhooks/{webhook_id}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 def _key(request: Request) -> str | None:

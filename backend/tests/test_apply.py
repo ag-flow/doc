@@ -21,7 +21,7 @@ async def test_apply_creates_all_tables(db_pool: asyncpg.Pool) -> None:
     await apply(db_pool)
 
     expected = {
-        "admin_user",
+        "app_user",
         "oidc_config",
         "workspace",
         "functional_type",

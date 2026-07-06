@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import asyncpg
 import structlog
 
+from docflow.documents.changelog import log_structure_change
 from docflow.templates.diff import DiffResult, compute_diff
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import AllowedValueDef, ConstraintDef, PropDef, ResolvedType, Template
@@ -18,6 +19,10 @@ log = structlog.get_logger(__name__)
 
 
 class VersionConflictError(Exception):
+    pass
+
+
+class UnresolvedTargetTypeError(ValueError):
     pass
 
 
@@ -34,6 +39,18 @@ class ImportReport:
     no_op: bool  # vrai si == version (rien à faire)
     diff: DiffResult
     applied: bool = False
+
+
+def _validate_target_types(resolved: list[ResolvedType], known_slugs: set[str]) -> None:
+    """Fail-fast : chaque target_type doit résoudre à un type existant ou importé ici."""
+    valid = known_slugs | {rt.slug for rt in resolved}
+    for rt in resolved:
+        for prop in rt.properties:
+            if prop.target_type is not None and prop.target_type not in valid:
+                raise UnresolvedTargetTypeError(
+                    f"propriété '{rt.slug}.{prop.slug}' : target_type '{prop.target_type}'"
+                    " introuvable dans le workspace ni dans ce template"
+                )
 
 
 async def _fetch_version(conn: asyncpg.Connection, wk: str, template_slug: str) -> int | None:
@@ -95,7 +112,7 @@ async def _write_types(
         type_id = slug_to_id.get(rt.slug)
         if type_id is None:
             continue
-        await _write_props(conn, type_id, rt.slug, rt.properties, diff)
+        await _write_props(conn, type_id, rt.slug, rt.properties, diff, slug_to_id)
 
 
 async def _write_props(
@@ -104,6 +121,7 @@ async def _write_props(
     type_slug: str,
     props: list[PropDef],
     diff: DiffResult,
+    slug_to_id: dict[str, uuid.UUID],
 ) -> None:
     add_paths = {i.path for i in diff.adds}
     soft_paths = {i.path for i in diff.soft_updates}
@@ -113,11 +131,13 @@ async def _write_props(
         prop_id: uuid.UUID | None = None
 
         if prop_path in add_paths:
+            target_id = slug_to_id.get(prop.target_type) if prop.target_type else None
             row = await conn.fetchrow(
                 """
                 INSERT INTO properties_defs
-                    (slug, label, functional_type_ref, type, default_value, required)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (slug, label, functional_type_ref, type, default_value, required,
+                     target_functional_type_ref, behavior)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
                 prop.slug,
@@ -126,6 +146,8 @@ async def _write_props(
                 prop.type,
                 prop.default,
                 prop.required,
+                target_id,
+                prop.behavior,
             )
             assert row is not None
             prop_id = row["id"]
@@ -251,6 +273,14 @@ async def run_import(
                 f" version en base={current_version}, fichier={template.version}"
             )
 
+        known_slugs = {
+            row["slug"]
+            for row in await conn.fetch(
+                "SELECT slug FROM functional_type WHERE workspace_technical_key = $1", wk
+            )
+        }
+        _validate_target_types(resolved, known_slugs)
+
         diff = await compute_diff(conn, wk, resolved)
 
         # no_op uniquement si même version ET diff réellement vide
@@ -278,6 +308,9 @@ async def run_import(
 
         async with conn.transaction():
             await _write_types(conn, wk, resolved, diff)
+            # Une seule entrée feed par import : signal d'invalidation globale
+            # (types/propriétés créés par _write_types en SQL direct).
+            await log_structure_change(conn, wk_row["workspace_technical_key"], "template", "U")
             await conn.execute(
                 """
                 INSERT INTO workspace_template_import

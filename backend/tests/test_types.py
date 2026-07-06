@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from docflow.app import app
 from docflow.auth.jwt import create_token
+from docflow.errors import DependentsConflictError
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
 from docflow.types import service as type_svc
@@ -17,15 +18,15 @@ _JWT_SECRET = "test_jwt_secret_for_m2"
 _BOOTSTRAP_EMAIL = "bootstrap@example.com"
 _BOOTSTRAP_PW = "bootstrap_pw_123"
 _BASE_ENV = {
-    "ADMIN_EMAIL": _BOOTSTRAP_EMAIL,
-    "ADMIN_PASSWORD": _BOOTSTRAP_PW,
     "JWT_SECRET": _JWT_SECRET,
 }
 _WS = "test-ws"
 
 
 def _admin_token(user_id: uuid.UUID) -> str:
-    user = AuthUser(id=user_id, email="a@b.com", label="L", is_superadmin=True, disabled=False)
+    user = AuthUser(
+        id=user_id, email="a@b.com", label="L", is_admin=True, validated=True, disabled=False
+    )
     return create_token(user, _JWT_SECRET)
 
 
@@ -89,16 +90,25 @@ async def test_cycle_detection(db_pool: asyncpg.Pool, test_workspace: dict) -> N
     assert exc.value.status_code == 422
 
 
-async def test_delete_type_with_children_rejected(
+async def test_delete_type_with_children_needs_confirm(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
+    """DOC-07 : la cascade 0011 est assumée mais gardée par un confirm explicite.
+    Sans confirm → refus (dépendants comptés) ; avec confirm → cascade sur les enfants."""
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     await type_svc.create_type(
         db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature", parent_slug="epic")
     )
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(DependentsConflictError) as guard:
         await type_svc.delete_type(db_pool, _WS, "epic")
-    assert exc.value.status_code == 409
+    assert guard.value.dependents == 1
+    # Rien n'a été supprimé tant que confirm n'est pas fourni
+    assert (await type_svc.get_type(db_pool, _WS, "feature")).slug == "feature"
+
+    await type_svc.delete_type(db_pool, _WS, "epic", confirm=True)
+    with pytest.raises(HTTPException) as exc:
+        await type_svc.get_type(db_pool, _WS, "feature")
+    assert exc.value.status_code == 404
 
 
 async def test_delete_type_ok(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
@@ -130,7 +140,7 @@ def test_unauthenticated_types_rejected(
     monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _client(monkeypatch, test_schema_url) as client:
-        resp = client.get(f"/workspaces/{_WS}/types")
+        resp = client.get(f"/api/workspaces/{_WS}/types")
     assert resp.status_code == 401
 
 
@@ -140,25 +150,87 @@ async def test_types_crud_via_http(
     clean_admin_users: None,
     test_workspace: dict,
 ) -> None:
-    """Test HTTP round-trip : login → CRUD types (workspace fourni par test_workspace)."""
+    """Test HTTP round-trip : setup wizard → login → CRUD types.
+
+    auth/seed.py : le bootstrap admin par variable d'env a été supprimé, remplacé
+    par le setup wizard (POST /api/setup/init-admin), premier compte = admin validé.
+    """
     with _client(monkeypatch, test_schema_url) as client:
+        setup = client.post(
+            "/api/setup/init-admin",
+            json={
+                "username": "bootstrap",
+                "email": _BOOTSTRAP_EMAIL,
+                "password": _BOOTSTRAP_PW,
+            },
+        )
+        assert setup.status_code == 201
+
         login = client.post(
-            "/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
         )
         token = login.json()["access_token"]
         hdrs = {"Authorization": f"Bearer {token}"}
 
         r = client.post(
-            f"/workspaces/{_WS}/types",
+            f"/api/workspaces/{_WS}/types",
             json={"slug": "http-epic", "label": "HTTP Epic"},
             headers=hdrs,
         )
         assert r.status_code == 201
         assert r.json()["slug"] == "http-epic"
 
-        r = client.get(f"/workspaces/{_WS}/types", headers=hdrs)
+        r = client.get(f"/api/workspaces/{_WS}/types", headers=hdrs)
         assert r.status_code == 200
         assert "http-epic" in [t["slug"] for t in r.json()]
 
-        r = client.delete(f"/workspaces/{_WS}/types/http-epic", headers=hdrs)
+        r = client.delete(f"/api/workspaces/{_WS}/types/http-epic", headers=hdrs)
         assert r.status_code == 204
+
+
+async def test_delete_type_confirm_guard_via_http(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+    test_workspace: dict,
+) -> None:
+    """DOC-07 : DELETE sans confirm → 409 informatif ; avec ?confirm=true → 204."""
+    with _client(monkeypatch, test_schema_url) as client:
+        setup = client.post(
+            "/api/setup/init-admin",
+            json={
+                "username": "bootstrap",
+                "email": _BOOTSTRAP_EMAIL,
+                "password": _BOOTSTRAP_PW,
+            },
+        )
+        assert setup.status_code == 201
+        login = client.post(
+            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+        )
+        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        base = f"/api/workspaces/{_WS}/types"
+        assert (
+            client.post(base, json={"slug": "g-epic", "label": "Epic"}, headers=hdrs).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                base,
+                json={"slug": "g-feature", "label": "Feature", "parent_slug": "g-epic"},
+                headers=hdrs,
+            ).status_code
+            == 201
+        )
+
+        r = client.delete(f"{base}/g-epic", headers=hdrs)
+        assert r.status_code == 409
+        body = r.json()
+        assert body["need_confirm"] is True
+        assert body["dependents"] == 1
+        assert "confirm=true" in body["detail"]
+
+        r = client.delete(f"{base}/g-epic?confirm=true", headers=hdrs)
+        assert r.status_code == 204
+        assert client.get(f"{base}/g-feature", headers=hdrs).status_code == 404

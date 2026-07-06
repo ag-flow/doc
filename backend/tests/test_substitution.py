@@ -1,4 +1,5 @@
 """Tests de la substitution JSON-safe des variables d'automates."""
+
 from __future__ import annotations
 
 import json

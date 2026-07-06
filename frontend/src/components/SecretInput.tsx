@@ -32,7 +32,10 @@ export function SecretInput({ value, onChange, placeholder, disabled }: SecretIn
   const { mode, raw } = parse(value)
 
   function setMode(newMode: string) {
-    onChange(build(newMode, raw))
+    // Changement de catégorie LOCAL ↔ wallet : ne jamais réutiliser la valeur
+    // précédente (secret en clair ou chemin) comme donnée dans le nouveau mode.
+    const crossesLocalBoundary = (mode === LOCAL) !== (newMode === LOCAL)
+    onChange(build(newMode, crossesLocalBoundary ? '' : raw))
   }
 
   function setRaw(newRaw: string) {

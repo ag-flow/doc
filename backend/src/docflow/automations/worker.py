@@ -8,6 +8,7 @@ import httpx
 import structlog
 
 from docflow.automations.substitution import render_and_validate
+from docflow.net.ssrf import SSRFError, validate_public_url
 
 log = structlog.get_logger(__name__)
 
@@ -79,8 +80,7 @@ async def execute(
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
-        "SELECT name, value, secret_ref, enabled "
-        "FROM automation_header WHERE automation_ref = $1",
+        "SELECT name, value, secret_ref, enabled FROM automation_header WHERE automation_ref = $1",
         automation["id"],
     )
     for h in header_rows:
@@ -115,6 +115,17 @@ async def execute(
         headers.setdefault("Content-Type", "application/json")
 
     try:
+        await validate_public_url(automation["url"])
+    except SSRFError as exc:
+        log.warning(
+            "automation_url_rejected",
+            automation_id=str(automation["id"]),
+            doc_id=str(doc["doc_technical_key"]),
+            error=str(exc),
+        )
+        return "failed"
+
+    try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.request(
                 automation["http_method"],
@@ -145,9 +156,7 @@ async def execute(
 # ── Tick par automate ─────────────────────────────────────────────────────────
 
 
-async def run_tick(
-    pool: asyncpg.Pool, automation: asyncpg.Record, settings: object
-) -> None:
+async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
     natures: list[str] = []
     if automation["on_create"]:
         natures.append("C")
@@ -179,6 +188,17 @@ async def run_tick(
             natures,
         )
 
+        # Le curseur représente le plus petit `seq` non encore traité. On
+        # l'avance au fil des changements tant qu'aucun document « chaud »
+        # (dans sa fenêtre de debounce) n'a été rencontré. Dès qu'on diffère
+        # un document chaud, on gèle le curseur (`deferred = True`) afin de le
+        # retraiter à un tick ultérieur, tout en CONTINUANT à traiter les
+        # autres documents du batch : un seul document fréquemment édité ne
+        # doit pas affamer les automations du reste du workspace. Les
+        # changements traités au-delà du curseur gelé sont protégés contre un
+        # double traitement par la table `automation_run` (already_done).
+        deferred = False
+
         for row in rows:
             doc = await conn.fetchrow(
                 "SELECT doc_technical_key, version, title "
@@ -186,7 +206,8 @@ async def run_tick(
                 row["document_ref"],
             )
             if doc is None:
-                await _advance(conn, automation["id"], row["seq"])
+                if not deferred:
+                    await _advance(conn, automation["id"], row["seq"])
                 continue
 
             version: int = doc["version"]
@@ -203,7 +224,8 @@ async def run_tick(
                 version,
             )
             if already_done:
-                await _advance(conn, automation["id"], row["seq"])
+                if not deferred:
+                    await _advance(conn, automation["id"], row["seq"])
                 continue
 
             if automation["delay_minutes"] > 0:
@@ -218,7 +240,10 @@ async def run_tick(
                     str(automation["delay_minutes"]),
                 )
                 if hot:
-                    break
+                    # Document chaud : on le laisse mûrir sans avancer le
+                    # curseur au-delà de lui, mais on ne bloque pas le batch.
+                    deferred = True
+                    continue
 
             status = await execute(conn, automation, doc, version, pool, settings)
 
@@ -235,7 +260,8 @@ async def run_tick(
                 row["seq"],
                 status,
             )
-            await _advance(conn, automation["id"], row["seq"])
+            if not deferred:
+                await _advance(conn, automation["id"], row["seq"])
 
 
 # ── Boucle principale ─────────────────────────────────────────────────────────

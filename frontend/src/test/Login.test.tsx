@@ -19,6 +19,12 @@ vi.mock('../lib/api', () => ({
   setToken: vi.fn(),
   getToken: vi.fn(() => null),
   clearToken: vi.fn(),
+  setupApi: {
+    methods: vi.fn(() =>
+      Promise.resolve({ local: true, oidc: false, needs_setup: false })
+    ),
+    initAdmin: vi.fn(),
+  },
 }))
 
 import { api, setToken } from '../lib/api'
@@ -28,13 +34,14 @@ describe('Login', () => {
     vi.clearAllMocks()
   })
 
-  it('renders login form', () => {
+  it('renders login form', async () => {
     render(
       <MemoryRouter>
         <Login />
       </MemoryRouter>,
     )
-    expect(screen.getByTestId('email-input')).toBeInTheDocument()
+    // Login rend null tant que /auth/methods n'a pas répondu
+    expect(await screen.findByTestId('email-input')).toBeInTheDocument()
     expect(screen.getByTestId('password-input')).toBeInTheDocument()
     expect(screen.getByTestId('submit-button')).toBeInTheDocument()
   })
@@ -46,7 +53,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(screen.getByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByTestId('submit-button'))
     await waitFor(() => expect(setToken).toHaveBeenCalledWith('tok-123'))
@@ -60,7 +67,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(screen.getByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'wrong' } })
     fireEvent.click(screen.getByTestId('submit-button'))
     await waitFor(() => expect(screen.getByText('Identifiants invalides')).toBeInTheDocument())

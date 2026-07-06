@@ -134,7 +134,17 @@ export function AutomatesPage() {
 
   return (
     <div className="p-6 max-w-4xl">
-      <h1 className="text-xl font-bold mb-6">Automates</h1>
+      <h1 className="text-xl font-bold mb-3">Automates sortants</h1>
+
+      <p className="text-sm text-gray-500 mb-6 max-w-2xl">
+        Les automates déclenchent des appels vers des API externes quand un document change
+        dans ce workspace. Contrairement aux webhooks qui envoient un payload JSON brut, un
+        automate suit un <strong>contrat OpenAPI</strong> importé : vous sélectionnez
+        l'opération à appeler, mappez les champs du document sur les paramètres et choisissez
+        les événements déclencheurs. Cas d'usage typiques : créer un ticket dans un outil de
+        gestion de projet, mettre à jour un statut dans un CRM, ou déclencher un pipeline de
+        traitement sans écrire de code d'intégration.
+      </p>
 
       {/* ── Contrats ── */}
       <section className="mb-8">

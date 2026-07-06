@@ -1,13 +1,23 @@
-# templates/agile-basic.yaml
+# templates/agile-basic.yaml — v2
 # Structure clonée dans un workspace par l'import. Idempotent, additif, versionné.
 # Aucun UUID : tout est par slug. L'héritage (inherit/abstract) est résolu À L'IMPORT
 # et n'existe JAMAIS en base — la base ne connaît que des types concrets à plat.
-version: 1
+#
+# Évolution v1 -> v2 : exerce les briques spécifiées dans le corpus docflow.
+#   - types scalaires date / bool ............................ 34_MPTS
+#   - propriété `reference` (cible typée) .................... 38_MREL
+#   - multi-valeur via `max_occurrences` (défaut 1 = mono) ... 39_MMV
+#   - modèle de contenu par type (`content_template`) ........ 35_MTPL
+# Rappel de frontière : les pipelines de statut sont PROPRES À CHAQUE TYPE
+# (un board `group_by statut` est cohérent par type, pas cross-type). docflow ne
+# porte AUCUNE règle de transition — c'est l'affaire du futur module workflow.
+version: 2
 template: agile-basic
-label: "Projet agile (epic / feature / story / atdd)"
+label: "Projet agile (epic / feature / story / atdd / bug / enabler)"
 
 functional_types:
-  # ─── base abstraite : NON matérialisée, sert de socle réutilisable ───
+
+  # ─── base abstraite : NON matérialisée, socle réutilisable ───
   - slug: base_statusable
     abstract: true
     label: "(base) entité à statut"
@@ -23,11 +33,37 @@ functional_types:
           - { slug: en_review, label: "En review", position: 2, color: "#F59E0B" }
           - { slug: done,      label: "Done",      position: 3, color: "#22C55E" }
 
-  # ─── EPIC : hérite la base, mais OVERRIDE 'statut' (remplacement par slug) ───
+  # ─── PERSONNE : cible des références assignee / reviewers ───
+  # Un type "annuaire" minimal, sans statut. Il EXISTE pour que les propriétés
+  # `reference` ci-dessous aient une cible typée résoluble à l'import (38_MREL).
+  - slug: personne
+    parent: null
+    label: Personne
+    properties:
+      - slug: email
+        label: "E-mail"
+        type: text
+        required: false
+        constraints:
+          - { kind: pattern, value: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", message: "e-mail invalide" }
+      - slug: trigramme
+        label: "Trigramme"
+        type: text
+        required: false
+
+  # ─── EPIC : hérite la base, OVERRIDE 'statut' (remplacement par slug) ───
   - slug: epic
     inherit: base_statusable
     parent: null
     label: Epic
+    content_template: |
+      # {{title}}
+      > Epic créée le {{date}}
+
+      ## Vision
+      ## Périmètre
+      ## Hors périmètre
+      ## Features rattachées
     properties:
       - slug: statut                      # même slug -> remplace entièrement l'hérité
         label: Statut
@@ -46,12 +82,24 @@ functional_types:
         constraints:
           - { kind: min, value: "0", message: "ne peut pas être négatif" }
           - { kind: max, value: "365" }
+      - slug: echeance                    # 34_MPTS : type date (ISO YYYY-MM-DD)
+        label: "Échéance cible"
+        type: date
+        required: false
 
   # ─── FEATURE : override 'statut' avec son propre pipeline ───
   - slug: feature
     inherit: base_statusable
     parent: epic
     label: Feature
+    content_template: |
+      # {{title}}
+      > Feature créée le {{date}}
+
+      ## Contexte
+      ## Comportement attendu
+      ## Critères d'acceptation
+      - [ ] …
     properties:
       - slug: statut
         label: Statut
@@ -69,12 +117,45 @@ functional_types:
         required: false
         constraints:
           - { kind: pattern, value: "^[A-Z]+-[0-9]+$", message: "format attendu : PROJ-123" }
+      - slug: echeance
+        label: "Échéance"
+        type: date
+        required: false
+      - slug: assignee                    # 38_MREL : reference mono (max 1 par défaut)
+        label: "Assigné à"
+        type: reference
+        target_type: personne             # cible typée (résolue à l'import)
+        required: false
+      - slug: reviewers                   # 39_MMV : reference MULTI (max_occurrences > 1)
+        label: "Relecteurs"
+        type: reference
+        target_type: personne
+        max_occurrences: 1000             # "illimité de fait" sur une liste de propriété
+        required: false
+      - slug: composants                  # 39_MMV : restricted_list MULTI bornée
+        label: "Composants"
+        type: restricted_list
+        max_occurrences: 3                # 1 à 3 composants
+        required: false
+        allowed_values:
+          - { slug: api, label: "API",      position: 0, color: "#6366F1" }
+          - { slug: ui,  label: "UI",       position: 1, color: "#0EA5E9" }
+          - { slug: db,  label: "Données",  position: 2, color: "#F59E0B" }
 
   # ─── STORY : enfant de feature, garde le 'statut' hérité de la base ───
   - slug: story
     inherit: base_statusable
     parent: feature
     label: "User Story"
+    content_template: |
+      # {{title}}
+
+      **En tant que** …
+      **je veux** …
+      **afin de** …
+
+      ## Critères d'acceptation
+      - [ ] …
     properties:
       - slug: points
         label: "Story points"
@@ -83,6 +164,12 @@ functional_types:
         constraints:
           - { kind: min, value: "0" }
           - { kind: max, value: "100" }
+      - slug: bloque_par                  # 38_MREL + 39_MMV : dépendances (multi)
+        label: "Bloquée par"
+        type: reference
+        target_type: story                # une story peut dépendre d'autres stories
+        max_occurrences: 1000
+        required: false
 
   # ─── ATDD : AUSSI enfant de feature (feature a donc 2 types d'enfants) ───
   - slug: atdd
@@ -94,4 +181,102 @@ functional_types:
         label: Scénario
         type: text
         required: true
+      - slug: automatise                  # 34_MPTS : type bool
+        label: "Automatisé"
+        type: bool
+        required: false
+        default: "false"
 
+  # ─── BUG : enfant de epic, pipeline de statut propre (triage -> done) ───
+  - slug: bug
+    inherit: base_statusable
+    parent: epic
+    label: Bug
+    content_template: |
+      # {{title}}
+      > Bug signalé le {{date}}
+
+      ## Symptôme
+      ## Étapes de reproduction
+      - [ ] …
+      ## Comportement attendu
+      ## Comportement observé
+    properties:
+      - slug: statut                      # même slug -> remplace l'hérité
+        label: Statut
+        type: restricted_list
+        required: true
+        default: a_trier
+        allowed_values:
+          - { slug: a_trier,    label: "À trier",    position: 0, color: "#9AA3AF" }
+          - { slug: confirme,   label: "Confirmé",   position: 1, color: "#6366F1" }
+          - { slug: en_cours,   label: "En cours",   position: 2, color: "#0EA5E9" }
+          - { slug: done,       label: "Done",       position: 3, color: "#22C55E" }
+          - { slug: rejete,     label: "Rejeté",     position: 4, color: "#EF4444" }
+      - slug: severite
+        label: "Sévérité"
+        type: restricted_list
+        required: true
+        default: majeure
+        allowed_values:
+          - { slug: bloquante, label: "Bloquante", position: 0, color: "#EF4444" }
+          - { slug: majeure,   label: "Majeure",   position: 1, color: "#F59E0B" }
+          - { slug: mineure,   label: "Mineure",   position: 2, color: "#9AA3AF" }
+      - slug: ref_jira
+        label: "Référence Jira"
+        type: text
+        required: false
+        constraints:
+          - { kind: pattern, value: "^[A-Z]+-[0-9]+$", message: "format attendu : PROJ-123" }
+      - slug: assignee                    # 38_MREL : reference mono
+        label: "Assigné à"
+        type: reference
+        target_type: personne
+        required: false
+
+  # ─── ENABLER : enfant de epic, travail technique habilitant (SAFe-like) ───
+  - slug: enabler
+    inherit: base_statusable
+    parent: epic
+    label: "Enabler technique"
+    content_template: |
+      # {{title}}
+      > Enabler créé le {{date}}
+
+      ## Objectif technique
+      ## Motivation / valeur habilitante
+      ## Impact & risques
+      ## Critères de sortie
+      - [ ] …
+    properties:
+      - slug: categorie
+        label: "Catégorie"
+        type: restricted_list
+        required: false
+        default: architecture
+        allowed_values:
+          - { slug: architecture,    label: "Architecture",      position: 0, color: "#6366F1" }
+          - { slug: infrastructure,  label: "Infrastructure",    position: 1, color: "#0EA5E9" }
+          - { slug: dette_technique, label: "Dette technique",   position: 2, color: "#F59E0B" }
+          - { slug: exploration,     label: "Exploration / POC",  position: 3, color: "#22C55E" }
+      - slug: budget_jours
+        label: "Budget (jours)"
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "0", message: "ne peut pas être négatif" }
+          - { kind: max, value: "365" }
+      - slug: assignee                    # 38_MREL : reference mono
+        label: "Assigné à"
+        type: reference
+        target_type: personne
+        required: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Couplage inter-méthodologies (rappel, NON modélisé ici) :
+#   le point de jonction métier↔dev (« ce produit attendu ⟶ cette epic ») est une
+#   simple propriété `reference` (38_MREL) portée par un type d'un AUTRE template
+#   (ex. strategie-metier.yaml : type `produit_attendu`, target_type: epic).
+#   docflow stocke QUE ça pointe, jamais ce que ça veut dire. Aucune règle de
+#   cadencement ici — cela appartient au module workflow.
+# ─────────────────────────────────────────────────────────────────────────────

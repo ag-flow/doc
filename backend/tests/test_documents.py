@@ -21,7 +21,8 @@ async def test_create_document(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Ma page", content="# Hello", block_id=test_block["id"]),
     )
     assert doc.title == "Ma page"
@@ -38,7 +39,8 @@ async def test_create_document_with_type(
 ) -> None:
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Epic Doc", functional_type_slug="epic", block_id=test_block["id"]),
     )
     assert doc.functional_type_slug == "epic"
@@ -50,7 +52,8 @@ async def test_create_document_unknown_type(
 ) -> None:
     with pytest.raises(HTTPException) as exc:
         await doc_svc.create_document(
-            db_pool, _WS,
+            db_pool,
+            _WS,
             DocumentCreate(title="Bad", functional_type_slug="ghost", block_id=test_block["id"]),
         )
     assert exc.value.status_code == 422
@@ -79,7 +82,8 @@ async def test_document_parent_hierarchy(
         db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
     )
     child = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(
             title="Child",
             parent_id=parent.doc_technical_key,
@@ -97,28 +101,35 @@ async def test_document_parent_wrong_workspace(
     from docflow.workspaces import service as ws_svc
 
     other_ws = await ws_svc.create_workspace(
-        db_pool, WorkspaceCreate(slug="other-ws", label="Other")
+        db_pool, WorkspaceCreate(slug="other-ws", label="Other"), None
     )
     # Créer un type et un bloc dans l'autre workspace pour pouvoir créer un document
     other_wk: uuid.UUID = other_ws.workspace_technical_key
     other_type_id: uuid.UUID = await db_pool.fetchval(
         "INSERT INTO functional_type (slug, label, workspace_technical_key) "
         "VALUES ($1, $2, $3) RETURNING id",
-        "other-root", "Other Root", other_wk,
+        "other-root",
+        "Other Root",
+        other_wk,
     )
     other_block_id: uuid.UUID = await db_pool.fetchval(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4) RETURNING id",
-        "other-block", "Other Block", other_type_id, other_wk,
+        "other-block",
+        "Other Block",
+        other_type_id,
+        other_wk,
     )
     parent = await doc_svc.create_document(
-        db_pool, "other-ws",
+        db_pool,
+        "other-ws",
         DocumentCreate(title="Other parent", block_id=other_block_id),
     )
     try:
         with pytest.raises(HTTPException) as exc:
             await doc_svc.create_document(
-                db_pool, _WS,
+                db_pool,
+                _WS,
                 DocumentCreate(
                     title="Child",
                     parent_id=parent.doc_technical_key,
@@ -138,7 +149,8 @@ async def test_get_document_with_content(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Doc", content="# Contenu initial", block_id=test_block["id"]),
     )
     fetched = await doc_svc.get_document(db_pool, _WS, doc.doc_technical_key)
@@ -151,13 +163,16 @@ async def test_update_document_content_versioned(
 ) -> None:
     """DoD 2 : écrire contenu v1 → v2, vérifier version alignée."""
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Feature A", content="# v1", block_id=test_block["id"]),
     )
     assert doc.version == 1
 
     updated = await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key,
+        db_pool,
+        _WS,
+        doc.doc_technical_key,
         DocumentUpdate(title="Feature A v2", content="# v2", expected_version=1),
     )
     assert updated.version == 2
@@ -175,12 +190,15 @@ async def test_update_document_wrong_version_409(
 ) -> None:
     """Mauvais expected_version → 409 + état courant, base inchangée."""
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Doc", content="# initial", block_id=test_block["id"]),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.update_document(
-            db_pool, _WS, doc.doc_technical_key,
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
             DocumentUpdate(title="Jamais", content="# jamais", expected_version=99),
         )
     assert exc.value.status_code == 409
@@ -203,7 +221,9 @@ async def test_update_document_content_requires_expected_version(
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.update_document(
-            db_pool, _WS, doc.doc_technical_key,
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
             DocumentUpdate(content="# new"),  # pas de expected_version
         )
     assert exc.value.status_code == 422
@@ -212,17 +232,59 @@ async def test_update_document_content_requires_expected_version(
 async def test_update_document_metadata_no_version(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
-    """Mise à jour des métadonnées (type fonctionnel) sans expected_version."""
-    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
+    """Mise à jour des métadonnées (type fonctionnel) sans expected_version.
+
+    Le changement de type doit respecter l'invariant de position (DOC-04) : on passe
+    d'un type fils du type du parent à un autre type fils (story → bug).
+    """
+    root_slug: str = test_block["type_slug"]
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story", parent_slug=root_slug)
+    )
+    await type_svc.create_type(
+        db_pool, _WS, FunctionalTypeCreate(slug="bug", label="Bug", parent_slug=root_slug)
+    )
+    parent = await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(title="Parent", block_id=test_block["id"], functional_type_slug=root_slug),
+    )
     doc = await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Doc", block_id=test_block["id"])
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Doc",
+            block_id=test_block["id"],
+            parent_id=parent.doc_technical_key,
+            functional_type_slug="story",
+        ),
     )
     updated = await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key,
-        DocumentUpdate(functional_type_slug="story"),
+        db_pool,
+        _WS,
+        doc.doc_technical_key,
+        DocumentUpdate(functional_type_slug="bug"),
     )
-    assert updated.functional_type_slug == "story"
+    assert updated.functional_type_slug == "bug"
     assert updated.version == 1  # pas de bump de version
+
+
+async def test_update_document_type_racine_invalide(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """DOC-04 : à la racine d'un bloc, changer le type hors type du bloc → 422."""
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
+    doc = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Doc racine", block_id=test_block["id"])
+    )
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.update_document(
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
+            DocumentUpdate(functional_type_slug="story"),
+        )
+    assert exc.value.status_code == 422
 
 
 async def test_update_document_no_changes(
@@ -231,9 +293,7 @@ async def test_update_document_no_changes(
     doc = await doc_svc.create_document(
         db_pool, _WS, DocumentCreate(title="Static", block_id=test_block["id"])
     )
-    result = await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key, DocumentUpdate()
-    )
+    result = await doc_svc.update_document(db_pool, _WS, doc.doc_technical_key, DocumentUpdate())
     assert result.title == "Static"
 
 
@@ -257,26 +317,31 @@ async def test_delete_document(
     assert exc.value.status_code == 404
 
 
-async def test_delete_document_with_children_rejected(
+async def test_delete_document_with_children_cascades(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
+    """0010_document_cascade_delete : supprimer un parent supprime ses enfants
+    (ON DELETE CASCADE), plus de rejet 409 — comportement délibérément inversé."""
     parent = await doc_svc.create_document(
         db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
     )
-    await doc_svc.create_document(
-        db_pool, _WS,
+    child = await doc_svc.create_document(
+        db_pool,
+        _WS,
         DocumentCreate(
             title="Child",
             parent_id=parent.doc_technical_key,
             block_id=test_block["id"],
         ),
     )
+    await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key)
     with pytest.raises(HTTPException) as exc:
-        await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key)
-    assert exc.value.status_code == 409
+        await doc_svc.get_document(db_pool, _WS, child.doc_technical_key)
+    assert exc.value.status_code == 404
 
 
 # ── Board query (DoD 6) ───────────────────────────────────────────────────────
+
 
 async def test_board_query_dod6(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
@@ -288,36 +353,45 @@ async def test_board_query_dod6(
     La jointure utilise idx_pvalue_version_allowed.
     """
     # Crée le type 'feature' avec une prop 'statut' (restricted_list)
-    await type_svc.create_type(
-        db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature")
-    )
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="feature", label="Feature"))
     await prop_svc.create_def(
-        db_pool, _WS, "feature",
+        db_pool,
+        _WS,
+        "feature",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "feature", "statut",
+        db_pool,
+        _WS,
+        "feature",
+        "statut",
         AllowedValueCreate(slug="todo", label="À faire"),
     )
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "feature", "statut",
+        db_pool,
+        _WS,
+        "feature",
+        "statut",
         AllowedValueCreate(slug="done", label="Terminé", position=1),
     )
 
     feat_a = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(
             title="Feature A", functional_type_slug="feature", block_id=test_block["id"]
         ),
     )
     feat_b = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(
             title="Feature B", functional_type_slug="feature", block_id=test_block["id"]
         ),
     )
     feat_c = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(
             title="Feature C", functional_type_slug="feature", block_id=test_block["id"]
         ),
@@ -326,17 +400,24 @@ async def test_board_query_dod6(
     # A et B → done ; C → todo
     for doc in (feat_a, feat_b):
         await doc_svc.set_property_value(
-            db_pool, _WS, doc.doc_technical_key, "statut",
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
+            "statut",
             PropertyValueSet(allowed_value_slug="done", expected_version=0),
         )
     await doc_svc.set_property_value(
-        db_pool, _WS, feat_c.doc_technical_key, "statut",
+        db_pool,
+        _WS,
+        feat_c.doc_technical_key,
+        "statut",
         PropertyValueSet(allowed_value_slug="todo", expected_version=0),
     )
 
     # Board : features en statut done
     board = await doc_svc.list_documents(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         functional_type="feature",
         prop_slug="statut",
         allowed_value_slug="done",
@@ -351,15 +432,15 @@ async def test_board_query_functional_type_only(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     """list_documents filtré par functional_type seul (sans valeur)."""
-    await type_svc.create_type(
-        db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic")
-    )
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
     await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Epic 1", functional_type_slug="epic", block_id=test_block["id"]),
     )
     await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Epic 2", functional_type_slug="epic", block_id=test_block["id"]),
     )
     # Document sans type fonctionnel

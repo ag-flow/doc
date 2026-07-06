@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -117,7 +117,10 @@ export function TypesAdmin() {
       </div>
 
       {creating && (
-        <div className="mb-6 rounded border border-gray-200 bg-gray-50 p-4">
+        <form
+          className="mb-6 rounded border border-gray-200 bg-gray-50 p-4"
+          onSubmit={(e) => { e.preventDefault(); handleCreate() }}
+        >
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="mb-1 block text-sm font-medium">{t('types.label')}</label>
@@ -157,14 +160,14 @@ export function TypesAdmin() {
           </div>
           {formError && <p className="mt-2 text-sm text-red-600">{formError}</p>}
           <div className="mt-3 flex gap-2">
-            <Button onClick={handleCreate} disabled={createMutation.isPending}>
+            <Button type="submit" disabled={createMutation.isPending}>
               {t('types.save')}
             </Button>
-            <Button variant="secondary" onClick={() => setCreating(false)}>
+            <Button variant="secondary" type="button" onClick={() => setCreating(false)}>
               {t('types.cancel')}
             </Button>
           </div>
-        </div>
+        </form>
       )}
 
       <table className="w-full border-collapse" data-testid="types-table">
@@ -178,9 +181,8 @@ export function TypesAdmin() {
         </thead>
         <tbody>
           {types.map((type) => (
-            <>
+            <Fragment key={type.slug}>
               <tr
-                key={type.slug}
                 className="border-b hover:bg-gray-50 cursor-pointer"
                 onClick={() => setExpandedType((v) => (v === type.slug ? null : type.slug))}
                 data-testid={`type-row-${type.slug}`}
@@ -205,13 +207,13 @@ export function TypesAdmin() {
                 </td>
               </tr>
               {expandedType === type.slug && (
-                <tr key={`${type.slug}-props`}>
+                <tr>
                   <td colSpan={4} className="p-0">
                     <TypePropertiesPanel ws={ws!} type={type} />
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -258,7 +260,7 @@ export function TypesAdmin() {
               <option value="">{t('tpl.selectTemplate')}</option>
               {templates.map(tpl => (
                 <option key={tpl.template} value={tpl.template}>
-                  {tpl.label} (v{tpl.version})
+                  {tpl.label} (v{tpl.version}) — {tpl.template}
                 </option>
               ))}
             </select>

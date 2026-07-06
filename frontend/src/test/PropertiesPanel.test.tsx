@@ -30,6 +30,7 @@ const baseValues: PropertyValueOut[] = [
     allowed_value_slug: null,
     allowed_value_label: null,
     required: false,
+      behavior: null,
   },
   {
     prop_slug: 'status',
@@ -40,6 +41,7 @@ const baseValues: PropertyValueOut[] = [
     allowed_value_slug: 'todo',
     allowed_value_label: 'À faire',
     required: true,
+  behavior: null,
   },
 ]
 
@@ -53,6 +55,7 @@ const richTypes = [
         label: 'Statut',
         type: 'restricted_list',
         required: true,
+  behavior: null,
         allowed_values: [
           { slug: 'todo', label: 'À faire', color: '#3b82f6', position: 0 },
           { slug: 'done', label: 'Terminé', color: '#22c55e', position: 1 },
@@ -110,6 +113,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])
@@ -146,6 +150,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])
@@ -160,6 +165,7 @@ describe('PropertiesPanel', () => {
       allowed_value_slug: null,
       allowed_value_label: null,
       required: false,
+      behavior: null,
     }
 
     // Premier appel → 409, deuxième → succès
@@ -203,6 +209,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
       {
         prop_slug: 'title2',
@@ -213,6 +220,7 @@ describe('PropertiesPanel', () => {
         allowed_value_slug: null,
         allowed_value_label: null,
         required: false,
+      behavior: null,
       },
     ])
     vi.mocked(api.get).mockResolvedValue([])

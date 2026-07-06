@@ -90,15 +90,18 @@ async def test_oidc_callback_rejected_when_disabled(db_pool: asyncpg.Pool) -> No
         ),
     )
     with pytest.raises(HTTPException) as exc:
-        await oidc_svc.handle_oidc_callback(
-            db_pool, "jwt-secret",
+        await oidc_svc.issue_token_for_verified_claims(
+            db_pool,
+            "jwt-secret",
             {"email": "user@example.com", "sub": "keycloak-sub-1"},
         )
     assert exc.value.status_code == 403
 
 
 async def test_oidc_provisioning_new_user(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
-    """Callback OIDC avec email inconnu → provisionnement sans password_hash."""
+    """Callback OIDC avec email inconnu → provisionnement sans password_hash, mais
+    compte non validé (0027_user_model) : rejet 403 PendingValidation tant qu'un
+    admin ne l'a pas validé — pas de token à la première fédération."""
     await oidc_svc.set_oidc_config(
         db_pool,
         OidcConfigSet(
@@ -108,15 +111,22 @@ async def test_oidc_provisioning_new_user(db_pool: asyncpg.Pool, clean_admin_use
             enabled=True,
         ),
     )
-    token = await oidc_svc.handle_oidc_callback(
-        db_pool, "test-secret-key-for-unit-tests-hs256",
-        {"email": "oidc-user@example.com", "sub": "sub-new-user", "name": "OIDC User"},
+    with pytest.raises(HTTPException) as exc:
+        await oidc_svc.issue_token_for_verified_claims(
+            db_pool,
+            "test-secret-key-for-unit-tests-hs256",
+            {"email": "oidc-user@example.com", "sub": "sub-new-user", "name": "OIDC User"},
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "PendingValidation"
+
+    row = await db_pool.fetchrow(
+        "SELECT password_hash, validated FROM app_user WHERE email = $1",
+        "oidc-user@example.com",
     )
-    assert isinstance(token, str)
-    pw_hash: str | None = await db_pool.fetchval(
-        "SELECT password_hash FROM admin_user WHERE email = $1", "oidc-user@example.com"
-    )
-    assert pw_hash is None
+    assert row is not None
+    assert row["password_hash"] is None
+    assert row["validated"] is False
 
 
 async def test_oidc_link_existing_user_preserves_password(
@@ -125,10 +135,13 @@ async def test_oidc_link_existing_user_preserves_password(
     """1er login fédéré d'un admin local → oidc_subject rempli, password_hash préservé."""
     # Créer admin local
     from docflow.auth.password import hash_password
+
     await db_pool.execute(
-        "INSERT INTO admin_user (email, label, password_hash, is_superadmin) "
-        "VALUES ($1, $2, $3, false)",
-        "existing@example.com", "Existing", hash_password("secret"),
+        "INSERT INTO app_user (email, label, password_hash, is_admin, validated) "
+        "VALUES ($1, $2, $3, false, true)",
+        "existing@example.com",
+        "Existing",
+        hash_password("secret"),
     )
     await oidc_svc.set_oidc_config(
         db_pool,
@@ -139,12 +152,14 @@ async def test_oidc_link_existing_user_preserves_password(
             enabled=True,
         ),
     )
-    await oidc_svc.handle_oidc_callback(
-        db_pool, "test-secret-key-for-unit-tests-hs256",
-        {"email": "existing@example.com", "sub": "keycloak-sub-existing"},
+    # email_verified=True requis pour lier un compte existant par email (AUTH-02)
+    await oidc_svc.issue_token_for_verified_claims(
+        db_pool,
+        "test-secret-key-for-unit-tests-hs256",
+        {"email": "existing@example.com", "sub": "keycloak-sub-existing", "email_verified": True},
     )
     row = await db_pool.fetchrow(
-        "SELECT password_hash, oidc_subject FROM admin_user WHERE email = $1",
+        "SELECT password_hash, oidc_subject FROM app_user WHERE email = $1",
         "existing@example.com",
     )
     assert row is not None

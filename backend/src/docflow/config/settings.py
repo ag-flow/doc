@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="forbid", case_sensitive=False)
 
     database_url: str
-    admin_email: str
-    admin_password: Secret
     jwt_secret: Secret
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -20,3 +18,13 @@ class Settings(BaseSettings):
     # Requise pour créer des webhooks avec headers ; absence = headers interdits.
     encryption_key: Secret | None = None
     automation_tick_seconds: int = 60
+    # URL de base d'une galerie de templates distante (toc.txt + *.yaml)
+    gallery_url: str | None = None
+    # Artefacts binaires (images collées dans les documents)
+    artifact_max_bytes: int = 10 * 1024 * 1024
+    # Durée de validité des liens de téléchargement signés (MCP get_artifact_link)
+    artifact_link_ttl_seconds: int = 900
+    # Purge des artefacts jamais référencés (brouillons abandonnés)
+    artifact_purge_after_hours: int = 24
+    # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
+    public_base_url: str | None = None

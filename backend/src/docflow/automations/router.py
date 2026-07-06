@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import require_authenticated
 from docflow.automations import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.automations import (
@@ -18,7 +18,7 @@ router = APIRouter(tags=["automations"])
 
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
 
 
 @router.get(_WS + "/automations", response_model=list[AutomationOut])
@@ -50,9 +50,7 @@ async def update_automation(
     request: Request,
     _: AuthUser = _Auth,
 ) -> AutomationOut:
-    return await service.update_automation(
-        request.app.state.pool, ws_slug, automation_id, body
-    )
+    return await service.update_automation(request.app.state.pool, ws_slug, automation_id, body)
 
 
 @router.delete(_AUTO, status_code=204)
@@ -70,9 +68,7 @@ async def list_runs(
     limit: int = Query(default=50, ge=1, le=200),
     _: AuthUser = _Auth,
 ) -> list[AutomationRunOut]:
-    return await service.list_runs(
-        request.app.state.pool, ws_slug, automation_id, limit
-    )
+    return await service.list_runs(request.app.state.pool, ws_slug, automation_id, limit)
 
 
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)

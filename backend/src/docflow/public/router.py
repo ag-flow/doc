@@ -8,13 +8,16 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 
+from docflow.artifacts import service as artifact_service
+from docflow.artifacts.router import binary_response
 from docflow.schemas.document import DocumentOut
 
 router = APIRouter(tags=["public"])
 
 _SELECT_DOC = """
-SELECT d.doc_technical_key, d.title, d.type, d.version,
+SELECT d.doc_technical_key, d.title, d.type, d.slug, d.version,
        d.parent, d.created_at, d.updated_at,
        d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
@@ -29,7 +32,7 @@ WHERE d.doc_technical_key = $1 AND d.exposed = true
 """
 
 _SELECT_CHILDREN = """
-SELECT d.doc_technical_key, d.title, d.type, d.version,
+SELECT d.doc_technical_key, d.title, d.type, d.slug, d.version,
        d.parent, d.created_at, d.updated_at,
        d.data_block_ref, d.exposed,
        ft.slug AS functional_type_slug,
@@ -53,6 +56,7 @@ def _map(row: object, content: str | None = None) -> DocumentOut:
         doc_technical_key=r["doc_technical_key"],
         title=r["title"],
         type=r["type"],
+        slug=r["slug"],
         content=r["content"] if (content is None and has_content) else content,
         version=r["version"],
         parent_id=r["parent"],
@@ -82,3 +86,16 @@ async def list_public_document_children(doc_id: uuid.UUID, request: Request) -> 
             raise HTTPException(status_code=404, detail=_NOT_FOUND)
         rows = await conn.fetch(_SELECT_CHILDREN, doc_id)
     return [_map(r, content=None) for r in rows]
+
+
+@router.get("/artifacts/{artifact_id}")
+async def get_public_artifact(artifact_id: uuid.UUID, request: Request) -> Response:
+    """Sert le binaire d'un artefact référencé par au moins un document exposé.
+
+    Même règle d'accès que les documents publics : `exposed = true` est la
+    seule porte d'entrée ; tout le reste répond 404 sans révéler l'existence.
+    """
+    data, media_type, filename = await artifact_service.fetch_public_artifact_content(
+        request.app.state.pool, artifact_id
+    )
+    return binary_response(data, media_type, filename, attachment=False)

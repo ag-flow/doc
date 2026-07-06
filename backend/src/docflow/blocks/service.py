@@ -6,6 +6,8 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.documents.changelog import log_structure_change
+from docflow.errors import DependentsConflictError
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 
 _SELECT_BLOCK = """
@@ -114,7 +116,7 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
 async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) -> DataBlockOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id, type_parent_id = await _resolve_type(conn, wk, data.functional_type_slug)
 
             parent_id: uuid.UUID | None = None
@@ -155,7 +157,8 @@ async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) 
                     status_code=409,
                     detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await log_structure_change(conn, wk, "block", "C", row["id"])
     return DataBlockOut(
         id=row["id"],
         slug=row["slug"],
@@ -178,7 +181,7 @@ async def update_block(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_row = await conn.fetchrow(
                 "SELECT id, functional_type_ref FROM data_block "
                 "WHERE workspace_technical_key = $1 AND slug = $2",
@@ -221,6 +224,7 @@ async def update_block(
                 block_id,
                 *list(db_updates.values()),
             )
+            await log_structure_change(conn, wk, "block", "U", block_id)
 
     return await get_block(pool, ws_slug, block_slug)
 
@@ -231,7 +235,7 @@ async def set_block_exposed(
     """Expose ou masque le bloc entier et tous ses documents (en une transaction)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id: uuid.UUID | None = await conn.fetchval(
                 "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
                 wk,
@@ -249,13 +253,37 @@ async def set_block_exposed(
                 block_id,
                 value,
             )
+            await log_structure_change(conn, wk, "block", "U", block_id)
     return await get_block(pool, ws_slug, block_slug)
 
 
-async def delete_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> None:
+# DOC-07 : dépendants détruits par la cascade 0011 (data_block.parent CASCADE,
+# document.data_block_ref CASCADE) = blocs descendants + documents du sous-arbre.
+_COUNT_BLOCK_DEPENDENTS = """
+WITH RECURSIVE subtree AS (
+    SELECT id FROM data_block WHERE id = $1
+    UNION ALL
+    SELECT b.id FROM data_block b JOIN subtree s ON b.parent = s.id
+)
+SELECT (SELECT count(*) FROM subtree) - 1 AS child_blocks,
+       (SELECT count(*) FROM document d
+        WHERE d.data_block_ref IN (SELECT id FROM subtree)) AS documents
+"""
+
+
+async def delete_block(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str, *, confirm: bool = False
+) -> None:
+    """Supprime un bloc.
+
+    DOC-07 : la cascade 0011 détruit les blocs enfants et tous les documents du
+    sous-arbre (valeurs et historique compris). On refuse (409) tant que
+    ``confirm`` n'est pas fourni s'il existe des dépendants ; avec ``confirm``,
+    la cascade DB est assumée.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id: uuid.UUID | None = await conn.fetchval(
                 "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
                 wk,
@@ -263,10 +291,18 @@ async def delete_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> Non
             )
             if block_id is None:
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
-            try:
-                await conn.execute("DELETE FROM data_block WHERE id = $1", block_id)
-            except (asyncpg.ForeignKeyViolationError, asyncpg.RestrictViolationError) as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="impossible de supprimer : ce bloc a des enfants",
-                ) from exc
+            counts = await conn.fetchrow(_COUNT_BLOCK_DEPENDENTS, block_id)
+            assert counts is not None
+            dependents = counts["child_blocks"] + counts["documents"]
+            if dependents > 0 and not confirm:
+                raise DependentsConflictError(
+                    detail=(
+                        f"la suppression du bloc '{block_slug}' détruirait en cascade "
+                        f"{counts['child_blocks']} bloc(s) enfant(s) et "
+                        f"{counts['documents']} document(s) (valeurs et historique compris) ; "
+                        "repasser avec confirm=true pour confirmer la suppression"
+                    ),
+                    dependents=dependents,
+                )
+            await conn.execute("DELETE FROM data_block WHERE id = $1", block_id)
+            await log_structure_change(conn, wk, "block", "D", block_id)

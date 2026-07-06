@@ -79,7 +79,7 @@ async def _doc_reaction_summary(
     like_rows = await conn.fetch(
         """
         SELECT u.label FROM document_reaction dr
-        JOIN admin_user u ON u.id = dr.user_ref
+        JOIN app_user u ON u.id = dr.user_ref
         WHERE dr.document_ref = $1 AND dr.nature = 1
         ORDER BY dr.created_at DESC LIMIT 5
         """,
@@ -88,7 +88,7 @@ async def _doc_reaction_summary(
     dislike_rows = await conn.fetch(
         """
         SELECT u.label FROM document_reaction dr
-        JOIN admin_user u ON u.id = dr.user_ref
+        JOIN app_user u ON u.id = dr.user_ref
         WHERE dr.document_ref = $1 AND dr.nature = -1
         ORDER BY dr.created_at DESC LIMIT 5
         """,
@@ -121,7 +121,7 @@ async def _comment_reaction_summary(
     like_rows = await conn.fetch(
         """
         SELECT u.label FROM comment_reaction cr
-        JOIN admin_user u ON u.id = cr.user_ref
+        JOIN app_user u ON u.id = cr.user_ref
         WHERE cr.comment_ref = $1 AND cr.nature = 1
         ORDER BY cr.created_at DESC LIMIT 5
         """,
@@ -130,7 +130,7 @@ async def _comment_reaction_summary(
     dislike_rows = await conn.fetch(
         """
         SELECT u.label FROM comment_reaction cr
-        JOIN admin_user u ON u.id = cr.user_ref
+        JOIN app_user u ON u.id = cr.user_ref
         WHERE cr.comment_ref = $1 AND cr.nature = -1
         ORDER BY cr.created_at DESC LIMIT 5
         """,
@@ -231,7 +231,7 @@ async def list_comments(
                    u.label AS author_label,
                    dc.user_ref
             FROM document_comment dc
-            JOIN admin_user u ON u.id = dc.user_ref
+            JOIN app_user u ON u.id = dc.user_ref
             WHERE dc.document_ref = $1
             ORDER BY dc.created_at
             """,

@@ -68,24 +68,24 @@ if [[ ! -f "$DATA/.env" ]]; then
     sed -i "s|JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" "$DATA/.env"
     sed -i "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=${ENCRYPTION_KEY}|" "$DATA/.env"
 
-    ok "Fichier $DATA/.env créé avec JWT_SECRET et ENCRYPTION_KEY pré-remplis"
+    ok "Fichier $DATA/.env créé (JWT_SECRET et ENCRYPTION_KEY pré-remplis)"
     echo ""
-    echo -e "${YELLOW}ACTION REQUISE${NC} — Éditer $DATA/.env et renseigner :"
-    echo "   ADMIN_EMAIL=<votre email>"
-    echo "   ADMIN_PASSWORD=<mot de passe fort>"
-    echo ""
-    echo "   nano $DATA/.env"
-    echo ""
-    read -r -p "Appuyer sur Entrée une fois .env complété…"
+    warn "Le compte administrateur sera créé via le wizard au premier accès à l'interface."
 fi
 
 # ── Vérifier que les variables obligatoires sont renseignées ───────────────────
-source "$DATA/.env" 2>/dev/null || true
-: "${DATABASE_URL:?'DATABASE_URL manquant dans $DATA/.env'}"
-: "${JWT_SECRET:?'JWT_SECRET manquant dans $DATA/.env'}"
-: "${ADMIN_EMAIL:?'ADMIN_EMAIL manquant dans $DATA/.env'}"
-: "${ADMIN_PASSWORD:?'ADMIN_PASSWORD manquant dans $DATA/.env'}"
-: "${ENCRYPTION_KEY:?'ENCRYPTION_KEY manquant dans $DATA/.env'}"
+# $DATA/.env est un fichier env_file docker (valeurs brutes, non quotées) : une
+# valeur contenant un espace, un `$`, un backtick ou un `#` y est parfaitement
+# valide pour docker, mais sourcer ce fichier en bash la ferait interpréter par
+# le shell (au mieux une erreur de syntaxe, au pire l'exécution de son contenu).
+# On valide donc ligne à ligne, sans jamais interpréter le fichier comme du bash.
+require_env_var() {
+    local var="$1"
+    grep -Eq "^${var}=.+" "$DATA/.env" || die "${var} manquant ou vide dans $DATA/.env"
+}
+require_env_var DATABASE_URL
+require_env_var JWT_SECRET
+require_env_var ENCRYPTION_KEY
 ok "Configuration validée"
 
 # ── Tirer l'image ──────────────────────────────────────────────────────────────

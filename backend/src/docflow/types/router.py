@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import (
     FunctionalTypeCreate,
@@ -19,9 +19,10 @@ router = APIRouter(tags=["types"])
 async def list_types_rich(
     ws_slug: str,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> list[FunctionalTypeRich]:
     """Retourne les types avec leurs propriétés et allowed_values."""
+    check_api_key_scope(request, ws_slug)
     return await service.list_types_rich(request.app.state.pool, ws_slug)
 
 
@@ -29,8 +30,9 @@ async def list_types_rich(
 async def list_types(
     ws_slug: str,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> list[FunctionalTypeOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_types(request.app.state.pool, ws_slug)
 
 
@@ -39,8 +41,9 @@ async def create_type(
     ws_slug: str,
     body: FunctionalTypeCreate,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.create_type(request.app.state.pool, ws_slug, body)
 
 
@@ -49,8 +52,9 @@ async def get_type(
     ws_slug: str,
     type_slug: str,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug)
     return await service.get_type(request.app.state.pool, ws_slug, type_slug)
 
 
@@ -60,8 +64,9 @@ async def update_type(
     type_slug: str,
     body: FunctionalTypeUpdate,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
 ) -> FunctionalTypeOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.update_type(request.app.state.pool, ws_slug, type_slug, body)
 
 
@@ -70,6 +75,10 @@ async def delete_type(
     ws_slug: str,
     type_slug: str,
     request: Request,
-    _: AuthUser = Depends(require_admin),
+    _: AuthUser = Depends(require_authenticated),
+    confirm: bool = Query(default=False),
 ) -> None:
-    await service.delete_type(request.app.state.pool, ws_slug, type_slug)
+    """DOC-07 : 409 si le type a des dépendants (types enfants, blocs, documents)
+    et que ``confirm`` n'est pas fourni ; avec ``?confirm=true``, cascade assumée."""
+    check_api_key_scope(request, ws_slug, write=True)
+    await service.delete_type(request.app.state.pool, ws_slug, type_slug, confirm=confirm)

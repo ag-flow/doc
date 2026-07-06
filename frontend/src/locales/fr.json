@@ -26,8 +26,10 @@
   },
   "tpl": {
     "title": "Templates",
+    "tabLocal": "Bibliothèque locale",
+    "tabGallery": "Galerie en ligne",
     "emptyTitle": "Aucun template disponible",
-    "emptyHint": "Ajoutez un fichier .yaml dans le dossier templates/ du dépôt.",
+    "emptyHint": "Ajoutez un fichier .yaml dans le dossier templates/ du dépôt, ou importez depuis la galerie.",
     "editTitle": "Éditer « {{template}} »",
     "deleteTitle": "Supprimer le template",
     "deleteConfirm": "Supprimer définitivement « {{template}} » ?",
@@ -39,7 +41,30 @@
     "selectTemplate": "— choisir un template —",
     "importConfirm": "Importer",
     "importNoOp": "Déjà à jour — aucune modification.",
-    "importSuccess": "{{adds}} type(s) ajouté(s), {{updates}} mise(s) à jour."
+    "importSuccess": "{{adds}} type(s) ajouté(s), {{updates}} mise(s) à jour.",
+    "gallery": {
+      "sources": "Sources",
+      "addSource": "Ajouter une source",
+      "sourceLabel": "Libellé",
+      "sourceLabelPlaceholder": "Ma galerie",
+      "sourceUrl": "URL",
+      "sourceUrlPlaceholder": "https://templates.example.com",
+      "sourceUrlHint": "URL de base contenant toc.txt et les fichiers *.yaml",
+      "add": "Ajouter",
+      "noSources": "Aucune source enregistrée.",
+      "selectSource": "Sélectionnez une source pour charger ses templates.",
+      "refresh": "Rafraîchir",
+      "loading": "Chargement…",
+      "empty": "Aucun template disponible dans cette galerie.",
+      "install": "Installer",
+      "update": "Mettre à jour",
+      "installed": "Installé",
+      "upToDate": "À jour",
+      "pulling": "Installation…",
+      "pullSuccess": "Template « {{template}} » installé (v{{version}}).",
+      "deleteSourceConfirm": "Supprimer cette source ?",
+      "builtin": "défaut env"
+    }
   },
   "ws": {
     "title": "Workspaces",
@@ -71,7 +96,9 @@
     "deleteConfirmMsg": "Supprimer « {{slug}} » ? Cette action est irréversible. Impossible si le type a des enfants ou des documents associés.",
     "addValue": "Ajouter une valeur",
     "valueLabel": "Libellé",
-    "valueColor": "Couleur"
+    "valueColor": "Couleur",
+    "contentTemplate": "Modèle de contenu",
+    "contentTemplateHint": "Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide."
   },
   "documents": {
     "title": "Documents",
@@ -94,7 +121,8 @@
     "openNewTab": "Ouvrir dans un nouvel onglet",
     "deleteConfirmTitle": "Supprimer ce document ?",
     "deleteConfirmMsg": "Cette action est irréversible. Le document et ses enfants seront supprimés.",
-    "deleteConfirm": "Supprimer définitivement"
+    "deleteConfirm": "Supprimer définitivement",
+    "selectValue": "— choisir une valeur —"
   },
   "editor": {
     "save": "Enregistrer",
@@ -127,10 +155,12 @@
       "desc": "Valeur serveur : {{server}}. Choisissez la version à conserver.",
       "keepServer": "Garder le serveur",
       "keepMine": "Garder le mien"
-    }
+    },
+    "auto": "auto",
+    "autoHint": "Propriété gérée automatiquement par le serveur (date d'enregistrement)"
   },
   "webhooks": {
-    "title": "Webhooks",
+    "title": "Webhooks sortants",
     "create": "Nouveau webhook",
     "edit": "Modifier le webhook",
     "label": "Libellé",

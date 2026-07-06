@@ -6,6 +6,8 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.documents.changelog import log_structure_change
+from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
     AllowedValueCreate,
@@ -19,22 +21,29 @@ from docflow.schemas.properties import (
 # ── Properties defs ───────────────────────────────────────────────────────────
 
 _SELECT_DEF = """
-SELECT id, slug, label, type, default_value, required, created_at, updated_at
-FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required, pd.behavior,
+       ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
+FROM properties_defs pd
+LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
+WHERE pd.functional_type_ref = $1 AND pd.slug = $2
 """
 _SELECT_ALL_DEFS = """
-SELECT id, slug, label, type, default_value, required, created_at, updated_at
-FROM properties_defs WHERE functional_type_ref = $1 ORDER BY created_at
+SELECT pd.id, pd.slug, pd.label, pd.type, pd.default_value, pd.required, pd.behavior,
+       ft2.slug AS target_functional_type_slug, pd.created_at, pd.updated_at
+FROM properties_defs pd
+LEFT JOIN functional_type ft2 ON ft2.id = pd.target_functional_type_ref
+WHERE pd.functional_type_ref = $1 ORDER BY pd.created_at
 """
 _INSERT_DEF = """
 INSERT INTO properties_defs
-    (slug, label, functional_type_ref, type, default_value, required)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, slug, label, type, default_value, required, created_at, updated_at
+    (slug, label, functional_type_ref, type, default_value, required,
+     target_functional_type_ref, behavior)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, slug, label, type, default_value, required, behavior, created_at, updated_at
 """
 _UPDATE_DEF = (
     "UPDATE properties_defs SET {cols}, updated_at = now() WHERE id = $1 "
-    "RETURNING id, slug, label, type, default_value, required, created_at, updated_at"
+    "RETURNING id, slug, label, type, default_value, required, behavior, created_at, updated_at"
 )
 
 # ── Allowed values ────────────────────────────────────────────────────────────
@@ -70,6 +79,8 @@ def _def_row(row: asyncpg.Record) -> PropertiesDefOut:
         type=row["type"],
         default_value=row["default_value"],
         required=row["required"],
+        behavior=row["behavior"] if "behavior" in row.keys() else None,
+        target_functional_type_slug=row.get("target_functional_type_slug"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -86,16 +97,23 @@ def _val_row(row: asyncpg.Record) -> AllowedValueOut:
     )
 
 
-async def _resolve_type_id(conn: asyncpg.Connection, ws_slug: str, type_slug: str) -> uuid.UUID:
-    wk = await require_workspace(conn, ws_slug)
+async def _resolve_type_id(
+    conn: asyncpg.Connection, ws_slug: str, type_slug: str, *, allow_archived: bool = True
+) -> uuid.UUID:
+    wk = await require_workspace(conn, ws_slug, allow_archived=allow_archived)
     return await require_type(conn, wk, type_slug)
 
 
 async def _resolve_prop_id_rl(
-    conn: asyncpg.Connection, ws_slug: str, type_slug: str, prop_slug: str
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    type_slug: str,
+    prop_slug: str,
+    *,
+    allow_archived: bool = True,
 ) -> uuid.UUID:
     """Résout et valide que la propriété est de type restricted_list."""
-    type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+    type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=allow_archived)
     prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
     if prop_type != "restricted_list":
         raise HTTPException(
@@ -106,6 +124,23 @@ async def _resolve_prop_id_rl(
             ),
         )
     return prop_id
+
+
+async def _log_property_change(
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    nature: str,
+    entity_ref: uuid.UUID | None = None,
+) -> None:
+    """Alimente le change feed (kind='property') dans la transaction courante.
+
+    Couvre defs, allowed_values et contraintes : pour les sessions actives,
+    toute évolution du modèle de propriétés invalide les mêmes vues.
+    """
+    wk: uuid.UUID = await conn.fetchval(
+        "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+    )
+    await log_structure_change(conn, wk, "property", nature, entity_ref)
 
 
 async def list_defs(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> list[PropertiesDefOut]:
@@ -131,7 +166,18 @@ async def create_def(
 ) -> PropertiesDefOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            type_id = await require_type(conn, wk, type_slug)
+
+            target_ft_id: uuid.UUID | None = None
+            if data.target_functional_type_slug is not None:
+                if data.type != "reference":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="target_functional_type_slug n'est valide que pour type='reference'",
+                    )
+                target_ft_id = await require_type(conn, wk, data.target_functional_type_slug)
+
             try:
                 row = await conn.fetchrow(
                     _INSERT_DEF,
@@ -141,14 +187,18 @@ async def create_def(
                     data.type,
                     data.default_value,
                     data.required,
+                    target_ft_id,
+                    data.behavior,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
                     status_code=409,
                     detail=f"propriété '{data.slug}' déjà définie sur ce type",
                 ) from exc
-    assert row is not None
-    return _def_row(row)
+            assert row is not None
+            await _log_property_change(conn, ws_slug, "C", row["id"])
+    # Recharger pour avoir target_functional_type_slug via le SELECT avec JOIN
+    return await get_def(pool, ws_slug, type_slug, data.slug)
 
 
 async def update_def(
@@ -158,37 +208,66 @@ async def update_def(
     prop_slug: str,
     data: PropertiesDefUpdate,
 ) -> PropertiesDefOut:
-    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
-    if not updates:
-        return await get_def(pool, ws_slug, type_slug, prop_slug)
-    _ALLOWED = frozenset({"label", "default_value", "required"})
-    for k in updates:
+    # DOC-14 #4 : distinguer « champ absent » (exclude_unset) de « champ = null ».
+    # default_value peut être remis explicitement à NULL ; label/required (NOT NULL)
+    # ne peuvent pas devenir null → on ignore un null envoyé sur ces champs.
+    raw = data.model_dump(exclude_unset=True)
+    _ALLOWED = frozenset({"label", "default_value", "required", "behavior"})
+    updates: dict[str, object | None] = {}
+    for k, v in raw.items():
         if k not in _ALLOWED:
             raise ValueError(f"champ non modifiable : {k}")
+        if k in {"label", "required"} and v is None:
+            continue
+        updates[k] = v
+    if not updates:
+        return await get_def(pool, ws_slug, type_slug, prop_slug)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
-            prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
+            prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
+            if updates.get("behavior") is not None and prop_type != "date":
+                raise HTTPException(
+                    status_code=422,
+                    detail="behavior est réservé aux propriétés de type 'date'",
+                )
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())
             )
+            await _log_property_change(conn, ws_slug, "U", prop_id)
     assert row is not None
     return _def_row(row)
 
 
-async def delete_def(pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str) -> None:
+async def delete_def(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, prop_slug: str, *, confirm: bool = False
+) -> None:
+    """Supprime une définition de propriété.
+
+    DOC-07 : depuis 0011, ``properties_values.property_def_ref`` est ON DELETE
+    CASCADE — la suppression détruit les valeurs et leur historique. On compte
+    donc les valeurs dépendantes et on refuse (409) tant que ``confirm`` n'est
+    pas fourni ; avec ``confirm``, la cascade DB est assumée.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
-            try:
-                await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
-            except asyncpg.ForeignKeyViolationError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="propriété utilisée par des valeurs existantes",
-                ) from exc
+            dependents: int = await conn.fetchval(
+                "SELECT count(*) FROM properties_values WHERE property_def_ref = $1", prop_id
+            )
+            if dependents > 0 and not confirm:
+                raise DependentsConflictError(
+                    detail=(
+                        f"la propriété '{prop_slug}' est portée par {dependents} valeur(s) "
+                        "de document (historique inclus) qui seraient détruites en cascade ; "
+                        "repasser avec confirm=true pour confirmer la suppression"
+                    ),
+                    dependents=dependents,
+                )
+            await conn.execute("DELETE FROM properties_defs WHERE id = $1", prop_id)
+            await _log_property_change(conn, ws_slug, "D", prop_id)
 
 
 async def list_allowed_values(
@@ -220,7 +299,9 @@ async def create_allowed_value(
 ) -> AllowedValueOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             try:
                 row = await conn.fetchrow(
                     _INSERT_VAL,
@@ -235,7 +316,8 @@ async def create_allowed_value(
                     status_code=409,
                     detail=f"valeur '{data.slug}' déjà définie",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await _log_property_change(conn, ws_slug, "C", row["id"])
     return _val_row(row)
 
 
@@ -256,7 +338,9 @@ async def update_allowed_value(
             raise ValueError(f"champ non modifiable : {k}")
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             val_id: uuid.UUID | None = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
@@ -264,6 +348,7 @@ async def update_allowed_value(
             row = await conn.fetchrow(
                 _UPDATE_VAL.format(cols=cols), val_id, *list(updates.values())
             )
+            await _log_property_change(conn, ws_slug, "U", val_id)
     assert row is not None
     return _val_row(row)
 
@@ -273,7 +358,9 @@ async def delete_allowed_value(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            prop_id = await _resolve_prop_id_rl(conn, ws_slug, type_slug, prop_slug)
+            prop_id = await _resolve_prop_id_rl(
+                conn, ws_slug, type_slug, prop_slug, allow_archived=False
+            )
             val_id = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
@@ -284,12 +371,14 @@ async def delete_allowed_value(
                     status_code=409,
                     detail="valeur utilisée par des documents existants",
                 ) from exc
+            await _log_property_change(conn, ws_slug, "D", val_id)
 
 
 # ── Constraints ───────────────────────────────────────────────────────────────
 
 _TEXT_ONLY_KINDS = frozenset({"min_length", "max_length", "pattern"})
-_INT_ONLY_KINDS = frozenset({"min", "max"})
+# min/max acceptés pour int, float, date
+_NUMERIC_RANGE_TYPES = frozenset({"int", "float", "date"})
 
 
 async def list_constraints(
@@ -320,18 +409,22 @@ async def upsert_constraint(
 ) -> ConstraintOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, prop_type = await require_prop_def(conn, type_id, prop_slug)
-            # I-6 : pattern/min_length/max_length réservés à text ; min/max à int
+            # I-6 : pattern/min_length/max_length réservés à text
+            #       min/max acceptés pour int, float, date uniquement
             if data.kind in _TEXT_ONLY_KINDS and prop_type != "text":
                 raise HTTPException(
                     status_code=422,
                     detail=f"contrainte '{data.kind}' réservée aux propriétés de type text",
                 )
-            if data.kind in _INT_ONLY_KINDS and prop_type != "int":
+            if data.kind in {"min", "max"} and prop_type not in _NUMERIC_RANGE_TYPES:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"contrainte '{data.kind}' réservée aux propriétés de type int",
+                    detail=(
+                        f"contrainte '{data.kind}' réservée aux propriétés "
+                        "de type int, float ou date"
+                    ),
                 )
             row = await conn.fetchrow(
                 """
@@ -346,6 +439,7 @@ async def upsert_constraint(
                 data.value,
                 data.message,
             )
+            await _log_property_change(conn, ws_slug, "U", prop_id)
     assert row is not None
     return ConstraintOut(
         id=row["id"],
@@ -361,7 +455,7 @@ async def delete_constraint(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            type_id = await _resolve_type_id(conn, ws_slug, type_slug)
+            type_id = await _resolve_type_id(conn, ws_slug, type_slug, allow_archived=False)
             prop_id, _ = await require_prop_def(conn, type_id, prop_slug)
             deleted = await conn.fetchval(
                 "DELETE FROM properties_constraints "
@@ -371,3 +465,4 @@ async def delete_constraint(
             )
             if deleted is None:
                 raise HTTPException(status_code=404, detail=f"contrainte '{kind}' introuvable")
+            await _log_property_change(conn, ws_slug, "U", prop_id)

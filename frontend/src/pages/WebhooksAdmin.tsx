@@ -150,12 +150,19 @@ export function WebhooksAdmin() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto" data-testid="webhooks-page">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold">{t('webhooks.title')}</h1>
         <Button onClick={openCreate} data-testid="create-webhook-btn">
           {t('webhooks.create')}
         </Button>
       </div>
+
+      <p className="text-sm text-gray-500 mb-6 max-w-xl">
+        Un webhook sortant envoie une requête HTTP vers une URL externe chaque fois qu'un
+        événement se produit dans ce workspace (création, modification ou suppression d'un
+        document). Utilisez-les pour notifier un outil tiers — Slack, Zapier, un CI, un
+        système de ticketing — ou pour déclencher un traitement côté serveur sans polling.
+      </p>
 
       {apiError && (
         <p className="text-red-600 mb-4 text-sm" data-testid="wh-api-error">

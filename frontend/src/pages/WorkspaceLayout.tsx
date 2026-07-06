@@ -2,6 +2,7 @@ import { Navigate, Outlet, useOutletContext, useParams, useMatch } from 'react-r
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api, docsApi, type WorkspaceOut, type DataBlockOut } from '../lib/api'
+import { useChangeFeed } from '../hooks/useChangeFeed'
 
 interface WorkspaceLayoutContext {
   workspace: WorkspaceOut
@@ -14,6 +15,10 @@ export function useWorkspaceCtx(): WorkspaceLayoutContext {
 export function WorkspaceLayout() {
   const { wsSlug } = useParams<{ wsSlug: string }>()
   const { t } = useTranslation()
+
+  // Les autres sessions (UI, agents MCP, automates) peuvent faire évoluer le
+  // contenu et le modèle : suivre le change feed et invalider les caches.
+  useChangeFeed(wsSlug)
 
   const { data: workspace, isLoading, isError } = useQuery<WorkspaceOut>({
     queryKey: ['workspace', wsSlug],

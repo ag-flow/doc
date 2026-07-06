@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import datetime
 import re
+import urllib.parse
 import uuid
 
 import asyncpg
 import structlog
 from fastapi import HTTPException
 
+from docflow.artifacts.service import (
+    collect_subtree_artifacts,
+    purge_unreferenced,
+    refresh_artifact_references,
+)
 from docflow.db.helpers import require_workspace
+from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
     allowed_types,
     create_document_in_block,
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.documents.template_apply import compute_initial_content
 from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
@@ -36,7 +45,7 @@ __all__ = [
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -49,7 +58,7 @@ ORDER BY d.created_at
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
        dv.content
@@ -67,6 +76,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
@@ -84,6 +94,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=row["content"],
         version=row["version"],
         parent_id=row["parent"],
@@ -126,6 +137,92 @@ async def _validate_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_id: u
         )
 
 
+async def _check_no_document_cycle(
+    conn: asyncpg.Connection, doc_id: uuid.UUID, proposed_parent_id: uuid.UUID
+) -> None:
+    """Refuse un reparentage créant un cycle.
+
+    Miroir de types/service.py::_check_no_cycle : refuse l'auto-parent et
+    refuse si `doc_id` figure dans la chaîne d'ancêtres du nouveau parent
+    (c.-à-d. si le nouveau parent est un descendant de doc_id). Prévient la
+    boucle infinie de la CTE récursive de parcours d'arbre (DOC-02).
+    """
+    if proposed_parent_id == doc_id:
+        raise HTTPException(
+            status_code=422, detail="un document ne peut pas être son propre parent"
+        )
+    ancestor: uuid.UUID | None = proposed_parent_id
+    while ancestor is not None:
+        row = await conn.fetchrow(
+            "SELECT parent FROM document WHERE doc_technical_key = $1", ancestor
+        )
+        if row is None:
+            break
+        if row["parent"] == doc_id:
+            raise HTTPException(
+                status_code=422, detail="cycle détecté dans la hiérarchie des documents"
+            )
+        ancestor = row["parent"]
+
+
+async def _validate_type_position(
+    conn: asyncpg.Connection,
+    block_id: uuid.UUID,
+    parent_id: uuid.UUID | None,
+    new_ft_id: uuid.UUID | None,
+) -> None:
+    """Revalide la position d'un document après changement de type (DOC-04).
+
+    Racine du bloc (parent None) → le type doit être celui du bloc.
+    Sous un parent → le type doit être un fils direct du type du parent.
+    Un document sans type (new_ft_id None) n'est pas contraint.
+    """
+    if new_ft_id is None:
+        return
+    if parent_id is None:
+        block_ft = await conn.fetchval(
+            "SELECT functional_type_ref FROM data_block WHERE id = $1", block_id
+        )
+        if block_ft != new_ft_id:
+            raise HTTPException(
+                status_code=422,
+                detail="type non autorisé à la racine de ce bloc (position)",
+            )
+    else:
+        parent_ft = await conn.fetchval(
+            "SELECT functional_type_ref FROM document WHERE doc_technical_key = $1",
+            parent_id,
+        )
+        new_ft_parent = await conn.fetchval(
+            "SELECT parent FROM functional_type WHERE id = $1", new_ft_id
+        )
+        if new_ft_parent != parent_ft:
+            raise HTTPException(
+                status_code=422,
+                detail="type non autorisé sous ce parent (position)",
+            )
+
+
+async def _purge_orphan_property_values(
+    conn: asyncpg.Connection, doc_id: uuid.UUID, new_ft_id: uuid.UUID | None
+) -> None:
+    """Supprime les valeurs de propriétés qui n'appartiennent plus au nouveau type (DOC-04).
+
+    Purge transactionnelle : quand new_ft_id est None (type retiré), toutes les
+    valeurs sont supprimées ; sinon seules celles dont la def n'est pas rattachée
+    au nouveau type. La FK properties_value_version → properties_values cascade.
+    """
+    await conn.execute(
+        "DELETE FROM properties_values "
+        "WHERE document_ref = $1 "
+        "AND property_def_ref NOT IN ("
+        "    SELECT id FROM properties_defs WHERE functional_type_ref = $2"
+        ")",
+        doc_id,
+        new_ft_id,
+    )
+
+
 async def list_documents(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -146,7 +243,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
-                       d.data_block_ref,
+                       d.data_block_ref, d.exposed, d.slug,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
@@ -174,7 +271,7 @@ async def list_documents(
                 """
                 SELECT d.doc_technical_key, d.title, d.type, d.version,
                        d.parent, d.created_at, d.updated_at,
-                       d.data_block_ref,
+                       d.data_block_ref, d.exposed, d.slug,
                        ft.slug AS functional_type_slug,
                        w.slug  AS workspace_slug
                 FROM document d
@@ -203,49 +300,103 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
 async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            # Isolation workspace (DOC-03) : le bloc cible doit appartenir à ce workspace.
+            block_ok = await conn.fetchval(
+                "SELECT 1 FROM data_block WHERE id = $1 AND workspace_technical_key = $2",
+                data.block_id,
+                wk,
+            )
+            if not block_ok:
+                raise HTTPException(
+                    status_code=422,
+                    detail="le bloc cible n'appartient pas à ce workspace",
+                )
             ft_id: uuid.UUID | None = None
             if data.functional_type_slug:
                 ft_id = await _resolve_functional_type(conn, wk, data.functional_type_slug)
             parent_exposed = False
             if data.parent_id:
                 await _validate_parent(conn, wk, data.parent_id)
-                parent_exposed = bool(
-                    await conn.fetchval(
-                        "SELECT exposed FROM document WHERE doc_technical_key = $1",
-                        data.parent_id,
-                    )
+                parent_row = await conn.fetchrow(
+                    "SELECT exposed, data_block_ref FROM document WHERE doc_technical_key = $1",
+                    data.parent_id,
                 )
-            row = await conn.fetchrow(
-                """
-                INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
-                     exposed)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, exposed, created_at, updated_at
-                """,
-                data.title,
-                data.parent_id,
-                ft_id,
-                wk,
-                data.block_id,
-                parent_exposed,
-            )
+                # Cohérence de l'arbre (DOC-03) : parent et enfant dans le même bloc.
+                if parent_row is None or parent_row["data_block_ref"] != data.block_id:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="le parent doit appartenir au même bloc que le document",
+                    )
+                parent_exposed = bool(parent_row["exposed"])
+            # Appliquer le template si corps vide et modèle défini
+            initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO document
+                        (title, slug, parent, functional_type_ref, workspace_technical_key,
+                         data_block_ref, exposed)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING doc_technical_key, title, type, version, parent,
+                              data_block_ref, exposed, slug, created_at, updated_at
+                    """,
+                    data.title,
+                    data.slug,
+                    data.parent_id,
+                    ft_id,
+                    wk,
+                    data.block_id,
+                    parent_exposed,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
+                ) from exc
             assert row is not None
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
                 "VALUES ($1, 1, $2, $3)",
                 row["doc_technical_key"],
                 data.title,
-                data.content,
+                initial_content,
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
+            await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
+            await refresh_artifact_references(conn, row["doc_technical_key"], wk, initial_content)
+
+            # Valeurs initiales de propriétés + contrat required (contrat dur :
+            # la création échoue si une required sans default/behavior manque).
+            new_doc_id: uuid.UUID = row["doc_technical_key"]
+            if data.properties:
+                if ft_id is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="properties fourni mais le document n'a pas de type fonctionnel",
+                    )
+                for prop_slug, prop_value in data.properties.items():
+                    prop_id, prop_type, _, _, behavior = await _resolve_prop(conn, ft_id, prop_slug)
+                    if behavior is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"propriété '{prop_slug}' gérée automatiquement "
+                                f"({behavior}) : écriture manuelle refusée"
+                            ),
+                        )
+                    await prop_writes.upsert_value(
+                        conn, wk, new_doc_id, prop_id, prop_type, prop_value, prop_slug
+                    )
+            if ft_id is not None:
+                await prop_writes.apply_behaviors(conn, wk, new_doc_id, ft_id)
+                await prop_writes.assert_required_satisfied(conn, new_doc_id, ft_id)
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
-        content=data.content,
+        slug=row["slug"],
+        content=initial_content,
         version=row["version"],
         parent_id=row["parent"],
         functional_type_slug=data.functional_type_slug,
@@ -271,15 +422,19 @@ async def update_document(
             detail="expected_version requis pour modifier le titre ou le contenu",
         )
 
+    # Verrouiller la ligne dès qu'on touche au contenu OU au parent (anti-cycle DOC-02).
+    lock_row = has_content or "parent_id" in raw
+
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
 
             # Existence + verrou optimiste
             head = await conn.fetchrow(
-                "SELECT version, title FROM document "
+                "SELECT version, title, functional_type_ref, parent, data_block_ref "
+                "FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2"
-                + (" FOR UPDATE" if has_content else ""),
+                + (" FOR UPDATE" if lock_row else ""),
                 doc_id,
                 wk,
             )
@@ -332,29 +487,128 @@ async def update_document(
                 )
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
+                await refresh_artifact_references(conn, doc_id, wk, new_content)
 
-            # Métadonnées (parent, type) — sans versioning
+            # Métadonnées (parent, type, slug) — sans versioning
             meta: dict[str, object] = {}
-            if "parent_id" in raw:
+            reparented = "parent_id" in raw
+            if reparented:
                 pid = raw["parent_id"]
                 if pid is not None:
                     await _validate_parent(conn, wk, pid)
+                    await _check_no_document_cycle(conn, doc_id, pid)
+                    # Cohérence de l'arbre (miroir DOC-03 du create) : parent
+                    # et enfant dans le même bloc.
+                    parent_block = await conn.fetchval(
+                        "SELECT data_block_ref FROM document WHERE doc_technical_key = $1",
+                        pid,
+                    )
+                    if parent_block != head["data_block_ref"]:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="le parent doit appartenir au même bloc que le document",
+                        )
                 meta["parent"] = pid
-            if "functional_type_slug" in raw:
+            retyped = "functional_type_slug" in raw
+            new_ft_id: uuid.UUID | None = head["functional_type_ref"]
+            if retyped:
                 ft_slug = raw["functional_type_slug"]
+                new_ft_id = None
                 if ft_slug is not None:
-                    meta["functional_type_ref"] = await _resolve_functional_type(conn, wk, ft_slug)
-                else:
-                    meta["functional_type_ref"] = None
+                    new_ft_id = await _resolve_functional_type(conn, wk, ft_slug)
+                meta["functional_type_ref"] = new_ft_id
+            # DOC-04 : revalider la position dès que le parent OU le type change —
+            # un reparentage seul peut invalider le type courant (à la racine le
+            # type doit être celui du bloc ; sous un parent, un fils direct du
+            # type du parent). Refus explicite plutôt qu'invariant violé en silence.
+            type_changed = retyped and new_ft_id != head["functional_type_ref"]
+            if reparented or type_changed:
+                effective_parent = raw["parent_id"] if reparented else head["parent"]
+                try:
+                    await _validate_type_position(
+                        conn, head["data_block_ref"], effective_parent, new_ft_id
+                    )
+                except HTTPException as exc:
+                    if reparented and not retyped:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "reparentage refusé : le type actuel du document n'est pas "
+                                "autorisé à cette position — re-préciser functional_type_slug "
+                                "(type du bloc à la racine, type fils du type du parent sinon) "
+                                "dans la même requête"
+                            ),
+                        ) from exc
+                    raise
+            if type_changed:
+                await _purge_orphan_property_values(conn, doc_id, new_ft_id)
+            if "slug" in raw:
+                meta["slug"] = raw["slug"]
             if meta:
                 cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(meta))
-                await conn.execute(
-                    f"UPDATE document SET {cols}, updated_at = now() WHERE doc_technical_key = $1",
-                    doc_id,
-                    *list(meta.values()),
+                try:
+                    await conn.execute(
+                        f"UPDATE document SET {cols}, updated_at = now() "  # noqa: S608
+                        "WHERE doc_technical_key = $1",
+                        doc_id,
+                        *list(meta.values()),
+                    )
+                except asyncpg.UniqueViolationError as exc:
+                    if "slug" in raw:
+                        detail = f"slug '{raw['slug']}' déjà utilisé dans ce workspace"
+                    else:
+                        detail = "un document avec le même slug existe déjà sous le parent visé"
+                    raise HTTPException(status_code=409, detail=detail) from exc
+                # Les sessions actives doivent voir les déplacements/retypages :
+                # une mutation de métadonnées alimente aussi le change feed.
+                await log_change(conn, wk, doc_id, "U")
+
+            # Contrat dur + comportements : tout enregistrement vaut révision.
+            # auto_now est reposée ; après un changement de type, les required
+            # du nouveau type doivent être satisfaits (valeur, default ou
+            # behavior) — sinon refus 422 listant les manquants.
+            mutated = bool(meta) or "content" in raw or "title" in raw
+            if mutated:
+                effective_ft: uuid.UUID | None = (
+                    new_ft_id if retyped else head["functional_type_ref"]
                 )
+                await prop_writes.apply_behaviors(conn, wk, doc_id, effective_ft)
+                if type_changed and effective_ft is not None:
+                    await prop_writes.assert_required_satisfied(conn, doc_id, effective_ft)
 
     return await get_document(pool, ws_slug, doc_id)
+
+
+_COUNT_DOCUMENT_DESCENDANTS = """
+WITH RECURSIVE descendants AS (
+    SELECT doc_technical_key FROM document WHERE doc_technical_key = $1
+    UNION ALL
+    SELECT d.doc_technical_key
+    FROM document d
+    JOIN descendants p ON d.parent = p.doc_technical_key
+)
+SELECT count(*) - 1 AS descendants FROM descendants
+"""
+
+
+async def count_document_descendants(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> int:
+    """Compte les documents descendants d'un document (lui-même exclu).
+
+    Miroir de blocks/service.py::_COUNT_BLOCK_DEPENDENTS — sert de garde
+    « confirm si dépendants » côté appelant (primitive MCP delete_document) ;
+    delete_document lui-même reste sans garde (comportement REST inchangé).
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+        count = await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id)
+    return int(count)
 
 
 async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
@@ -364,7 +618,7 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             snap = await conn.fetchrow(
                 "SELECT doc_technical_key, title, type FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -373,7 +627,11 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             )
             if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+            # Capturés AVANT la suppression : les références partent en cascade
+            # avec le document et ses descendants.
+            artifact_candidates = await collect_subtree_artifacts(conn, doc_id)
             await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
+            await purge_unreferenced(conn, artifact_candidates)
             await log_change(conn, wk, doc_id, "D")
     return {"id": str(snap["doc_technical_key"]), "title": snap["title"], "type": snap["type"]}
 
@@ -384,7 +642,7 @@ async def set_document_exposed(
     """Expose ou masque le document et tous ses descendants (cascade récursive)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             exists = await conn.fetchval(
                 "SELECT 1 FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -438,9 +696,9 @@ async def _get_doc_type_id(conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid
 
 async def _resolve_prop(
     conn: asyncpg.Connection, type_id: uuid.UUID, prop_slug: str
-) -> tuple[uuid.UUID, str, bool, str]:
+) -> tuple[uuid.UUID, str, bool, str, str | None]:
     row = await conn.fetchrow(
-        "SELECT id, type, required, label "
+        "SELECT id, type, required, label, behavior "
         "FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2",
         type_id,
         prop_slug,
@@ -450,11 +708,14 @@ async def _resolve_prop(
             status_code=422,
             detail=f"propriété '{prop_slug}' inconnue pour ce type fonctionnel (I-2)",
         )
-    return row["id"], row["type"], row["required"], row["label"]
+    return row["id"], row["type"], row["required"], row["label"], row["behavior"]
+
+
+_SCALAR_TYPES = frozenset({"text", "int", "date", "bool", "url", "float"})
 
 
 def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: str) -> None:
-    if prop_type in ("text", "int"):
+    if prop_type in _SCALAR_TYPES:
         if data.value is None:
             raise HTTPException(
                 status_code=422,
@@ -478,6 +739,32 @@ def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: 
                 status_code=422,
                 detail=f"propriété '{prop_slug}' de type restricted_list : 'value' doit être null",
             )
+    elif prop_type == "reference":
+        if data.value is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"propriété '{prop_slug}' de type reference : 'value' (doc UUID) requis",
+            )
+        if data.allowed_value_slug is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"propriété '{prop_slug}' de type reference : "
+                    "'allowed_value_slug' doit être null"
+                ),
+            )
+        try:
+            import uuid as _uuid
+
+            _uuid.UUID(data.value)
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"propriété '{prop_slug}' de type reference : "
+                    f"'{data.value}' n'est pas un UUID valide"
+                ),
+            ) from exc
 
 
 async def _apply_constraints(
@@ -500,6 +787,30 @@ async def _apply_constraints(
             try:
                 if int(value) > int(cval):
                     error = msg or f"valeur > maximum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "min" and prop_type == "float":
+            try:
+                if float(value) < float(cval):
+                    error = msg or f"valeur < minimum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "max" and prop_type == "float":
+            try:
+                if float(value) > float(cval):
+                    error = msg or f"valeur > maximum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "min" and prop_type == "date":
+            try:
+                if datetime.date.fromisoformat(value) < datetime.date.fromisoformat(cval):
+                    error = msg or f"date antérieure au minimum ({cval})"
+            except ValueError:
+                pass
+        elif kind == "max" and prop_type == "date":
+            try:
+                if datetime.date.fromisoformat(value) > datetime.date.fromisoformat(cval):
+                    error = msg or f"date postérieure au maximum ({cval})"
             except ValueError:
                 pass
         elif kind == "min_length" and prop_type == "text":
@@ -525,6 +836,52 @@ async def _validate_int(value: str, prop_slug: str) -> None:
         ) from exc
 
 
+def _validate_date(value: str, prop_slug: str) -> None:
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type date : "
+                f"'{value}' n'est pas une date ISO (YYYY-MM-DD)"
+            ),
+        ) from exc
+
+
+def _validate_bool(value: str, prop_slug: str) -> None:
+    if value not in {"true", "false"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type bool : '{value}' invalide "
+                "— valeurs acceptées : 'true' ou 'false'"
+            ),
+        )
+
+
+def _validate_url(value: str, prop_slug: str) -> None:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"propriété '{prop_slug}' de type url : "
+                "URL invalide (scheme http/https requis, netloc requis)"
+            ),
+        )
+
+
+def _validate_float(value: str, prop_slug: str) -> None:
+    try:
+        float(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"propriété '{prop_slug}' de type float : '{value}' n'est pas un nombre décimal",
+        ) from exc
+
+
 async def list_property_values(
     pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID
 ) -> list[PropertyValueOut]:
@@ -534,7 +891,7 @@ async def list_property_values(
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label AS prop_label, pd.type, pd.required,
-                   pd.default_value,
+                   pd.behavior, pd.default_value,
                    pv.version AS pv_version,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
@@ -570,6 +927,7 @@ async def list_property_values(
                 allowed_value_slug=av_slug,
                 allowed_value_label=av_label,
                 required=r["required"],
+                behavior=r["behavior"],
             )
         )
     return result
@@ -580,14 +938,32 @@ async def set_property_value(
 ) -> PropertyValueOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
-            prop_id, prop_type, required, prop_label = await _resolve_prop(conn, type_id, prop_slug)
+            prop_id, prop_type, required, prop_label, behavior = await _resolve_prop(
+                conn, type_id, prop_slug
+            )
+            if behavior is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"propriété '{prop_slug}' gérée automatiquement ({behavior}) : "
+                        "écriture manuelle refusée"
+                    ),
+                )
             _validate_value_for_type(prop_type, data, prop_slug)
 
             allowed_value_ref: uuid.UUID | None = None
             if prop_type == "int" and data.value is not None:
                 await _validate_int(data.value, prop_slug)
+            if prop_type == "date" and data.value is not None:
+                _validate_date(data.value, prop_slug)
+            if prop_type == "bool" and data.value is not None:
+                _validate_bool(data.value, prop_slug)
+            if prop_type == "url" and data.value is not None:
+                _validate_url(data.value, prop_slug)
+            if prop_type == "float" and data.value is not None:
+                _validate_float(data.value, prop_slug)
             if prop_type == "restricted_list" and data.allowed_value_slug is not None:
                 allowed_value_ref = await conn.fetchval(
                     "SELECT id FROM properties_allowed_values "
@@ -603,6 +979,38 @@ async def set_property_value(
                             "ou n'appartient pas à cette définition (I-5)"
                         ),
                     )
+            if prop_type == "reference" and data.value is not None:
+                ref_doc_id = uuid.UUID(data.value)
+                # Vérifier que le doc cible existe dans ce workspace
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM document "
+                    "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+                    ref_doc_id,
+                    wk,
+                )
+                if not exists:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"document cible '{data.value}' introuvable dans ce workspace",
+                    )
+                # Vérifier le type cible (target_functional_type_ref) si défini
+                target_ft_id = await conn.fetchval(
+                    "SELECT target_functional_type_ref FROM properties_defs WHERE id = $1",
+                    prop_id,
+                )
+                if target_ft_id is not None:
+                    doc_ft_id = await conn.fetchval(
+                        "SELECT functional_type_ref FROM document WHERE doc_technical_key = $1",
+                        ref_doc_id,
+                    )
+                    if doc_ft_id != target_ft_id:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "le document cible n'est pas du type fonctionnel attendu "
+                                "(contrainte target_functional_type_ref)"
+                            ),
+                        )
             if data.value is not None:
                 await _apply_constraints(conn, prop_id, prop_type, data.value)
 
@@ -634,13 +1042,18 @@ async def set_property_value(
                         status_code=409,
                         detail={"version": 0, "value": None, "allowed_value_slug": None},
                     ) from exc
+                target_doc_ref: uuid.UUID | None = (
+                    uuid.UUID(data.value) if prop_type == "reference" and data.value else None
+                )
                 await conn.execute(
                     "INSERT INTO properties_value_version "
-                    "(property_value_ref, version_number, value, allowed_value_ref) "
-                    "VALUES ($1, 1, $2, $3)",
+                    "(property_value_ref, version_number, "
+                    "value, allowed_value_ref, target_document_ref) "
+                    "VALUES ($1, 1, $2, $3, $4)",
                     pv_id,
                     data.value,
                     allowed_value_ref,
+                    target_doc_ref,
                 )
                 return_version = 1
             else:
@@ -663,14 +1076,19 @@ async def set_property_value(
                         },
                     )
                 new_v = current_v + 1
+                target_doc_ref = (
+                    uuid.UUID(data.value) if prop_type == "reference" and data.value else None
+                )
                 await conn.execute(
                     "INSERT INTO properties_value_version "
-                    "(property_value_ref, version_number, value, allowed_value_ref) "
-                    "VALUES ($1, $2, $3, $4)",
+                    "(property_value_ref, version_number, "
+                    "value, allowed_value_ref, target_document_ref) "
+                    "VALUES ($1, $2, $3, $4, $5)",
                     pv_row["id"],
                     new_v,
                     data.value,
                     allowed_value_ref,
+                    target_doc_ref,
                 )
                 await conn.execute(
                     "UPDATE properties_values SET version = $1 WHERE id = $2",
@@ -679,6 +1097,8 @@ async def set_property_value(
                 )
                 return_version = new_v
             await log_change(conn, wk, doc_id, "P")
+            # Tout enregistrement vaut révision : reposer les auto_now du type.
+            await prop_writes.apply_behaviors(conn, wk, doc_id, type_id)
 
     allowed_label: str | None = None
     if allowed_value_ref is not None:
@@ -703,9 +1123,17 @@ async def delete_property_value(
 ) -> None:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await _get_doc_type_id(conn, wk, doc_id)
-            prop_id, _, required, _ = await _resolve_prop(conn, type_id, prop_slug)
+            prop_id, _, required, _, behavior = await _resolve_prop(conn, type_id, prop_slug)
+            if behavior is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"propriété '{prop_slug}' gérée automatiquement ({behavior}) : "
+                        "suppression manuelle refusée"
+                    ),
+                )
             if required:
                 raise HTTPException(
                     status_code=422,

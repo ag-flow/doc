@@ -27,8 +27,37 @@ export class ApiError extends Error {
   }
 }
 
+/** Endpoints d'authentification : un 401 y est un échec de login légitime, pas une
+ *  session expirée. On ne doit ni purger de token ni recharger la page. */
+const AUTH_PATHS = ['/auth/login', '/auth/methods', '/setup/init-admin']
+
+function isAuthPath(path: string): boolean {
+  return AUTH_PATHS.some((p) => path.startsWith(p))
+}
+
+/** Gère un 401 de façon centralisée. On ne purge le token et ne redirige vers /login
+ *  que pour une session réellement expirée : un token était présent ET la requête ne
+ *  vise pas un endpoint d'auth. Sinon (login sans token, mauvais mot de passe…) on
+ *  laisse l'ApiError remonter pour que l'appelant affiche le message d'erreur au lieu
+ *  de recharger brutalement la page. Retourne toujours (throw). */
+function handleUnauthorized(path: string, hadToken: boolean): never {
+  if (hadToken && !isAuthPath(path)) {
+    clearToken()
+    window.location.href = '/login'
+  }
+  throw new ApiError(401, null, 'Unauthorized')
+}
+
 function detailMessage(detail: unknown, fallback: string): string {
   if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // Corps d'erreur de validation FastAPI/Pydantic : liste de {msg, loc, type}.
+    const msgs = detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? (d as { msg?: unknown }).msg : null))
+      .filter((m): m is string => typeof m === 'string')
+      .map((m) => m.replace(/^Value error, /, ''))
+    if (msgs.length > 0) return msgs.join(' ; ')
+  }
   if (detail && typeof detail === 'object' && 'message' in detail) {
     const m = (detail as { message?: unknown }).message
     if (typeof m === 'string') return m
@@ -43,17 +72,30 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new ApiError(401, null, 'Unauthorized')
-  }
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
     throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
   }
   return res.text()
+}
+
+/** Requête retournant un Blob (téléchargement de fichier), avec la même gestion 401 / erreurs que `request`. */
+async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string>),
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const detail = (body as { detail?: unknown }).detail ?? null
+    throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
+  }
+  return res.blob()
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -65,17 +107,29 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) {
-    clearToken()
-    window.location.href = '/login'
-    throw new ApiError(401, null, 'Unauthorized')
-  }
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
     throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
   }
   if (res.status === 204) return undefined as T
+  return res.json() as Promise<T>
+}
+
+/** Requête multipart (upload de fichier) : pas de Content-Type manuel, le
+ *  navigateur pose lui-même la boundary du FormData. */
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: form, headers })
+  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    const detail = (body as { detail?: unknown }).detail ?? null
+    throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
+  }
   return res.json() as Promise<T>
 }
 
@@ -88,6 +142,7 @@ export const api = {
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: <T = void>(path: string) => request<T>(path, { method: 'DELETE' }),
+  getBlob: (path: string) => requestBlob(path),
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -98,6 +153,7 @@ export interface FunctionalType {
   label: string
   parent_slug: string | null
   workspace_slug: string
+  content_template: string | null
   created_at: string
   updated_at: string
 }
@@ -113,7 +169,7 @@ export interface AllowedValueOut {
 export interface PropertyDef {
   slug: string
   label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   required: boolean
   allowed_values?: AllowedValueOut[]
 }
@@ -142,10 +198,32 @@ export interface TemplateInfo {
   type_slugs: string[]
 }
 
+export interface RemoteTemplateInfo {
+  template: string
+  label: string
+  version: number
+  type_slugs: string[]
+  concrete_types: number
+  installed: boolean
+  update_available: boolean
+}
+
+export interface GalleryConfig {
+  default_url: string | null
+}
+
+export interface GallerySourceOut {
+  id: string | null
+  label: string
+  url: string
+  builtin: boolean
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string
   type: string
+  slug: string | null
   content: string | null
   version: number
   parent_id: string | null
@@ -172,12 +250,14 @@ export interface DataBlockOut {
 export interface PropertyValueOut {
   prop_slug: string
   prop_label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   version: number | null
   value: string | null
   allowed_value_slug: string | null
   allowed_value_label: string | null
   required: boolean
+  /** 'auto_now' | 'auto_now_create' : propriété gérée par le serveur (lecture seule). */
+  behavior: string | null
 }
 
 /** Corps renvoyé dans `detail` d'un 409 sur PUT value. */
@@ -214,9 +294,10 @@ export interface AllowedValueRich {
 export interface PropertyDefRich {
   slug: string
   label: string
-  type: 'text' | 'int' | 'restricted_list'
+  type: 'text' | 'int' | 'restricted_list' | 'date' | 'bool' | 'url' | 'float' | 'reference'
   default_value: string | null
   required: boolean
+  behavior: string | null
   allowed_values: AllowedValueRich[]
 }
 
@@ -247,7 +328,14 @@ export const docsApi = {
   createDocument: (
     ws: string,
     block: string,
-    body: { title: string; functional_type_slug: string; parent_id?: string },
+    body: {
+      title: string
+      functional_type_slug: string
+      parent_id?: string
+      slug?: string
+      /** Valeurs initiales : requises pour les propriétés required sans défaut. */
+      properties?: Record<string, string>
+    },
   ) => api.post<DocumentOut>(`/workspaces/${ws}/blocks/${block}/documents`, body),
 
   listDocuments: (ws: string) =>
@@ -259,7 +347,7 @@ export const docsApi = {
   patchDocument: (
     ws: string,
     docId: string,
-    body: { title?: string; content?: string; expected_version: number },
+    body: { title?: string; content?: string; expected_version?: number; slug?: string },
   ) => api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}`, body),
 
   getDocumentValues: (ws: string, docId: string) =>
@@ -286,7 +374,52 @@ export const docsApi = {
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
 }
 
+// ── Artefacts (images des documents) ────────────────────────────────────────
+
+export interface ArtifactCreatedOut {
+  id: string
+  url: string
+  deduplicated: boolean
+  filename: string
+  extension: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  crc32: number
+}
+
+export const artifactsApi = {
+  upload: (ws: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return requestForm<ArtifactCreatedOut>(`/workspaces/${ws}/artifacts`, form)
+  },
+  getBlob: (ws: string, id: string) => requestBlob(`/workspaces/${ws}/artifacts/${id}`),
+}
+
 // ── API publique (sans authentification) ────────────────────────────────────
+
+export type ChangeEntityKind = 'document' | 'type' | 'property' | 'block' | 'template'
+
+export interface ChangeEntry {
+  seq: number
+  nature: string
+  entity_kind: ChangeEntityKind
+  entity_id: string | null
+  document_id: string | null
+  occurred_at: string
+}
+
+export interface ChangeFeedOut {
+  changes: ChangeEntry[]
+  next_cursor: number
+  has_more: boolean
+}
+
+export const changesApi = {
+  get: (ws: string, since: number, limit = 200) =>
+    api.get<ChangeFeedOut>(`/workspaces/${ws}/changes?since=${since}&limit=${limit}`),
+}
 
 async function pubGet<T>(path: string): Promise<T> {
   const res = await fetch(`/pub${path}`)
@@ -307,6 +440,18 @@ export const templatesApi = {
   saveYaml: (slug: string, content: string) =>
     api.put<TemplateInfo>(`/templates/${slug}/yaml`, { yaml_content: content }),
   delete: (slug: string) => api.delete(`/templates/${slug}`),
+}
+
+export const galleryApi = {
+  getConfig: () => api.get<GalleryConfig>('/templates/gallery/config'),
+  listSources: () => api.get<GallerySourceOut[]>('/templates/gallery/sources'),
+  addSource: (label: string, url: string) =>
+    api.post<GallerySourceOut>('/templates/gallery/sources', { label, url }),
+  deleteSource: (id: string) => api.delete(`/templates/gallery/sources/${id}`),
+  list: (source_url: string) =>
+    api.get<RemoteTemplateInfo[]>(`/templates/gallery?source_url=${encodeURIComponent(source_url)}`),
+  pull: (source_url: string, template_slug: string) =>
+    api.post<TemplateInfo>('/templates/gallery/pull', { source_url, template_slug }),
 }
 
 // ── Types réactions / commentaires ───────────────────────────────────────────
@@ -383,10 +528,18 @@ export interface BrokenLinkDetail {
   target_label: string
 }
 
+export interface BacklinkOut {
+  source_id: string
+  source_title: string
+  source_type: string | null
+  bloc: string | null
+  target_label: string
+}
+
 export const referencesApi = {
-  searchDocuments: (ws: string, q: string, limit = 10) =>
+  searchDocuments: (ws: string, q: string, limit = 10, type?: string) =>
     api.get<DocumentSearchResult[]>(
-      `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}`
+      `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}${type ? `&type=${encodeURIComponent(type)}` : ''}`
     ),
 
   getBrokenLinks: (ws: string) =>
@@ -394,6 +547,9 @@ export const referencesApi = {
 
   getBrokenLinksDetail: (ws: string, blocId: string) =>
     api.get<BrokenLinkDetail[]>(`/workspaces/${ws}/blocs/${blocId}/broken-links`),
+
+  getBacklinks: (ws: string, docId: string, limit = 50) =>
+    api.get<BacklinkOut[]>(`/workspaces/${ws}/documents/${docId}/backlinks?limit=${limit}`),
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────
@@ -424,8 +580,23 @@ export interface AuthUser {
   id: string
   email: string
   label: string
-  is_superadmin: boolean
+  is_admin: boolean
+  validated: boolean
   disabled: boolean
+}
+
+export interface AppUserOut {
+  id: string
+  email: string
+  label: string
+  username: string | null
+  source: 'local' | 'oidc'
+  is_admin: boolean
+  validated: boolean
+  disabled: boolean
+  has_local_password: boolean
+  created_at: string
+  updated_at: string
 }
 
 /** Décode le payload JWT localement (sans vérification — le serveur valide). */
@@ -433,11 +604,21 @@ export function isSuperAdmin(): boolean {
   const token = getToken()
   if (!token) return false
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    return Boolean(payload.is_superadmin)
+    const segment = token.split('.')[1]
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const payload = JSON.parse(atob(padded))
+    return Boolean(payload.is_admin)
   } catch {
     return false
   }
+}
+
+export const usersApi = {
+  list: () => api.get<AppUserOut[]>('/admin/users'),
+  validate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/validate`, {}),
+  unvalidate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/unvalidate`, {}),
+  delete: (id: string) => api.delete(`/admin/users/${id}`),
 }
 
 // ── Vault wallets ───────────────────────────────────────────────────────────
@@ -631,4 +812,225 @@ export const automationsApi = {
     api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
   replay: (ws: string, id: string, runId: string) =>
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
+}
+
+// ── API Keys ─────────────────────────────────────────────────────────────────
+
+export interface ApiProfileOut {
+  id: string
+  name: string
+  description: string | null
+  is_admin: boolean
+  created_at: string
+  updated_at: string
+  scope_count: number
+  key_count: number
+}
+
+export interface ApiProfileScopeIn {
+  workspace_slug: string
+  block_slug: string | null
+  read_only: boolean
+}
+
+export interface ApiProfileScopeOut {
+  id: string
+  workspace_slug: string
+  block_slug: string | null
+  read_only: boolean
+}
+
+export interface ApiProfileDetail extends ApiProfileOut {
+  scopes: ApiProfileScopeOut[]
+}
+
+export interface ApiKeyOut {
+  id: string
+  profile_id: string
+  profile_name: string
+  label: string
+  key_prefix: string
+  created_at: string
+  last_used_at: string | null
+  revoked: boolean
+}
+
+export interface ApiKeyCreated extends ApiKeyOut {
+  key: string
+}
+
+export const apiProfilesApi = {
+  list: () => api.get<ApiProfileOut[]>('/user/api-profiles'),
+  create: (body: { name: string; description?: string | null; is_admin?: boolean }) =>
+    api.post<ApiProfileOut>('/user/api-profiles', body),
+  update: (id: string, body: { name?: string; description?: string | null; is_admin?: boolean }) =>
+    api.patch<ApiProfileOut>(`/user/api-profiles/${id}`, body),
+  get: (id: string) => api.get<ApiProfileDetail>(`/user/api-profiles/${id}`),
+  setScopes: (id: string, scopes: ApiProfileScopeIn[]) =>
+    api.put<ApiProfileScopeOut[]>(`/user/api-profiles/${id}/scopes`, { scopes }),
+  delete: (id: string) => api.delete(`/user/api-profiles/${id}`),
+}
+
+export const apiKeysApi = {
+  list: () => api.get<ApiKeyOut[]>('/user/api-keys'),
+  generate: (body: { profile_id: string; label: string }) =>
+    api.post<ApiKeyCreated>('/user/api-keys', body),
+  revoke: (id: string) => api.delete(`/user/api-keys/${id}`),
+}
+
+// ── Remote certificates ───────────────────────────────────────────────────────
+
+export interface RemoteCertificateOut {
+  id: string
+  slug: string
+  label: string
+  cert_type: 'ssh_key' | 'tls'
+  public_part: string
+  fingerprint: string | null
+  expires_at: string | null
+  created_at: string
+}
+
+export const remoteCertsApi = {
+  list: () => api.get<RemoteCertificateOut[]>('/admin/remote/certificates'),
+  create: (body: {
+    slug: string; label: string; cert_type: 'ssh_key' | 'tls'
+    public_part: string; private_key: string; expires_at?: string | null
+  }) => api.post<RemoteCertificateOut>('/admin/remote/certificates', body),
+  get: (slug: string) => api.get<RemoteCertificateOut>(`/admin/remote/certificates/${slug}`),
+  delete: (slug: string) => api.delete(`/admin/remote/certificates/${slug}`),
+}
+
+// ── Remote points ─────────────────────────────────────────────────────────────
+
+export type PointType = 'ftp' | 'ftps' | 'sftp' | 'git'
+export type AuthType = 'password' | 'pat' | 'certificate'
+export type AuthStorage = 'local' | 'vault'
+export type GitProvider = 'github' | 'gitlab' | 'gitea' | 'custom'
+
+export interface RemotePointOut {
+  id: string
+  slug: string
+  label: string
+  point_type: PointType
+  host: string
+  port: number | null
+  username: string
+  git_provider: GitProvider | null
+  git_repo: string | null
+  git_branch: string
+  auth_type: AuthType
+  auth_storage: AuthStorage | null
+  auth_vault_ref: string | null
+  certificate_slug: string | null
+  has_local_secret: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface RemotePointBody {
+  slug?: string
+  label: string
+  point_type: PointType
+  host: string
+  port?: number | null
+  username: string
+  git_provider?: GitProvider | null
+  git_repo?: string | null
+  git_branch?: string
+  auth_type: AuthType
+  auth_storage?: AuthStorage | null
+  auth_secret?: string | null
+  auth_vault_ref?: string | null
+  certificate_slug?: string | null
+}
+
+export interface RemotePointTestResult {
+  ok: boolean
+  detail: string
+}
+
+export const remotePointsApi = {
+  list: () => api.get<RemotePointOut[]>('/admin/remote/points'),
+  create: (body: RemotePointBody & { slug: string }) =>
+    api.post<RemotePointOut>('/admin/remote/points', body),
+  get: (slug: string) => api.get<RemotePointOut>(`/admin/remote/points/${slug}`),
+  update: (slug: string, body: RemotePointBody) =>
+    api.put<RemotePointOut>(`/admin/remote/points/${slug}`, body),
+  delete: (slug: string) => api.delete(`/admin/remote/points/${slug}`),
+  test: (slug: string) => api.post<RemotePointTestResult>(`/admin/remote/points/${slug}/test`, {}),
+}
+
+// ── Backup jobs ───────────────────────────────────────────────────────────────
+
+export interface BackupJobOut {
+  id: string
+  slug: string
+  label: string
+  strategy: 'db_dump' | 'git_sync'
+  enabled: boolean
+  remote_point_slug: string
+  workspace_slug: string | null
+  schedule_cron: string | null
+  schedule_every_seconds: number | null
+  git_base_path: string | null
+  created_at: string
+  updated_at: string
+  last_run_at: string | null
+  last_run_status: 'running' | 'success' | 'error' | null
+}
+
+export interface BackupJobRunOut {
+  id: string
+  job_id: string
+  started_at: string
+  finished_at: string | null
+  status: 'running' | 'success' | 'error'
+  error_message: string | null
+  last_change_seq: number | null
+  files_written: number | null
+  files_deleted: number | null
+  commit_sha: string | null
+}
+
+export interface BackupJobBody {
+  slug?: string
+  label: string
+  strategy: 'db_dump' | 'git_sync'
+  enabled?: boolean
+  remote_point_slug: string
+  workspace_slug?: string | null
+  schedule_cron?: string | null
+  schedule_every_seconds?: number | null
+  git_base_path?: string | null
+}
+
+export const backupApi = {
+  listJobs: () => api.get<BackupJobOut[]>('/admin/backup/jobs'),
+  createJob: (body: BackupJobBody & { slug: string }) =>
+    api.post<BackupJobOut>('/admin/backup/jobs', body),
+  getJob: (slug: string) => api.get<BackupJobOut>(`/admin/backup/jobs/${slug}`),
+  updateJob: (slug: string, body: BackupJobBody) =>
+    api.put<BackupJobOut>(`/admin/backup/jobs/${slug}`, body),
+  deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
+  listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
+}
+
+// ── Setup wizard ─────────────────────────────────────────────────────────────
+
+export interface AuthMethodsOut {
+  local: boolean
+  oidc: boolean
+  needs_setup: boolean
+}
+
+export interface InitAdminRequest {
+  username: string
+  email: string
+  password: string
+}
+
+export const setupApi = {
+  methods: () => api.get<AuthMethodsOut>('/auth/methods'),
+  initAdmin: (body: InitAdminRequest) => api.post<{ id: string }>('/setup/init-admin', body),
 }

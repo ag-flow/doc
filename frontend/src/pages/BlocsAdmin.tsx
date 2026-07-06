@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react'
 import {
-  api, docsApi, referencesApi,
+  api, ApiError, docsApi, referencesApi,
   type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
 } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
@@ -217,13 +217,32 @@ export function BlocsAdmin() {
 
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
 
+  function handleExport() {
+    setApiError('')
+    void api.getBlob(`/workspaces/${wsSlug}/export?scope=workspace`)
+      .then((blob) => {
+        const blobUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `${wsSlug}.zip`
+        a.click()
+        URL.revokeObjectURL(blobUrl)
+      })
+      .catch((e) => setApiError(e instanceof ApiError ? e.message : t('error.generic')))
+  }
+
   return (
     <div className="mx-auto max-w-3xl p-8" data-testid="blocs-admin">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-gray-900">{t('blocs.title')}</h1>
-        <Button onClick={() => setShowCreate(true)} data-testid="create-bloc-btn">
-          {t('blocs.create')}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={handleExport} data-testid="export-workspace-btn">
+            {t('blocs.export', 'Exporter (markdown)')}
+          </Button>
+          <Button onClick={() => setShowCreate(true)} data-testid="create-bloc-btn">
+            {t('blocs.create')}
+          </Button>
+        </div>
       </div>
 
       {apiError && (

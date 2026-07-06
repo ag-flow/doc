@@ -1,3 +1,4 @@
+import { ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useFieldState, type ValueType } from '../hooks/useFieldState'
 import type { AllowedValueOut, PropertyValueOut } from '../lib/api'
@@ -17,11 +18,33 @@ function initialValue(prop: PropertyValueOut): string | null {
 
 export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldProps) {
   const { t } = useTranslation()
-  const valueType: ValueType = prop.type
+  const valueType: ValueType = prop.type as ValueType
   const { state, setValue, save, keepServer, keepMine } = useFieldState(
     initialValue(prop),
     prop.version,
   )
+
+  // Propriété gérée par le serveur (behavior auto_now / auto_now_create) :
+  // lecture seule — le backend refuse de toute façon l'écriture manuelle.
+  if (prop.behavior) {
+    return (
+      <div className="mb-4" data-testid={`property-${prop.prop_slug}`}>
+        <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+          {prop.prop_label}
+          <span
+            className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600"
+            title={t('properties.autoHint')}
+            data-testid={`property-auto-badge-${prop.prop_slug}`}
+          >
+            {t('properties.auto')}
+          </span>
+        </label>
+        <p className="text-sm text-gray-700" data-testid={`property-input-${prop.prop_slug}`}>
+          {prop.value ?? '—'}
+        </p>
+      </div>
+    )
+  }
 
   const commit = () => {
     if (state.status === 'dirty') void save(ws, docId, prop.prop_slug, valueType)
@@ -75,6 +98,84 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
             )
           })()}
         </div>
+      ) : prop.type === 'bool' ? (
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            id={fieldId}
+            type="checkbox"
+            className="h-4 w-4 rounded border-gray-300"
+            checked={state.value === 'true'}
+            disabled={saving}
+            onChange={(e) => {
+              // FE-05 : persister la valeur explicite du toggle, pas via `commit` qui
+              // lirait un `state.status`/`state.value` encore périmés dans ce rendu.
+              const next = e.target.checked ? 'true' : 'false'
+              setValue(next)
+              void save(ws, docId, prop.prop_slug, valueType, next)
+            }}
+            data-testid={`property-input-${prop.prop_slug}`}
+          />
+          <span className="text-sm text-gray-600">
+            {state.value === 'true' ? t('common.yes', 'Oui') : t('common.no', 'Non')}
+          </span>
+        </label>
+      ) : prop.type === 'date' ? (
+        <Input
+          id={fieldId}
+          type="date"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+        />
+      ) : prop.type === 'url' ? (
+        <div className="flex items-center gap-1">
+          <Input
+            id={fieldId}
+            type="url"
+            value={state.value ?? ''}
+            disabled={saving}
+            placeholder="https://..."
+            onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+            onBlur={commit}
+            data-testid={`property-input-${prop.prop_slug}`}
+          />
+          {state.value && (
+            <a
+              href={state.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-gray-400 hover:text-blue-600"
+              tabIndex={-1}
+            >
+              <ExternalLink size={14} />
+            </a>
+          )}
+        </div>
+      ) : prop.type === 'float' ? (
+        <Input
+          id={fieldId}
+          type="number"
+          step="any"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+        />
+      ) : prop.type === 'reference' ? (
+        <Input
+          id={fieldId}
+          type="text"
+          placeholder="UUID du document cible"
+          value={state.value ?? ''}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value === '' ? null : e.target.value)}
+          onBlur={commit}
+          data-testid={`property-input-${prop.prop_slug}`}
+          className="font-mono text-xs"
+        />
       ) : (
         <Input
           id={fieldId}

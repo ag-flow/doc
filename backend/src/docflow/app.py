@@ -8,21 +8,27 @@ from contextlib import asynccontextmanager, suppress
 
 import asyncpg
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
+from docflow.apikeys.router import router as apikeys_router
+from docflow.artifacts.router import router as artifacts_router
+from docflow.artifacts.worker import purge_loop as artifact_purge_loop
 from docflow.auth.router import router as auth_router
-from docflow.auth.seed import seed_bootstrap_admin
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
+from docflow.backup.router import router as backup_router
+from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
+from docflow.errors import DependentsConflictError
+from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.oidc.router import router as oidc_router
@@ -30,9 +36,12 @@ from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router
 from docflow.reactions.router import router as reactions_router
 from docflow.references.router import router as references_router
+from docflow.remote.router import router as remote_router
+from docflow.setup.router import router as setup_router
 from docflow.templates.router import router as templates_router
 from docflow.types.router import router as types_router
 from docflow.vault.router import router as vault_router
+from docflow.views.router import router as views_router
 from docflow.webhooks.router import router as webhooks_router
 from docflow.workspaces.router import router as workspaces_router
 
@@ -69,24 +78,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
-    await seed_bootstrap_admin(pool, settings)
-    configure_mcp(pool)
+    configure_mcp(pool, settings)
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))
+    backup_task = asyncio.create_task(backup_worker_loop(pool, settings))
+    artifact_task = asyncio.create_task(artifact_purge_loop(pool, settings))
     log.info("docflow_started")
     try:
         yield
     finally:
         worker_task.cancel()
+        backup_task.cancel()
+        artifact_task.cancel()
         with suppress(asyncio.CancelledError):
             await worker_task
+        with suppress(asyncio.CancelledError):
+            await backup_task
+        with suppress(asyncio.CancelledError):
+            await artifact_task
         await close_pool(pool)
         log.info("docflow_stopped")
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
+
+
+@app.exception_handler(DependentsConflictError)
+async def dependents_conflict_handler(_: Request, exc: DependentsConflictError) -> JSONResponse:
+    """DOC-07 : suppression destructrice sans confirm → 409 informatif."""
+    return JSONResponse(
+        {"detail": exc.detail, "dependents": exc.dependents, "need_confirm": True},
+        status_code=409,
+    )
+
+
 _API = "/api"
+app.include_router(setup_router, prefix=_API)
 app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
@@ -94,15 +122,21 @@ app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
 app.include_router(documents_router, prefix=_API)
+app.include_router(artifacts_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)
 app.include_router(mcp_router, prefix=_API)
 app.include_router(webhooks_router, prefix=_API)
+app.include_router(remote_router, prefix=_API)
+app.include_router(backup_router, prefix=_API)
 app.include_router(reactions_router, prefix=_API)
 app.include_router(references_router, prefix=_API)
 app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
+app.include_router(export_router, prefix=_API)
+app.include_router(views_router, prefix=_API)
+app.include_router(apikeys_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 
 
@@ -115,9 +149,9 @@ async def health() -> JSONResponse:
     try:
         result = await _check_db(app.state.pool)
         return JSONResponse({"status": "ok", "db": result == 1})
-    except Exception as exc:
-        log.error("health_check_failed", error=str(exc))
-        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+    except Exception:
+        log.error("health_check_failed", exc_info=True)
+        return JSONResponse({"status": "error", "detail": "service unavailable"}, status_code=503)
 
 
 # Fichiers statiques du frontend (assets JS/CSS)

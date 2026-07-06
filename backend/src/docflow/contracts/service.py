@@ -9,6 +9,7 @@ import httpx
 import structlog
 from fastapi import HTTPException
 
+from docflow.net.ssrf import SSRFError, validate_public_url
 from docflow.schemas.contracts import (
     ContractDetailOut,
     ContractImport,
@@ -125,7 +126,10 @@ async def import_contract(pool: asyncpg.Pool, body: ContractImport) -> ContractO
             "INSERT INTO openapi_contract (label, source_url, version, raw_spec) "
             "VALUES ($1, $2, $3, $4::jsonb) "
             "RETURNING id, label, source_url, version, imported_at, updated_at",
-            body.label, body.source_url, version, raw_json,
+            body.label,
+            body.source_url,
+            version,
+            raw_json,
         )
     assert row is not None
     return _row_to_out(row)
@@ -159,7 +163,8 @@ async def update_contract(
         row = await conn.fetchrow(
             "UPDATE openapi_contract SET label=$1, updated_at=now() WHERE id=$2 "
             "RETURNING id, label, source_url, version, imported_at, updated_at",
-            body.label, contract_id,
+            body.label,
+            contract_id,
         )
     if row is None:
         raise HTTPException(404, "Contrat introuvable.")
@@ -177,6 +182,11 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
         raise HTTPException(422, "Ce contrat n'a pas de source_url (import manuel).")
 
     try:
+        await validate_public_url(row["source_url"])
+    except SSRFError as exc:
+        raise HTTPException(422, f"URL de source refusée : {exc}") from exc
+
+    try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(row["source_url"])
         resp.raise_for_status()
@@ -191,7 +201,9 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
             "UPDATE openapi_contract SET raw_spec=$1::jsonb, version=$2, updated_at=now() "
             "WHERE id=$3 "
             "RETURNING id, label, source_url, version, imported_at, updated_at",
-            raw_json, version, contract_id,
+            raw_json,
+            version,
+            contract_id,
         )
     assert updated is not None
     log.info("contract_refreshed", contract_id=str(contract_id), version=version)
@@ -200,8 +212,6 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
 
 async def delete_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM openapi_contract WHERE id = $1", contract_id
-        )
+        result = await conn.execute("DELETE FROM openapi_contract WHERE id = $1", contract_id)
     if result == "DELETE 0":
         raise HTTPException(404, "Contrat introuvable.")

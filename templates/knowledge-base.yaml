@@ -1,0 +1,379 @@
+# templates/knowledge-base.yaml — v1
+# Base de connaissance d'une application.
+# Couvre : articles généraux, FAQ, runbooks opérationnels, ADR, notes de version.
+# Hiérarchie : section → article / faq / runbook / adr  (release_note = racine)
+#
+# Briques utilisées :
+#   - types scalaires date / bool ............... 34_MPTS
+#   - propriété reference (cible typée) ......... 38_MREL
+#   - modèle de contenu par type ................ 35_MTPL
+version: 1
+template: knowledge-base
+label: "Base de connaissance applicative"
+
+functional_types:
+
+  # ─── BASE ABSTRAITE : cycle de vie editorial commun ──────────────────────
+  - slug: base_editorial
+    abstract: true
+    label: "(base) contenu éditorial"
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - { slug: brouillon,  label: "Brouillon",   position: 0, color: "#9AA3AF" }
+          - { slug: en_review,  label: "En review",   position: 1, color: "#F59E0B" }
+          - { slug: publie,     label: "Publié",      position: 2, color: "#22C55E" }
+          - { slug: archive,    label: "Archivé",     position: 3, color: "#6B7280" }
+      - slug: audience
+        label: Audience
+        type: restricted_list
+        required: false
+        default: interne
+        allowed_values:
+          - { slug: interne,     label: "Interne",        position: 0, color: "#6366F1" }
+          - { slug: externe,     label: "Externe",        position: 1, color: "#0EA5E9" }
+          - { slug: developpeur, label: "Développeur",    position: 2, color: "#F59E0B" }
+          - { slug: admin,       label: "Administrateur", position: 3, color: "#EF4444" }
+      - slug: derniere_revision
+        label: "Dernière révision"
+        type: date
+        required: false
+
+  # ─── SECTION : conteneur thématique racine ───────────────────────────────
+  # Pas de cycle éditorial sur les sections — elles sont des entrées d'index.
+  - slug: section
+    parent: null
+    label: Section
+    content_template: |
+      # {{title}}
+
+      > Catégorie créée le {{date}}
+
+      ## Description
+      <!-- Décrivez brièvement le périmètre de cette section -->
+
+      ## Sous-sections & articles
+    properties:
+      - slug: icone
+        label: Icône
+        type: text
+        required: false
+        constraints:
+          - { kind: pattern, value: "^[\\w-]+$", message: "slug d'icône (ex. book-open)" }
+      - slug: ordre
+        label: Ordre d'affichage
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "0" }
+
+  # ─── ARTICLE : documentation générale ────────────────────────────────────
+  - slug: article
+    inherit: base_editorial
+    parent: section
+    label: Article
+    content_template: |
+      # {{title}}
+
+      > Publié le {{date}} · Audience : …
+
+      ## Résumé
+
+      <!-- Une ou deux phrases qui résument l'article -->
+
+      ## Contexte
+
+      ## Procédure / Explication
+
+      ## Points clés
+
+      - …
+
+      ## Voir aussi
+
+      - …
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - { slug: brouillon, label: "Brouillon",  position: 0, color: "#9AA3AF" }
+          - { slug: en_review, label: "En review",  position: 1, color: "#F59E0B" }
+          - { slug: publie,    label: "Publié",     position: 2, color: "#22C55E" }
+          - { slug: archive,   label: "Archivé",    position: 3, color: "#6B7280" }
+      - slug: complexite
+        label: Complexité
+        type: restricted_list
+        required: false
+        default: debutant
+        allowed_values:
+          - { slug: debutant,      label: "Débutant",      position: 0, color: "#22C55E" }
+          - { slug: intermediaire, label: "Intermédiaire", position: 1, color: "#F59E0B" }
+          - { slug: avance,        label: "Avancé",        position: 2, color: "#EF4444" }
+      - slug: duree_lecture_min
+        label: "Durée de lecture (min)"
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "1" }
+          - { kind: max, value: "120" }
+      - slug: derniere_revision
+        label: "Dernière révision"
+        type: date
+        required: false
+      - slug: auteur
+        label: Auteur
+        type: reference
+        target_type: contributeur
+        required: false
+
+  # ─── FAQ : entrée question / réponse ─────────────────────────────────────
+  - slug: faq
+    inherit: base_editorial
+    parent: section
+    label: "FAQ"
+    content_template: |
+      # {{title}}
+
+      <!-- Le titre EST la question, formulée de façon naturelle -->
+
+      ## Réponse
+
+      <!-- Réponse directe, concise -->
+
+      ## Explication détaillée
+
+      <!-- Optionnel : contexte, nuances, exemples -->
+
+      ## Références
+
+      - …
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - { slug: brouillon, label: "Brouillon", position: 0, color: "#9AA3AF" }
+          - { slug: en_review, label: "En review", position: 1, color: "#F59E0B" }
+          - { slug: publie,    label: "Publié",    position: 2, color: "#22C55E" }
+          - { slug: archive,   label: "Archivé",   position: 3, color: "#6B7280" }
+      - slug: derniere_revision
+        label: "Dernière révision"
+        type: date
+        required: false
+
+  # ─── RUNBOOK : procédure opérationnelle ──────────────────────────────────
+  - slug: runbook
+    inherit: base_editorial
+    parent: section
+    label: Runbook
+    content_template: |
+      # {{title}}
+
+      > Procédure opérationnelle · Durée estimée : … min
+
+      ## Objectif
+
+      ## Prérequis
+
+      - Accès : …
+      - Outils : …
+
+      ## Étapes
+
+      - [ ] 1. …
+      - [ ] 2. …
+      - [ ] 3. …
+
+      ## Vérification post-exécution
+
+      - [ ] …
+
+      ## Rollback
+
+      <!-- Comment annuler si quelque chose tourne mal -->
+
+      ## Contacts en cas de problème
+
+      - …
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - { slug: brouillon, label: "Brouillon", position: 0, color: "#9AA3AF" }
+          - { slug: en_review, label: "En review", position: 1, color: "#F59E0B" }
+          - { slug: valide,    label: "Validé",    position: 2, color: "#22C55E" }
+          - { slug: archive,   label: "Archivé",   position: 3, color: "#6B7280" }
+      - slug: urgence
+        label: Niveau d'urgence
+        type: restricted_list
+        required: true
+        default: routine
+        allowed_values:
+          - { slug: routine,  label: "Routine",  position: 0, color: "#22C55E" }
+          - { slug: incident, label: "Incident", position: 1, color: "#F59E0B" }
+          - { slug: critique, label: "Critique", position: 2, color: "#EF4444" }
+      - slug: duree_estimee_min
+        label: "Durée estimée (min)"
+        type: int
+        required: false
+        constraints:
+          - { kind: min, value: "1" }
+      - slug: derniere_revision
+        label: "Dernière révision"
+        type: date
+        required: false
+      - slug: teste_le
+        label: "Testé le"
+        type: date
+        required: false
+      - slug: responsable
+        label: Responsable
+        type: reference
+        target_type: contributeur
+        required: false
+
+  # ─── ADR : Architecture Decision Record ──────────────────────────────────
+  - slug: adr
+    inherit: base_editorial
+    parent: section
+    label: "ADR (décision d'architecture)"
+    content_template: |
+      # ADR-{{title}}
+
+      > Date : {{date}} · Statut : …
+
+      ## Contexte
+
+      <!-- Quelle situation, contrainte ou problème motive cette décision ? -->
+
+      ## Décision
+
+      <!-- La décision prise, formulée de façon affirmative -->
+
+      ## Conséquences
+
+      ### Positives
+      - …
+
+      ### Négatives / compromis
+      - …
+
+      ## Alternatives considérées
+
+      | Alternative | Raison du rejet |
+      |-------------|----------------|
+      | …           | …              |
+
+      ## Références
+    properties:
+      - slug: decision
+        label: Décision
+        type: restricted_list
+        required: true
+        default: en_discussion
+        allowed_values:
+          - { slug: en_discussion, label: "En discussion", position: 0, color: "#9AA3AF" }
+          - { slug: acceptee,      label: "Acceptée",      position: 1, color: "#22C55E" }
+          - { slug: deprecee,      label: "Dépréciée",     position: 2, color: "#F59E0B" }
+          - { slug: remplacee,     label: "Remplacée",     position: 3, color: "#6B7280" }
+      - slug: date_decision
+        label: "Date de décision"
+        type: date
+        required: false
+      - slug: deprecee_par
+        label: "Remplacée par (ADR)"
+        type: reference
+        target_type: adr
+        required: false
+
+  # ─── CONTRIBUTEUR : auteur / responsable (annuaire minimal) ──────────────
+  # Type référençable par article, runbook — sans statut, pas de lifecycle.
+  - slug: contributeur
+    parent: null
+    label: Contributeur
+    properties:
+      - slug: email
+        label: E-mail
+        type: text
+        required: false
+        constraints:
+          - { kind: pattern, value: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", message: "e-mail invalide" }
+      - slug: role
+        label: Rôle
+        type: restricted_list
+        required: false
+        default: redacteur
+        allowed_values:
+          - { slug: redacteur,   label: "Rédacteur",    position: 0, color: "#6366F1" }
+          - { slug: relecteur,   label: "Relecteur",    position: 1, color: "#0EA5E9" }
+          - { slug: responsable, label: "Responsable",  position: 2, color: "#F59E0B" }
+
+  # ─── RELEASE NOTE : note de version (racine, hors hiérarchie section) ────
+  - slug: release_note
+    inherit: base_editorial
+    parent: null
+    label: "Note de version"
+    content_template: |
+      # v{{title}}
+
+      > Date de release : {{date}}
+
+      ## Nouveautés
+
+      - …
+
+      ## Améliorations
+
+      - …
+
+      ## Correctifs
+
+      - …
+
+      ## Breaking changes
+
+      <!-- Laisser vide si aucun -->
+
+      ## Guide de migration
+
+      <!-- Étapes pour migrer depuis la version précédente -->
+
+      ## Contributeurs
+
+      - …
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - { slug: brouillon, label: "Brouillon", position: 0, color: "#9AA3AF" }
+          - { slug: en_review, label: "En review", position: 1, color: "#F59E0B" }
+          - { slug: publiee,   label: "Publiée",   position: 2, color: "#22C55E" }
+          - { slug: archivee,  label: "Archivée",  position: 3, color: "#6B7280" }
+      - slug: date_release
+        label: "Date de release"
+        type: date
+        required: false
+      - slug: breaking_changes
+        label: "Breaking changes"
+        type: bool
+        required: false
+        default: "false"
+      - slug: derniere_revision
+        label: "Dernière révision"
+        type: date
+        required: false

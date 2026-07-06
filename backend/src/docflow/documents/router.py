@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from docflow.auth.deps import require_admin
+from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.documents import service
 from docflow.references import service as ref_service
 from docflow.references.service import DocumentSearchResult
@@ -20,7 +20,12 @@ router = APIRouter(tags=["documents"])
 
 _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"
-_Auth = Depends(require_admin)
+_Auth = Depends(require_authenticated)
+
+# Référence forte sur les tasks webhook en cours : asyncio ne garde qu'une
+# référence faible sur les tasks créées par create_task, un objet non
+# référencé ailleurs peut être ramassé par le GC avant son exécution.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 def _enc_key(request: Request) -> str | None:
@@ -30,7 +35,7 @@ def _enc_key(request: Request) -> str | None:
 
 def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) -> None:
     """Lance l'émission webhook en fire-and-forget."""
-    asyncio.create_task(
+    task = asyncio.create_task(
         wh_service.emit_event(
             request.app.state.pool,
             ws_slug,
@@ -39,12 +44,20 @@ def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) 
             encryption_key=_enc_key(request),
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 class _ChangeEntry(BaseModel):
     seq: int
     nature: str
-    document_id: str
+    # 'document' | 'type' | 'property' | 'block' | 'template'
+    entity_kind: str
+    # UUID du document (kind=document) ou de l'entité structure ; None pour
+    # une entrée globale (import de template).
+    entity_id: str | None
+    # Compat : ancien nom, renseigné pour kind=document uniquement.
+    document_id: str | None
     occurred_at: str
 
 
@@ -63,6 +76,7 @@ async def list_documents(
     prop_slug: str | None = Query(default=None),
     allowed_value_slug: str | None = Query(default=None),
 ) -> list[DocumentOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_documents(
         request.app.state.pool,
         ws_slug,
@@ -76,6 +90,7 @@ async def list_documents(
 async def create_document(
     ws_slug: str, body: DocumentCreate, request: Request, _: AuthUser = _Auth
 ) -> DocumentOut:
+    check_api_key_scope(request, ws_slug, write=True)
     doc = await service.create_document(request.app.state.pool, ws_slug, body)
     _fire(
         request,
@@ -99,6 +114,7 @@ async def search_documents(
     limit: int = Query(10, ge=1, le=50),
     _: AuthUser = _Auth,
 ) -> list[DocumentSearchResult]:
+    check_api_key_scope(request, ws_slug)
     return await ref_service.search_documents(request.app.state.pool, ws_slug, q, limit)
 
 
@@ -106,6 +122,7 @@ async def search_documents(
 async def get_document(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> DocumentOut:
+    check_api_key_scope(request, ws_slug)
     return await service.get_document(request.app.state.pool, ws_slug, doc_id)
 
 
@@ -117,6 +134,7 @@ async def update_document(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DocumentOut:
+    check_api_key_scope(request, ws_slug, write=True)
     doc = await service.update_document(request.app.state.pool, ws_slug, doc_id, body)
     _fire(
         request,
@@ -145,6 +163,7 @@ async def set_document_exposed(
     request: Request,
     _: AuthUser = _Auth,
 ) -> DocumentOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.set_document_exposed(request.app.state.pool, ws_slug, doc_id, body.exposed)
 
 
@@ -152,6 +171,7 @@ async def set_document_exposed(
 async def delete_document(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     snapshot = await service.delete_document(request.app.state.pool, ws_slug, doc_id)
     _fire(request, "document.deleted", ws_slug, snapshot)
 
@@ -164,12 +184,13 @@ async def get_changes(
     since: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> _ChangeFeedOut:
+    check_api_key_scope(request, ws_slug)
     async with request.app.state.pool.acquire() as conn:
         from docflow.db.helpers import require_workspace
 
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT seq, nature, document_ref, occurred_at "
+            "SELECT seq, nature, entity_kind, document_ref, entity_ref, occurred_at "
             "FROM document_change_log "
             "WHERE workspace_technical_key = $1 AND seq > $2 "
             "ORDER BY seq LIMIT $3",
@@ -185,7 +206,13 @@ async def get_changes(
             _ChangeEntry(
                 seq=int(r["seq"]),
                 nature=r["nature"],
-                document_id=str(r["document_ref"]),
+                entity_kind=r["entity_kind"],
+                entity_id=(
+                    str(r["document_ref"])
+                    if r["document_ref"] is not None
+                    else (str(r["entity_ref"]) if r["entity_ref"] is not None else None)
+                ),
+                document_id=str(r["document_ref"]) if r["document_ref"] is not None else None,
                 occurred_at=r["occurred_at"].isoformat(),
             )
             for r in page
@@ -204,6 +231,7 @@ _VAL = _DOC + "/values"
 async def list_property_values(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> list[PropertyValueOut]:
+    check_api_key_scope(request, ws_slug)
     return await service.list_property_values(request.app.state.pool, ws_slug, doc_id)
 
 
@@ -216,6 +244,7 @@ async def set_property_value(
     request: Request,
     _: AuthUser = _Auth,
 ) -> PropertyValueOut:
+    check_api_key_scope(request, ws_slug, write=True)
     return await service.set_property_value(
         request.app.state.pool, ws_slug, doc_id, prop_slug, body
     )
@@ -225,4 +254,5 @@ async def set_property_value(
 async def delete_property_value(
     ws_slug: str, doc_id: uuid.UUID, prop_slug: str, request: Request, _: AuthUser = _Auth
 ) -> None:
+    check_api_key_scope(request, ws_slug, write=True)
     await service.delete_property_value(request.app.state.pool, ws_slug, doc_id, prop_slug)

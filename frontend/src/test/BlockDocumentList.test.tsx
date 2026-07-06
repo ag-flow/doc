@@ -27,6 +27,7 @@ function makeDoc(over: Partial<DocumentOut>): DocumentOut {
     doc_technical_key: 'd1',
     title: 'Doc',
     type: 'page',
+    slug: null,
     content: null,
     version: 1,
     parent_id: null,
@@ -103,6 +104,7 @@ describe('BlockDocumentList', () => {
         label: 'Epic',
         parent_slug: null,
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [
@@ -111,6 +113,7 @@ describe('BlockDocumentList', () => {
             label: 'Budget (jours)',
             type: 'int',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [],
           },
@@ -122,6 +125,7 @@ describe('BlockDocumentList', () => {
         label: 'Feature',
         parent_slug: 'epic',
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [],
@@ -157,6 +161,7 @@ describe('BlockDocumentList', () => {
         label: 'Epic',
         parent_slug: null,
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [
@@ -165,6 +170,7 @@ describe('BlockDocumentList', () => {
             label: 'Budget (jours)',
             type: 'int',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [],
           },
@@ -185,8 +191,8 @@ describe('BlockDocumentList', () => {
     ])
     // types-rich doit exposer feature comme enfant d'epic pour que le bouton apparaisse
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([
-      { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
-      { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', created_at: '', updated_at: '', properties: [] },
+      { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', content_template: null, created_at: '', updated_at: '', properties: [] },
+      { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', content_template: null, created_at: '', updated_at: '', properties: [] },
     ])
     vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([
       { slug: 'feature', label: 'Feature' },
@@ -215,6 +221,7 @@ describe('BlockDocumentList', () => {
         label: 'ATDD',
         parent_slug: 'feature',
         workspace_slug: 'ws',
+        content_template: null,
         created_at: '',
         updated_at: '',
         properties: [
@@ -223,6 +230,7 @@ describe('BlockDocumentList', () => {
             label: 'Statut',
             type: 'restricted_list',
             default_value: null,
+          behavior: null,
             required: false,
             allowed_values: [
               { slug: 'done', label: 'Terminé', position: 1, color: '#22c55e' },

@@ -12,7 +12,7 @@ class AdminUserCreate(BaseModel):
     email: str
     label: str
     password: str
-    is_superadmin: bool = False
+    is_admin: bool = False
 
 
 class AdminUserUpdate(BaseModel):
@@ -20,7 +20,8 @@ class AdminUserUpdate(BaseModel):
 
     email: str | None = None
     label: str | None = None
-    is_superadmin: bool | None = None
+    is_admin: bool | None = None
+    validated: bool | None = None
     disabled: bool | None = None
 
 
@@ -34,7 +35,10 @@ class AdminUserOut(BaseModel):
     id: uuid.UUID
     email: str
     label: str
-    is_superadmin: bool
+    username: str | None
+    source: str
+    is_admin: bool
+    validated: bool
     disabled: bool
     has_local_password: bool
     created_at: datetime

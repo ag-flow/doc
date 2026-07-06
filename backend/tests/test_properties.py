@@ -138,7 +138,11 @@ async def test_update_allowed_value(db_pool: asyncpg.Pool, test_workspace: dict)
         db_pool, _WS, "epic", "status", AllowedValueCreate(slug="todo", label="Todo")
     )
     updated = await prop_svc.update_allowed_value(
-        db_pool, _WS, "epic", "status", "todo",
+        db_pool,
+        _WS,
+        "epic",
+        "status",
+        "todo",
         AllowedValueUpdate(label="À faire", color="#ff0000"),
     )
     assert updated.label == "À faire"

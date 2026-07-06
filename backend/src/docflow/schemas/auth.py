@@ -21,5 +21,6 @@ class AuthUser(BaseModel):
     id: uuid.UUID
     email: str
     label: str
-    is_superadmin: bool
+    is_admin: bool
+    validated: bool
     disabled: bool

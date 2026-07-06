@@ -26,3 +26,4 @@ class PropertyValueOut(BaseModel):
     allowed_value_slug: str | None
     allowed_value_label: str | None
     required: bool
+    behavior: str | None = None

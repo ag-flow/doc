@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { api } from '../lib/api'
 import type { WorkspaceOut } from '../lib/api'
-import { labelToSlug, generateUUID } from '../lib/slug'
+import { labelToSlug } from '../lib/slug'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -87,7 +87,7 @@ export default function WorkspaceList() {
     <div className="p-6 max-w-3xl mx-auto" data-testid="workspace-list">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">{t('ws.title')}</h1>
-        <Button onClick={() => { setSlug(generateUUID()); setSlugTouched(true); setShowCreate(true) }} data-testid="create-ws-btn">
+        <Button onClick={() => { setSlug(''); setSlugTouched(false); setShowCreate(true) }} data-testid="create-ws-btn">
           {t('ws.create')}
         </Button>
       </div>

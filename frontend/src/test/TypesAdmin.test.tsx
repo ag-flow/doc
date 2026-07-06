@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
@@ -50,5 +50,22 @@ describe('TypesAdmin', () => {
     vi.mocked(api.get).mockResolvedValue([])
     renderWithProviders()
     await waitFor(() => expect(screen.getByTestId('create-type-btn')).toBeInTheDocument())
+  })
+
+  it('shows the template slug alongside its label in the import dropdown', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/templates') {
+        return Promise.resolve([
+          { template: 'agile-project', label: 'Projet agile', version: 2, path: '', concrete_types: 0, type_slugs: [] },
+        ])
+      }
+      return Promise.resolve([])
+    })
+    renderWithProviders()
+    await waitFor(() => expect(screen.getByTestId('import-template-btn')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('import-template-btn'))
+    await waitFor(() =>
+      expect(screen.getByText('Projet agile (v2) — agile-project')).toBeInTheDocument(),
+    )
   })
 })

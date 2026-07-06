@@ -1,4 +1,5 @@
 import { useNavigate, useMatch, NavLink } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Layers,
   LayoutTemplate,
@@ -7,10 +8,13 @@ import {
   Boxes,
   FileText,
   Webhook,
+  HardDrive,
   KeyRound,
+  KeySquare,
   ShieldCheck,
   LogOut,
   Zap,
+  Users,
 } from 'lucide-react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -67,6 +71,7 @@ function Divider() {
 
 export function Sidebar() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const superAdmin = isSuperAdmin()
 
   const wsMatch = useMatch('/ws/:wsSlug/*')
@@ -77,6 +82,7 @@ export function Sidebar() {
 
   function logout() {
     clearToken()
+    queryClient.clear()
     void navigate('/login')
   }
 
@@ -127,14 +133,21 @@ export function Sidebar() {
       {/* Spacer */}
       <div className="flex-1" />
 
+      {/* Clés API — accessible à tous les utilisateurs */}
+      <div className="flex flex-col items-center gap-1 mb-1">
+        <NavItem to="/api-keys" icon={KeySquare} label="Clés API" />
+      </div>
+
       {/* Section admin (bas) */}
       {superAdmin && (
         <>
           <Divider />
           <div className="flex flex-col items-center gap-1 mb-1">
             <NavItem to="/templates" icon={LayoutTemplate} label="Templates" />
+            <NavItem to="/admin/users" icon={Users} label="Utilisateurs" />
             <NavItem to="/admin/vault" icon={KeyRound} label="Wallets Vault" />
             <NavItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
+            <NavItem to="/admin/remote" icon={HardDrive} label="Connexions & Sauvegarde" />
           </div>
         </>
       )}

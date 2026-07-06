@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from docflow.crypto import decrypt_headers, encrypt_headers
 from docflow.db.helpers import require_workspace
+from docflow.net.ssrf import validate_public_url
 from docflow.schemas.webhook import WebhookCreate, WebhookOut, WebhookUpdate
 
 log = structlog.get_logger(__name__)
@@ -82,7 +83,7 @@ async def create_webhook(
     if data.headers and not encryption_key:
         raise HTTPException(
             status_code=422,
-            detail="DOCFLOW_ENCRYPTION_KEY requis pour stocker des headers chiffrés",
+            detail="ENCRYPTION_KEY requis pour stocker des headers chiffrés",
         )
     enc = encrypt_headers(encryption_key, data.headers) if data.headers and encryption_key else None
     async with pool.acquire() as conn:
@@ -119,7 +120,7 @@ async def update_webhook(
     if "headers" in raw and raw["headers"] and not encryption_key:
         raise HTTPException(
             status_code=422,
-            detail="DOCFLOW_ENCRYPTION_KEY requis pour stocker des headers chiffrés",
+            detail="ENCRYPTION_KEY requis pour stocker des headers chiffrés",
         )
 
     async with pool.acquire() as conn:
@@ -146,17 +147,17 @@ async def update_webhook(
             sets["events"] = raw["events"]
         if "active" in raw:
             sets["active"] = raw["active"]
-        sets["updated_at"] = "now()"
 
-        # Construction sécurisée de la clause SET (clés connues, pas d'interpolation user)
-        parts = []
+        # Construction sécurisée de la clause SET (clés connues, valeurs toujours
+        # paramétrées). `updated_at` est géré hors boucle, sans comparaison de
+        # valeur, pour ne jamais confondre une donnée utilisateur avec la
+        # fonction SQL `now()` (cf. automations/service.py::update_automation).
+        parts: list[str] = []
         values: list[object] = [webhook_id]
         for k, v in sets.items():
-            if v == "now()":
-                parts.append(f"{k} = now()")
-            else:
-                values.append(v)
-                parts.append(f"{k} = ${len(values)}")
+            values.append(v)
+            parts.append(f"{k} = ${len(values)}")
+        parts.append("updated_at = now()")
 
         row = await conn.fetchrow(
             "UPDATE webhook_subscription SET " + ", ".join(parts) + " WHERE id = $1 "
@@ -203,6 +204,7 @@ async def test_webhook(
     }
     url = wh.url.replace("{id_document}", "00000000-0000-0000-0000-000000000000")
     try:
+        await validate_public_url(url)
         async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
             resp = await client.post(url, json=payload, headers=wh.headers)
         return resp.status_code, None
@@ -250,19 +252,20 @@ async def emit_event(
                 url = row["url"].replace("{id_document}", doc_id)
                 headers = _decrypt_safe(encryption_key, row["headers_encrypted"])
                 try:
+                    await validate_public_url(url)
                     resp = await client.post(url, json=payload, headers=headers)
                     log.info(
                         "webhook_sent",
                         webhook_id=str(row["id"]),
-                        event=event,
+                        webhook_event=event,
                         status=resp.status_code,
                     )
                 except Exception as exc:
                     log.warning(
                         "webhook_send_failed",
                         webhook_id=str(row["id"]),
-                        event=event,
+                        webhook_event=event,
                         error=str(exc),
                     )
     except Exception as exc:
-        log.error("webhook_emit_error", event=event, error=str(exc))
+        log.error("webhook_emit_error", webhook_event=event, error=str(exc))

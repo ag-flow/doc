@@ -5,8 +5,10 @@ import structlog
 from fastapi import HTTPException
 
 from docflow.auth.jwt import create_token
+from docflow.config.settings import Settings
+from docflow.oidc.verify import OidcVerifyError, exchange_code, verify_id_token
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.oidc import OidcConfigOut, OidcConfigSet, OidcPublicConfig
+from docflow.schemas.oidc import OidcCallbackIn, OidcConfigOut, OidcConfigSet, OidcPublicConfig
 from docflow.secrets.resolver import resolve
 from docflow.secrets.secret import Secret
 
@@ -86,15 +88,60 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
     return _to_out(row)
 
 
-async def handle_oidc_callback(
+async def handle_oidc_callback(pool: asyncpg.Pool, settings: Settings, body: OidcCallbackIn) -> str:
+    """Flow authorization-code : échange le code, vérifie l'id_token, émet un JWT docflow.
+
+    Aucun claim n'est accepté sans vérification serveur de la signature de
+    l'id_token contre le JWKS de l'issuer configuré (AUTH-01).
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_SELECT)
+    if row is None or not row["enabled"]:
+        raise HTTPException(status_code=403, detail="OIDC non activé")
+    issuer: str = row["issuer"]
+    client_id: str = row["client_id"]
+
+    enc = settings.encryption_key
+    client_secret = await resolve(
+        Secret(row["client_secret_ref"]),
+        harpocrate_url=settings.harpocrate_url,
+        pool=pool,
+        enc_key=enc.reveal() if enc is not None else None,
+    )
+    try:
+        id_token = await exchange_code(
+            issuer=issuer,
+            code=body.code,
+            redirect_uri=body.redirect_uri,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        claims = await verify_id_token(
+            id_token, issuer=issuer, client_id=client_id, nonce=body.nonce
+        )
+    except OidcVerifyError as exc:
+        # Le message d'OidcVerifyError ne contient ni token, ni claims, ni secret.
+        log.warning("oidc_callback_rejected", reason=str(exc))
+        raise HTTPException(status_code=401, detail="échec de vérification OIDC") from exc
+    return await issue_token_for_verified_claims(pool, settings.jwt_secret.reveal(), claims)
+
+
+async def issue_token_for_verified_claims(
     pool: asyncpg.Pool, jwt_secret: str, id_token_claims: dict[str, object]
 ) -> str:
-    """Provisionne ou lie l'admin_user depuis les claims OIDC, retourne un JWT docflow."""
+    """Provisionne ou lie l'app_user depuis des claims OIDC **déjà vérifiés**.
+
+    Ne jamais appeler avec des claims non vérifiés : la vérification de
+    signature/iss/aud/exp est faite en amont par `handle_oidc_callback`.
+    """
     email = str(id_token_claims.get("email", ""))
     sub = str(id_token_claims.get("sub", ""))
     name = str(id_token_claims.get("name", email))
     if not email or not sub:
         raise HTTPException(status_code=422, detail="claims OIDC manquants (email/sub)")
+    # email_verified peut être un booléen (standard OIDC) ou une chaîne "true" selon l'IdP.
+    email_verified_raw = id_token_claims.get("email_verified")
+    email_verified = email_verified_raw is True or str(email_verified_raw).lower() == "true"
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -108,30 +155,38 @@ async def handle_oidc_callback(
 
             # Chercher par oidc_subject d'abord, puis par email
             user_row = await conn.fetchrow(
-                "SELECT id, email, label, is_superadmin, disabled, password_hash "
-                "FROM admin_user WHERE oidc_subject = $1",
+                "SELECT id, email, label, is_admin, validated, disabled "
+                "FROM app_user WHERE oidc_subject = $1",
                 sub,
             )
             if user_row is None:
                 user_row = await conn.fetchrow(
-                    "SELECT id, email, label, is_superadmin, disabled, password_hash "
-                    "FROM admin_user WHERE email = $1",
+                    "SELECT id, email, label, is_admin, validated, disabled "
+                    "FROM app_user WHERE email = $1",
                     email,
                 )
                 if user_row is not None:
-                    # Lier le compte existant : remplir oidc_subject, préserver password_hash
+                    # Ne lier un compte existant par email que si l'IdP a vérifié cet email,
+                    # sinon un sub attaquant portant l'email d'un compte local (admin) en
+                    # prendrait le contrôle (account takeover). Cf. AUTH-02.
+                    if not email_verified:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="liaison OIDC refusée: email non vérifié par l'IdP",
+                        )
                     await conn.execute(
-                        "UPDATE admin_user SET oidc_subject = $1 WHERE id = $2",
+                        "UPDATE app_user SET oidc_subject = $1, source = 'oidc' WHERE id = $2",
                         sub,
                         user_row["id"],
                     )
                 else:
-                    # Provisionner un nouveau compte (sans password_hash)
+                    # Nouveau compte OIDC : non admin, non validé
                     user_row = await conn.fetchrow(
                         """
-                        INSERT INTO admin_user (email, label, oidc_subject, is_superadmin)
-                        VALUES ($1, $2, $3, false)
-                        RETURNING id, email, label, is_superadmin, disabled, password_hash
+                        INSERT INTO app_user
+                            (email, label, oidc_subject, is_admin, validated, source)
+                        VALUES ($1, $2, $3, false, false, 'oidc')
+                        RETURNING id, email, label, is_admin, validated, disabled
                         """,
                         email,
                         name,
@@ -140,12 +195,15 @@ async def handle_oidc_callback(
     assert user_row is not None
     if user_row["disabled"]:
         raise HTTPException(status_code=403, detail="compte désactivé")
+    if not user_row["validated"]:
+        raise HTTPException(status_code=403, detail="PendingValidation")
 
     user = AuthUser(
         id=user_row["id"],
         email=user_row["email"],
         label=user_row["label"],
-        is_superadmin=user_row["is_superadmin"],
+        is_admin=user_row["is_admin"],
+        validated=user_row["validated"],
         disabled=user_row["disabled"],
     )
     return create_token(user, jwt_secret)

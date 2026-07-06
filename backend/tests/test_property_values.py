@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from docflow.documents import service as doc_svc
+from docflow.errors import DependentsConflictError
 from docflow.properties import service as prop_svc
 from docflow.schemas.constraint import ConstraintCreate
 from docflow.schemas.document import DocumentCreate
@@ -30,12 +31,17 @@ async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
     root_type_id: uuid.UUID = await pool.fetchval(
         "INSERT INTO functional_type (slug, label, workspace_technical_key) "
         "VALUES ($1, $2, $3) RETURNING id",
-        "setup-root", "Setup Root", wk,
+        "setup-root",
+        "Setup Root",
+        wk,
     )
     block_id: uuid.UUID = await pool.fetchval(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4) RETURNING id",
-        "setup-block", "Setup Block", root_type_id, wk,
+        "setup-block",
+        "Setup Block",
+        root_type_id,
+        wk,
     )
 
     await type_svc.create_type(pool, _WS, FunctionalTypeCreate(slug="task", label="Task"))
@@ -46,7 +52,9 @@ async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
         pool, _WS, "task", PropertiesDefCreate(slug="count", label="Count", type="int")
     )
     await prop_svc.create_def(
-        pool, _WS, "task",
+        pool,
+        _WS,
+        "task",
         PropertiesDefCreate(slug="status", label="Status", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
@@ -56,7 +64,8 @@ async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
         pool, _WS, "task", "status", AllowedValueCreate(slug="done", label="Done", position=1)
     )
     doc = await doc_svc.create_document(
-        pool, _WS,
+        pool,
+        _WS,
         DocumentCreate(title="My task", functional_type_slug="task", block_id=block_id),
     )
     return "task", doc.doc_technical_key
@@ -86,8 +95,7 @@ async def test_set_int_value_invalid(db_pool: asyncpg.Pool, test_workspace: dict
     _, doc_id = await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "count",
-            PropertyValueSet(value="not-an-int", expected_version=0)
+            db_pool, _WS, doc_id, "count", PropertyValueSet(value="not-an-int", expected_version=0)
         )
     assert exc.value.status_code == 422
 
@@ -95,8 +103,11 @@ async def test_set_int_value_invalid(db_pool: asyncpg.Pool, test_workspace: dict
 async def test_set_restricted_list_value(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     _, doc_id = await _setup(db_pool)
     result = await doc_svc.set_property_value(
-        db_pool, _WS, doc_id, "status",
-        PropertyValueSet(allowed_value_slug="todo", expected_version=0)
+        db_pool,
+        _WS,
+        doc_id,
+        "status",
+        PropertyValueSet(allowed_value_slug="todo", expected_version=0),
     )
     assert result.allowed_value_slug == "todo"
     assert result.type == "restricted_list"
@@ -108,8 +119,11 @@ async def test_set_wrong_type_i3(db_pool: asyncpg.Pool, test_workspace: dict) ->
     _, doc_id = await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "title",
-            PropertyValueSet(allowed_value_slug="todo", expected_version=0)
+            db_pool,
+            _WS,
+            doc_id,
+            "title",
+            PropertyValueSet(allowed_value_slug="todo", expected_version=0),
         )
     assert exc.value.status_code == 422
 
@@ -119,8 +133,11 @@ async def test_i2_prop_not_in_type(db_pool: asyncpg.Pool, test_workspace: dict) 
     _, doc_id = await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "nonexistent-prop",
-            PropertyValueSet(value="x", expected_version=0)
+            db_pool,
+            _WS,
+            doc_id,
+            "nonexistent-prop",
+            PropertyValueSet(value="x", expected_version=0),
         )
     assert exc.value.status_code == 422
     assert "I-2" in exc.value.detail
@@ -147,16 +164,22 @@ async def test_optimistic_lock_409_dod3(db_pool: asyncpg.Pool, test_workspace: d
 
     # Première écriture (v0 → v1)
     result = await doc_svc.set_property_value(
-        db_pool, _WS, doc_id, "status",
-        PropertyValueSet(allowed_value_slug="todo", expected_version=0)
+        db_pool,
+        _WS,
+        doc_id,
+        "status",
+        PropertyValueSet(allowed_value_slug="todo", expected_version=0),
     )
     assert result.version == 1
 
     # Rejouer avec expected_version=0 (devrait être 1) → 409
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "status",
-            PropertyValueSet(allowed_value_slug="done", expected_version=0)
+            db_pool,
+            _WS,
+            doc_id,
+            "status",
+            PropertyValueSet(allowed_value_slug="done", expected_version=0),
         )
     assert exc.value.status_code == 409
     detail = exc.value.detail
@@ -192,11 +215,16 @@ async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: di
     _, _ = await _setup(db_pool)
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
     await prop_svc.create_def(
-        db_pool, _WS, "story",
+        db_pool,
+        _WS,
+        "story",
         PropertiesDefCreate(slug="budget_jours", label="Budget jours", type="int"),
     )
     await prop_svc.upsert_constraint(
-        db_pool, _WS, "story", "budget_jours",
+        db_pool,
+        _WS,
+        "story",
+        "budget_jours",
         ConstraintCreate(kind="min", value="0", message="budget_jours ne peut pas être négatif"),
     )
     # Réutilise le bloc créé par _setup
@@ -204,13 +232,17 @@ async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: di
         "SELECT id FROM data_block WHERE slug = $1", "setup-block"
     )
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Story 1", functional_type_slug="story", block_id=block_id),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc.doc_technical_key, "budget_jours",
-            PropertyValueSet(value="-1", expected_version=0)
+            db_pool,
+            _WS,
+            doc.doc_technical_key,
+            "budget_jours",
+            PropertyValueSet(value="-1", expected_version=0),
         )
     assert exc.value.status_code == 422
     assert "budget_jours ne peut pas être négatif" in exc.value.detail
@@ -223,18 +255,26 @@ async def test_allowed_value_wrong_def_422_dod5(
     _, doc_id = await _setup(db_pool)
     # Ajoute une prop 'priority' avec 'high'
     await prop_svc.create_def(
-        db_pool, _WS, "task",
+        db_pool,
+        _WS,
+        "task",
         PropertiesDefCreate(slug="priority", label="Priority", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
-        db_pool, _WS, "task", "priority",
+        db_pool,
+        _WS,
+        "task",
+        "priority",
         AllowedValueCreate(slug="high", label="High"),
     )
     # "high" appartient à "priority", pas à "status"
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "status",
-            PropertyValueSet(allowed_value_slug="high", expected_version=0)
+            db_pool,
+            _WS,
+            doc_id,
+            "status",
+            PropertyValueSet(allowed_value_slug="high", expected_version=0),
         )
     assert exc.value.status_code == 422
     assert "I-5" in exc.value.detail
@@ -275,9 +315,7 @@ async def test_constraint_pattern(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert ok.value == "Uppercase"
 
 
-async def test_constraint_pattern_only_on_text(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+async def test_constraint_pattern_only_on_text(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """I-6 : pattern interdit sur int."""
     await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:
@@ -290,25 +328,47 @@ async def test_constraint_pattern_only_on_text(
 async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     """I-4 : supprimer la valeur d'une propriété required → rejet."""
     _, _ = await _setup(db_pool)
-    await type_svc.create_type(
-        db_pool, _WS, FunctionalTypeCreate(slug="req-type", label="Req")
-    )
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="req-type", label="Req"))
     await prop_svc.create_def(
-        db_pool, _WS, "req-type",
+        db_pool,
+        _WS,
+        "req-type",
         PropertiesDefCreate(slug="req-prop", label="Req Prop", type="text", required=True),
     )
     block_id: uuid.UUID = await db_pool.fetchval(
         "SELECT id FROM data_block WHERE slug = $1", "setup-block"
     )
+    # Contrat dur : la required doit être fournie dès la création
     doc = await doc_svc.create_document(
-        db_pool, _WS,
-        DocumentCreate(title="Req doc", functional_type_slug="req-type", block_id=block_id),
-    )
-    await doc_svc.set_property_value(
-        db_pool, _WS, doc.doc_technical_key, "req-prop",
-        PropertyValueSet(value="val", expected_version=0)
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Req doc",
+            functional_type_slug="req-type",
+            block_id=block_id,
+            properties={"req-prop": "val"},
+        ),
     )
     with pytest.raises(HTTPException) as exc:
         await doc_svc.delete_property_value(db_pool, _WS, doc.doc_technical_key, "req-prop")
     assert exc.value.status_code == 422
     assert "I-4" in exc.value.detail
+
+
+async def test_delete_def_with_values_needs_confirm(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DOC-07 : supprimer une def portant des valeurs → refus sans confirm
+    (dépendants comptés), cascade assumée avec confirm=True."""
+    _, doc_id = await _setup(db_pool)
+    await doc_svc.set_property_value(
+        db_pool, _WS, doc_id, "title", PropertyValueSet(value="Hello", expected_version=0)
+    )
+    with pytest.raises(DependentsConflictError) as guard:
+        await prop_svc.delete_def(db_pool, _WS, "task", "title")
+    assert guard.value.dependents == 1
+    # Rien n'a été supprimé tant que confirm n'est pas fourni
+    assert any(d.slug == "title" for d in await prop_svc.list_defs(db_pool, _WS, "task"))
+
+    await prop_svc.delete_def(db_pool, _WS, "task", "title", confirm=True)
+    assert not any(d.slug == "title" for d in await prop_svc.list_defs(db_pool, _WS, "task"))

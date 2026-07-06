@@ -6,6 +6,8 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_type, require_workspace
+from docflow.documents.changelog import log_structure_change
+from docflow.errors import DependentsConflictError
 from docflow.schemas.types import (
     AllowedValueRich,
     FunctionalTypeCreate,
@@ -16,7 +18,7 @@ from docflow.schemas.types import (
 )
 
 _SELECT_TYPE = """
-SELECT ft.id, ft.slug, ft.label, ft.created_at, ft.updated_at,
+SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.created_at, ft.updated_at,
        p.slug AS parent_slug,
        w.slug AS workspace_slug
 FROM functional_type ft
@@ -26,7 +28,7 @@ WHERE ft.workspace_technical_key = $1 AND ft.slug = $2
 """
 
 _SELECT_ALL = """
-SELECT ft.id, ft.slug, ft.label, ft.created_at, ft.updated_at,
+SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.created_at, ft.updated_at,
        p.slug AS parent_slug,
        w.slug AS workspace_slug
 FROM functional_type ft
@@ -38,7 +40,7 @@ ORDER BY ft.created_at
 
 _UPDATE_RETURNING = (
     "UPDATE functional_type SET {cols}, updated_at = now() WHERE id = $1 "
-    "RETURNING id, slug, label, parent, created_at, updated_at"
+    "RETURNING id, slug, label, parent, content_template, created_at, updated_at"
 )
 
 
@@ -49,6 +51,7 @@ def _row_to_out(row: asyncpg.Record) -> FunctionalTypeOut:
         label=row["label"],
         parent_slug=row["parent_slug"],
         workspace_slug=row["workspace_slug"],
+        content_template=row["content_template"] if "content_template" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -99,11 +102,14 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                 label=tr["label"],
                 parent_slug=tr["parent_slug"],
                 workspace_slug=tr["workspace_slug"],
+                content_template=(
+                    tr["content_template"] if "content_template" in tr.keys() else None
+                ),
                 created_at=tr["created_at"],
                 updated_at=tr["updated_at"],
             )
             defs = await conn.fetch(
-                "SELECT id, slug, label, type, default_value, required "
+                "SELECT id, slug, label, type, default_value, required, behavior "
                 "FROM properties_defs WHERE functional_type_ref = $1 ORDER BY created_at",
                 tr["id"],
             )
@@ -132,6 +138,7 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                         type=d["type"],
                         default_value=d["default_value"],
                         required=d["required"],
+                        behavior=d["behavior"],
                         allowed_values=avs,
                     )
                 )
@@ -160,7 +167,7 @@ async def create_type(
 ) -> FunctionalTypeOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             parent_id: uuid.UUID | None = None
             if data.parent_slug:
                 parent_id = await _resolve_parent(conn, wk, data.parent_slug)
@@ -182,13 +189,15 @@ async def create_type(
                     status_code=409,
                     detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
                 ) from exc
-    assert row is not None
+            assert row is not None
+            await log_structure_change(conn, wk, "type", "C", row["id"])
     return FunctionalTypeOut(
         id=row["id"],
         slug=row["slug"],
         label=row["label"],
         parent_slug=data.parent_slug,
         workspace_slug=ws_slug,
+        content_template=None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -203,7 +212,7 @@ async def update_type(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
 
             parent_id: uuid.UUID | None = None
@@ -221,6 +230,7 @@ async def update_type(
                 type_id,
                 *vals,
             )
+            await log_structure_change(conn, wk, "type", "U", type_id)
 
     assert row is not None
     parent_slug_out: str | None = None
@@ -237,20 +247,58 @@ async def update_type(
         label=row["label"],
         parent_slug=parent_slug_out,
         workspace_slug=ws_slug,
+        content_template=row["content_template"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
-async def delete_type(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> None:
+# DOC-07 : dépendants détruits par la cascade 0011 (functional_type.parent CASCADE,
+# data_block.functional_type_ref CASCADE, document.data_block_ref CASCADE) =
+# types descendants + blocs de ces types + documents de ces blocs.
+_COUNT_TYPE_DEPENDENTS = """
+WITH RECURSIVE type_subtree AS (
+    SELECT id FROM functional_type WHERE id = $1
+    UNION ALL
+    SELECT t.id FROM functional_type t JOIN type_subtree s ON t.parent = s.id
+),
+blocks AS (
+    SELECT b.id FROM data_block b
+    WHERE b.functional_type_ref IN (SELECT id FROM type_subtree)
+)
+SELECT (SELECT count(*) FROM type_subtree) - 1 AS child_types,
+       (SELECT count(*) FROM blocks) AS blocks,
+       (SELECT count(*) FROM document d
+        WHERE d.data_block_ref IN (SELECT id FROM blocks)) AS documents
+"""
+
+
+async def delete_type(
+    pool: asyncpg.Pool, ws_slug: str, type_slug: str, *, confirm: bool = False
+) -> None:
+    """Supprime un type fonctionnel.
+
+    DOC-07 : la cascade 0011 détruit les types descendants, les blocs de ces
+    types et tous les documents de ces blocs (valeurs et historique compris).
+    On refuse (409) tant que ``confirm`` n'est pas fourni s'il existe des
+    dépendants ; avec ``confirm``, la cascade DB est assumée.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             type_id = await require_type(conn, wk, type_slug)
-            try:
-                await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)
-            except (asyncpg.ForeignKeyViolationError, asyncpg.RestrictViolationError) as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="impossible de supprimer ce type : contrainte de référence",
-                ) from exc
+            counts = await conn.fetchrow(_COUNT_TYPE_DEPENDENTS, type_id)
+            assert counts is not None
+            dependents = counts["child_types"] + counts["blocks"] + counts["documents"]
+            if dependents > 0 and not confirm:
+                raise DependentsConflictError(
+                    detail=(
+                        f"la suppression du type '{type_slug}' détruirait en cascade "
+                        f"{counts['child_types']} type(s) enfant(s), {counts['blocks']} bloc(s) "
+                        f"et {counts['documents']} document(s) (valeurs et historique compris) ; "
+                        "repasser avec confirm=true pour confirmer la suppression"
+                    ),
+                    dependents=dependents,
+                )
+            await conn.execute("DELETE FROM functional_type WHERE id = $1", type_id)
+            await log_structure_change(conn, wk, "type", "D", type_id)

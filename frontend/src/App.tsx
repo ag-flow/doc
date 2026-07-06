@@ -18,6 +18,9 @@ import { WebhooksAdmin } from './pages/WebhooksAdmin'
 import { OidcAdmin } from './pages/OidcAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
+import { UsersAdmin } from './pages/UsersAdmin'
+import { ApiKeysPage } from './pages/ApiKeysPage'
+import { RemotePage } from './pages/RemotePage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -92,6 +95,30 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><OidcAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/admin/users',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><UsersAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/api-keys',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ApiKeysPage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/admin/remote',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><RemotePage /></AppLayout>
       </ProtectedRoute>
     ),
   },

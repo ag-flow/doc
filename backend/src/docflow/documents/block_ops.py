@@ -8,8 +8,11 @@ import asyncpg
 import structlog
 from fastapi import HTTPException
 
+from docflow.artifacts.service import refresh_artifact_references
 from docflow.db.helpers import require_workspace
+from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
+from docflow.documents.template_apply import compute_initial_content
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
 log = structlog.get_logger(__name__)
@@ -17,7 +20,7 @@ log = structlog.get_logger(__name__)
 _SELECT_BLOCK_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
        d.parent, d.created_at, d.updated_at,
-       d.data_block_ref, d.exposed,
+       d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
 FROM document d
@@ -33,6 +36,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
@@ -159,14 +163,26 @@ async def allowed_types(
                 raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
             return [{"slug": row["slug"], "label": row["label"]}]
         else:
-            rows = await conn.fetch(
+            block_id, _ = await _resolve_block_id(conn, wk, block_slug)
+            parent_ft: uuid.UUID | None = await conn.fetchval(
                 """
-                SELECT ft.slug, ft.label FROM functional_type ft
-                WHERE ft.parent = (
-                    SELECT d.functional_type_ref FROM document d WHERE d.doc_technical_key = $1
-                )
+                SELECT d.functional_type_ref FROM document d
+                WHERE d.doc_technical_key = $1
+                  AND d.workspace_technical_key = $2
+                  AND d.data_block_ref = $3
                 """,
                 parent_id,
+                wk,
+                block_id,
+            )
+            if parent_ft is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"document parent {parent_id} introuvable dans ce bloc",
+                )
+            rows = await conn.fetch(
+                "SELECT ft.slug, ft.label FROM functional_type ft WHERE ft.parent = $1",
+                parent_ft,
             )
             return [{"slug": r["slug"], "label": r["label"]} for r in rows]
 
@@ -287,7 +303,7 @@ async def create_document_in_block(
     """Création deux temps : validate type autorisé → crée document v1 + valeurs par défaut."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug)
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
             block_id, block_ft_ref = await _resolve_block_id(conn, wk, block_slug)
 
             # 1. Valider le parent (doit appartenir au même bloc)
@@ -381,34 +397,76 @@ async def create_document_in_block(
                         body.parent_id,
                     )
                 )
-            row = await conn.fetchrow(
-                """
-                INSERT INTO document
-                    (title, parent, functional_type_ref, workspace_technical_key, data_block_ref,
-                     exposed)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING doc_technical_key, title, type, version, parent,
-                          data_block_ref, exposed, created_at, updated_at
-                """,
-                body.title,
-                body.parent_id,
-                ft_id,
-                wk,
-                block_id,
-                parent_exposed,
-            )
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO document
+                        (title, slug, parent, functional_type_ref, workspace_technical_key,
+                         data_block_ref, exposed)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING doc_technical_key, title, type, version, parent,
+                              data_block_ref, exposed, slug, created_at, updated_at
+                    """,
+                    body.title,
+                    body.slug,
+                    body.parent_id,
+                    ft_id,
+                    wk,
+                    block_id,
+                    parent_exposed,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"slug '{body.slug}' déjà utilisé dans ce workspace",
+                ) from exc
             assert row is not None
             doc_id: uuid.UUID = row["doc_technical_key"]
 
+            # Appliquer le content_template du type (DOC-14 #1)
+            initial_content = await compute_initial_content(conn, ft_id, body.title)
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, 1, $2, NULL)",
+                "VALUES ($1, 1, $2, $3)",
                 doc_id,
                 body.title,
+                initial_content,
             )
+            # Un template de contenu peut porter des références d'artefacts :
+            # les tracer dès la création pour que le refcount soit juste.
+            await refresh_artifact_references(conn, doc_id, wk, initial_content)
 
             # 5. Instancier les valeurs par défaut
             await _instantiate_default_values(conn, wk, doc_id, ft_id)
+
+            # 5bis. Valeurs initiales fournies + contrat dur (required) +
+            # comportements automatiques — même contrat que create_document.
+            if body.properties:
+                for prop_slug, prop_value in body.properties.items():
+                    prop_row = await conn.fetchrow(
+                        "SELECT id, type, behavior FROM properties_defs "
+                        "WHERE functional_type_ref = $1 AND slug = $2",
+                        ft_id,
+                        prop_slug,
+                    )
+                    if prop_row is None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"propriété '{prop_slug}' inconnue pour ce type (I-2)",
+                        )
+                    if prop_row["behavior"] is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"propriété '{prop_slug}' gérée automatiquement "
+                                f"({prop_row['behavior']}) : écriture manuelle refusée"
+                            ),
+                        )
+                    await prop_writes.upsert_value(
+                        conn, wk, doc_id, prop_row["id"], prop_row["type"], prop_value, prop_slug
+                    )
+            await prop_writes.apply_behaviors(conn, wk, doc_id, ft_id)
+            await prop_writes.assert_required_satisfied(conn, doc_id, ft_id)
 
             # 6. Journaliser la création (spec 30)
             await log_change(conn, wk, doc_id, "C")
@@ -417,6 +475,7 @@ async def create_document_in_block(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
         type=row["type"],
+        slug=row["slug"],
         content=None,
         version=row["version"],
         parent_id=row["parent"],
