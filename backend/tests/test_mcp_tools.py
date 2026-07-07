@@ -225,6 +225,53 @@ async def test_get_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
     assert "error" in data  # type: ignore[operator]
 
 
+async def test_get_document_warns_required_unset(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Une propriété obligatoire ajoutée après création (donc non renseignée)
+    déclenche un warning consultatif dans get_document (cas legacy : le contrat
+    dur ne protège que la création)."""
+    await db_pool.execute(
+        "INSERT INTO properties_defs (slug, label, type, functional_type_ref, required) "
+        "VALUES ($1, $2, $3, $4, true)",
+        "statut",
+        "Statut",
+        "text",
+        mcp_ws["type_id"],
+    )
+    data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    warnings = data.get("warnings")  # type: ignore[union-attr]
+    assert warnings, "un warning est attendu pour la required non renseignée"
+    assert "statut" in warnings[0]
+
+
+async def test_get_document_no_warning_when_satisfied(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Une required renseignée ne déclenche aucun warning."""
+    await db_pool.execute(
+        "INSERT INTO properties_defs (slug, label, type, functional_type_ref, required) "
+        "VALUES ($1, $2, $3, $4, true)",
+        "statut",
+        "Statut",
+        "text",
+        mcp_ws["type_id"],
+    )
+    _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "prop_slug": "statut",
+                "value": "a_cadrer",
+            },
+        )
+    )
+    data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    assert "warnings" not in data  # type: ignore[operator]
+
+
 # ---------------------------------------------------------------------------
 # 6. create_document
 # ---------------------------------------------------------------------------
@@ -318,6 +365,9 @@ async def test_list_property_values_retourne_prop(
     assert isinstance(data, list)
     slugs = [p["prop_slug"] for p in data]  # type: ignore[union-attr]
     assert "priority" in slugs
+    # Chaque entrée expose le flag required (ici priority n'est pas obligatoire)
+    priority = next(p for p in data if p["prop_slug"] == "priority")  # type: ignore[union-attr,index]
+    assert priority["required"] is False
 
 
 # ---------------------------------------------------------------------------

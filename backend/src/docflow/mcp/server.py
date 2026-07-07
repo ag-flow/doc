@@ -81,6 +81,8 @@ _TOOLS: list[Tool] = [
         description=(
             "Lit le contenu complet d'un document : id, title, contenu (markdown "
             "brut), functional_type_slug. "
+            "Ajoute 'warnings' (liste) lorsque des propriétés obligatoires du type "
+            "sont non renseignées : les renseigner avec set_property_value. "
             "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
             "au workspace indiqué. "
             "Lecture seule — aucun effet de bord."
@@ -329,8 +331,11 @@ _TOOLS: list[Tool] = [
             "Retourne toutes les propriétés du type fonctionnel du document avec "
             "leur valeur actuelle (null si non renseignée). "
             "Chaque entrée contient : prop_slug, label, type "
-            "(text | int | restricted_list), value (texte brut pour text/int), "
+            "(text | int | restricted_list), required (bool — obligatoire), "
+            "value (texte brut pour text/int), "
             "allowed_value_slug + allowed_value_label (pour restricted_list). "
+            "Une entrée required=true avec value et allowed_value_slug null est "
+            "une valeur obligatoire manquante : la renseigner avec set_property_value. "
             "Utiliser prop_slug et allowed_value_slug avec set_property_value "
             "pour écrire une valeur. "
             "Lecture seule — aucun effet de bord."
@@ -349,7 +354,7 @@ _TOOLS: list[Tool] = [
         description=(
             "Lit la valeur actuelle d'une seule propriété d'un document. "
             "Retourne : prop_slug, label, type (text | int | restricted_list), "
-            "value (texte brut pour text/int, null si vide), "
+            "required (bool — obligatoire), value (texte brut pour text/int, null si vide), "
             "allowed_value_slug + allowed_value_label (pour restricted_list, null si vide). "
             "Préférer list_property_values pour lire toutes les propriétés d'un coup ; "
             "utiliser cet outil quand seule une propriété précise est nécessaire. "
@@ -766,6 +771,43 @@ async def _require_workspace(conn: asyncpg.Connection, ws_slug: str) -> uuid.UUI
     return wk
 
 
+async def _required_unset_slugs(
+    conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid.UUID
+) -> list[str]:
+    """Slugs des propriétés *required* du type du document dont la valeur est nulle.
+
+    Garde-fou consultatif au read : le contrat dur (422 à l'écriture, cf.
+    ``assert_required_satisfied``) ne protège que les créations. Un document
+    antérieur à l'ajout de la contrainte — ou dont la valeur par défaut n'a jamais
+    été instanciée — peut présenter une propriété obligatoire à null. On ignore
+    les propriétés à ``behavior`` (renseignées par le serveur). Le ``default_value``
+    n'est PAS considéré satisfaisant ici : s'il n'a pas été matérialisé en valeur,
+    le read renvoie bel et bien null et l'agent doit la renseigner.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT pd.slug
+        FROM properties_defs pd
+        JOIN document d ON d.functional_type_ref = pd.functional_type_ref
+                       AND d.workspace_technical_key = $1
+                       AND d.doc_technical_key = $2
+        LEFT JOIN properties_values pv ON pv.property_def_ref = pd.id
+                                      AND pv.document_ref = d.doc_technical_key
+        LEFT JOIN properties_value_version pvv
+               ON pvv.property_value_ref = pv.id
+              AND pvv.version_number = pv.version
+        WHERE pd.required
+          AND pd.behavior IS NULL
+          AND pvv.value IS NULL
+          AND pvv.allowed_value_ref IS NULL
+        ORDER BY pd.slug
+        """,
+        wk,
+        doc_id,
+    )
+    return [r["slug"] for r in rows]
+
+
 async def _list_types(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
     async with pool.acquire() as conn:
         wk = await _require_workspace(conn, ws_slug)
@@ -813,9 +855,17 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
             wk,
             uuid.UUID(doc_id),
         )
-    if row is None:
-        return _text({"error": f"document '{doc_id}' introuvable"})
-    return _text(dict(row))
+        if row is None:
+            return _text({"error": f"document '{doc_id}' introuvable"})
+        unset = await _required_unset_slugs(conn, wk, uuid.UUID(doc_id))
+    result = dict(row)
+    if unset:
+        result["warnings"] = [
+            "propriété(s) obligatoire(s) non renseignée(s) : "
+            + ", ".join(unset)
+            + " — les renseigner avec set_property_value"
+        ]
+    return _text(result)
 
 
 async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1024,7 +1074,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
         wk = await _require_workspace(conn, ws_slug)
         rows = await conn.fetch(
             """
-            SELECT pd.slug AS prop_slug, pd.label, pd.type,
+            SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
@@ -1053,7 +1103,7 @@ async def _get_property_value(
         wk = await _require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             """
-            SELECT pd.slug AS prop_slug, pd.label, pd.type,
+            SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
