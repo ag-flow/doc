@@ -28,6 +28,7 @@ from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
 from docflow.errors import DependentsConflictError
+from docflow.events.router import router as events_router
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
@@ -134,6 +135,7 @@ app.include_router(reactions_router, prefix=_API)
 app.include_router(references_router, prefix=_API)
 app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
+app.include_router(events_router, prefix=_API)
 app.include_router(export_router, prefix=_API)
 app.include_router(views_router, prefix=_API)
 app.include_router(apikeys_router, prefix=_API)
