@@ -271,6 +271,29 @@ SELECT (SELECT count(*) FROM subtree) - 1 AS child_blocks,
 """
 
 
+async def count_block_dependents(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> dict[str, int]:
+    """Décompte des dépendants détruits par la cascade d'un delete_block.
+
+    Retourne {"child_blocks": n, "documents": m}. Miroir applicatif de la garde
+    de delete_block, exposé pour que la primitive MCP puisse afficher le décompte
+    avant confirmation. Lève 404 si le bloc n'existe pas.
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        block_id: uuid.UUID | None = await conn.fetchval(
+            "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = $2",
+            wk,
+            block_slug,
+        )
+        if block_id is None:
+            raise HTTPException(status_code=404, detail=f"bloc '{block_slug}' introuvable")
+        counts = await conn.fetchrow(_COUNT_BLOCK_DEPENDENTS, block_id)
+        assert counts is not None
+    return {"child_blocks": counts["child_blocks"], "documents": counts["documents"]}
+
+
 async def delete_block(
     pool: asyncpg.Pool, ws_slug: str, block_slug: str, *, confirm: bool = False
 ) -> None:
