@@ -372,6 +372,14 @@ export const docsApi = {
 
   setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+
+  /** Supprime un bloc. Sans `confirm`, l'API refuse (409) si le bloc a des
+   *  dépendants — le message d'erreur porte le décompte à afficher avant de
+   *  reconfirmer avec `confirm=true` (cascade assumée). */
+  deleteBlock: (ws: string, blockSlug: string, confirm = false) =>
+    api.delete<void>(
+      `/workspaces/${ws}/blocks/${blockSlug}${confirm ? '?confirm=true' : ''}`,
+    ),
 }
 
 // ── Artefacts (images des documents) ────────────────────────────────────────

@@ -22,7 +22,14 @@
     "rootType": "Type racine",
     "selectType": "— choisir un type racine —",
     "empty": "Aucun bloc dans ce workspace",
-    "open": "Ouvrir"
+    "open": "Ouvrir",
+    "delete": "Supprimer",
+    "deleteTitle": "Supprimer le bloc",
+    "deleteConfirm": "Supprimer définitivement le bloc « {{label}} » ?",
+    "deleteEmptyHint": "Ce bloc est vide.",
+    "deleteWarnTitle": "Suppression en cascade",
+    "deleteConfirmCascade": "Supprimer quand même",
+    "deleting": "Suppression…"
   },
   "tpl": {
     "title": "Templates",

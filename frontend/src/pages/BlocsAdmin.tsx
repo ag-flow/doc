@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react'
 import {
   api, ApiError, docsApi, referencesApi,
   type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
@@ -68,10 +68,98 @@ function BrokenLinksBadge({
   )
 }
 
+/** Confirmation de suppression d'un bloc en deux temps :
+ *  1er « Supprimer » → tentative sans confirm ; si le bloc a des dépendants
+ *  l'API répond 409 avec le décompte, qu'on affiche avant de reconfirmer la
+ *  cascade. Bloc vide → suppression directe après la 1ʳᵉ confirmation. */
+function DeleteBlocDialog({
+  bloc,
+  wsSlug,
+  onClose,
+  onDeleted,
+}: {
+  bloc: DataBlockOut
+  wsSlug: string
+  onClose: () => void
+  onDeleted: () => void
+}) {
+  const { t } = useTranslation()
+  const [cascadeMsg, setCascadeMsg] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  const deleteMutation = useMutation({
+    mutationFn: (confirm: boolean) => docsApi.deleteBlock(wsSlug, bloc.slug, confirm),
+    onSuccess: () => onDeleted(),
+    onError: (e: Error) => {
+      // 409 = dépendants : on bascule en confirmation de cascade avec le décompte.
+      if (e instanceof ApiError && e.status === 409) {
+        setCascadeMsg(e.message)
+      } else {
+        setError(e instanceof Error ? e.message : t('error.generic'))
+      }
+    },
+  })
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      data-testid="delete-bloc-dialog"
+    >
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <h2 className="mb-3 text-lg font-semibold text-gray-900">{t('blocs.deleteTitle')}</h2>
+
+        {cascadeMsg ? (
+          <div
+            className="mb-4 flex gap-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+            data-testid="delete-bloc-cascade"
+          >
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">{t('blocs.deleteWarnTitle')}</p>
+              <p className="mt-1">{cascadeMsg}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="mb-4 text-sm text-gray-600">
+            {t('blocs.deleteConfirm', { label: bloc.label })}
+          </p>
+        )}
+
+        {error && (
+          <p className="mb-3 text-sm text-red-600" data-testid="delete-bloc-error">
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={deleteMutation.isPending}>
+            {t('common.cancel')}
+          </Button>
+          <button
+            type="button"
+            onClick={() => deleteMutation.mutate(cascadeMsg !== null)}
+            disabled={deleteMutation.isPending}
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white
+                       transition-colors hover:bg-red-700 disabled:opacity-50"
+            data-testid="delete-bloc-confirm"
+          >
+            {deleteMutation.isPending
+              ? t('blocs.deleting')
+              : cascadeMsg
+                ? t('blocs.deleteConfirmCascade')
+                : t('blocs.delete')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [blocToDelete, setBlocToDelete] = useState<DataBlockOut | null>(null)
 
   const exposeMutation = useMutation({
     mutationFn: ({ slug, exposed }: { slug: string; exposed: boolean }) =>
@@ -80,6 +168,14 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
       void qc.invalidateQueries({ queryKey: ['blocs', wsSlug] })
     },
   })
+
+  function handleDeleted() {
+    // Le bloc et ses documents ont disparu : rafraîchir la liste ET les liens
+    // cassés (des références entrantes peuvent être devenues orphelines).
+    void qc.invalidateQueries({ queryKey: ['blocs', wsSlug] })
+    void qc.invalidateQueries({ queryKey: ['broken-links', wsSlug] })
+    setBlocToDelete(null)
+  }
 
   const { data: brokenLinks = [] } = useQuery<BrokenLinkBloc[]>({
     queryKey: ['broken-links', wsSlug],
@@ -93,6 +189,7 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
   )
 
   return (
+    <>
     <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b text-left text-gray-500">
@@ -152,12 +249,31 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
                 >
                   {t('blocs.open')}
                 </Button>
+                <button
+                  type="button"
+                  title={t('blocs.delete')}
+                  onClick={() => setBlocToDelete(bloc)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium
+                    text-red-600 transition-colors hover:bg-red-50"
+                  data-testid={`delete-bloc-${bloc.slug}`}
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             </td>
           </tr>
         )})}
       </tbody>
     </table>
+    {blocToDelete && (
+      <DeleteBlocDialog
+        bloc={blocToDelete}
+        wsSlug={wsSlug}
+        onClose={() => setBlocToDelete(null)}
+        onDeleted={handleDeleted}
+      />
+    )}
+    </>
   )
 }
 
