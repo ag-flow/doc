@@ -537,6 +537,63 @@ _TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="list_blocks",
+        description=(
+            "Liste l'ossature complète des blocs d'un workspace. "
+            "LECTURE : aucun effet de bord. "
+            "Retourne pour chaque bloc : slug, label, functional_type_slug (type de "
+            "sa racine), parent_slug (null si bloc racine) et exposed. "
+            "À utiliser avant create_document (pour connaître les blocs et leur type) "
+            "et avant delete_block, pour ne pas créer de bloc ad hoc en doublon."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace (issu de list_workspaces)",
+                },
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="delete_block",
+        description=(
+            "Supprime un bloc d'un workspace. "
+            "SUPPRESSION EN CASCADE : les blocs enfants et TOUS les documents du "
+            "sous-arbre (avec leurs valeurs, versions et historique) sont détruits. "
+            "Irréversible. "
+            "GARDE : si le bloc a des dépendants (blocs enfants ou documents), l'appel "
+            "est refusé (erreur avec child_blocks / documents / dependents) tant que "
+            "confirm=true n'est pas fourni ; relire ces valeurs avant de confirmer. "
+            "Un bloc vide se supprime sans confirm. "
+            "Retourne {deleted: true, block_slug} en cas de succès."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace",
+                },
+                "block_slug": {
+                    "type": "string",
+                    "description": "Slug du bloc à supprimer",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "true pour confirmer la suppression en cascade quand le bloc "
+                        "a des dépendants (défaut false ; cf. dependents dans la "
+                        "réponse d'erreur pour connaître le nombre concerné)"
+                    ),
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
         name="create_api_profile",
         description=(
             "Crée un profil d'accès API avec un périmètre limité à UN workspace. "
@@ -641,6 +698,8 @@ _WS_TOOLS: dict[str, bool] = {
     "get_block_type": False,
     "set_property_value": True,
     "create_block": True,
+    "list_blocks": False,
+    "delete_block": True,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -739,6 +798,10 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _import_template(pool, arguments)
     if name == "create_block":
         return await _create_block(pool, arguments)
+    if name == "list_blocks":
+        return await _list_blocks(pool, str(arguments.get("workspace_slug", "")))
+    if name == "delete_block":
+        return await _delete_block(pool, arguments)
     if name == "create_api_profile":
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
@@ -947,12 +1010,17 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     if current_version is None:
         return _text({"error": f"document '{doc_id_str}' introuvable"})
 
+    # Ne renseigner que les champs réellement fournis : un champ omis doit rester
+    # « unset » (model_dump(exclude_unset=True) l'exclut) pour que le service
+    # reporte sa valeur courante au lieu de l'écraser à NULL (bug MCO).
+    update_fields: dict[str, object] = {"expected_version": current_version}
+    if "title" in args:
+        update_fields["title"] = title
+    if "contenu" in args:
+        update_fields["content"] = contenu
+
     try:
-        data = DocumentUpdate(
-            title=title,
-            content=contenu,
-            expected_version=current_version,
-        )
+        data = DocumentUpdate(**update_fields)
         doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
     except HTTPException as e:
         return _text({"error": e.detail})
@@ -1302,6 +1370,71 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
             "functional_type_slug": result.functional_type_slug,
         }
     )
+
+
+async def _list_blocks(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks import service as block_svc
+
+    try:
+        blocks = await block_svc.list_blocks(pool, ws_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(
+        [
+            {
+                "slug": b.slug,
+                "label": b.label,
+                "functional_type_slug": b.functional_type_slug,
+                "parent_slug": b.parent_slug,
+                "exposed": b.exposed,
+            }
+            for b in blocks
+        ]
+    )
+
+
+async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks import service as block_svc
+    from docflow.errors import DependentsConflictError
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    block_slug = str(args.get("block_slug", ""))
+    confirm = bool(args.get("confirm", False))
+
+    # Décompte préalable pour un message explicite (miroir de _delete_document).
+    try:
+        counts = await block_svc.count_block_dependents(pool, ws_slug, block_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    dependents = counts["child_blocks"] + counts["documents"]
+    if dependents > 0 and not confirm:
+        return _text(
+            {
+                "error": (
+                    f"la suppression du bloc '{block_slug}' détruirait en cascade "
+                    f"{counts['child_blocks']} bloc(s) enfant(s) et "
+                    f"{counts['documents']} document(s) (valeurs et historique compris) ; "
+                    "rappeler avec confirm=true pour confirmer"
+                ),
+                "child_blocks": counts["child_blocks"],
+                "documents": counts["documents"],
+                "dependents": dependents,
+            }
+        )
+
+    try:
+        await block_svc.delete_block(pool, ws_slug, block_slug, confirm=confirm)
+    except DependentsConflictError as e:
+        return _text({"error": e.detail, "dependents": e.dependents})
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text({"deleted": True, "block_slug": block_slug})
 
 
 async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:

@@ -20,11 +20,13 @@ from docflow.mcp.server import (
     _create_block,
     _create_document,
     _create_workspace,
+    _delete_block,
     _delete_document,
     _get_block_type,
     _get_document,
     _get_property_value,
     _import_template,
+    _list_blocks,
     _list_documents,
     _list_property_values,
     _list_templates,
@@ -153,6 +155,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "workspace_exists",
         "block_exists",
         "get_block_type",
+        "list_blocks",
+        "delete_block",
         "create_artifact",
         "get_artifact",
         "get_artifact_link",
@@ -311,6 +315,96 @@ async def test_create_document_type_inconnu(
     assert "error" in data  # type: ignore[operator]
 
 
+# Bug MCO : create_document doit appliquer la contrainte de type de position
+# (racine du bloc = type du bloc ; sous un parent = fils direct du type du parent),
+# au même titre que set_document_parent. Les 4 combinaisons sont couvertes.
+
+
+@pytest.fixture()
+async def mcp_feature_type(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    """Ajoute un type 'feature' enfant direct de 'epic' au workspace de la fixture."""
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key, parent) "
+        "VALUES ($1, $2, $3, $4)",
+        "feature",
+        "Feature",
+        mcp_ws["wk"],
+        mcp_ws["type_id"],
+    )
+
+
+async def test_create_document_racine_type_incorrect_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_feature_type: None
+) -> None:
+    # Bloc 'epics' typé epic ; poser un 'feature' à la racine (parent omis) → refus.
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Feature à la racine",
+                "functional_type_slug": "feature",
+            },
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_create_document_racine_type_correct_ok(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Epic racine",
+                "functional_type_slug": mcp_ws["type_slug"],
+            },
+        )
+    )
+    assert data["created"] is True  # type: ignore[index]
+
+
+async def test_create_document_enfant_type_correct_ok(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_feature_type: None
+) -> None:
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Feature sous epic",
+                "functional_type_slug": "feature",
+                "parent_id": mcp_ws["doc_id"],
+            },
+        )
+    )
+    assert data["created"] is True  # type: ignore[index]
+
+
+async def test_create_document_enfant_type_invalide_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_feature_type: None
+) -> None:
+    # 'epic' n'est pas un fils direct de 'epic' → refus sous le parent epic.
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Epic sous epic",
+                "functional_type_slug": mcp_ws["type_slug"],
+                "parent_id": mcp_ws["doc_id"],
+            },
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
 # ---------------------------------------------------------------------------
 # 7. update_document
 # ---------------------------------------------------------------------------
@@ -345,6 +439,67 @@ async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, 
         )
     )
     assert "error" in data  # type: ignore[operator]
+
+
+# Bug MCO : omission d'un champ (title ou contenu) ne doit PAS écraser l'autre à NULL.
+# Les deux cas d'omission sont testés dans la même suite (symétrie).
+
+
+async def test_update_document_titre_seul_preserve_contenu(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    # Le doc de la fixture a été créé avec contenu "# Epic A".
+    res = _json(
+        await _update_document(
+            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Epic A renommé"}
+        )
+    )
+    assert res["updated"] is True  # type: ignore[index]
+    got = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert got["title"] == "Epic A renommé"  # type: ignore[index]
+    # Le contenu omis doit être reporté depuis la version précédente, pas mis à NULL.
+    assert got["contenu"] == "# Epic A"  # type: ignore[index]
+
+
+async def test_update_document_contenu_seul_preserve_titre(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    res = _json(
+        await _update_document(
+            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "contenu": "# Nouveau corps"}
+        )
+    )
+    assert res["updated"] is True  # type: ignore[index]
+    got = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    # Le titre omis doit rester inchangé.
+    assert got["title"] == "Epic A"  # type: ignore[index]
+    assert got["contenu"] == "# Nouveau corps"  # type: ignore[index]
+
+
+async def test_update_document_deux_champs(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    res = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": ws, "doc_id": doc_id, "title": "T2", "contenu": "C2"},
+        )
+    )
+    assert res["updated"] is True  # type: ignore[index]
+    got = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert got["title"] == "T2"  # type: ignore[index]
+    assert got["contenu"] == "C2"  # type: ignore[index]
+
+
+async def test_update_document_sans_champ_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    res = _json(await _update_document(db_pool, {"workspace_slug": ws, "doc_id": doc_id}))
+    assert "error" in res  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
@@ -1017,3 +1172,90 @@ async def test_set_parent_uuid_invalide(db_pool: asyncpg.Pool, mcp_ws: dict[str,
         )
     )
     assert result == {"error": "doc_id / parent_id : UUID invalide"}
+
+
+# ---------------------------------------------------------------------------
+# Enabler MCO : list_blocks & delete_block
+# ---------------------------------------------------------------------------
+
+
+async def test_list_blocks_retourne_ossature(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws = mcp_ws["ws_slug"]
+    data = _json(await _list_blocks(db_pool, ws))  # type: ignore[arg-type]
+    assert isinstance(data, list)
+    epics = next(b for b in data if b["slug"] == mcp_ws["block_slug"])
+    assert epics["functional_type_slug"] == mcp_ws["type_slug"]
+    assert epics["parent_slug"] is None
+    assert "label" in epics and "exposed" in epics
+
+
+async def test_list_blocks_workspace_inconnu(db_pool: asyncpg.Pool) -> None:
+    configure(db_pool)
+    data = _json(await _list_blocks(db_pool, "ws-inexistant"))
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_delete_block_vide_reussit(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    ws = mcp_ws["ws_slug"]
+    # Un bloc vide, sans document.
+    created = _json(
+        await _create_block(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "slug": "bloc-vide",
+                "label": "Bloc vide",
+                "functional_type_slug": mcp_ws["type_slug"],
+            },
+        )
+    )
+    assert created["created"] is True  # type: ignore[index]
+
+    res = _json(await _delete_block(db_pool, {"workspace_slug": ws, "block_slug": "bloc-vide"}))
+    assert res["deleted"] is True  # type: ignore[index]
+    # Le bloc disparaît de list_blocks.
+    slugs = [b["slug"] for b in _json(await _list_blocks(db_pool, ws))]  # type: ignore[arg-type,union-attr]
+    assert "bloc-vide" not in slugs
+
+
+async def test_delete_block_non_vide_sans_confirm_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws = mcp_ws["ws_slug"]
+    # Le bloc de la fixture contient déjà un document (Epic A).
+    res = _json(
+        await _delete_block(db_pool, {"workspace_slug": ws, "block_slug": mcp_ws["block_slug"]})
+    )
+    assert "error" in res  # type: ignore[operator]
+    assert res["documents"] == 1  # type: ignore[index]
+    assert res["dependents"] >= 1  # type: ignore[index]
+    # Le bloc est toujours là.
+    slugs = [b["slug"] for b in _json(await _list_blocks(db_pool, ws))]  # type: ignore[arg-type,union-attr]
+    assert mcp_ws["block_slug"] in slugs
+
+
+async def test_delete_block_non_vide_avec_confirm_reussit(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws = mcp_ws["ws_slug"]
+    res = _json(
+        await _delete_block(
+            db_pool,
+            {"workspace_slug": ws, "block_slug": mcp_ws["block_slug"], "confirm": True},
+        )
+    )
+    assert res["deleted"] is True  # type: ignore[index]
+    slugs = [b["slug"] for b in _json(await _list_blocks(db_pool, ws))]  # type: ignore[arg-type,union-attr]
+    assert mcp_ws["block_slug"] not in slugs
+
+
+async def test_delete_block_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
+    res = _json(
+        await _delete_block(
+            db_pool,
+            {"workspace_slug": str(mcp_ws["ws_slug"]), "block_slug": "bloc-fantome"},
+        )
+    )
+    assert "error" in res  # type: ignore[operator]

@@ -184,9 +184,18 @@ async def _validate_type_position(
             "SELECT functional_type_ref FROM data_block WHERE id = $1", block_id
         )
         if block_ft != new_ft_id:
+            expected = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", block_ft
+            )
+            provided = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", new_ft_id
+            )
             raise HTTPException(
                 status_code=422,
-                detail="type non autorisé à la racine de ce bloc (position)",
+                detail=(
+                    "type non autorisé à la racine de ce bloc (position) : "
+                    f"attendu '{expected}', fourni '{provided}'"
+                ),
             )
     else:
         parent_ft = await conn.fetchval(
@@ -197,9 +206,21 @@ async def _validate_type_position(
             "SELECT parent FROM functional_type WHERE id = $1", new_ft_id
         )
         if new_ft_parent != parent_ft:
+            allowed = [
+                r["slug"]
+                for r in await conn.fetch(
+                    "SELECT slug FROM functional_type WHERE parent = $1", parent_ft
+                )
+            ]
+            provided = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", new_ft_id
+            )
             raise HTTPException(
                 status_code=422,
-                detail="type non autorisé sous ce parent (position)",
+                detail=(
+                    "type non autorisé sous ce parent (position) : "
+                    f"fourni '{provided}', attendus {allowed or '(aucun — position feuille)'}"
+                ),
             )
 
 
@@ -329,6 +350,10 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                         detail="le parent doit appartenir au même bloc que le document",
                     )
                 parent_exposed = bool(parent_row["exposed"])
+            # DOC-04 : contrainte de position identique à set_document_parent —
+            # à la racine, le type doit être celui du bloc ; sous un parent, un fils
+            # direct du type du parent. create_document ne la gardait pas (bug MCO).
+            await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
             try:

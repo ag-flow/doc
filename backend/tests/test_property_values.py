@@ -28,23 +28,21 @@ async def _setup(pool: asyncpg.Pool) -> tuple[str, uuid.UUID]:
     wk: uuid.UUID = await pool.fetchval(
         "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
     )
-    root_type_id: uuid.UUID = await pool.fetchval(
-        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
-        "VALUES ($1, $2, $3) RETURNING id",
-        "setup-root",
-        "Setup Root",
+    await type_svc.create_type(pool, _WS, FunctionalTypeCreate(slug="task", label="Task"))
+    task_type_id: uuid.UUID = await pool.fetchval(
+        "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
         wk,
+        "task",
     )
+    # Le bloc doit être typé comme sa racine (contrainte de position) : ici 'task'.
     block_id: uuid.UUID = await pool.fetchval(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
         "VALUES ($1, $2, $3, $4) RETURNING id",
         "setup-block",
         "Setup Block",
-        root_type_id,
+        task_type_id,
         wk,
     )
-
-    await type_svc.create_type(pool, _WS, FunctionalTypeCreate(slug="task", label="Task"))
     await prop_svc.create_def(
         pool, _WS, "task", PropertiesDefCreate(slug="title", label="Title", type="text")
     )
@@ -210,7 +208,9 @@ async def test_version_bump_increments(db_pool: asyncpg.Pool, test_workspace: di
     assert title_v.value == "v2"
 
 
-async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+async def test_constraint_min_422_dod4(
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
+) -> None:
     """DoD 4 : budget_jours = -1 → 422 avec message de la contrainte min."""
     _, _ = await _setup(db_pool)
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="story", label="Story"))
@@ -227,10 +227,8 @@ async def test_constraint_min_422_dod4(db_pool: asyncpg.Pool, test_workspace: di
         "budget_jours",
         ConstraintCreate(kind="min", value="0", message="budget_jours ne peut pas être négatif"),
     )
-    # Réutilise le bloc créé par _setup
-    block_id: uuid.UUID = await db_pool.fetchval(
-        "SELECT id FROM data_block WHERE slug = $1", "setup-block"
-    )
+    # 'story' est un type racine distinct de 'task' : il lui faut son propre bloc.
+    block_id: uuid.UUID = await make_block(_WS, "story", "story-block")
     doc = await doc_svc.create_document(
         db_pool,
         _WS,
@@ -325,7 +323,9 @@ async def test_constraint_pattern_only_on_text(db_pool: asyncpg.Pool, test_works
     assert exc.value.status_code == 422
 
 
-async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+async def test_delete_required_value_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
+) -> None:
     """I-4 : supprimer la valeur d'une propriété required → rejet."""
     _, _ = await _setup(db_pool)
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="req-type", label="Req"))
@@ -335,9 +335,7 @@ async def test_delete_required_value_rejected(db_pool: asyncpg.Pool, test_worksp
         "req-type",
         PropertiesDefCreate(slug="req-prop", label="Req Prop", type="text", required=True),
     )
-    block_id: uuid.UUID = await db_pool.fetchval(
-        "SELECT id FROM data_block WHERE slug = $1", "setup-block"
-    )
+    block_id: uuid.UUID = await make_block(_WS, "req-type", "req-block")
     # Contrat dur : la required doit être fournie dès la création
     doc = await doc_svc.create_document(
         db_pool,
