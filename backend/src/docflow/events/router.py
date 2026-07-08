@@ -39,9 +39,7 @@ async def get_schema_versions(event_code: str, _: AuthUser = _Auth) -> dict[str,
 
 
 @router.get("/schemas/{event_code}/versions/{version}")
-async def get_schema_version(
-    event_code: str, version: int, _: AuthUser = _Auth
-) -> dict[str, Any]:
+async def get_schema_version(event_code: str, version: int, _: AuthUser = _Auth) -> dict[str, Any]:
     """JSON Schema des champs métier d'une version précise (§5.2)."""
     schema = catalog.get_schema(event_code, version)
     if schema is None:

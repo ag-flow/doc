@@ -28,7 +28,10 @@ from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
 from docflow.errors import DependentsConflictError
+from docflow.events import outbox as events_outbox
 from docflow.events.router import router as events_router
+from docflow.events.worker import emission_configured
+from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
@@ -80,11 +83,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await open_pool(settings.database_url)
     await apply(pool)
     configure_mcp(pool, settings)
+    # Producteur d'events : n'émettre (enqueue) que si le workflow est configuré.
+    events_outbox.configure(
+        enabled=emission_configured(settings), source=settings.event_source
+    )
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))
     backup_task = asyncio.create_task(backup_worker_loop(pool, settings))
     artifact_task = asyncio.create_task(artifact_purge_loop(pool, settings))
+    events_task = asyncio.create_task(events_worker_loop(pool, settings))
     log.info("docflow_started")
     try:
         yield
@@ -92,12 +100,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_task.cancel()
         backup_task.cancel()
         artifact_task.cancel()
+        events_task.cancel()
         with suppress(asyncio.CancelledError):
             await worker_task
         with suppress(asyncio.CancelledError):
             await backup_task
         with suppress(asyncio.CancelledError):
             await artifact_task
+        with suppress(asyncio.CancelledError):
+            await events_task
         await close_pool(pool)
         log.info("docflow_stopped")
 

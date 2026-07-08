@@ -28,3 +28,14 @@ class Settings(BaseSettings):
     artifact_purge_after_hours: int = 24
     # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
     public_base_url: str | None = None
+
+    # ── Producteur d'events workflow (contrat producteur) ──
+    # Émission activée ssi les trois sont renseignés. L'event est posté en
+    # POST {workflow_ingestion_url}/events/{workflow_source_id}, signé HMAC.
+    workflow_ingestion_url: str | None = None
+    workflow_source_id: str | None = None
+    workflow_hmac_secret: Secret | None = None
+    # Valeur du champ système _source de l'enveloppe (URI-ref du producteur).
+    event_source: str = "docflow"
+    # Intervalle de balayage de l'outbox par le worker (secondes).
+    event_worker_tick_seconds: int = 15
