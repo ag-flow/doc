@@ -13,6 +13,7 @@ from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
 from docflow.documents.template_apply import compute_initial_content
+from docflow.events import outbox
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
 log = structlog.get_logger(__name__)
@@ -470,6 +471,19 @@ async def create_document_in_block(
 
             # 6. Journaliser la création (spec 30)
             await log_change(conn, wk, doc_id, "C")
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.created.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(doc_id),
+                    "workspaceSlug": ws_slug,
+                    "blockSlug": block_slug,
+                    "functionalTypeSlug": chosen_slug,
+                    "parentId": str(body.parent_id) if body.parent_id else None,
+                    "title": body.title,
+                },
+            )
 
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
