@@ -30,6 +30,9 @@ interface AddDocumentDialogProps {
   ws: string
   block: string
   parentId?: string
+  /** Type présélectionné (ex. bouton « + Bug » d'un enfant) : évite de le
+   *  redemander et fournit le type même si plusieurs sont autorisés ici. */
+  initialType?: string
   onCreated: (docId: string) => void
   onClose: () => void
 }
@@ -38,6 +41,7 @@ export function AddDocumentDialog({
   ws,
   block,
   parentId,
+  initialType,
   onCreated,
   onClose,
 }: AddDocumentDialogProps) {
@@ -45,7 +49,7 @@ export function AddDocumentDialog({
   const qc = useQueryClient()
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
-  const [selectedType, setSelectedType] = useState('')
+  const [selectedType, setSelectedType] = useState(initialType ?? '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

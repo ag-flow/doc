@@ -249,6 +249,57 @@ describe('PropertiesPanel', () => {
     expect(screen.getByTestId('property-input-title2')).not.toBeDisabled()
   })
 
+  // Régression : un statut à valeur par défaut (version null, jamais écrit
+  // explicitement) doit s'enregistrer avec expected_version 0 — sinon le
+  // backend rejette (« Input should be a valid integer ») et le statut par
+  // défaut est impossible à changer.
+  it('saves a default-only restricted_list with expected_version 0', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'status',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: null, // aucune valeur explicite : seul le défaut du type
+        value: null,
+        allowed_value_slug: 'todo',
+        allowed_value_label: 'À faire',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 1,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    renderPanel()
+    await waitFor(() => expect(screen.getByTestId('property-input-status')).toBeInTheDocument())
+
+    const select = screen.getByTestId('property-input-status')
+    fireEvent.change(select, { target: { value: 'done' } })
+    await act(async () => {
+      fireEvent.blur(select)
+    })
+
+    await waitFor(() => expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalled())
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith(
+      'ws',
+      'd1',
+      'status',
+      { allowed_value_slug: 'done', expected_version: 0 },
+    )
+    // Aucune erreur affichée.
+    expect(screen.queryByTestId('property-error-status')).not.toBeInTheDocument()
+  })
+
   // État vide
   it('shows empty message when no properties', async () => {
     vi.mocked(docsApi.getDocumentValues).mockResolvedValue([])

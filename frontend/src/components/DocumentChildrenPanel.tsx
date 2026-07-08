@@ -3,9 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { docsApi, type AllowedTypeOut, type DocumentOut } from '../lib/api'
-import { ApiError } from '../lib/api'
+import { AddDocumentDialog } from './AddDocumentDialog'
 import { Button } from './ui/button'
-import { Input } from './ui/input'
 
 interface Props {
   ws: string
@@ -19,9 +18,6 @@ export function DocumentChildrenPanel({ ws, blocSlug, docId }: Props) {
   const queryClient = useQueryClient()
 
   const [creatingChild, setCreatingChild] = useState<AllowedTypeOut | null>(null)
-  const [childTitle, setChildTitle] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
 
   const { data: blockDocs = [] } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, blocSlug],
@@ -37,25 +33,11 @@ export function DocumentChildrenPanel({ ws, blocSlug, docId }: Props) {
 
   const docPath = (id: string) => `/ws/${ws}/blocs/${blocSlug}/documents/${id}`
 
-  async function createChild() {
-    if (submitting) return
-    if (!childTitle.trim() || !creatingChild) return
-    setSubmitting(true)
-    setCreateError(null)
-    try {
-      const newDoc = await docsApi.createDocument(ws, blocSlug, {
-        title: childTitle.trim(),
-        functional_type_slug: creatingChild.slug,
-        parent_id: docId,
-      })
-      setCreatingChild(null)
-      setChildTitle('')
-      void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, blocSlug] })
-      void navigate(docPath(newDoc.doc_technical_key))
-    } catch (err) {
-      setCreateError(err instanceof ApiError ? err.message : t('error.generic'))
-      setSubmitting(false)
-    }
+  function handleChildCreated(newDocId: string) {
+    setCreatingChild(null)
+    void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, blocSlug] })
+    void queryClient.invalidateQueries({ queryKey: ['block-values', ws, blocSlug] })
+    void navigate(docPath(newDocId))
   }
 
   if (childTypes.length === 0 && children.length === 0) return null
@@ -108,11 +90,7 @@ export function DocumentChildrenPanel({ ws, blocSlug, docId }: Props) {
               variant="secondary"
               size="sm"
               data-testid={`add-child-${ct.slug}`}
-              onClick={() => {
-                setCreatingChild(ct)
-                setChildTitle('')
-                setCreateError(null)
-              }}
+              onClick={() => setCreatingChild(ct)}
             >
               + {ct.label}
             </Button>
@@ -121,35 +99,14 @@ export function DocumentChildrenPanel({ ws, blocSlug, docId }: Props) {
       )}
 
       {creatingChild && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold">+ {creatingChild.label}</h2>
-            <div>
-              <label className="mb-1 block text-sm font-medium">{t('documents.titleField')}</label>
-              <Input
-                value={childTitle}
-                onChange={(e) => setChildTitle(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void createChild() }}
-                placeholder="Titre…"
-                autoFocus
-                data-testid="child-title-input"
-              />
-            </div>
-            {createError && <p className="text-sm text-red-600">{createError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setCreatingChild(null)}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                disabled={!childTitle.trim() || submitting}
-                onClick={() => void createChild()}
-                data-testid="child-submit"
-              >
-                {t('common.save')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <AddDocumentDialog
+          ws={ws}
+          block={blocSlug}
+          parentId={docId}
+          initialType={creatingChild.slug}
+          onCreated={handleChildCreated}
+          onClose={() => setCreatingChild(null)}
+        />
       )}
     </div>
   )
