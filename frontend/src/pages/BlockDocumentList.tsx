@@ -16,12 +16,15 @@ import {
 import {
   docsApi,
   type AllowedTypeOut,
+  type DataBlockOut,
   type DocumentOut,
   type FunctionalTypeRich,
   type DocPropValue,
 } from '../lib/api'
+import { Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
+import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 
 interface TreeRow extends DocumentOut {
   subRows: TreeRow[]
@@ -112,12 +115,27 @@ export function BlockDocumentList() {
   const [showColMenu, setShowColMenu] = useState(false)
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
+  const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
   const { data: documents = [], isLoading } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, block],
     queryFn: () => docsApi.getBlockDocuments(ws!, block!),
     enabled: Boolean(ws && block),
   })
+
+  // Métadonnées des blocs (cache partagé avec l'écran Blocs) pour le libellé.
+  const { data: blocs = [] } = useQuery<DataBlockOut[]>({
+    queryKey: ['blocs', ws],
+    queryFn: () => docsApi.getBlocks(ws!),
+    enabled: Boolean(ws),
+  })
+  const blocLabel = blocs.find((b) => b.slug === block)?.label ?? block ?? ''
+
+  function handleBlocDeleted() {
+    setShowDeleteBloc(false)
+    void queryClient.invalidateQueries({ queryKey: ['blocs', ws] })
+    void navigate(`/ws/${ws}/blocs`)
+  }
 
   const { data: types = [] } = useQuery<FunctionalTypeRich[]>({
     queryKey: ['types-rich', ws],
@@ -359,6 +377,15 @@ export function BlockDocumentList() {
             ? t('documents.addType', { type: rootAllowedTypes[0].label })
             : t('documents.add')}
         </Button>
+        <Button
+          variant="secondary"
+          onClick={() => setShowDeleteBloc(true)}
+          className="text-red-600 hover:bg-red-50"
+          data-testid="delete-current-bloc-btn"
+        >
+          <Trash2 size={14} className="mr-1" />
+          {t('blocs.deleteTitle')}
+        </Button>
       </div>
 
       {/* Filtres préservant le chemin pour chaque restricted_list visible */}
@@ -449,6 +476,16 @@ export function BlockDocumentList() {
           parentId={dialogParent ?? undefined}
           onCreated={handleCreated}
           onClose={() => setDialogParent(undefined)}
+        />
+      )}
+
+      {showDeleteBloc && ws && block && (
+        <DeleteBlocDialog
+          wsSlug={ws}
+          blockSlug={block}
+          blockLabel={blocLabel}
+          onClose={() => setShowDeleteBloc(false)}
+          onDeleted={handleBlocDeleted}
         />
       )}
     </div>
