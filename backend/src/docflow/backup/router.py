@@ -9,6 +9,7 @@ from docflow.backup.schemas import (
     BackupJobOut,
     BackupJobRunOut,
     BackupJobUpdate,
+    DumpArchiveOut,
 )
 
 router = APIRouter(prefix="/admin/backup", tags=["backup"])
@@ -41,6 +42,11 @@ async def update_job(
 @router.delete("/jobs/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_job(slug: str, request: Request, _: None = _Auth) -> None:
     await service.delete_job(request.app.state.pool, slug)
+
+
+@router.get("/jobs/{slug}/archives", response_model=list[DumpArchiveOut])
+async def list_archives(slug: str, request: Request, _: None = _Auth) -> list[DumpArchiveOut]:
+    return await service.list_job_archives(request.app.state.pool, request.app.state.settings, slug)
 
 
 @router.get("/jobs/{slug}/runs", response_model=list[BackupJobRunOut])

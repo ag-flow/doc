@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import asyncpg
@@ -10,6 +11,7 @@ from docflow.backup.schemas import (
     BackupJobOut,
     BackupJobRunOut,
     BackupJobUpdate,
+    DumpArchiveOut,
 )
 
 
@@ -139,6 +141,70 @@ async def delete_job(pool: asyncpg.Pool, slug: str) -> None:
         deleted = await conn.execute("DELETE FROM backup_job WHERE slug = $1", slug)
     if deleted == "DELETE 0":
         raise HTTPException(404, "job introuvable")
+
+
+# ── Listing des archives sur le remote (jobs db_dump) ─────────────────────────
+
+_DUMP_DEFAULT_PORTS = {"ftp": 21, "ftps": 21, "sftp": 22}
+
+
+async def list_job_archives(
+    pool: asyncpg.Pool, settings: object, job_slug: str
+) -> list[DumpArchiveOut]:
+    """Liste les archives de dump d'un job db_dump sur son remote point.
+
+    Read-only : ouvre une connexion ftp/ftps/sftp, énumère le répertoire de
+    dépôt (git_base_path du job), ne retient que les fichiers suivant la
+    convention de nommage, triés du plus récent au plus ancien. La clé privée
+    éventuellement déchiffrée est effacée du disque en fin d'appel.
+    """
+    from docflow.backup import archives
+    from docflow.remote.connection import delete_key_file, resolve_dump_auth
+
+    job = await get_job(pool, job_slug)
+    if job.strategy != "db_dump":
+        raise HTTPException(422, "listing d'archives réservé aux jobs db_dump")
+
+    async with pool.acquire() as conn:
+        point_type: str | None = await conn.fetchval(
+            "SELECT point_type FROM remote_point WHERE slug = $1", job.remote_point_slug
+        )
+    if point_type not in ("ftp", "ftps", "sftp"):
+        raise HTTPException(422, f"type de point non supporté pour le listing : {point_type!r}")
+
+    host, port, username, password, ssh_key_path = await resolve_dump_auth(
+        pool, job.remote_point_slug, settings
+    )
+    eff_port = port or _DUMP_DEFAULT_PORTS[point_type]
+    try:
+        if point_type == "sftp":
+            raw = await asyncio.to_thread(
+                archives.list_sftp_archives,
+                host=host,
+                port=eff_port,
+                username=username,
+                password=password,
+                ssh_key_path=ssh_key_path,
+                remote_dir=job.git_base_path,
+            )
+        else:
+            if not password:
+                raise HTTPException(422, f"mot de passe requis pour {point_type.upper()}")
+            raw = await asyncio.to_thread(
+                archives.list_ftp_archives,
+                host=host,
+                port=eff_port,
+                username=username,
+                password=password,
+                remote_dir=job.git_base_path,
+                tls=(point_type == "ftps"),
+            )
+    finally:
+        if ssh_key_path:
+            await asyncio.to_thread(delete_key_file, ssh_key_path)
+
+    raw.sort(key=lambda a: a["created_at"], reverse=True)
+    return [DumpArchiveOut(**a) for a in raw]
 
 
 # ── Historique d'exécution ────────────────────────────────────────────────────

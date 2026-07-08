@@ -77,6 +77,16 @@ class BackupJobOut(BaseModel):
     last_run_status: str | None
 
 
+class DumpArchiveOut(BaseModel):
+    """Une archive de dump présente sur le remote point d'un job db_dump."""
+
+    filename: str
+    scope: str
+    job_id: str
+    created_at: datetime
+    size: int | None = None
+
+
 class BackupJobRunOut(BaseModel):
     id: uuid.UUID
     job_id: uuid.UUID
