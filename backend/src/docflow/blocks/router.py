@@ -11,12 +11,13 @@ from docflow.auth.deps import (
     filter_blocks_by_scope,
     require_authenticated,
 )
-from docflow.blocks import service
+from docflow.blocks import introspection, service
 from docflow.documents import service as doc_svc
 from docflow.documents.block_ops import list_block_values as _list_block_values
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
+from docflow.schemas.introspection import BlockPropertiesOut
 from docflow.webhooks import service as wh_service
 
 router = APIRouter(tags=["blocks"])
@@ -46,6 +47,17 @@ async def get_block(
 ) -> DataBlockOut:
     check_api_key_scope(request, ws_slug, block_slug)
     return await service.get_block(request.app.state.pool, ws_slug, block_slug)
+
+
+@router.get(_BLOCK + "/properties", response_model=BlockPropertiesOut)
+async def list_block_properties(
+    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+) -> BlockPropertiesOut:
+    """Schéma de propriétés du bloc (type racine + descendants), sans doc_id."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await introspection.list_block_properties(
+        request.app.state.pool, ws_slug, block_slug
+    )
 
 
 @router.patch(_BLOCK, response_model=DataBlockOut)

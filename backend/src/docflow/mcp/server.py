@@ -654,6 +654,27 @@ _TOOLS: list[Tool] = [
             "required": ["profile_id", "label"],
         },
     ),
+    Tool(
+        name="list_block_properties",
+        description=(
+            "Introspecte le schéma de propriétés d'un bloc SANS fournir de doc_id. "
+            "Découverte dynamique : les slugs de propriétés (dont le statut) sont propres "
+            "à chaque type fonctionnel. Retourne, pour le type racine du bloc ET ses types "
+            "descendants (les seuls instanciables dans le bloc), la liste des propriétés : "
+            "prop_slug, label, type (text|int|date|bool|url|float|restricted_list|reference), "
+            "required, default_value ; pour restricted_list, allowed_values (slug+label). "
+            "À utiliser avant set_property_value pour connaître les valeurs autorisées sans "
+            "lire un document témoin. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc à introspecter"},
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -700,6 +721,7 @@ _WS_TOOLS: dict[str, bool] = {
     "create_block": True,
     "list_blocks": False,
     "delete_block": True,
+    "list_block_properties": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -802,6 +824,12 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _list_blocks(pool, str(arguments.get("workspace_slug", "")))
     if name == "delete_block":
         return await _delete_block(pool, arguments)
+    if name == "list_block_properties":
+        return await _list_block_properties(
+            pool,
+            str(arguments.get("workspace_slug", "")),
+            str(arguments.get("block_slug", "")),
+        )
     if name == "create_api_profile":
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
@@ -1435,6 +1463,20 @@ async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
         return _text({"error": e.detail})
 
     return _text({"deleted": True, "block_slug": block_slug})
+
+
+async def _list_block_properties(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks.introspection import list_block_properties
+
+    try:
+        out = await list_block_properties(pool, ws_slug, block_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
 
 
 async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
