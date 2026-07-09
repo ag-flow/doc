@@ -4,9 +4,12 @@ import datetime
 import uuid
 
 import asyncpg
+import structlog
 from fastapi import HTTPException
 
 from docflow.documents.changelog import log_change
+
+log = structlog.get_logger(__name__)
 
 # Écritures serveur de valeurs de propriétés, partagées entre la création de
 # document (valeurs initiales + contrat required), les comportements
@@ -121,6 +124,79 @@ async def upsert_value(
         target_doc_ref,
     )
     await log_change(conn, wk, doc_id, "P")
+
+
+async def instantiate_default_values(
+    conn: asyncpg.Connection,
+    wk: uuid.UUID,
+    doc_id: uuid.UUID,
+    type_id: uuid.UUID | None,
+) -> None:
+    """Matérialise les valeurs par défaut du type pour les propriétés non renseignées.
+
+    Point d'entrée unique partagé par les deux chemins de création (``create_document``
+    côté service/MCP et ``create_document_in_block`` côté UI/bloc) : sans cette parité,
+    une propriété required dotée d'un ``default`` restait ``NULL`` après une création
+    MCP alors que le chemin bloc l'appliquait (US « défauts du template »).
+
+    Garde d'idempotence : une propriété qui porte déjà une valeur (fournie par
+    l'appelant) est ignorée — le défaut ne l'écrase jamais.
+    """
+    if type_id is None:
+        return
+    defs = await conn.fetch(
+        """
+        SELECT pd.id, pd.type, pd.default_value
+        FROM properties_defs pd
+        LEFT JOIN properties_values pv
+            ON pv.property_def_ref = pd.id AND pv.document_ref = $2
+        WHERE pd.functional_type_ref = $1
+          AND pd.default_value IS NOT NULL
+          AND pv.id IS NULL
+        """,
+        type_id,
+        doc_id,
+    )
+    for pd in defs:
+        prop_id: uuid.UUID = pd["id"]
+        prop_type: str = pd["type"]
+        default_val: str = pd["default_value"]
+
+        allowed_value_ref: uuid.UUID | None = None
+        value_to_store: str | None = None
+        if prop_type == "restricted_list":
+            allowed_value_ref = await conn.fetchval(
+                "SELECT id FROM properties_allowed_values "
+                "WHERE property_def_ref = $1 AND slug = $2",
+                prop_id,
+                default_val,
+            )
+            if allowed_value_ref is None:
+                log.warning(
+                    "default_value_not_found",
+                    prop_id=str(prop_id),
+                    default_val=default_val,
+                )
+                continue
+        else:
+            value_to_store = default_val
+
+        pv_id: uuid.UUID = await conn.fetchval(
+            "INSERT INTO properties_values "
+            "(document_ref, property_def_ref, version, workspace_technical_key) "
+            "VALUES ($1, $2, 1, $3) RETURNING id",
+            doc_id,
+            prop_id,
+            wk,
+        )
+        await conn.execute(
+            "INSERT INTO properties_value_version "
+            "(property_value_ref, version_number, value, allowed_value_ref) "
+            "VALUES ($1, 1, $2, $3)",
+            pv_id,
+            value_to_store,
+            allowed_value_ref,
+        )
 
 
 async def assert_required_satisfied(

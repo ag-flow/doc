@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
-import structlog
 from fastapi import HTTPException
 
 from docflow.artifacts.service import refresh_artifact_references
@@ -15,8 +14,6 @@ from docflow.documents.changelog import log_change
 from docflow.documents.template_apply import compute_initial_content
 from docflow.events import outbox
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
-
-log = structlog.get_logger(__name__)
 
 _SELECT_BLOCK_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
@@ -77,61 +74,6 @@ async def _resolve_functional_type(conn: asyncpg.Connection, wk: uuid.UUID, slug
             detail=f"type fonctionnel '{slug}' introuvable dans ce workspace",
         )
     return ft_id
-
-
-async def _instantiate_default_values(
-    conn: asyncpg.Connection,
-    wk: uuid.UUID,
-    doc_id: uuid.UUID,
-    ft_id: uuid.UUID,
-) -> None:
-    """Instancie les valeurs par défaut pour les propriétés du type fonctionnel."""
-    defs = await conn.fetch(
-        "SELECT id, type, default_value FROM properties_defs "
-        "WHERE functional_type_ref = $1 AND default_value IS NOT NULL",
-        ft_id,
-    )
-    for pd in defs:
-        prop_id: uuid.UUID = pd["id"]
-        prop_type: str = pd["type"]
-        default_val: str = pd["default_value"]
-
-        allowed_value_ref: uuid.UUID | None = None
-        value_to_store: str | None = None
-
-        if prop_type == "restricted_list":
-            allowed_value_ref = await conn.fetchval(
-                "SELECT id FROM properties_allowed_values "
-                "WHERE property_def_ref = $1 AND slug = $2",
-                prop_id,
-                default_val,
-            )
-            if allowed_value_ref is None:
-                log.warning(
-                    "default_value_not_found",
-                    prop_id=str(prop_id),
-                    default_val=default_val,
-                )
-                continue
-        else:
-            value_to_store = default_val
-
-        pv_id: uuid.UUID = await conn.fetchval(
-            "INSERT INTO properties_values "
-            "(document_ref, property_def_ref, version, workspace_technical_key) "
-            "VALUES ($1, $2, 1, $3) RETURNING id",
-            doc_id,
-            prop_id,
-            wk,
-        )
-        await conn.execute(
-            "INSERT INTO properties_value_version "
-            "(property_value_ref, version_number, value, allowed_value_ref) "
-            "VALUES ($1, 1, $2, $3)",
-            pv_id,
-            value_to_store,
-            allowed_value_ref,
-        )
 
 
 async def allowed_types(
@@ -437,8 +379,8 @@ async def create_document_in_block(
             # les tracer dès la création pour que le refcount soit juste.
             await refresh_artifact_references(conn, doc_id, wk, initial_content)
 
-            # 5. Instancier les valeurs par défaut
-            await _instantiate_default_values(conn, wk, doc_id, ft_id)
+            # 5. Instancier les valeurs par défaut (helper partagé avec create_document)
+            await prop_writes.instantiate_default_values(conn, wk, doc_id, ft_id)
 
             # 5bis. Valeurs initiales fournies + contrat dur (required) +
             # comportements automatiques — même contrat que create_document.

@@ -415,6 +415,9 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                         conn, wk, new_doc_id, prop_id, prop_type, prop_value, prop_slug
                     )
             if ft_id is not None:
+                # Défauts du template (parité avec create_document_in_block/UI) : les
+                # propriétés non fournies dotées d'un default sont matérialisées.
+                await prop_writes.instantiate_default_values(conn, wk, new_doc_id, ft_id)
                 await prop_writes.apply_behaviors(conn, wk, new_doc_id, ft_id)
                 await prop_writes.assert_required_satisfied(conn, new_doc_id, ft_id)
 
