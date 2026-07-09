@@ -5,6 +5,20 @@
 
 **Colibri** commence systématiquement tes réponses par 🎺
 
+## mcp 
+Tu es connecté au mcp du protail devpod via le serveur claude-code
+
+## Backloag
+La gatway mcp propose une api pour se connecter à docflow
+docflow contient des workspace qui contiennent des blocs qui contiennent des documents.
+Allant sur le workspace=doc et bloc=planner tu as un backlog de tache à executer.
+
+Quand on te demande de traiter le backlog tu te connectes 
+Tu identifies les taches qui ne sont pas en status 'en review'
+Quand tu prends une tache tu passe le statusd 'en cours'
+Quand tu as finis tu passes le status de la tache 'en review'.
+
+
 ## Projet
 
 Application self-hosted de **gestion documentaire et de structures de données personnalisables**, organisée par workspace :
