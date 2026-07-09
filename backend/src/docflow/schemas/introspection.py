@@ -75,3 +75,13 @@ class BlockObjectsPage(BaseModel):
     total: int
     has_next: bool
     objects: list[BlockObjectOut]
+
+
+class BlockQueryRequest(BaseModel):
+    """Corps de la query filtrée paginée (REST)."""
+
+    model_config = {"extra": "forbid"}
+
+    filters: dict[str, str]
+    page: int = 1
+    page_size: int = 50

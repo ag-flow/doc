@@ -161,6 +161,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "get_artifact",
         "get_artifact_link",
         "list_block_properties",
+        "list_block_objects",
+        "query_documents",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 

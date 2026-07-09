@@ -675,6 +675,60 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "block_slug"],
         },
     ),
+    Tool(
+        name="list_block_objects",
+        description=(
+            "Liste les documents (objets) d'un bloc AVEC leurs valeurs de propriétés, "
+            "en une requête et de façon PAGINÉE (page 1-based, page_size borné). Chaque "
+            "objet porte id, title, functional_type_slug et la liste de ses valeurs "
+            "(prop_slug, type, value pour les scalaires, allowed_value_slug/label pour les "
+            "restricted_list). Évite de lire chaque document un par un. Combiner avec "
+            "list_block_properties pour interpréter les valeurs. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Taille de page (défaut 50, max 200)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
+        name="query_documents",
+        description=(
+            "Liste, de façon PAGINÉE, les documents d'un bloc qui matchent un filtre sur "
+            "une ou plusieurs propriétés — pour cibler une opération en masse (ex. tous les "
+            "documents où statut=done). filters est un objet {prop_slug: valeur attendue} ; "
+            "la valeur est comparée au slug de la valeur autorisée (restricted_list) ou à la "
+            "valeur brute (scalaire) ; plusieurs entrées sont combinées en ET. Retourne la "
+            "même forme paginée que list_block_objects (total, has_next, objects avec valeurs). "
+            "Au moins un filtre est requis. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "filters": {
+                    "type": "object",
+                    "description": "Filtre {prop_slug: valeur attendue}, combiné en ET",
+                    "additionalProperties": {"type": "string"},
+                },
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Taille de page (défaut 50, max 200)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug", "filters"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -722,6 +776,8 @@ _WS_TOOLS: dict[str, bool] = {
     "list_blocks": False,
     "delete_block": True,
     "list_block_properties": False,
+    "list_block_objects": False,
+    "query_documents": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -830,6 +886,10 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
             str(arguments.get("workspace_slug", "")),
             str(arguments.get("block_slug", "")),
         )
+    if name == "list_block_objects":
+        return await _list_block_objects(pool, arguments)
+    if name == "query_documents":
+        return await _query_documents(pool, arguments)
     if name == "create_api_profile":
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
@@ -1474,6 +1534,57 @@ async def _list_block_properties(
 
     try:
         out = await list_block_properties(pool, ws_slug, block_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+def _pagination_args(args: dict[str, object]) -> tuple[int, int]:
+    from docflow.documents.block_query import DEFAULT_PAGE_SIZE
+
+    page = int(str(args.get("page", 1)))
+    page_size = int(str(args.get("page_size", DEFAULT_PAGE_SIZE)))
+    return page, page_size
+
+
+async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.block_query import list_block_objects
+
+    page, page_size = _pagination_args(args)
+    try:
+        out = await list_block_objects(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("block_slug", "")),
+            page,
+            page_size,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.block_query import query_documents
+
+    raw_filters = args.get("filters", {})
+    if not isinstance(raw_filters, dict):
+        return _text({"error": "filters doit être un objet {prop_slug: valeur attendue}"})
+    filters = {str(k): str(v) for k, v in raw_filters.items()}
+    page, page_size = _pagination_args(args)
+    try:
+        out = await query_documents(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("block_slug", "")),
+            filters,
+            page,
+            page_size,
+        )
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(out.model_dump())

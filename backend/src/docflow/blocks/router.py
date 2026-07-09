@@ -12,12 +12,17 @@ from docflow.auth.deps import (
     require_authenticated,
 )
 from docflow.blocks import introspection, service
+from docflow.documents import block_query
 from docflow.documents import service as doc_svc
 from docflow.documents.block_ops import list_block_values as _list_block_values
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
-from docflow.schemas.introspection import BlockPropertiesOut
+from docflow.schemas.introspection import (
+    BlockObjectsPage,
+    BlockPropertiesOut,
+    BlockQueryRequest,
+)
 from docflow.webhooks import service as wh_service
 
 router = APIRouter(tags=["blocks"])
@@ -55,8 +60,37 @@ async def list_block_properties(
 ) -> BlockPropertiesOut:
     """Schéma de propriétés du bloc (type racine + descendants), sans doc_id."""
     check_api_key_scope(request, ws_slug, block_slug)
-    return await introspection.list_block_properties(
-        request.app.state.pool, ws_slug, block_slug
+    return await introspection.list_block_properties(request.app.state.pool, ws_slug, block_slug)
+
+
+@router.get(_BLOCK + "/objects", response_model=BlockObjectsPage)
+async def list_block_objects(
+    ws_slug: str,
+    block_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> BlockObjectsPage:
+    """Documents du bloc avec leurs valeurs de propriétés, paginés."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await block_query.list_block_objects(
+        request.app.state.pool, ws_slug, block_slug, page, page_size
+    )
+
+
+@router.post(_BLOCK + "/query", response_model=BlockObjectsPage)
+async def query_block_documents(
+    ws_slug: str,
+    block_slug: str,
+    body: BlockQueryRequest,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> BlockObjectsPage:
+    """Query filtrée paginée sur propriété (POST : le filtre voyage dans le corps)."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await block_query.query_documents(
+        request.app.state.pool, ws_slug, block_slug, body.filters, body.page, body.page_size
     )
 
 
