@@ -1069,11 +1069,20 @@ async def set_property_value(
                     data.allowed_value_slug,
                 )
                 if allowed_value_ref is None:
+                    # Erreur auto-corrective : lister les slugs valides de la définition
+                    # pour qu'un agent puisse rejouer sans deviner.
+                    valid = await conn.fetch(
+                        "SELECT slug FROM properties_allowed_values "
+                        "WHERE property_def_ref = $1 ORDER BY position, created_at",
+                        prop_id,
+                    )
+                    slugs = [v["slug"] for v in valid]
                     raise HTTPException(
                         status_code=422,
                         detail=(
                             f"valeur autorisée '{data.allowed_value_slug}' introuvable "
-                            "ou n'appartient pas à cette définition (I-5)"
+                            f"ou n'appartient pas à cette définition (I-5) ; "
+                            f"valeurs autorisées : {', '.join(slugs) or '(aucune)'}"
                         ),
                     )
             if prop_type == "reference" and data.value is not None:

@@ -137,6 +137,44 @@ async def test_query_empty_filter_rejected(
     assert exc.value.status_code == 422
 
 
+async def test_list_property_values_exposes_allowed_values(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """list_property_values (MCP) expose l'ensemble COMPLET des valeurs autorisées."""
+    import json
+
+    from docflow.mcp.server import _list_property_values, configure
+
+    await _setup(db_pool, ["todo"])
+    configure(db_pool)
+    doc_id = await db_pool.fetchval("SELECT doc_technical_key FROM document WHERE title='Epic 00'")
+    res = await _list_property_values(db_pool, _WS, str(doc_id))
+    payload = json.loads(res[0].text)
+    statut = next(p for p in payload if p["prop_slug"] == "statut")
+    assert [v["slug"] for v in statut["allowed_values"]] == ["todo", "done"]
+    assert {v["label"] for v in statut["allowed_values"]} == {"À faire", "Done"}
+
+
+async def test_set_property_value_invalid_slug_lists_valid(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Le 422 I-5 est auto-correctif : il liste les slugs valides."""
+    from fastapi import HTTPException
+
+    from docflow.schemas.property_value import PropertyValueSet
+
+    await _setup(db_pool, ["todo"])
+    doc_id = await db_pool.fetchval("SELECT doc_technical_key FROM document WHERE title='Epic 00'")
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.set_property_value(
+            db_pool, _WS, doc_id, "statut",
+            PropertyValueSet(allowed_value_slug="en_review", expected_version=0),
+        )
+    assert exc.value.status_code == 422
+    assert "todo" in str(exc.value.detail)
+    assert "done" in str(exc.value.detail)
+
+
 async def test_query_via_mcp_tool(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     import json
 

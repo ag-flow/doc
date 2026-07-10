@@ -42,9 +42,18 @@ async def upsert_value(
             value,
         )
         if allowed_value_ref is None:
+            valid = await conn.fetch(
+                "SELECT slug FROM properties_allowed_values "
+                "WHERE property_def_ref = $1 ORDER BY position, created_at",
+                prop_id,
+            )
+            slugs = ", ".join(v["slug"] for v in valid) or "(aucune)"
             raise HTTPException(
                 status_code=422,
-                detail=f"valeur autorisée '{value}' introuvable pour cette propriété (I-5)",
+                detail=(
+                    f"valeur autorisée '{value}' introuvable pour cette propriété (I-5) ; "
+                    f"valeurs autorisées : {slugs}"
+                ),
             )
         stored_value: str | None = None
     else:

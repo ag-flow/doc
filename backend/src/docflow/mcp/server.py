@@ -333,10 +333,13 @@ _TOOLS: list[Tool] = [
             "Chaque entrée contient : prop_slug, label, type "
             "(text | int | restricted_list), required (bool — obligatoire), "
             "value (texte brut pour text/int), "
-            "allowed_value_slug + allowed_value_label (pour restricted_list). "
+            "allowed_value_slug + allowed_value_label (valeur COURANTE, pour restricted_list). "
+            "Pour une restricted_list, l'entrée porte aussi allowed_values : la liste "
+            "COMPLÈTE des options possibles [{slug, label}] (le jeu de valeurs varie par "
+            "type fonctionnel) — utiliser ces slugs pour poser une valeur sans deviner. "
             "Une entrée required=true avec value et allowed_value_slug null est "
             "une valeur obligatoire manquante : la renseigner avec set_property_value. "
-            "Utiliser prop_slug et allowed_value_slug avec set_property_value "
+            "Utiliser prop_slug + un slug de allowed_values avec set_property_value "
             "pour écrire une valeur. "
             "Lecture seule — aucun effet de bord."
         ),
@@ -1249,7 +1252,36 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             wk,
             uuid.UUID(doc_id),
         )
-    return _text([dict(r) for r in rows])
+        # Ensemble COMPLET des valeurs autorisées par propriété restricted_list du
+        # type du document (pas seulement la valeur courante) : un agent peut ainsi
+        # découvrir les slugs cibles de set_property_value sans deviner.
+        av_rows = await conn.fetch(
+            """
+            SELECT pd.slug AS prop_slug, pav.slug AS av_slug, pav.label AS av_label
+            FROM properties_defs pd
+            JOIN functional_type ft ON ft.id = pd.functional_type_ref
+            JOIN document d ON d.functional_type_ref = ft.id
+                           AND d.workspace_technical_key = $1
+                           AND d.doc_technical_key = $2
+            JOIN properties_allowed_values pav ON pav.property_def_ref = pd.id
+            WHERE pd.type = 'restricted_list'
+            ORDER BY pd.slug, pav.position, pav.created_at
+            """,
+            wk,
+            uuid.UUID(doc_id),
+        )
+    allowed_by_prop: dict[str, list[dict[str, str]]] = {}
+    for r in av_rows:
+        allowed_by_prop.setdefault(r["prop_slug"], []).append(
+            {"slug": r["av_slug"], "label": r["av_label"]}
+        )
+    result: list[dict[str, object]] = []
+    for r in rows:
+        entry = dict(r)
+        if entry["type"] == "restricted_list":
+            entry["allowed_values"] = allowed_by_prop.get(r["prop_slug"], [])
+        result.append(entry)
+    return _text(result)
 
 
 async def _get_property_value(
