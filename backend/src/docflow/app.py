@@ -171,7 +171,15 @@ async def health() -> JSONResponse:
 if _STATIC.exists():
     app.mount("/assets", StaticFiles(directory=_STATIC / "assets"), name="assets")
 
-    # SPA catch-all : toute route non-API renvoie index.html
+    # SPA catch-all : sert un fichier racine existant du build (favicon.svg,
+    # icons.svg, robots.txt…) s'il existe, sinon renvoie index.html. La garde
+    # is_relative_to empêche toute remontée hors du répertoire statique.
+    _static_root = _STATIC.resolve()
+
     @app.get("/{full_path:path}")
     async def spa(full_path: str) -> FileResponse:
+        if full_path:
+            candidate = (_STATIC / full_path).resolve()
+            if candidate.is_file() and candidate.is_relative_to(_static_root):
+                return FileResponse(candidate)
         return FileResponse(_STATIC / "index.html")
