@@ -437,7 +437,7 @@ export function DocumentEditor() {
         </div>
         {!focusMode && (
           <div className="w-1/3 border-l border-gray-200 pl-6">
-            <PropertiesPanel ws={ws} docId={docId} />
+            <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </div>
         )}
