@@ -68,9 +68,13 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
             value={state.value ?? ''}
             disabled={saving}
             onChange={(e) => {
-              setValue(e.target.value || null)
+              // Une liste fermée s'enregistre dès le choix (action délibérée et
+              // discrète, comme le toggle bool ci-dessous) : on passe la valeur
+              // explicitement pour ne pas dépendre d'un `state.value` encore périmé.
+              const next = e.target.value || null
+              setValue(next)
+              void save(ws, docId, prop.prop_slug, valueType, next)
             }}
-            onBlur={commit}
             data-testid={`property-input-${prop.prop_slug}`}
           >
             <option value="">{t('properties.none')}</option>

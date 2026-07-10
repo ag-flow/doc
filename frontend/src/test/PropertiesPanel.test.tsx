@@ -369,6 +369,51 @@ describe('PropertiesPanel', () => {
     expect(optionValues).not.toContain('done')
   })
 
+  // Une liste fermée s'enregistre dès le choix (au change), sans attendre le blur :
+  // choisir une valeur EST une action délibérée et discrète (comme un toggle bool).
+  it('saves a restricted_list immediately on change (no blur needed)', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'status',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: 1,
+        value: null,
+        allowed_value_slug: 'todo',
+        allowed_value_label: 'À faire',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 2,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    renderPanel()
+    await waitFor(() => expect(screen.getByTestId('property-input-status')).toBeInTheDocument())
+
+    const select = screen.getByTestId('property-input-status')
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'done' } })
+    })
+
+    // Sauvegarde déclenchée par le change, sans blur.
+    await waitFor(() => expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalled())
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'status', {
+      allowed_value_slug: 'done',
+      expected_version: 1,
+    })
+  })
+
   // État vide
   it('shows empty message when no properties', async () => {
     vi.mocked(docsApi.getDocumentValues).mockResolvedValue([])
