@@ -525,6 +525,78 @@ describe('BlockDocumentList', () => {
     )
   })
 
+  // US Sélecteur de colonnes (projection du QuerySpec).
+  it('in query mode, hiding a column reduces the projection sent to the server', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic',
+        slug: 'epic',
+        label: 'Epic',
+        parent_slug: null,
+        workspace_slug: 'ws',
+        content_template: null,
+        created_at: '',
+        updated_at: '',
+        properties: [
+          {
+            slug: 'statut',
+            label: 'Statut',
+            type: 'restricted_list',
+            default_value: null,
+            behavior: null,
+            required: false,
+            allowed_values: [{ slug: 'done', label: 'Terminé', position: 1, color: '#22c55e' }],
+          },
+          {
+            slug: 'points',
+            label: 'Points',
+            type: 'int',
+            default_value: null,
+            behavior: null,
+            required: false,
+            allowed_values: [],
+          },
+        ],
+      },
+    ])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1',
+      page: 1,
+      page_size: 100,
+      total: 1,
+      has_next: false,
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [statut('done')] }],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Projection initiale = toutes les colonnes visibles → null (le serveur remonte tout).
+    expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith(
+      'ws',
+      'b1',
+      expect.objectContaining({ projection: null }),
+    )
+
+    // Masquer la colonne « Points » via le sélecteur de colonnes.
+    fireEvent.click(screen.getByTestId('columns-btn'))
+    await waitFor(() => expect(screen.getByTestId('col-toggle-prop_points')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('col-toggle-prop_points'))
+
+    // La requête est rejouée avec une projection réduite aux colonnes visibles.
+    await waitFor(() =>
+      expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith(
+        'ws',
+        'b1',
+        expect.objectContaining({ projection: ['statut'] }),
+      ),
+    )
+  })
+
   // US Barre de pagination en haut (≤100 par page) — mode browse (racines).
   it('paginates in browse mode via the top prev/next controls, calling list_block_tree', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]

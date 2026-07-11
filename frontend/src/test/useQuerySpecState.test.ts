@@ -93,6 +93,22 @@ describe('useQuerySpecState', () => {
     expect(result.current.spec.sort).toEqual([{ key: 'title', dir: 'desc' }])
   })
 
+  it('setProjection sets the projection and is a no-op when unchanged', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setProjection(['statut', 'points']))
+    expect(result.current.spec.projection).toEqual(['statut', 'points'])
+    // Projection ne bascule pas le mode (reste browse tant que pas de filtre/tri).
+    expect(result.current.mode).toBe('browse')
+
+    const specBefore = result.current.spec
+    // Même contenu (nouvelle référence de tableau) → aucune nouvelle identité de spec.
+    act(() => result.current.setProjection(['statut', 'points']))
+    expect(result.current.spec).toBe(specBefore)
+
+    act(() => result.current.setProjection(null))
+    expect(result.current.spec.projection).toBeNull()
+  })
+
   it('loadSpec hydrates an external QuerySpec (e.g. a saved query) and derives mode', () => {
     const { result } = renderHook(() => useQuerySpecState(100))
     act(() =>

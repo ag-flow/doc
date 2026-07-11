@@ -20,6 +20,10 @@ export interface UseQuerySpecStateResult {
    *  `additive` (Maj-clic) : conserve les autres clés et compose un tri multi-clé
    *  (la clé est ajoutée/retirée en fin de liste) ; sinon remplace le tri courant. */
   toggleSort: (key: string, additive?: boolean) => void
+  /** Pilote `projection` (liste de prop_slug à remonter, ou null = toutes). Sans
+   *  effet en soi sur le mode ; réduit la charge serveur en mode requête et est
+   *  capturé par une requête nommée. No-op si la projection est inchangée. */
+  setProjection: (projection: string[] | null) => void
   setPage: (page: number) => void
   /** Hydrate l'état depuis un `QuerySpec` externe (ex. requête nommée). */
   loadSpec: (next: BlockQueryBody) => void
@@ -62,6 +66,19 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
     })
   }, [])
 
+  const setProjection = useCallback((projection: string[] | null) => {
+    setSpec((prev) => {
+      const a = prev.projection
+      const same =
+        a === projection ||
+        (Array.isArray(a) &&
+          Array.isArray(projection) &&
+          a.length === projection.length &&
+          a.every((x, i) => x === projection[i]))
+      return same ? prev : { ...prev, projection }
+    })
+  }, [])
+
   const setPage = useCallback((page: number) => {
     setSpec((prev) => ({ ...prev, page }))
   }, [])
@@ -74,5 +91,5 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
     setSpec((prev) => emptySpec(prev.page_size))
   }, [])
 
-  return { spec, mode, setFilter, toggleSort, setPage, loadSpec, reset }
+  return { spec, mode, setFilter, toggleSort, setProjection, setPage, loadSpec, reset }
 }

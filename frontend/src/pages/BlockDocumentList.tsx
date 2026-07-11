@@ -178,7 +178,7 @@ export function BlockDocumentList() {
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
-  const { spec, mode, setFilter, toggleSort, setPage, reset } = useQuerySpecState()
+  const { spec, mode, setFilter, toggleSort, setProjection, setPage, reset } = useQuerySpecState()
 
   // Pagination + tri hiérarchique du mode browse (racines, ≤100/page).
   const [browsePage, setBrowsePage] = useState(1)
@@ -293,6 +293,19 @@ export function BlockDocumentList() {
     }
     return cols
   }, [types, typeSlugSet])
+
+  // Projection dérivée du sélecteur de colonnes : null si toutes les colonnes de
+  // propriété sont visibles (le serveur remonte tout), sinon la liste des slugs
+  // visibles. En mode requête, les colonnes masquées ne sont pas demandées.
+  const projection = useMemo<string[] | null>(() => {
+    const anyHidden = propColumns.some((p) => columnVisibility[`prop_${p.slug}`] === false)
+    if (!anyHidden) return null
+    return propColumns
+      .filter((p) => columnVisibility[`prop_${p.slug}`] !== false)
+      .map((p) => p.slug)
+  }, [propColumns, columnVisibility])
+
+  useEffect(() => setProjection(projection), [projection, setProjection])
 
   const rows = useMemo<TreeRow[]>(() => {
     if (mode === 'query') return queryPage ? flatRows(queryPage) : []
