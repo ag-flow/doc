@@ -176,10 +176,17 @@ if _STATIC.exists():
     # is_relative_to empêche toute remontée hors du répertoire statique.
     _static_root = _STATIC.resolve()
 
+    # La coquille SPA ne doit JAMAIS être mise en cache : sinon le navigateur
+    # garde un index.html périmé qui référence un ancien bundle hashé, et
+    # l'utilisateur reste sur du code obsolète après un déploiement. Les assets
+    # /assets/* sont hashés par contenu → sûrs à cacher (nom neuf à chaque build).
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
     @app.get("/{full_path:path}")
     async def spa(full_path: str) -> FileResponse:
         if full_path:
             candidate = (_STATIC / full_path).resolve()
             if candidate.is_file() and candidate.is_relative_to(_static_root):
-                return FileResponse(candidate)
-        return FileResponse(_STATIC / "index.html")
+                # favicon.svg / icons.svg ne sont pas hashés : revalidation aussi.
+                return FileResponse(candidate, headers=_NO_CACHE)
+        return FileResponse(_STATIC / "index.html", headers=_NO_CACHE)
