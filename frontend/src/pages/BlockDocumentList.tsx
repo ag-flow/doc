@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -15,10 +15,11 @@ import {
   docsApi,
   type AllowedTypeOut,
   type BlockObjectsPage,
+  type BlockTreeNode,
+  type BlockTreePage,
   type DataBlockOut,
   type DocumentOut,
   type FunctionalTypeRich,
-  type DocPropValue,
 } from '../lib/api'
 import { useQuerySpecState } from '../hooks/useQuerySpecState'
 import { Trash2 } from 'lucide-react'
@@ -35,23 +36,35 @@ interface TreeRow {
   properties?: { prop_slug: string; value: string | null; allowed_value_slug: string | null }[]
 }
 
-function buildTree(docs: DocumentOut[]): TreeRow[] {
-  const byId = new Map<string, TreeRow>(
-    docs.map((d) => [
-      d.doc_technical_key,
-      { id: d.doc_technical_key, title: d.title, functional_type_slug: d.functional_type_slug, subRows: [] },
-    ]),
-  )
-  const roots: TreeRow[] = []
-  for (const doc of docs) {
-    const row = byId.get(doc.doc_technical_key)!
-    if (doc.parent_id && byId.has(doc.parent_id)) {
-      byId.get(doc.parent_id)!.subRows.push(row)
-    } else {
-      roots.push(row)
+/** Mode browse arbre : convertit un nœud `list_block_tree` (récursif) en ligne de table. */
+function treeNodeToRow(node: BlockTreeNode): TreeRow {
+  return {
+    id: node.id,
+    title: node.title,
+    functional_type_slug: node.functional_type_slug,
+    subRows: node.children.map(treeNodeToRow),
+    properties: node.properties,
+  }
+}
+
+/** Mode browse liste (non arbre) : mêmes racines/sous-arbres de la page courante,
+ *  aplatis en profondeur (parent puis descendants) sans regroupement visuel. */
+function flattenTreeNodes(nodes: BlockTreeNode[]): TreeRow[] {
+  const out: TreeRow[] = []
+  const walk = (list: BlockTreeNode[]) => {
+    for (const node of list) {
+      out.push({
+        id: node.id,
+        title: node.title,
+        functional_type_slug: node.functional_type_slug,
+        subRows: [],
+        properties: node.properties,
+      })
+      walk(node.children)
     }
   }
-  return roots
+  walk(nodes)
+  return out
 }
 
 function flatRows(page: BlockObjectsPage): TreeRow[] {
@@ -64,20 +77,15 @@ function flatRows(page: BlockObjectsPage): TreeRow[] {
   }))
 }
 
-/** Valeur d'une propriété pour une ligne, quel que soit le mode : aplatie
- *  inline (query) ou via la carte `blockValues` (browse). La couleur d'une
- *  restricted_list se résout toujours depuis les `allowed_values` du type
- *  (le serveur de requête ne la retourne pas). */
+/** Valeur d'une propriété pour une ligne. Les deux modes (browse arbre, query)
+ *  aplatissent désormais les valeurs directement sur la ligne (`properties`).
+ *  La couleur d'une restricted_list se résout depuis les `allowed_values` du
+ *  type (ni le mode browse ni le mode requête ne la retournent). */
 function propValueFor(
   row: TreeRow,
   propSlug: string,
-  blockValues: Record<string, DocPropValue[]>,
 ): { value: string | null; allowedSlug: string | null } | null {
-  if (row.properties) {
-    const pv = row.properties.find((p) => p.prop_slug === propSlug)
-    return pv ? { value: pv.value, allowedSlug: pv.allowed_value_slug } : null
-  }
-  const pv = (blockValues[row.id] ?? []).find((v) => v.prop_slug === propSlug)
+  const pv = (row.properties ?? []).find((p) => p.prop_slug === propSlug)
   return pv ? { value: pv.value, allowedSlug: pv.allowed_value_slug } : null
 }
 
@@ -103,6 +111,9 @@ interface PropColDef {
   allowedValues: { slug: string; label: string; color: string | null }[]
 }
 
+/** Plafond serveur de `list_block_tree` (racines par page, mode browse). */
+const BROWSE_PAGE_SIZE = 100
+
 export function BlockDocumentList() {
   const { t } = useTranslation()
   // Route /ws/:wsSlug/blocs/:blocSlug/documents
@@ -118,6 +129,10 @@ export function BlockDocumentList() {
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
   const { spec, mode, setFilter, toggleSort, setPage, reset } = useQuerySpecState()
+
+  // Pagination du mode browse (racines, ≤100/page — plafond serveur `list_block_tree`).
+  const [browsePage, setBrowsePage] = useState(1)
+  useEffect(() => setBrowsePage(1), [ws, block])
 
   const { data: documents = [], isLoading } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, block],
@@ -145,10 +160,12 @@ export function BlockDocumentList() {
     enabled: Boolean(ws),
   })
 
-  const { data: blockValues = {} } = useQuery<Record<string, DocPropValue[]>>({
-    queryKey: ['block-values', ws, block],
-    queryFn: () => docsApi.getBlockValues(ws!, block!),
-    enabled: Boolean(ws && block),
+  // Mode browse : racines paginées + sous-arbres + valeurs (list_block_tree).
+  const { data: treePage } = useQuery<BlockTreePage>({
+    queryKey: ['block-tree', ws, block, browsePage],
+    queryFn: () => docsApi.getBlockTree(ws!, block!, browsePage, BROWSE_PAGE_SIZE),
+    enabled: Boolean(ws && block) && mode === 'browse',
+    placeholderData: keepPreviousData,
   })
 
   const { data: rootAllowedTypes = [] } = useQuery<AllowedTypeOut[]>({
@@ -204,19 +221,11 @@ export function BlockDocumentList() {
     return cols
   }, [types, typeSlugSet])
 
-  const treeRows = useMemo(() => buildTree(documents), [documents])
-
   const rows = useMemo<TreeRow[]>(() => {
     if (mode === 'query') return queryPage ? flatRows(queryPage) : []
-    return treeMode
-      ? treeRows
-      : documents.map((d) => ({
-          id: d.doc_technical_key,
-          title: d.title,
-          functional_type_slug: d.functional_type_slug,
-          subRows: [],
-        }))
-  }, [mode, queryPage, treeMode, treeRows, documents])
+    if (!treePage) return []
+    return treeMode ? treePage.roots.map(treeNodeToRow) : flattenTreeNodes(treePage.roots)
+  }, [mode, queryPage, treeMode, treePage])
 
   const titleSortDir = spec.sort.find((s) => s.key === 'title')?.dir
 
@@ -261,7 +270,7 @@ export function BlockDocumentList() {
       id: `prop_${p.slug}`,
       header: p.label,
       cell: ({ row }) => {
-        const pv = propValueFor(row.original, p.slug, blockValues)
+        const pv = propValueFor(row.original, p.slug)
         if (!pv || (pv.value === null && !pv.allowedSlug)) return <span className="text-gray-300">—</span>
         if (p.type === 'restricted_list') {
           if (!pv.allowedSlug) return <span className="text-gray-300">—</span>
@@ -311,7 +320,7 @@ export function BlockDocumentList() {
     }
 
     return [...staticCols, ...dynCols, actionCol]
-  }, [t, mode, treeMode, propColumns, blockValues, childTypesByParent, ws, block])
+  }, [t, mode, treeMode, propColumns, childTypesByParent, ws, block])
 
   const table = useReactTable({
     data: rows,
@@ -327,13 +336,14 @@ export function BlockDocumentList() {
   function handleCreated(docId: string) {
     setDialogParent(undefined)
     void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, block] })
-    void queryClient.invalidateQueries({ queryKey: ['block-values', ws, block] })
+    void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, block] })
     void navigate(`/ws/${ws}/blocs/${block}/documents/${docId}`)
   }
 
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
 
-  const isEmpty = mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : documents.length === 0
+  const isEmpty =
+    mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : (treePage?.roots.length ?? 0) === 0
 
   return (
     <div className="p-8" data-testid="block-document-list">
@@ -430,9 +440,36 @@ export function BlockDocumentList() {
         </div>
       )}
 
-      {/* Pagination en haut : uniquement en mode requête (browse reste un
-          arbre non paginé tant que la Feature « Mode browse arbre » n'est
-          pas branchée côté front). */}
+      {/* Pagination en haut, mode browse : racines paginées (list_block_tree, ≤100/page). */}
+      {mode === 'browse' && (
+        <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="browse-pagination">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={browsePage <= 1}
+            onClick={() => setBrowsePage((p) => p - 1)}
+            data-testid="browse-page-prev"
+          >
+            {t('documents.prev')}
+          </Button>
+          <span data-testid="browse-page-indicator">
+            {treePage
+              ? t('documents.pageIndicator', { page: treePage.page, total: treePage.total })
+              : t('common.loading')}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!treePage?.has_next}
+            onClick={() => setBrowsePage((p) => p + 1)}
+            data-testid="browse-page-next"
+          >
+            {t('documents.next')}
+          </Button>
+        </div>
+      )}
+
+      {/* Pagination en haut, mode requête : liste plate paginée serveur (≤100/page). */}
       {mode === 'query' && (
         <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="query-pagination">
           <Button

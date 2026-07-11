@@ -373,6 +373,27 @@ export interface BlockObjectsPage {
   objects: BlockObjectOut[]
 }
 
+/** Nœud de l'arbre `list_block_tree` : le document + ses valeurs + ses enfants directs. */
+export interface BlockTreeNode {
+  id: string
+  title: string
+  functional_type_slug: string | null
+  parent_id: string | null
+  properties: PropertyValueBrief[]
+  children: BlockTreeNode[]
+}
+
+/** Page de racines d'un bloc (mode browse) : `total`/`has_next` comptent les
+ *  racines uniquement — les enfants d'une racine incluse ne consomment pas le `page_size`. */
+export interface BlockTreePage {
+  block_slug: string
+  page: number
+  page_size: number
+  total: number
+  has_next: boolean
+  roots: BlockTreeNode[]
+}
+
 // ── Endpoints documents / blocks ────────────────────────────────────────────
 
 export const docsApi = {
@@ -395,6 +416,12 @@ export const docsApi = {
   /** Mode requête (filtre/tri actif) : liste plate paginée serveur, ≤100/page. */
   queryBlockDocuments: (ws: string, block: string, body: BlockQueryBody) =>
     api.post<BlockObjectsPage>(`/workspaces/${ws}/blocks/${block}/query`, body),
+
+  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs. */
+  getBlockTree: (ws: string, block: string, page: number, pageSize: number) =>
+    api.get<BlockTreePage>(
+      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}`,
+    ),
 
   createDocument: (
     ws: string,
