@@ -16,8 +16,10 @@ export interface UseQuerySpecStateResult {
   mode: WindowMode
   /** Pose ou retire (clause=null) le filtre d'une propriété. Repart en page 1. */
   setFilter: (prop: string, clause: Omit<FilterClause, 'prop'> | null) => void
-  /** Cycle asc → desc → aucun sur une seule clé de tri. Repart en page 1. */
-  toggleSort: (key: string) => void
+  /** Cycle asc → desc → aucun sur une clé de tri. Repart en page 1.
+   *  `additive` (Maj-clic) : conserve les autres clés et compose un tri multi-clé
+   *  (la clé est ajoutée/retirée en fin de liste) ; sinon remplace le tri courant. */
+  toggleSort: (key: string, additive?: boolean) => void
   setPage: (page: number) => void
   /** Hydrate l'état depuis un `QuerySpec` externe (ex. requête nommée). */
   loadSpec: (next: BlockQueryBody) => void
@@ -41,15 +43,21 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
     })
   }, [])
 
-  const toggleSort = useCallback((key: string) => {
+  const toggleSort = useCallback((key: string, additive = false) => {
     setSpec((prev) => {
       const existing = prev.sort.find((s) => s.key === key)
-      const sort: SortKey[] =
+      // Cycle d'une clé : absente → asc, asc → desc, desc → retirée (null).
+      const next: SortKey | null =
         existing === undefined
-          ? [{ key, dir: 'asc' }]
+          ? { key, dir: 'asc' }
           : existing.dir === 'asc'
-            ? [{ key, dir: 'desc' }]
-            : []
+            ? { key, dir: 'desc' }
+            : null
+      const others = prev.sort.filter((s) => s.key !== key)
+      // Maj-clic : compose avec les autres clés (ordre = précédence) ;
+      // clic simple : remplace tout le tri par cette seule clé.
+      const base = additive ? others : []
+      const sort: SortKey[] = next ? [...base, next] : base
       return { ...prev, sort, page: 1 }
     })
   }, [])

@@ -302,14 +302,24 @@ export function BlockDocumentList() {
     return treeMode ? sorted : flattenRows(sorted)
   }, [mode, queryPage, treeMode, treePage, browseSort])
 
-  // Direction de tri de la colonne `title` selon le mode : browse = tri arbre
-  // client (`browseSort`) ; query = tri serveur (`spec.sort`).
-  const titleSortDir =
-    mode === 'browse'
-      ? browseSort?.key === 'title'
-        ? browseSort.dir
-        : undefined
-      : spec.sort.find((s) => s.key === 'title')?.dir
+  // Clé de tri QuerySpec d'une colonne, ou null si non triable dans le mode courant.
+  // `title` est triable dans les deux modes ; les colonnes de propriété ne le sont
+  // qu'en mode requête (le tri arbre reste title-only, cf. feature browse).
+  function headerSortKey(columnId: string): string | null {
+    if (columnId === 'title') return 'title'
+    if (mode === 'query' && columnId.startsWith('prop_')) return columnId.slice('prop_'.length)
+    return null
+  }
+
+  // Direction + rang (multi-clé) d'une colonne. Browse = tri arbre client
+  // (`browseSort`, title uniquement) ; query = tri serveur (`spec.sort`).
+  function sortStateFor(key: string): { dir: 'asc' | 'desc'; index: number } | null {
+    if (mode === 'browse') {
+      return browseSort?.key === key ? { dir: browseSort.dir, index: -1 } : null
+    }
+    const index = spec.sort.findIndex((s) => s.key === key)
+    return index >= 0 ? { dir: spec.sort[index].dir, index } : null
+  }
 
   const columns = useMemo<ColumnDef<TreeRow>[]>(() => {
     const staticCols: ColumnDef<TreeRow>[] = [
@@ -596,19 +606,31 @@ export function BlockDocumentList() {
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b text-left text-sm font-medium text-gray-500">
                 {hg.headers.map((header) => {
-                  const sortable = header.column.id === 'title'
+                  const sortKey = headerSortKey(header.column.id)
+                  const sortState = sortKey ? sortStateFor(sortKey) : null
+                  // Le rang n'est affiché que sur un tri multi-clé (mode requête).
+                  const showRank = mode === 'query' && spec.sort.length > 1 && sortState
                   return (
                     <th
                       key={header.id}
-                      className={sortable ? 'cursor-pointer select-none pb-2 pr-4' : 'pb-2 pr-4'}
+                      className={sortKey ? 'cursor-pointer select-none pb-2 pr-4' : 'pb-2 pr-4'}
                       onClick={
-                        sortable
-                          ? () => (mode === 'browse' ? toggleBrowseSort('title') : toggleSort('title'))
+                        sortKey
+                          ? (e) =>
+                              mode === 'browse'
+                                ? toggleBrowseSort(sortKey)
+                                : toggleSort(sortKey, e.shiftKey)
                           : undefined
                       }
+                      data-testid={sortKey ? `sort-header-${sortKey}` : undefined}
                     >
                       {flexRender(header.column.columnDef.header, header.getContext())}
-                      {sortable && titleSortDir ? (titleSortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                      {sortState && (
+                        <span className="ml-0.5 text-xs">
+                          {sortState.dir === 'asc' ? '↑' : '↓'}
+                          {showRank ? <sup>{sortState.index + 1}</sup> : null}
+                        </span>
+                      )}
                     </th>
                   )
                 })}

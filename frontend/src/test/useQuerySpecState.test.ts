@@ -60,6 +60,39 @@ describe('useQuerySpecState', () => {
     expect(result.current.spec.sort).toEqual([{ key: 'created_at', dir: 'asc' }])
   })
 
+  it('additive toggleSort (Maj-clic) composes a multi-key sort in click order', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.toggleSort('statut'))
+    act(() => result.current.toggleSort('title', true))
+    expect(result.current.spec.sort).toEqual([
+      { key: 'statut', dir: 'asc' },
+      { key: 'title', dir: 'asc' },
+    ])
+  })
+
+  it('additive toggleSort cycles a key in place then drops it, keeping the others', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.toggleSort('statut'))
+    act(() => result.current.toggleSort('title', true))
+    // asc → desc sur 'statut' sans perdre 'title' (l'ordre est préservé).
+    act(() => result.current.toggleSort('statut', true))
+    expect(result.current.spec.sort).toEqual([
+      { key: 'title', dir: 'asc' },
+      { key: 'statut', dir: 'desc' },
+    ])
+    // desc → retirée : ne reste que 'title'.
+    act(() => result.current.toggleSort('statut', true))
+    expect(result.current.spec.sort).toEqual([{ key: 'title', dir: 'asc' }])
+  })
+
+  it('a non-additive click collapses a multi-key sort back to a single key', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.toggleSort('statut'))
+    act(() => result.current.toggleSort('title', true))
+    act(() => result.current.toggleSort('title'))
+    expect(result.current.spec.sort).toEqual([{ key: 'title', dir: 'desc' }])
+  })
+
   it('loadSpec hydrates an external QuerySpec (e.g. a saved query) and derives mode', () => {
     const { result } = renderHook(() => useQuerySpecState(100))
     act(() =>

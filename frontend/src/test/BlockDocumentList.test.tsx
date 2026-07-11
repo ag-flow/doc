@@ -468,6 +468,63 @@ describe('BlockDocumentList', () => {
     )
   })
 
+  // US Tri par clic d'entête branché au moteur serveur (+ multi-clé Maj-clic).
+  it('in query mode, sorts by a property column and composes a multi-key sort with Maj-click', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([statutType()])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1',
+      page: 1,
+      page_size: 100,
+      total: 1,
+      has_next: false,
+      objects: [
+        {
+          id: 'e1',
+          title: 'Epic 1',
+          functional_type_slug: 'epic',
+          properties: [statut('done')],
+        },
+      ],
+    })
+
+    renderList()
+    // Entrer en mode requête via un filtre (les colonnes de propriété deviennent triables).
+    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+
+    // Tri serveur par la colonne de propriété statut (clé = slug de propriété).
+    fireEvent.click(screen.getByTestId('sort-header-statut'))
+    await waitFor(() =>
+      expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        sort: [{ key: 'statut', dir: 'asc' }],
+        projection: null,
+        page: 1,
+        page_size: 100,
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+
+    // Maj-clic sur le titre → tri multi-clé (statut puis title, ordre = précédence).
+    fireEvent.click(screen.getByTestId('sort-header-title'), { shiftKey: true })
+    await waitFor(() =>
+      expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        sort: [
+          { key: 'statut', dir: 'asc' },
+          { key: 'title', dir: 'asc' },
+        ],
+        projection: null,
+        page: 1,
+        page_size: 100,
+      }),
+    )
+  })
+
   // US Barre de pagination en haut (≤100 par page) — mode browse (racines).
   it('paginates in browse mode via the top prev/next controls, calling list_block_tree', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
