@@ -129,7 +129,11 @@
     "deleteConfirmTitle": "Supprimer ce document ?",
     "deleteConfirmMsg": "Cette action est irréversible. Le document et ses enfants seront supprimés.",
     "deleteConfirm": "Supprimer définitivement",
-    "selectValue": "— choisir une valeur —"
+    "selectValue": "— choisir une valeur —",
+    "prev": "Précédent",
+    "next": "Suivant",
+    "pageIndicator": "Page {{page}} · {{total}} résultat(s)",
+    "clearQuery": "Effacer la requête"
   },
   "editor": {
     "save": "Enregistrer",

@@ -1,82 +1,84 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   flexRender,
   getCoreRowModel,
   getExpandedRowModel,
-  getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type ExpandedState,
-  type SortingState,
   type VisibilityState,
 } from '@tanstack/react-table'
 import {
   docsApi,
   type AllowedTypeOut,
+  type BlockObjectsPage,
   type DataBlockOut,
   type DocumentOut,
   type FunctionalTypeRich,
   type DocPropValue,
 } from '../lib/api'
+import { useQuerySpecState } from '../hooks/useQuerySpecState'
 import { Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 
-interface TreeRow extends DocumentOut {
+interface TreeRow {
+  id: string
+  title: string
+  functional_type_slug: string | null
   subRows: TreeRow[]
+  /** Renseigné en mode requête (query) : valeurs déjà aplaties par le serveur. */
+  properties?: { prop_slug: string; value: string | null; allowed_value_slug: string | null }[]
 }
 
 function buildTree(docs: DocumentOut[]): TreeRow[] {
   const byId = new Map<string, TreeRow>(
-    docs.map((d) => [d.doc_technical_key, { ...d, subRows: [] }]),
+    docs.map((d) => [
+      d.doc_technical_key,
+      { id: d.doc_technical_key, title: d.title, functional_type_slug: d.functional_type_slug, subRows: [] },
+    ]),
   )
   const roots: TreeRow[] = []
-  for (const doc of byId.values()) {
+  for (const doc of docs) {
+    const row = byId.get(doc.doc_technical_key)!
     if (doc.parent_id && byId.has(doc.parent_id)) {
-      byId.get(doc.parent_id)!.subRows.push(doc)
+      byId.get(doc.parent_id)!.subRows.push(row)
     } else {
-      roots.push(doc)
+      roots.push(row)
     }
   }
   return roots
 }
 
-function pathPreservingFilter(
-  docs: DocumentOut[],
-  filters: Record<string, string>,
-  values: Record<string, DocPropValue[]>,
-): DocumentOut[] {
-  if (Object.keys(filters).length === 0) return docs
+function flatRows(page: BlockObjectsPage): TreeRow[] {
+  return page.objects.map((o) => ({
+    id: o.id,
+    title: o.title,
+    functional_type_slug: o.functional_type_slug,
+    subRows: [],
+    properties: o.properties,
+  }))
+}
 
-  const matched = new Set(
-    docs
-      .filter((doc) => {
-        const docVals = values[doc.doc_technical_key] ?? []
-        return Object.entries(filters).every(([propSlug, valueSlug]) => {
-          const pv = docVals.find((v) => v.prop_slug === propSlug)
-          return pv?.allowed_value_slug === valueSlug
-        })
-      })
-      .map((d) => d.doc_technical_key),
-  )
-
-  const byId = new Map(docs.map((d) => [d.doc_technical_key, d]))
-  const visible = new Set(matched)
-
-  for (const id of matched) {
-    let cur: DocumentOut | undefined = byId.get(id)
-    while (cur?.parent_id) {
-      if (visible.has(cur.parent_id)) break
-      visible.add(cur.parent_id)
-      cur = byId.get(cur.parent_id)
-    }
+/** Valeur d'une propriété pour une ligne, quel que soit le mode : aplatie
+ *  inline (query) ou via la carte `blockValues` (browse). La couleur d'une
+ *  restricted_list se résout toujours depuis les `allowed_values` du type
+ *  (le serveur de requête ne la retourne pas). */
+function propValueFor(
+  row: TreeRow,
+  propSlug: string,
+  blockValues: Record<string, DocPropValue[]>,
+): { value: string | null; allowedSlug: string | null } | null {
+  if (row.properties) {
+    const pv = row.properties.find((p) => p.prop_slug === propSlug)
+    return pv ? { value: pv.value, allowedSlug: pv.allowed_value_slug } : null
   }
-
-  return docs.filter((d) => visible.has(d.doc_technical_key))
+  const pv = (blockValues[row.id] ?? []).find((v) => v.prop_slug === propSlug)
+  return pv ? { value: pv.value, allowedSlug: pv.allowed_value_slug } : null
 }
 
 function ColorPill({ label, color }: { label: string; color: string | null }) {
@@ -110,12 +112,12 @@ export function BlockDocumentList() {
 
   const [treeMode, setTreeMode] = useState(true)
   const [expanded, setExpanded] = useState<ExpandedState>(true)
-  const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
   const [showColMenu, setShowColMenu] = useState(false)
-  const [filters, setFilters] = useState<Record<string, string>>({})
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
+
+  const { spec, mode, setFilter, toggleSort, setPage, reset } = useQuerySpecState()
 
   const { data: documents = [], isLoading } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, block],
@@ -153,6 +155,15 @@ export function BlockDocumentList() {
     queryKey: ['allowed-types', ws, block, 'root'],
     queryFn: () => docsApi.getAllowedTypes(ws!, block!),
     enabled: Boolean(ws && block),
+  })
+
+  // Mode requête : dès qu'un filtre/tri est actif, bascule automatique vers
+  // une liste plate paginée serveur (≤100 lignes) pilotée par `spec`.
+  const { data: queryPage, isFetching: queryFetching } = useQuery<BlockObjectsPage>({
+    queryKey: ['block-query', ws, block, spec],
+    queryFn: () => docsApi.queryBlockDocuments(ws!, block!, spec),
+    enabled: Boolean(ws && block) && mode === 'query',
+    placeholderData: keepPreviousData,
   })
 
   const childTypesByParent = useMemo(() => {
@@ -193,18 +204,21 @@ export function BlockDocumentList() {
     return cols
   }, [types, typeSlugSet])
 
-  const filteredDocs = useMemo(
-    () => pathPreservingFilter(documents, filters, blockValues),
-    [documents, filters, blockValues],
-  )
+  const treeRows = useMemo(() => buildTree(documents), [documents])
 
-  const data = useMemo<TreeRow[]>(
-    () =>
-      treeMode
-        ? buildTree(filteredDocs)
-        : filteredDocs.map((d) => ({ ...d, subRows: [] })),
-    [filteredDocs, treeMode],
-  )
+  const rows = useMemo<TreeRow[]>(() => {
+    if (mode === 'query') return queryPage ? flatRows(queryPage) : []
+    return treeMode
+      ? treeRows
+      : documents.map((d) => ({
+          id: d.doc_technical_key,
+          title: d.title,
+          functional_type_slug: d.functional_type_slug,
+          subRows: [],
+        }))
+  }, [mode, queryPage, treeMode, treeRows, documents])
+
+  const titleSortDir = spec.sort.find((s) => s.key === 'title')?.dir
 
   const columns = useMemo<ColumnDef<TreeRow>[]>(() => {
     const staticCols: ColumnDef<TreeRow>[] = [
@@ -214,21 +228,21 @@ export function BlockDocumentList() {
         cell: ({ row, getValue }) => (
           <div
             className="flex items-center gap-1"
-            style={{ paddingLeft: treeMode ? `${row.depth * 16}px` : undefined }}
+            style={{ paddingLeft: mode === 'browse' && treeMode ? `${row.depth * 16}px` : undefined }}
           >
-            {treeMode && row.getCanExpand() ? (
+            {mode === 'browse' && treeMode && row.getCanExpand() ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   row.toggleExpanded()
                 }}
                 className="w-4 text-gray-500"
-                data-testid={`expand-${row.original.doc_technical_key}`}
+                data-testid={`expand-${row.original.id}`}
               >
                 {row.getIsExpanded() ? '▾' : '▸'}
               </button>
             ) : (
-              treeMode && <span className="w-4" />
+              mode === 'browse' && treeMode && <span className="w-4" />
             )}
             <span className="text-sm font-medium">{String(getValue())}</span>
           </div>
@@ -246,19 +260,13 @@ export function BlockDocumentList() {
     const dynCols: ColumnDef<TreeRow>[] = propColumns.map((p) => ({
       id: `prop_${p.slug}`,
       header: p.label,
-      enableSorting: false,
       cell: ({ row }) => {
-        const docVals = blockValues[row.original.doc_technical_key] ?? []
-        const pv = docVals.find((v) => v.prop_slug === p.slug)
-        if (!pv) return <span className="text-gray-300">—</span>
+        const pv = propValueFor(row.original, p.slug, blockValues)
+        if (!pv || (pv.value === null && !pv.allowedSlug)) return <span className="text-gray-300">—</span>
         if (p.type === 'restricted_list') {
-          if (!pv.allowed_value_slug) return <span className="text-gray-300">—</span>
-          return (
-            <ColorPill
-              label={pv.allowed_value_label ?? pv.allowed_value_slug}
-              color={pv.allowed_value_color ?? null}
-            />
-          )
+          if (!pv.allowedSlug) return <span className="text-gray-300">—</span>
+          const av = p.allowedValues.find((a) => a.slug === pv.allowedSlug)
+          return <ColorPill label={av?.label ?? pv.allowedSlug} color={av?.color ?? null} />
         }
         return <span className="text-sm">{pv.value ?? '—'}</span>
       },
@@ -267,9 +275,8 @@ export function BlockDocumentList() {
     const actionCol: ColumnDef<TreeRow> = {
       id: 'actions',
       header: '',
-      enableSorting: false,
       cell: ({ row }) => {
-        const docId = row.original.doc_technical_key
+        const docId = row.original.id
         const docTypeSlug = row.original.functional_type_slug
         const docChildren = docTypeSlug ? (childTypesByParent.get(docTypeSlug) ?? []) : []
         const docPath = `/ws/${ws}/blocs/${block}/documents/${docId}`
@@ -304,19 +311,17 @@ export function BlockDocumentList() {
     }
 
     return [...staticCols, ...dynCols, actionCol]
-  }, [t, treeMode, propColumns, blockValues])
+  }, [t, mode, treeMode, propColumns, blockValues, childTypesByParent, ws, block])
 
   const table = useReactTable({
-    data,
+    data: rows,
     columns,
-    state: { expanded, sorting, columnVisibility },
+    state: { expanded, columnVisibility },
     onExpandedChange: setExpanded,
-    onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
     getSubRows: (row) => row.subRows,
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   })
 
   function handleCreated(docId: string) {
@@ -327,6 +332,8 @@ export function BlockDocumentList() {
   }
 
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
+
+  const isEmpty = mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : documents.length === 0
 
   return (
     <div className="p-8" data-testid="block-document-list">
@@ -365,13 +372,15 @@ export function BlockDocumentList() {
           )}
         </div>
 
-        <Button
-          variant="secondary"
-          onClick={() => setTreeMode((v) => !v)}
-          data-testid="toggle-view-btn"
-        >
-          {treeMode ? t('documents.list_mode') : t('documents.tree_mode')}
-        </Button>
+        {mode === 'browse' && (
+          <Button
+            variant="secondary"
+            onClick={() => setTreeMode((v) => !v)}
+            data-testid="toggle-view-btn"
+          >
+            {treeMode ? t('documents.list_mode') : t('documents.tree_mode')}
+          </Button>
+        )}
         <Button onClick={() => setDialogParent(null)} data-testid="add-root-btn">
           {rootAllowedTypes.length === 1
             ? t('documents.addType', { type: rootAllowedTypes[0].label })
@@ -388,75 +397,105 @@ export function BlockDocumentList() {
         </Button>
       </div>
 
-      {/* Filtres préservant le chemin pour chaque restricted_list visible */}
+      {/* Filtres d'entête (restricted_list) : alimentent le QuerySpec et
+          déclenchent la bascule vers le mode requête (serveur, ≤100 lignes). */}
       {propColumns.filter((p) => p.type === 'restricted_list').length > 0 && (
         <div className="mb-4 flex flex-wrap gap-3" data-testid="filter-bar">
           {propColumns
             .filter((p) => p.type === 'restricted_list')
-            .map((p) => (
-              <div key={p.slug} className="flex items-center gap-1">
-                <span className="text-sm text-gray-600">{p.label} :</span>
-                <select
-                  className="rounded border border-gray-300 px-2 py-1 text-sm"
-                  value={filters[p.slug] ?? ''}
-                  onChange={(e) =>
-                    setFilters((prev) => {
-                      const next = { ...prev }
-                      if (e.target.value) {
-                        next[p.slug] = e.target.value
-                      } else {
-                        delete next[p.slug]
-                      }
-                      return next
-                    })
-                  }
-                  data-testid={`filter-${p.slug}`}
-                >
-                  <option value="">{t('documents.filter_all')}</option>
-                  {p.allowedValues.map((av) => (
-                    <option key={av.slug} value={av.slug}>
-                      {av.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+            .map((p) => {
+              const active = spec.filters.find((f) => f.prop === p.slug)
+              return (
+                <div key={p.slug} className="flex items-center gap-1">
+                  <span className="text-sm text-gray-600">{p.label} :</span>
+                  <select
+                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    value={active?.value ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setFilter(p.slug, v ? { op: 'eq', value: v } : null)
+                    }}
+                    data-testid={`filter-${p.slug}`}
+                  >
+                    <option value="">{t('documents.filter_all')}</option>
+                    {p.allowedValues.map((av) => (
+                      <option key={av.slug} value={av.slug}>
+                        {av.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
         </div>
       )}
 
-      {documents.length === 0 ? (
-        <p className="text-gray-500">{t('documents.noDocuments')}</p>
-      ) : filteredDocs.length === 0 ? (
-        <p className="text-gray-500">{t('documents.noResults')}</p>
+      {/* Pagination en haut : uniquement en mode requête (browse reste un
+          arbre non paginé tant que la Feature « Mode browse arbre » n'est
+          pas branchée côté front). */}
+      {mode === 'query' && (
+        <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="query-pagination">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={spec.page <= 1}
+            onClick={() => setPage(spec.page - 1)}
+            data-testid="query-page-prev"
+          >
+            {t('documents.prev')}
+          </Button>
+          <span data-testid="query-page-indicator">
+            {queryPage
+              ? t('documents.pageIndicator', { page: queryPage.page, total: queryPage.total })
+              : t('common.loading')}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!queryPage?.has_next}
+            onClick={() => setPage(spec.page + 1)}
+            data-testid="query-page-next"
+          >
+            {t('documents.next')}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={reset} data-testid="query-clear-btn">
+            {t('documents.clearQuery')}
+          </Button>
+        </div>
+      )}
+
+      {isEmpty ? (
+        <p className="text-gray-500">
+          {mode === 'query' ? t('documents.noResults') : t('documents.noDocuments')}
+        </p>
       ) : (
         <table className="w-full border-collapse" data-testid="documents-table">
           <thead>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b text-left text-sm font-medium text-gray-500">
-                {hg.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="cursor-pointer select-none pb-2 pr-4"
-                    onClick={header.column.getToggleSortingHandler()}
-                  >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                    {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ''}
-                  </th>
-                ))}
+                {hg.headers.map((header) => {
+                  const sortable = header.column.id === 'title'
+                  return (
+                    <th
+                      key={header.id}
+                      className={sortable ? 'cursor-pointer select-none pb-2 pr-4' : 'pb-2 pr-4'}
+                      onClick={sortable ? () => toggleSort('title') : undefined}
+                    >
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                      {sortable && titleSortDir ? (titleSortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                    </th>
+                  )
+                })}
               </tr>
             ))}
           </thead>
-          <tbody>
+          <tbody className={queryFetching ? 'opacity-60' : undefined}>
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
                 className="cursor-pointer border-b hover:bg-gray-50"
-                onClick={() =>
-                  navigate(
-                    `/ws/${ws}/blocs/${block}/documents/${row.original.doc_technical_key}`,
-                  )
-                }
-                data-testid={`doc-row-${row.original.doc_technical_key}`}
+                onClick={() => navigate(`/ws/${ws}/blocs/${block}/documents/${row.original.id}`)}
+                data-testid={`doc-row-${row.original.id}`}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="py-2 pr-4">

@@ -306,6 +306,73 @@ export interface FunctionalTypeRich extends FunctionalType {
   properties: PropertyDefRich[]
 }
 
+// ── Moteur de requête (QuerySpec) ───────────────────────────────────────────
+
+/** Opérateurs de filtre — miroir de `Operator` (backend `schemas/query.py`). */
+export type QueryOperator =
+  | 'eq'
+  | 'contains'
+  | 'starts_with'
+  | 'lt'
+  | 'gt'
+  | 'between'
+  | 'in'
+  | 'before'
+  | 'after'
+
+export interface FilterClause {
+  prop: string
+  op: QueryOperator
+  /** Valeur unique — tous les opérateurs sauf 'in' et 'between'. */
+  value?: string | null
+  /** Valeurs multiples — 'in' (liste) ou 'between' (exactement [min, max]). */
+  values?: string[] | null
+}
+
+export interface SortKey {
+  /** slug de propriété | 'title' | 'created_at'. */
+  key: string
+  dir: 'asc' | 'desc'
+}
+
+/** Corps REST de POST .../blocks/{block}/query — miroir de `BlockQueryBody`
+ *  (backend `schemas/query.py`). Structure partagée : rejouable telle quelle
+ *  par une requête nommée (milestone ultérieur). */
+export interface BlockQueryBody {
+  type_slugs?: string[] | null
+  filters: FilterClause[]
+  sort: SortKey[]
+  projection?: string[] | null
+  page: number
+  page_size: number
+}
+
+/** Valeur d'une propriété d'un objet de requête (forme aplatie, sans couleur —
+ *  résoudre la couleur depuis les `allowed_values` du type si besoin). */
+export interface PropertyValueBrief {
+  prop_slug: string
+  type: string
+  value: string | null
+  allowed_value_slug: string | null
+  allowed_value_label: string | null
+}
+
+export interface BlockObjectOut {
+  id: string
+  title: string
+  functional_type_slug: string | null
+  properties: PropertyValueBrief[]
+}
+
+export interface BlockObjectsPage {
+  block_slug: string
+  page: number
+  page_size: number
+  total: number
+  has_next: boolean
+  objects: BlockObjectOut[]
+}
+
 // ── Endpoints documents / blocks ────────────────────────────────────────────
 
 export const docsApi = {
@@ -324,6 +391,10 @@ export const docsApi = {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''
     return api.get<AllowedTypeOut[]>(`/workspaces/${ws}/blocks/${block}/allowed-types${qs}`)
   },
+
+  /** Mode requête (filtre/tri actif) : liste plate paginée serveur, ≤100/page. */
+  queryBlockDocuments: (ws: string, block: string, body: BlockQueryBody) =>
+    api.post<BlockObjectsPage>(`/workspaces/${ws}/blocks/${block}/query`, body),
 
   createDocument: (
     ws: string,
