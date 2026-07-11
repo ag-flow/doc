@@ -331,12 +331,12 @@ describe('BlockDocumentList', () => {
     expect(screen.getByTestId('query-pagination')).toBeInTheDocument()
     expect(screen.queryByTestId('browse-pagination')).not.toBeInTheDocument()
 
-    // Effacer la requête revient en mode browse (arbre complet, sans appel serveur supplémentaire).
+    // Effacer la requête revient en mode browse (arbre paginé, sans appel serveur
+    // supplémentaire). Les statuts n'étant pas renseignés ici, l'arbre démarre
+    // replié : seule la racine est visible (les descendants sont collapsés).
     fireEvent.click(screen.getByTestId('query-clear-btn'))
-    await waitFor(() => {
-      expect(screen.getByText('Epic 1')).toBeInTheDocument()
-      expect(screen.getByText('Story in-progress')).toBeInTheDocument()
-    })
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
     expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
     expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
   })
@@ -450,5 +450,89 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('browse-page-next'))
     await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 100))
     expect(screen.getByTestId('browse-page-prev')).not.toBeDisabled()
+  })
+
+  // US Collapse par défaut si les enfants directs ont le même statut.
+  function statut(slug: string): PropertyValueBrief {
+    return {
+      prop_slug: 'statut',
+      type: 'restricted_list',
+      value: null,
+      allowed_value_slug: slug,
+      allowed_value_label: slug,
+    }
+  }
+
+  it('starts a parent collapsed when its direct children share the same status', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, { f1: [statut('done')], f2: [statut('done')] }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Enfants homogènes (done/done) → parent replié : enfants masqués.
+    expect(screen.queryByText('Feature A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Feature B')).not.toBeInTheDocument()
+
+    // L'utilisateur peut toujours déplier manuellement.
+    fireEvent.click(screen.getByTestId('expand-e1'))
+    await waitFor(() => expect(screen.getByText('Feature A')).toBeInTheDocument())
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
+  })
+
+  it('starts a parent expanded when its direct children have divergent statuses', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, { f1: [statut('done')], f2: [statut('en_cours')] }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Statuts divergents (done vs en_cours) → parent déplié d'emblée.
+    expect(screen.getByText('Feature A')).toBeInTheDocument()
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
+  })
+
+  it('keys collapse on statut only, ignoring other restricted_list props (e.g. severite)', async () => {
+    // Cas `bug` : enfants avec severite divergente mais statut homogène → replié.
+    const severite = (slug: string): PropertyValueBrief => ({
+      prop_slug: 'severite',
+      type: 'restricted_list',
+      value: null,
+      allowed_value_slug: slug,
+      allowed_value_label: slug,
+    })
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'b1', title: 'Bug A', functional_type_slug: 'bug', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'b2', title: 'Bug B', functional_type_slug: 'bug', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, {
+        b1: [statut('done'), severite('majeure')],
+        b2: [statut('done'), severite('mineure')],
+      }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // severite diverge mais statut est homogène → parent replié.
+    expect(screen.queryByText('Bug A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Bug B')).not.toBeInTheDocument()
   })
 })

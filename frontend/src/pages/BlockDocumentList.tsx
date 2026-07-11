@@ -36,6 +36,41 @@ interface TreeRow {
   properties?: { prop_slug: string; value: string | null; allowed_value_slug: string | null }[]
 }
 
+/** Slug conventionnel de la propriété « statut » (une `restricted_list` par type).
+ *  docflow ne réserve aucun concept de statut (spec 02_DATA_MODEL §143 : « le statut
+ *  n'est pas un concept spécial ») ; on cible donc ce slug explicitement plutôt que
+ *  « la première restricted_list », car un type peut en porter plusieurs (ex. `bug`
+ *  a `severite` ET `statut`) — une heuristique générique choisirait la mauvaise. */
+const STATUS_PROP_SLUG = 'statut'
+
+/** Statut d'un nœud (slug de valeur autorisée), ou null si non renseigné/absent. */
+function statusOf(node: BlockTreeNode): string | null {
+  const pv = node.properties.find((p) => p.prop_slug === STATUS_PROP_SLUG)
+  return pv?.allowed_value_slug ?? null
+}
+
+/** État d'expansion initial (TanStack `ExpandedState`) du mode browse arbre.
+ *
+ *  Règle : un parent démarre **déplié** seulement si ses enfants directs présentent
+ *  des statuts **divergents** (≥ 2 valeurs distinctes) ; sinon il démarre **replié**
+ *  (enfants homogènes, sans statut, ou parent d'un seul enfant). Un statut non
+ *  renseigné ne crée pas de divergence — conforme au critère « collapsé si aucun
+ *  statut divergent ». Seuls les nœuds dépliés figurent dans la carte (absent = replié). */
+function computeDefaultExpanded(roots: BlockTreeNode[]): Record<string, boolean> {
+  const state: Record<string, boolean> = {}
+  const visit = (node: BlockTreeNode) => {
+    if (node.children.length > 0) {
+      const distinct = new Set(
+        node.children.map(statusOf).filter((s): s is string => s !== null),
+      )
+      if (distinct.size >= 2) state[node.id] = true
+      node.children.forEach(visit)
+    }
+  }
+  roots.forEach(visit)
+  return state
+}
+
 /** Mode browse arbre : convertit un nœud `list_block_tree` (récursif) en ligne de table. */
 function treeNodeToRow(node: BlockTreeNode): TreeRow {
   return {
@@ -122,7 +157,8 @@ export function BlockDocumentList() {
   const queryClient = useQueryClient()
 
   const [treeMode, setTreeMode] = useState(true)
-  const [expanded, setExpanded] = useState<ExpandedState>(true)
+  // Vide au départ ; peuplé par `computeDefaultExpanded` dès que l'arbre charge.
+  const [expanded, setExpanded] = useState<ExpandedState>({})
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
   const [showColMenu, setShowColMenu] = useState(false)
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
@@ -167,6 +203,13 @@ export function BlockDocumentList() {
     enabled: Boolean(ws && block) && mode === 'browse',
     placeholderData: keepPreviousData,
   })
+
+  // Collapse par défaut : recalcule l'état d'expansion à chaque (re)chargement de
+  // l'arbre (changement de page/bloc, invalidation). Les toggles manuels de
+  // l'utilisateur tiennent jusqu'au prochain rechargement.
+  useEffect(() => {
+    if (treePage) setExpanded(computeDefaultExpanded(treePage.roots))
+  }, [treePage])
 
   const { data: rootAllowedTypes = [] } = useQuery<AllowedTypeOut[]>({
     queryKey: ['allowed-types', ws, block, 'root'],
@@ -329,6 +372,9 @@ export function BlockDocumentList() {
     onExpandedChange: setExpanded,
     onColumnVisibilityChange: setColumnVisibility,
     getSubRows: (row) => row.subRows,
+    // Clé de ligne = id du document → l'état d'expansion (computeDefaultExpanded)
+    // référence des ids stables plutôt que des chemins d'index TanStack.
+    getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
   })
