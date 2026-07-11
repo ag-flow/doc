@@ -13,6 +13,7 @@ from docflow.documents.block_query import list_block_objects, query_documents
 from docflow.properties import service as prop_svc
 from docflow.schemas.document import DocumentCreate
 from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
+from docflow.schemas.query import FilterClause, QuerySpec
 from docflow.schemas.types import FunctionalTypeCreate
 from docflow.types import service as type_svc
 
@@ -40,7 +41,9 @@ async def _setup(pool: asyncpg.Pool, statuts: list[str]) -> uuid.UUID:
         wk,
     )
     await prop_svc.create_def(
-        pool, _WS, "epic",
+        pool,
+        _WS,
+        "epic",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     for slug, label, pos in [("todo", "À faire", 0), ("done", "Done", 1)]:
@@ -94,9 +97,7 @@ async def test_list_objects_pagination(db_pool: asyncpg.Pool, test_workspace: di
     assert p3.objects[0].title == "Epic 04"
 
 
-async def test_list_objects_page_size_bounds(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+async def test_list_objects_page_size_bounds(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     await _setup(db_pool, ["todo"])
     with pytest.raises(HTTPException) as exc:
         await list_block_objects(db_pool, _WS, "board", page=1, page_size=9999)
@@ -106,12 +107,19 @@ async def test_list_objects_page_size_bounds(
 # ── query_documents ───────────────────────────────────────────────────────────
 
 
+def _spec(**kw: object) -> QuerySpec:
+    kw.setdefault("workspace_slug", _WS)
+    kw.setdefault("block_slug", "board")
+    return QuerySpec(**kw)  # type: ignore[arg-type]
+
+
 async def test_query_filters_by_restricted_value(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
     await _setup(db_pool, ["todo", "done", "todo", "done", "todo"])
-    page = await query_documents(db_pool, _WS, "board", {"statut": "done"}, page=1, page_size=50)
-
+    page = await query_documents(
+        db_pool, _WS, _spec(filters=[FilterClause(prop="statut", op="eq", value="done")])
+    )
     assert page.total == 2
     for obj in page.objects:
         statut = next(p for p in obj.properties if p.prop_slug == "statut")
@@ -122,19 +130,21 @@ async def test_query_pagination_on_filtered_set(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
     await _setup(db_pool, ["todo", "done", "todo", "done", "todo", "done"])
-    p1 = await query_documents(db_pool, _WS, "board", {"statut": "todo"}, page=1, page_size=2)
+    p1 = await query_documents(
+        db_pool,
+        _WS,
+        _spec(filters=[FilterClause(prop="statut", op="eq", value="todo")], page=1, page_size=2),
+    )
     assert p1.total == 3
     assert len(p1.objects) == 2
     assert p1.has_next is True
 
 
-async def test_query_empty_filter_rejected(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
-    await _setup(db_pool, ["todo"])
-    with pytest.raises(HTTPException) as exc:
-        await query_documents(db_pool, _WS, "board", {}, page=1, page_size=50)
-    assert exc.value.status_code == 422
+async def test_query_empty_spec_returns_all(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Un QuerySpec sans filtre liste tous les objets du bloc (paginé)."""
+    await _setup(db_pool, ["todo", "done", "todo"])
+    page = await query_documents(db_pool, _WS, _spec())
+    assert page.total == 3
 
 
 async def test_list_property_values_exposes_allowed_values(
@@ -167,7 +177,10 @@ async def test_set_property_value_invalid_slug_lists_valid(
     doc_id = await db_pool.fetchval("SELECT doc_technical_key FROM document WHERE title='Epic 00'")
     with pytest.raises(HTTPException) as exc:
         await doc_svc.set_property_value(
-            db_pool, _WS, doc_id, "statut",
+            db_pool,
+            _WS,
+            doc_id,
+            "statut",
             PropertyValueSet(allowed_value_slug="en_review", expected_version=0),
         )
     assert exc.value.status_code == 422

@@ -18,11 +18,8 @@ from docflow.documents.block_ops import list_block_values as _list_block_values
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
-from docflow.schemas.introspection import (
-    BlockObjectsPage,
-    BlockPropertiesOut,
-    BlockQueryRequest,
-)
+from docflow.schemas.introspection import BlockObjectsPage, BlockPropertiesOut
+from docflow.schemas.query import BlockQueryBody, QuerySpec
 from docflow.webhooks import service as wh_service
 
 router = APIRouter(tags=["blocks"])
@@ -83,15 +80,14 @@ async def list_block_objects(
 async def query_block_documents(
     ws_slug: str,
     block_slug: str,
-    body: BlockQueryRequest,
+    body: BlockQueryBody,
     request: Request,
     _: AuthUser = _Auth,
 ) -> BlockObjectsPage:
-    """Query filtrée paginée sur propriété (POST : le filtre voyage dans le corps)."""
+    """Moteur de requête (QuerySpec) : filtres typés, tri multi-clé, projection, pagination."""
     check_api_key_scope(request, ws_slug, block_slug)
-    return await block_query.query_documents(
-        request.app.state.pool, ws_slug, block_slug, body.filters, body.page, body.page_size
-    )
+    spec = QuerySpec(workspace_slug=ws_slug, block_slug=block_slug, **body.model_dump())
+    return await block_query.query_documents(request.app.state.pool, ws_slug, spec)
 
 
 @router.patch(_BLOCK, response_model=DataBlockOut)

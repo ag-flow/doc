@@ -705,13 +705,20 @@ _TOOLS: list[Tool] = [
     Tool(
         name="query_documents",
         description=(
-            "Liste, de façon PAGINÉE, les documents d'un bloc qui matchent un filtre sur "
-            "une ou plusieurs propriétés — pour cibler une opération en masse (ex. tous les "
-            "documents où statut=done). filters est un objet {prop_slug: valeur attendue} ; "
-            "la valeur est comparée au slug de la valeur autorisée (restricted_list) ou à la "
-            "valeur brute (scalaire) ; plusieurs entrées sont combinées en ET. Retourne la "
-            "même forme paginée que list_block_objects (total, has_next, objects avec valeurs). "
-            "Au moins un filtre est requis. Lecture seule."
+            "Moteur de requête PAGINÉ sur les documents d'un bloc (QuerySpec) : filtres typés, "
+            "tri multi-clé, projection, sélection par type. Retourne la forme paginée de "
+            "list_block_objects (total, has_next, objects avec valeurs). Lecture seule.\n"
+            "- filters (rétro-compatible) : objet {prop_slug: valeur} → égalité.\n"
+            "- where : liste de clauses [{prop, op, value|values}]. Opérateurs par type : "
+            "text/url = eq|contains|starts_with ; int/float = eq|lt|gt|between ([min,max]) ; "
+            "date = eq|before|after|between ; restricted_list = eq|in (values=[slugs]) ; "
+            "bool/reference = eq. Un opérateur incompatible avec le type renvoie une erreur "
+            "listant les opérateurs valides.\n"
+            "- sort : liste [{key, dir}] (key = prop_slug | title | created_at ; dir = asc|desc ; "
+            "restricted_list trié par ordre de pipeline).\n"
+            "- projection : liste de prop_slug à remonter (défaut : toutes).\n"
+            "- type_slugs : restreint aux types d'objet donnés.\n"
+            "- page / page_size (défaut 50, max 100)."
         ),
         inputSchema={
             "type": "object",
@@ -720,16 +727,36 @@ _TOOLS: list[Tool] = [
                 "block_slug": {"type": "string", "description": "Slug du bloc"},
                 "filters": {
                     "type": "object",
-                    "description": "Filtre {prop_slug: valeur attendue}, combiné en ET",
+                    "description": "Filtre d'égalité {prop_slug: valeur} (rétro-compatible)",
                     "additionalProperties": {"type": "string"},
+                },
+                "where": {
+                    "type": "array",
+                    "description": "Clauses typées [{prop, op, value|values}]",
+                    "items": {"type": "object"},
+                },
+                "sort": {
+                    "type": "array",
+                    "description": "Tri multi-clé [{key, dir}]",
+                    "items": {"type": "object"},
+                },
+                "projection": {
+                    "type": "array",
+                    "description": "prop_slug à remonter (défaut : toutes)",
+                    "items": {"type": "string"},
+                },
+                "type_slugs": {
+                    "type": "array",
+                    "description": "Restreindre aux types d'objet donnés",
+                    "items": {"type": "string"},
                 },
                 "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
                 "page_size": {
                     "type": "integer",
-                    "description": "Taille de page (défaut 50, max 200)",
+                    "description": "Taille de page (défaut 50, max 100)",
                 },
             },
-            "required": ["workspace_slug", "block_slug", "filters"],
+            "required": ["workspace_slug", "block_slug"],
         },
     ),
     *artifact_tools.ARTIFACT_TOOLS,
@@ -1600,23 +1627,50 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
 async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
+    from pydantic import ValidationError
 
     from docflow.documents.block_query import query_documents
+    from docflow.schemas.query import FilterClause, QuerySpec, SortKey
 
-    raw_filters = args.get("filters", {})
-    if not isinstance(raw_filters, dict):
-        return _text({"error": "filters doit être un objet {prop_slug: valeur attendue}"})
-    filters = {str(k): str(v) for k, v in raw_filters.items()}
+    ws = str(args.get("workspace_slug", ""))
+    block = str(args.get("block_slug", ""))
     page, page_size = _pagination_args(args)
+
+    clauses: list[FilterClause] = []
     try:
-        out = await query_documents(
-            pool,
-            str(args.get("workspace_slug", "")),
-            str(args.get("block_slug", "")),
-            filters,
-            page,
-            page_size,
+        # Rétro-compatibilité : filters = {prop: valeur} → égalité.
+        raw_filters = args.get("filters")
+        if isinstance(raw_filters, dict):
+            clauses += [
+                FilterClause(prop=str(k), op="eq", value=str(v)) for k, v in raw_filters.items()
+            ]
+        # Forme riche : where = [{prop, op, value|values}].
+        raw_where = args.get("where")
+        if isinstance(raw_where, list):
+            clauses += [FilterClause(**w) for w in raw_where if isinstance(w, dict)]
+        raw_sort = args.get("sort")
+        sort = (
+            [SortKey(**s) for s in raw_sort if isinstance(s, dict)]
+            if isinstance(raw_sort, list)
+            else []
         )
+        projection = args.get("projection")
+        type_slugs = args.get("type_slugs")
+        spec = QuerySpec(
+            workspace_slug=ws,
+            block_slug=block,
+            type_slugs=type_slugs if isinstance(type_slugs, list) else None,
+            filters=clauses,
+            sort=sort,
+            projection=projection if isinstance(projection, list) else None,
+            page=page,
+            page_size=page_size,
+        )
+    except ValidationError as e:
+        return _text({"error": f"QuerySpec invalide : {e}"})
+
+    try:
+        out = await query_documents(pool, ws, spec)
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(out.model_dump())
