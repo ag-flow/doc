@@ -308,13 +308,13 @@ describe('BlockDocumentList', () => {
     })
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
 
-    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await applyRestrictedFilter('statut', ['done'])
 
     await waitFor(() => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
         page: 1,
@@ -357,15 +357,15 @@ describe('BlockDocumentList', () => {
 
     renderList()
     // Entrer en mode requête via un filtre (le clic d'entête ne bascule plus le mode).
-    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
+    await applyRestrictedFilter('statut', ['done'])
     // Attendre la résolution de la requête (la ligne apparaît) avant de trier.
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('Titre'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
         page: 1,
@@ -377,7 +377,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
         page: 1,
@@ -402,8 +402,8 @@ describe('BlockDocumentList', () => {
 
     renderList()
     // Entrer en mode requête via un filtre.
-    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
+    await applyRestrictedFilter('statut', ['done'])
     // Attendre la résolution (has_next=true → bouton suivant actif) avant de paginer.
     await waitFor(() => expect(screen.getByTestId('query-page-next')).not.toBeDisabled())
     expect(screen.getByTestId('query-page-prev')).toBeDisabled()
@@ -411,7 +411,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('query-page-next'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
         page: 2,
@@ -492,15 +492,15 @@ describe('BlockDocumentList', () => {
 
     renderList()
     // Entrer en mode requête via un filtre (les colonnes de propriété deviennent triables).
-    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
+    await applyRestrictedFilter('statut', ['done'])
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
 
     // Tri serveur par la colonne de propriété statut (clé = slug de propriété).
     fireEvent.click(screen.getByTestId('sort-header-statut'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
         page: 1,
@@ -513,7 +513,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('sort-header-title'), { shiftKey: true })
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [
           { key: 'statut', dir: 'asc' },
           { key: 'title', dir: 'asc' },
@@ -572,8 +572,8 @@ describe('BlockDocumentList', () => {
     })
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
+    await applyRestrictedFilter('statut', ['done'])
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
     // Projection initiale = toutes les colonnes visibles → null (le serveur remonte tout).
     expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith(
@@ -627,6 +627,17 @@ describe('BlockDocumentList', () => {
     await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 100))
     expect(screen.getByTestId('browse-page-prev')).not.toBeDisabled()
   })
+
+  // Applique un filtre restricted_list via le popover d'entête (op `in`).
+  // Ouvre le popover, coche la/les valeur(s), puis clique « Appliquer ».
+  async function applyRestrictedFilter(propSlug: string, valueSlugs: string[]) {
+    fireEvent.click(screen.getByTestId(`filter-btn-${propSlug}`))
+    await waitFor(() => expect(screen.getByTestId(`filter-popover-${propSlug}`)).toBeInTheDocument())
+    for (const v of valueSlugs) {
+      fireEvent.click(screen.getByTestId(`filter-opt-${propSlug}-${v}`))
+    }
+    fireEvent.click(screen.getByTestId(`filter-apply-${propSlug}`))
+  }
 
   // US Collapse par défaut si les enfants directs ont le même statut.
   function statut(slug: string): PropertyValueBrief {

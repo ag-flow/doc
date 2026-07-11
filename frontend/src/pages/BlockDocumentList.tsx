@@ -26,6 +26,7 @@ import { Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
+import { HeaderFilterPopover } from '../components/HeaderFilterPopover'
 
 interface TreeRow {
   id: string
@@ -294,6 +295,12 @@ export function BlockDocumentList() {
     return cols
   }, [types, typeSlugSet])
 
+  // Lookup id de colonne (`prop_<slug>`) → définition, pour brancher le popover de filtre.
+  const propColById = useMemo(
+    () => new Map(propColumns.map((p) => [`prop_${p.slug}`, p])),
+    [propColumns],
+  )
+
   // Projection dérivée du sélecteur de colonnes : null si toutes les colonnes de
   // propriété sont visibles (le serveur remonte tout), sinon la liste des slugs
   // visibles. En mode requête, les colonnes masquées ne sont pas demandées.
@@ -515,39 +522,6 @@ export function BlockDocumentList() {
         </Button>
       </div>
 
-      {/* Filtres d'entête (restricted_list) : alimentent le QuerySpec et
-          déclenchent la bascule vers le mode requête (serveur, ≤100 lignes). */}
-      {propColumns.filter((p) => p.type === 'restricted_list').length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-3" data-testid="filter-bar">
-          {propColumns
-            .filter((p) => p.type === 'restricted_list')
-            .map((p) => {
-              const active = spec.filters.find((f) => f.prop === p.slug)
-              return (
-                <div key={p.slug} className="flex items-center gap-1">
-                  <span className="text-sm text-gray-600">{p.label} :</span>
-                  <select
-                    className="rounded border border-gray-300 px-2 py-1 text-sm"
-                    value={active?.value ?? ''}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      setFilter(p.slug, v ? { op: 'eq', value: v } : null)
-                    }}
-                    data-testid={`filter-${p.slug}`}
-                  >
-                    <option value="">{t('documents.filter_all')}</option>
-                    {p.allowedValues.map((av) => (
-                      <option key={av.slug} value={av.slug}>
-                        {av.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )
-            })}
-        </div>
-      )}
-
       {/* Pagination en haut, mode browse : racines paginées (list_block_tree, ≤100/page). */}
       {mode === 'browse' && (
         <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="browse-pagination">
@@ -623,6 +597,7 @@ export function BlockDocumentList() {
                   const sortState = sortKey ? sortStateFor(sortKey) : null
                   // Le rang n'est affiché que sur un tri multi-clé (mode requête).
                   const showRank = mode === 'query' && spec.sort.length > 1 && sortState
+                  const propCol = propColById.get(header.column.id)
                   return (
                     <th
                       key={header.id}
@@ -637,13 +612,22 @@ export function BlockDocumentList() {
                       }
                       data-testid={sortKey ? `sort-header-${sortKey}` : undefined}
                     >
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                      {sortState && (
-                        <span className="ml-0.5 text-xs">
-                          {sortState.dir === 'asc' ? '↑' : '↓'}
-                          {showRank ? <sup>{sortState.index + 1}</sup> : null}
-                        </span>
-                      )}
+                      <span className="inline-flex items-center gap-1">
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {sortState && (
+                          <span className="text-xs">
+                            {sortState.dir === 'asc' ? '↑' : '↓'}
+                            {showRank ? <sup>{sortState.index + 1}</sup> : null}
+                          </span>
+                        )}
+                        {propCol && (
+                          <HeaderFilterPopover
+                            column={propCol}
+                            clause={spec.filters.find((f) => f.prop === propCol.slug) ?? null}
+                            onChange={(clause) => setFilter(propCol.slug, clause)}
+                          />
+                        )}
+                      </span>
                     </th>
                   )
                 })}

@@ -120,7 +120,6 @@
     "tree_mode": "Arbre",
     "list_mode": "Liste",
     "columns": "Colonnes",
-    "filter_all": "Tous",
     "noResults": "Aucun résultat pour ce filtre",
     "addChild": "Ajouter un enfant :",
     "addType": "Ajouter {{type}}",
@@ -133,7 +132,28 @@
     "prev": "Précédent",
     "next": "Suivant",
     "pageIndicator": "Page {{page}} · {{total}} résultat(s)",
-    "clearQuery": "Effacer la requête"
+    "clearQuery": "Effacer la requête",
+    "filter": {
+      "title": "Filtrer",
+      "apply": "Appliquer",
+      "clear": "Effacer",
+      "value": "Valeur",
+      "min": "Min",
+      "max": "Max",
+      "true": "Vrai",
+      "false": "Faux",
+      "op": {
+        "eq": "égal à",
+        "contains": "contient",
+        "starts_with": "commence par",
+        "lt": "inférieur à",
+        "gt": "supérieur à",
+        "between": "entre",
+        "before": "avant",
+        "after": "après",
+        "in": "parmi"
+      }
+    }
   },
   "editor": {
     "save": "Enregistrer",
