@@ -341,11 +341,11 @@ describe('BlockDocumentList', () => {
     expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
   })
 
-  it('clicking the title header toggles sort and switches to query mode (asc → desc → none)', async () => {
+  it('in query mode, clicking the title header cycles server sort (asc → desc)', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
-    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([statutType()])
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
@@ -356,43 +356,41 @@ describe('BlockDocumentList', () => {
     })
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('documents-table')).toBeInTheDocument())
+    // Entrer en mode requête via un filtre (le clic d'entête ne bascule plus le mode).
+    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    // Attendre la résolution de la requête (la ligne apparaît) avant de trier.
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('Titre'))
     await waitFor(() =>
-      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
-        filters: [],
+      expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
         page: 1,
         page_size: 100,
       }),
     )
-    // Attendre la fin du fetch (la ligne réapparaît) avant de recliquer, sinon
-    // l'entête disparaît pendant le chargement (état "Aucun résultat").
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [],
+        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
         page: 1,
         page_size: 100,
       }),
     )
-    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByText(/Titre/))
-    await waitFor(() => expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument())
   })
 
   it('paginates in query mode via the top prev/next controls', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
-    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([statutType()])
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
@@ -403,21 +401,70 @@ describe('BlockDocumentList', () => {
     })
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('documents-table')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('Titre'))
-    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Entrer en mode requête via un filtre.
+    await waitFor(() => expect(screen.getByTestId('filter-statut')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('filter-statut'), { target: { value: 'done' } })
+    // Attendre la résolution (has_next=true → bouton suivant actif) avant de paginer.
+    await waitFor(() => expect(screen.getByTestId('query-page-next')).not.toBeDisabled())
     expect(screen.getByTestId('query-page-prev')).toBeDisabled()
-    expect(screen.getByTestId('query-page-next')).not.toBeDisabled()
 
     fireEvent.click(screen.getByTestId('query-page-next'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
-        filters: [],
-        sort: [{ key: 'title', dir: 'asc' }],
+        filters: [{ prop: 'statut', op: 'eq', value: 'done' }],
+        sort: [],
         projection: null,
         page: 2,
         page_size: 100,
       }),
+    )
+  })
+
+  // US Tri hiérarchique sur la page courante (parents puis enfants).
+  it('sorts the tree hierarchically on header click, staying in browse mode', async () => {
+    // Ordre serveur volontairement non trié : racines [ea, eb], enfants de ea [fz, fx].
+    const docs = [
+      makeDoc({ doc_technical_key: 'ea', title: 'Epic A', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'eb', title: 'Epic B', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'fz', title: 'Feat Z', functional_type_slug: 'feature', parent_id: 'ea' }),
+      makeDoc({ doc_technical_key: 'fx', title: 'Feat X', functional_type_slug: 'feature', parent_id: 'ea' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    // ea a des enfants au statut divergent → déplié d'emblée (enfants visibles).
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, { fz: [statut('done')], fx: [statut('en_cours')] }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    const rowOrder = () =>
+      screen.getAllByTestId(/^doc-row-/).map((el) => el.getAttribute('data-testid'))
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Feat X')).toBeInTheDocument())
+    // Ordre serveur par défaut (insertion, non trié).
+    expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb'])
+
+    fireEvent.click(screen.getByText('Titre'))
+    // Reste en mode browse : aucun appel serveur, pagination browse conservée.
+    expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
+    expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
+    expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
+
+    // Tri asc hiérarchique : racines A avant B ; sous A, X avant Z ; enfants sous leur parent.
+    await waitFor(() =>
+      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb']),
+    )
+
+    // Deuxième clic : desc → B avant A ; sous A, Z avant X.
+    fireEvent.click(screen.getByText(/Titre/))
+    await waitFor(() =>
+      expect(rowOrder()).toEqual(['doc-row-eb', 'doc-row-ea', 'doc-row-fz', 'doc-row-fx']),
+    )
+
+    // Troisième clic : retour à l'ordre serveur (tri annulé).
+    fireEvent.click(screen.getByText(/Titre/))
+    await waitFor(() =>
+      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb']),
     )
   })
 
@@ -460,6 +507,34 @@ describe('BlockDocumentList', () => {
       value: null,
       allowed_value_slug: slug,
       allowed_value_label: slug,
+    }
+  }
+
+  // Type epic portant une propriété statut (restricted_list) → filtre d'entête.
+  function statutType(): FunctionalTypeRich {
+    return {
+      id: 'tid-epic',
+      slug: 'epic',
+      label: 'Epic',
+      parent_slug: null,
+      workspace_slug: 'ws',
+      content_template: null,
+      created_at: '',
+      updated_at: '',
+      properties: [
+        {
+          slug: 'statut',
+          label: 'Statut',
+          type: 'restricted_list',
+          default_value: null,
+          behavior: null,
+          required: false,
+          allowed_values: [
+            { slug: 'done', label: 'Terminé', position: 1, color: '#22c55e' },
+            { slug: 'en_cours', label: 'En cours', position: 0, color: '#f59e0b' },
+          ],
+        },
+      ],
     }
   }
 

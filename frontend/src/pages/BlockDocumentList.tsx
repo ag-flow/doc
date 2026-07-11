@@ -82,24 +82,38 @@ function treeNodeToRow(node: BlockTreeNode): TreeRow {
   }
 }
 
-/** Mode browse liste (non arbre) : mêmes racines/sous-arbres de la page courante,
- *  aplatis en profondeur (parent puis descendants) sans regroupement visuel. */
-function flattenTreeNodes(nodes: BlockTreeNode[]): TreeRow[] {
+/** Mode browse liste (non arbre) : aplatit l'arbre en profondeur (parent puis
+ *  descendants). Appliqué APRÈS le tri hiérarchique, donc l'ordre parent→enfants
+ *  triés est préservé. */
+function flattenRows(rows: TreeRow[]): TreeRow[] {
   const out: TreeRow[] = []
-  const walk = (list: BlockTreeNode[]) => {
-    for (const node of list) {
-      out.push({
-        id: node.id,
-        title: node.title,
-        functional_type_slug: node.functional_type_slug,
-        subRows: [],
-        properties: node.properties,
-      })
-      walk(node.children)
+  const walk = (list: TreeRow[]) => {
+    for (const r of list) {
+      out.push({ ...r, subRows: [] })
+      walk(r.subRows)
     }
   }
-  walk(nodes)
+  walk(rows)
   return out
+}
+
+interface BrowseSort {
+  key: string
+  dir: 'asc' | 'desc'
+}
+
+/** Tri hiérarchique : ordonne chaque niveau (racines, puis récursivement les
+ *  enfants dans chaque parent) par la clé/direction. Un enfant reste toujours
+ *  sous son parent — on ne trie jamais à plat entre niveaux. Seul `title` est
+ *  triable côté arbre (cohérent avec l'unique colonne triable de l'entête). */
+function sortTreeRows(rows: TreeRow[], sort: BrowseSort): TreeRow[] {
+  const cmp = (a: TreeRow, b: TreeRow): number => {
+    const r = a.title.localeCompare(b.title)
+    return sort.dir === 'asc' ? r : -r
+  }
+  const sortLevel = (list: TreeRow[]): TreeRow[] =>
+    [...list].sort(cmp).map((r) => ({ ...r, subRows: sortLevel(r.subRows) }))
+  return sortLevel(rows)
 }
 
 function flatRows(page: BlockObjectsPage): TreeRow[] {
@@ -166,9 +180,25 @@ export function BlockDocumentList() {
 
   const { spec, mode, setFilter, toggleSort, setPage, reset } = useQuerySpecState()
 
-  // Pagination du mode browse (racines, ≤100/page — plafond serveur `list_block_tree`).
+  // Pagination + tri hiérarchique du mode browse (racines, ≤100/page).
   const [browsePage, setBrowsePage] = useState(1)
-  useEffect(() => setBrowsePage(1), [ws, block])
+  const [browseSort, setBrowseSort] = useState<BrowseSort | null>(null)
+  useEffect(() => {
+    setBrowsePage(1)
+    setBrowseSort(null)
+  }, [ws, block])
+
+  // Clic d'entête en mode browse : cycle asc → desc → aucun, appliqué à l'arbre
+  // (ne bascule pas en mode requête, contrairement à `toggleSort` du QuerySpec).
+  function toggleBrowseSort(key: string) {
+    setBrowseSort((prev) =>
+      prev?.key !== key
+        ? { key, dir: 'asc' }
+        : prev.dir === 'asc'
+          ? { key, dir: 'desc' }
+          : null,
+    )
+  }
 
   const { data: documents = [], isLoading } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, block],
@@ -267,10 +297,19 @@ export function BlockDocumentList() {
   const rows = useMemo<TreeRow[]>(() => {
     if (mode === 'query') return queryPage ? flatRows(queryPage) : []
     if (!treePage) return []
-    return treeMode ? treePage.roots.map(treeNodeToRow) : flattenTreeNodes(treePage.roots)
-  }, [mode, queryPage, treeMode, treePage])
+    const treeRows = treePage.roots.map(treeNodeToRow)
+    const sorted = browseSort ? sortTreeRows(treeRows, browseSort) : treeRows
+    return treeMode ? sorted : flattenRows(sorted)
+  }, [mode, queryPage, treeMode, treePage, browseSort])
 
-  const titleSortDir = spec.sort.find((s) => s.key === 'title')?.dir
+  // Direction de tri de la colonne `title` selon le mode : browse = tri arbre
+  // client (`browseSort`) ; query = tri serveur (`spec.sort`).
+  const titleSortDir =
+    mode === 'browse'
+      ? browseSort?.key === 'title'
+        ? browseSort.dir
+        : undefined
+      : spec.sort.find((s) => s.key === 'title')?.dir
 
   const columns = useMemo<ColumnDef<TreeRow>[]>(() => {
     const staticCols: ColumnDef<TreeRow>[] = [
@@ -562,7 +601,11 @@ export function BlockDocumentList() {
                     <th
                       key={header.id}
                       className={sortable ? 'cursor-pointer select-none pb-2 pr-4' : 'pb-2 pr-4'}
-                      onClick={sortable ? () => toggleSort('title') : undefined}
+                      onClick={
+                        sortable
+                          ? () => (mode === 'browse' ? toggleBrowseSort('title') : toggleSort('title'))
+                          : undefined
+                      }
                     >
                       {flexRender(header.column.columnDef.header, header.getContext())}
                       {sortable && titleSortDir ? (titleSortDir === 'asc' ? ' ↑' : ' ↓') : ''}
