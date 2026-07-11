@@ -12,7 +12,7 @@ from docflow.auth.deps import (
     require_authenticated,
 )
 from docflow.blocks import introspection, service
-from docflow.documents import block_query
+from docflow.documents import block_query, block_tree
 from docflow.documents import service as doc_svc
 from docflow.documents.block_ops import list_block_values as _list_block_values
 from docflow.schemas.auth import AuthUser
@@ -20,6 +20,7 @@ from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 from docflow.schemas.introspection import BlockObjectsPage, BlockPropertiesOut
 from docflow.schemas.query import BlockQueryBody, QuerySpec
+from docflow.schemas.tree import BlockTreePage
 from docflow.webhooks import service as wh_service
 
 router = APIRouter(tags=["blocks"])
@@ -88,6 +89,22 @@ async def query_block_documents(
     check_api_key_scope(request, ws_slug, block_slug)
     spec = QuerySpec(workspace_slug=ws_slug, block_slug=block_slug, **body.model_dump())
     return await block_query.query_documents(request.app.state.pool, ws_slug, spec)
+
+
+@router.get(_BLOCK + "/tree", response_model=BlockTreePage)
+async def list_block_tree(
+    ws_slug: str,
+    block_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> BlockTreePage:
+    """Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await block_tree.list_block_tree(
+        request.app.state.pool, ws_slug, block_slug, page, page_size
+    )
 
 
 @router.patch(_BLOCK, response_model=DataBlockOut)

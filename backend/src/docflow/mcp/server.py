@@ -759,6 +759,30 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "block_slug"],
         },
     ),
+    Tool(
+        name="list_block_tree",
+        description=(
+            "Arbre des documents d'un bloc (mode browse), PAGINÉ sur les RACINES "
+            "(≤100/page). Chaque racine porte son sous-arbre complet (children récursif) "
+            "et les valeurs de propriétés de chaque nœud. total/has_next comptent les "
+            "racines seules : les enfants d'une racine incluse ne consomment pas le "
+            "page_size. Chaque nœud : id, title, functional_type_slug, parent_id, "
+            "properties, children. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Racines par page (défaut 50, max 100)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -808,6 +832,7 @@ _WS_TOOLS: dict[str, bool] = {
     "list_block_properties": False,
     "list_block_objects": False,
     "query_documents": False,
+    "list_block_tree": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -920,6 +945,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _list_block_objects(pool, arguments)
     if name == "query_documents":
         return await _query_documents(pool, arguments)
+    if name == "list_block_tree":
+        return await _list_block_tree(pool, arguments)
     if name == "create_api_profile":
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
@@ -1614,6 +1641,26 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
     page, page_size = _pagination_args(args)
     try:
         out = await list_block_objects(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("block_slug", "")),
+            page,
+            page_size,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.block_tree import TREE_DEFAULT_PAGE_SIZE, list_block_tree
+
+    page = int(str(args.get("page", 1)))
+    page_size = int(str(args.get("page_size", TREE_DEFAULT_PAGE_SIZE)))
+    try:
+        out = await list_block_tree(
             pool,
             str(args.get("workspace_slug", "")),
             str(args.get("block_slug", "")),
