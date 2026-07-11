@@ -62,10 +62,13 @@ function isConflictDetail(detail: unknown): detail is ValueConflictDetail {
   )
 }
 
-/** État local d'un champ de propriété, avec sauvegarde optimiste et conflit 409. */
+/** État local d'un champ de propriété, avec sauvegarde optimiste et conflit 409.
+ *  `onSaved` est appelé après chaque sauvegarde réussie (ex. rafraîchir une table
+ *  qui affiche la valeur ailleurs). */
 export function useFieldState(
   initialValue: string | null,
   baseVersion: number | null,
+  onSaved?: () => void,
 ): UseFieldStateResult {
   const [state, setState] = useState<FieldState>({
     status: 'idle',
@@ -99,6 +102,7 @@ export function useFieldState(
           buildBody(value, valueType, expected_version),
         )
         setState({ status: 'idle', value, baseVersion: res.version })
+        onSaved?.()
       } catch (err) {
         if (err instanceof ApiError && err.status === 409 && isConflictDetail(err.detail)) {
           setState((prev) => ({ ...prev, status: 'conflict', serverState: err.detail as FieldServerState }))
@@ -113,7 +117,7 @@ export function useFieldState(
         }
       }
     },
-    [],
+    [onSaved],
   )
 
   const save = useCallback(

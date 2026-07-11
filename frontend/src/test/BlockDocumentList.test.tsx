@@ -16,6 +16,8 @@ vi.mock('../lib/api', async () => {
       getAllowedTypes: vi.fn(),
       createDocument: vi.fn(),
       queryBlockDocuments: vi.fn(),
+      getDocumentValues: vi.fn(),
+      putDocumentValue: vi.fn(),
     },
   }
 })
@@ -594,6 +596,84 @@ describe('BlockDocumentList', () => {
         'b1',
         expect.objectContaining({ projection: ['statut'] }),
       ),
+    )
+  })
+
+  // US Édition inline des propriétés dans les cellules.
+  it('inline-edits a restricted_list cell and refreshes the table', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs, { e1: [statut('a_faire')] }))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic',
+        slug: 'epic',
+        label: 'Epic',
+        parent_slug: null,
+        workspace_slug: 'ws',
+        content_template: null,
+        created_at: '',
+        updated_at: '',
+        properties: [
+          {
+            slug: 'statut',
+            label: 'Statut',
+            type: 'restricted_list',
+            default_value: null,
+            behavior: null,
+            required: true,
+            allowed_values: [
+              { slug: 'a_faire', label: 'À faire', position: 0, color: '#999' },
+              { slug: 'done', label: 'Done', position: 1, color: '#22c55e' },
+            ],
+          },
+        ],
+      },
+    ])
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'statut',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: 2,
+        value: null,
+        allowed_value_slug: 'a_faire',
+        allowed_value_label: 'À faire',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'statut',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 3,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Done',
+      required: true,
+      behavior: null,
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('inline-cell-statut-e1')).toBeInTheDocument())
+    const treeCallsBefore = vi.mocked(docsApi.getBlockTree).mock.calls.length
+
+    // Clic sur la cellule → contrôle inline (après récupération de la version).
+    fireEvent.click(screen.getByTestId('inline-cell-statut-e1'))
+    await waitFor(() => expect(screen.getByTestId('property-input-statut')).toBeInTheDocument())
+
+    // Choisir « Done » → sauvegarde avec la version courante.
+    fireEvent.change(screen.getByTestId('property-input-statut'), { target: { value: 'done' } })
+    await waitFor(() =>
+      expect(docsApi.putDocumentValue).toHaveBeenCalledWith('ws', 'e1', 'statut', {
+        allowed_value_slug: 'done',
+        expected_version: 2,
+      }),
+    )
+    // La table est rafraîchie (list_block_tree rejoué après invalidation).
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.getBlockTree).mock.calls.length).toBeGreaterThan(treeCallsBefore),
     )
   })
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -20,6 +20,7 @@ import {
   type DataBlockOut,
   type DocumentOut,
   type FunctionalTypeRich,
+  type PropertyDefRich,
 } from '../lib/api'
 import { useQuerySpecState } from '../hooks/useQuerySpecState'
 import { Trash2 } from 'lucide-react'
@@ -27,6 +28,7 @@ import { Button } from '../components/ui/button'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 import { HeaderFilterPopover } from '../components/HeaderFilterPopover'
+import { InlinePropertyCell } from '../components/InlinePropertyCell'
 
 interface TreeRow {
   id: string
@@ -137,21 +139,6 @@ function propValueFor(
 ): { value: string | null; allowedSlug: string | null } | null {
   const pv = (row.properties ?? []).find((p) => p.prop_slug === propSlug)
   return pv ? { value: pv.value, allowedSlug: pv.allowed_value_slug } : null
-}
-
-function ColorPill({ label, color }: { label: string; color: string | null }) {
-  return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-      style={
-        color
-          ? { backgroundColor: color, color: '#fff' }
-          : { backgroundColor: '#e5e7eb', color: '#374151' }
-      }
-    >
-      {label}
-    </span>
-  )
 }
 
 interface PropColDef {
@@ -301,6 +288,24 @@ export function BlockDocumentList() {
     [propColumns],
   )
 
+  // Index type → (prop_slug → def) : donne, par ligne, les valeurs autorisées
+  // scopées au type du document et son `behavior` (édition inline).
+  const typePropIndex = useMemo(() => {
+    const m = new Map<string, Map<string, PropertyDefRich>>()
+    for (const ty of types) {
+      const inner = new Map<string, PropertyDefRich>()
+      for (const p of ty.properties ?? []) inner.set(p.slug, p)
+      m.set(ty.slug, inner)
+    }
+    return m
+  }, [types])
+
+  // Après une édition inline, rafraîchir les données de la table (les deux modes).
+  const handleValueSaved = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, block] })
+    void queryClient.invalidateQueries({ queryKey: ['block-query', ws, block] })
+  }, [queryClient, ws, block])
+
   // Projection dérivée du sélecteur de colonnes : null si toutes les colonnes de
   // propriété sont visibles (le serveur remonte tout), sinon la liste des slugs
   // visibles. En mode requête, les colonnes masquées ne sont pas demandées.
@@ -383,13 +388,23 @@ export function BlockDocumentList() {
       header: p.label,
       cell: ({ row }) => {
         const pv = propValueFor(row.original, p.slug)
-        if (!pv || (pv.value === null && !pv.allowedSlug)) return <span className="text-gray-300">—</span>
-        if (p.type === 'restricted_list') {
-          if (!pv.allowedSlug) return <span className="text-gray-300">—</span>
-          const av = p.allowedValues.find((a) => a.slug === pv.allowedSlug)
-          return <ColorPill label={av?.label ?? pv.allowedSlug} color={av?.color ?? null} />
-        }
-        return <span className="text-sm">{pv.value ?? '—'}</span>
+        const docType = row.original.functional_type_slug
+        // Édition inline scopée au type du document : une propriété n'est
+        // éditable que si le type du doc la définit et qu'elle n'est pas auto.
+        const def = docType ? typePropIndex.get(docType)?.get(p.slug) : undefined
+        return (
+          <InlinePropertyCell
+            ws={ws!}
+            docId={row.original.id}
+            propSlug={p.slug}
+            propType={p.type}
+            value={pv?.value ?? null}
+            allowedSlug={pv?.allowedSlug ?? null}
+            allowedValues={def?.allowed_values ?? []}
+            editable={Boolean(def) && !def!.behavior}
+            onSaved={handleValueSaved}
+          />
+        )
       },
     }))
 
@@ -432,7 +447,7 @@ export function BlockDocumentList() {
     }
 
     return [...staticCols, ...dynCols, actionCol]
-  }, [t, mode, treeMode, propColumns, childTypesByParent, ws, block])
+  }, [t, mode, treeMode, propColumns, typePropIndex, handleValueSaved, childTypesByParent, ws, block])
 
   const table = useReactTable({
     data: rows,
