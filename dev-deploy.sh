@@ -10,6 +10,11 @@
 # Usage :
 #   sudo ./dev-deploy.sh [BRANCH]
 #   ex : sudo ./dev-deploy.sh dev
+#
+# Reset du mot de passe d'un compte admin (stack déjà démarrée, aucune
+# synchro git ni rebuild) :
+#   sudo ./dev-deploy.sh --resetadmin [EMAIL]
+#   EMAIL optionnel si un seul compte admin existe en base.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -24,17 +29,26 @@ main() {
     local PG_PASSWORD_FILE="${DATA_ROOT}/pg_password.txt"
     local COMPOSE_FILE="deploy/docker-compose.yml"
 
-    # ─── Argument : branche cible ─────────────────────────────────────────────
+    # ─── Arguments ────────────────────────────────────────────────────────────
     local TARGET_BRANCH=""
+    local RESETADMIN=0
+    local ADMIN_EMAIL=""
     local arg
     for arg in "$@"; do
         case "$arg" in
+            --resetadmin) RESETADMIN=1 ;;
             --*) echo "ERREUR : flag inconnu : $arg" >&2; exit 1 ;;
             *)
-                if [[ -n "$TARGET_BRANCH" ]]; then
+                if [[ "$RESETADMIN" -eq 1 ]]; then
+                    if [[ -n "$ADMIN_EMAIL" ]]; then
+                        echo "ERREUR : plusieurs emails passés en argument." >&2; exit 1
+                    fi
+                    ADMIN_EMAIL="$arg"
+                elif [[ -n "$TARGET_BRANCH" ]]; then
                     echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
+                else
+                    TARGET_BRANCH="$arg"
                 fi
-                TARGET_BRANCH="$arg"
                 ;;
         esac
     done
@@ -45,6 +59,11 @@ main() {
     fi
 
     cd "$APP_DIR"
+
+    if [[ "$RESETADMIN" -eq 1 ]]; then
+        reset_admin_password "$COMPOSE_FILE" "$ADMIN_EMAIL"
+        return 0
+    fi
 
     # ─── 1) Git sync ──────────────────────────────────────────────────────────
     # reset --hard (et non pull --ff-only) : robuste quand le script se met à
@@ -190,6 +209,77 @@ main() {
     echo "  Env   : ${ENV_FILE} (+ ${PG_PASSWORD_FILE})"
     echo ""
     echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+}
+
+# ─── Reset du mot de passe d'un compte admin ──────────────────────────────────
+# Stack déjà démarrée requise ; ne touche ni au dépôt git ni à l'image.
+reset_admin_password() {
+    local COMPOSE_FILE="$1"
+    local TARGET_EMAIL="$2"
+
+    echo "==> Reset du mot de passe admin..."
+
+    local RUNNING
+    RUNNING="$(docker compose -f "$COMPOSE_FILE" ps --services --status running)"
+    if ! grep -qx "app" <<<"$RUNNING" || ! grep -qx "postgres" <<<"$RUNNING"; then
+        echo "ERREUR : la stack n'est pas démarrée (app + postgres) — lancer un déploiement d'abord." >&2
+        exit 1
+    fi
+
+    if [[ -z "$TARGET_EMAIL" ]]; then
+        local ADMIN_LIST ADMIN_COUNT
+        ADMIN_LIST="$(docker compose -f "$COMPOSE_FILE" exec -T postgres \
+            psql -U docflow -d docflow -tA -c \
+            "SELECT email FROM app_user WHERE is_admin = true ORDER BY email;")"
+        ADMIN_COUNT="$(grep -c . <<<"$ADMIN_LIST" || true)"
+        if [[ "$ADMIN_COUNT" -eq 0 ]]; then
+            echo "ERREUR : aucun compte admin en base." >&2
+            exit 1
+        elif [[ "$ADMIN_COUNT" -gt 1 ]]; then
+            echo "ERREUR : plusieurs comptes admin, préciser l'email :" >&2
+            sed 's/^/  - /' <<<"$ADMIN_LIST" >&2
+            echo "  Usage : sudo ./dev-deploy.sh --resetadmin <email>" >&2
+            exit 1
+        fi
+        TARGET_EMAIL="$ADMIN_LIST"
+    fi
+
+    local EXISTS
+    EXISTS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        psql -U docflow -d docflow -v email="$TARGET_EMAIL" -tA -c \
+        "SELECT 1 FROM app_user WHERE email = :'email';")"
+    if [[ -z "$EXISTS" ]]; then
+        echo "ERREUR : aucun compte avec l'email '${TARGET_EMAIL}'." >&2
+        exit 1
+    fi
+
+    local NEW_PASSWORD NEW_HASH
+    NEW_PASSWORD="$(python3 -c \
+        "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20)))")"
+
+    # Hash calculé DANS le container app : garantit la même version
+    # d'argon2-cffi que celle utilisée par l'application elle-même. Le mot
+    # de passe transite par stdin, jamais en argv (évite qu'il apparaisse
+    # dans une liste de process).
+    NEW_HASH="$(printf '%s' "$NEW_PASSWORD" | docker compose -f "$COMPOSE_FILE" exec -T app \
+        python3 -c "import sys; from argon2 import PasswordHasher; print(PasswordHasher().hash(sys.stdin.read()))")"
+
+    docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        psql -U docflow -d docflow -v email="$TARGET_EMAIL" -v hash="$NEW_HASH" -c \
+        "UPDATE app_user SET password_hash = :'hash' WHERE email = :'email';" \
+        || { echo "ERREUR : la mise à jour en base a échoué." >&2; exit 1; }
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "  ✓ Mot de passe réinitialisé"
+    echo ""
+    echo "  Email        : ${TARGET_EMAIL}"
+    echo "  Mot de passe : ${NEW_PASSWORD}"
+    echo ""
+    echo "  À noter immédiatement — non ré-affiché, non stocké par ce script."
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
 }
