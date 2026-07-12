@@ -185,8 +185,7 @@ Le script télécharge la dernière version de `docker-compose.prod.yml`, tire l
 
 ### Procédure complète — première installation
 
-Checklist dans l'ordre, pour `test1` (192.168.10.166) ou toute VM de dev
-équivalente.
+Checklist dans l'ordre, pour `test1` ou toute VM de dev équivalente.
 
 #### 1. Pousser sur `dev`
 

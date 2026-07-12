@@ -14,8 +14,8 @@ l'ordre.
 ssh pve
 ```
 
-(`pve` = 192.168.10.41. Second nœud du cluster disponible : `pve2` =
-192.168.10.152, si besoin de répartir la charge.)
+(`pve` : alias SSH configuré localement. Second nœud du cluster disponible :
+`pve2`, si besoin de répartir la charge.)
 
 ## 2. Lancer `create-node.sh` — une seule commande
 

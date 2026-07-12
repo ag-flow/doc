@@ -76,7 +76,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ## Déploiement sur la VM de test
 
-**Machine de test** : `test1` (192.168.10.166, root, clé `~/.ssh/id_ed25519`).
+**Machine de test** : `test1` (alias SSH configuré localement, root, clé `~/.ssh/id_ed25519`).
 **Répertoire sur la VM** : `/opt/docflow`.
 
 Procédure complète (1ère installation + redéploiement) : voir
@@ -174,7 +174,7 @@ Exécution **dans l'ordre** M1 → M9. Ne pas démarrer M(n+1) sans la Definitio
 
 ### Livraison
 
-- **`test1` (192.168.10.166) est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
+- **`test1` est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
 - Ne modifie pas `.env` sauf si demandé.
 - Commit messages en **français**, format conventionnel (`feat:`, `fix:`, `chore:`, `docs:`, `test:`…).
 
