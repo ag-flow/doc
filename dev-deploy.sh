@@ -12,9 +12,9 @@
 #   ex : sudo ./dev-deploy.sh dev
 #
 # Reset du mot de passe d'un compte admin (stack déjà démarrée, aucune
-# synchro git ni rebuild) :
-#   sudo ./dev-deploy.sh --resetadmin [EMAIL]
-#   EMAIL optionnel si un seul compte admin existe en base.
+# synchro git ni rebuild). Email et mot de passe fournis par l'appelant —
+# le script n'en génère ni n'en affiche jamais :
+#   sudo ./dev-deploy.sh --reset EMAIL PASSWORD
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -31,19 +31,24 @@ main() {
 
     # ─── Arguments ────────────────────────────────────────────────────────────
     local TARGET_BRANCH=""
-    local RESETADMIN=0
-    local ADMIN_EMAIL=""
+    local RESET=0
+    local RESET_EMAIL=""
+    local RESET_PASSWORD=""
     local arg
     for arg in "$@"; do
         case "$arg" in
-            --resetadmin) RESETADMIN=1 ;;
+            --reset) RESET=1 ;;
             --*) echo "ERREUR : flag inconnu : $arg" >&2; exit 1 ;;
             *)
-                if [[ "$RESETADMIN" -eq 1 ]]; then
-                    if [[ -n "$ADMIN_EMAIL" ]]; then
-                        echo "ERREUR : plusieurs emails passés en argument." >&2; exit 1
+                if [[ "$RESET" -eq 1 ]]; then
+                    if [[ -z "$RESET_EMAIL" ]]; then
+                        RESET_EMAIL="$arg"
+                    elif [[ -z "$RESET_PASSWORD" ]]; then
+                        RESET_PASSWORD="$arg"
+                    else
+                        echo "ERREUR : trop d'arguments pour --reset (attendu : EMAIL PASSWORD)." >&2
+                        exit 1
                     fi
-                    ADMIN_EMAIL="$arg"
                 elif [[ -n "$TARGET_BRANCH" ]]; then
                     echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
                 else
@@ -60,8 +65,12 @@ main() {
 
     cd "$APP_DIR"
 
-    if [[ "$RESETADMIN" -eq 1 ]]; then
-        reset_admin_password "$COMPOSE_FILE" "$ADMIN_EMAIL"
+    if [[ "$RESET" -eq 1 ]]; then
+        if [[ -z "$RESET_EMAIL" || -z "$RESET_PASSWORD" ]]; then
+            echo "ERREUR : usage : sudo ./dev-deploy.sh --reset EMAIL PASSWORD" >&2
+            exit 1
+        fi
+        reset_admin_password "$COMPOSE_FILE" "$RESET_EMAIL" "$RESET_PASSWORD"
         return 0
     fi
 
@@ -215,11 +224,15 @@ main() {
 
 # ─── Reset du mot de passe d'un compte admin ──────────────────────────────────
 # Stack déjà démarrée requise ; ne touche ni au dépôt git ni à l'image.
+# Email et mot de passe sont fournis par l'appelant : cette fonction n'en
+# génère ni n'en affiche jamais — rien de sensible n'apparaît dans la sortie
+# du script ni dans ses logs.
 reset_admin_password() {
     local COMPOSE_FILE="$1"
     local TARGET_EMAIL="$2"
+    local NEW_PASSWORD="$3"
 
-    echo "==> Reset du mot de passe admin..."
+    echo "==> Reset du mot de passe admin (${TARGET_EMAIL})..."
 
     local RUNNING
     RUNNING="$(docker compose -f "$COMPOSE_FILE" ps --services --status running)"
@@ -228,41 +241,20 @@ reset_admin_password() {
         exit 1
     fi
 
-    if [[ -z "$TARGET_EMAIL" ]]; then
-        local ADMIN_LIST ADMIN_COUNT
-        ADMIN_LIST="$(docker compose -f "$COMPOSE_FILE" exec -T postgres \
-            psql -U docflow -d docflow -tA -c \
-            "SELECT email FROM app_user WHERE is_admin = true ORDER BY email;")"
-        ADMIN_COUNT="$(grep -c . <<<"$ADMIN_LIST" || true)"
-        if [[ "$ADMIN_COUNT" -eq 0 ]]; then
-            echo "ERREUR : aucun compte admin en base." >&2
-            exit 1
-        elif [[ "$ADMIN_COUNT" -gt 1 ]]; then
-            echo "ERREUR : plusieurs comptes admin, préciser l'email :" >&2
-            sed 's/^/  - /' <<<"$ADMIN_LIST" >&2
-            echo "  Usage : sudo ./dev-deploy.sh --resetadmin <email>" >&2
-            exit 1
-        fi
-        TARGET_EMAIL="$ADMIN_LIST"
-    fi
-
     # La substitution de variable :'nom' de psql n'est appliquée qu'en mode
     # script (stdin/-f) — PAS avec -c, qui envoie la commande telle quelle
     # (vérifié empiriquement, contre-intuitif). D'où le `printf | psql`
     # plutôt que `psql -c` pour toute requête paramétrée ci-dessous.
     local EXISTS
-    EXISTS="$(printf '%s\n' "SELECT 1 FROM app_user WHERE email = :'email';" \
+    EXISTS="$(printf '%s\n' "SELECT 1 FROM app_user WHERE email = :'email' AND is_admin = true;" \
         | docker compose -f "$COMPOSE_FILE" exec -T postgres \
             psql -U docflow -d docflow -v email="$TARGET_EMAIL" -tA)"
     if [[ -z "$EXISTS" ]]; then
-        echo "ERREUR : aucun compte avec l'email '${TARGET_EMAIL}'." >&2
+        echo "ERREUR : aucun compte admin avec l'email '${TARGET_EMAIL}'." >&2
         exit 1
     fi
 
-    local NEW_PASSWORD NEW_HASH
-    NEW_PASSWORD="$(python3 -c \
-        "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20)))")"
-
+    local NEW_HASH
     # Hash calculé DANS le container app : garantit la même version
     # d'argon2-cffi que celle utilisée par l'application elle-même. Le mot
     # de passe transite par stdin, jamais en argv (évite qu'il apparaisse
@@ -275,17 +267,7 @@ reset_admin_password() {
             psql -U docflow -d docflow -v email="$TARGET_EMAIL" -v hash="$NEW_HASH" \
         || { echo "ERREUR : la mise à jour en base a échoué." >&2; exit 1; }
 
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
-    echo "  ✓ Mot de passe réinitialisé"
-    echo ""
-    echo "  Email        : ${TARGET_EMAIL}"
-    echo "  Mot de passe : ${NEW_PASSWORD}"
-    echo ""
-    echo "  À noter immédiatement — non ré-affiché, non stocké par ce script."
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "✓ Mot de passe mis à jour pour ${TARGET_EMAIL}."
 }
 
 main "$@"
