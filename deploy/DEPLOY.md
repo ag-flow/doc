@@ -11,6 +11,97 @@
 
 ---
 
+## Procédure complète — mise en place d'une instance de production
+
+Checklist dans l'ordre. Chaque étape renvoie vers le paragraphe détaillé plus bas.
+
+### 1. Publier l'image (dev → main)
+
+Le pipeline `.github/workflows/build-and-push.yml` ne construit et ne publie
+l'image que sur push vers `main`. Rien ne se déploie tant que ce merge n'a pas
+eu lieu.
+
+```bash
+git checkout main && git pull origin main
+git merge --ff-only origin/dev   # ou merge classique si main a divergé
+git push origin main
+```
+
+Suivre le run sur GitHub Actions : il publie `ghcr.io/ag-flow/doc:latest` et
+`ghcr.io/ag-flow/doc:sha-<court>`. **Ne pas lancer l'étape 4 avant que ce build
+soit vert.**
+
+### 2. Provisionner la machine
+
+- VM Linux x86_64 ou arm64, Docker ≥ 24 + plugin Compose, accès sortant à
+  `ghcr.io`.
+- Dimensionnement minimal : 1 vCPU / 1 Go RAM pour app + Postgres en usage
+  léger ; à ajuster selon le volume de documents/artefacts stockés.
+- Créer l'enregistrement DNS `docflow.yoops.org` → IP de la VM.
+- Ouvrir les ports 80/443 en entrée pour le reverse proxy. Le port de l'app
+  (8080) reste bindé en local uniquement (`127.0.0.1:8080`, voir
+  `docker-compose.prod.yml`) — il n'est jamais exposé directement.
+
+### 3. Authentifier Docker sur GHCR si nécessaire
+
+→ voir § Authentification GHCR ci-dessous (uniquement si le pull échoue).
+
+### 4. Lancer l'installation
+
+→ voir § Installation — une seule commande. À exécuter sur la VM cible, en
+`root` ou un utilisateur membre du groupe `docker`.
+
+### 5. Mettre en place le reverse proxy TLS
+
+→ voir § Exposition HTTPS. Caddy (TLS automatique) ou Nginx + certbot selon
+l'existant sur le reste du parc `*.yoops.org`.
+
+### 6. Créer le premier compte admin
+
+→ voir § Premier accès. À faire **immédiatement** après le smoke test : tant
+qu'aucun utilisateur n'existe en base, `/api/setup/init-admin` est un
+endpoint non authentifié.
+
+### 7. (Optionnel) Configurer OIDC Keycloak
+
+- Côté Keycloak (`security.yoops.org`, realm `yoops`) : créer un client
+  `docflow` confidentiel, redirect URI
+  `https://docflow.yoops.org/auth/oidc/callback`.
+- Stocker le `client_secret` dans Harpocrate, jamais en clair — docflow ne
+  référence que `${vault://...}` (voir `specs/17_M8_oidc.md`).
+- Depuis le compte admin bootstrap : `PUT /admin/oidc` (ou l'IHM
+  d'administration) avec issuer, `client_id`, `client_secret_ref`, puis
+  activer.
+- Vérifier après activation que le login local (break-glass) fonctionne
+  toujours — c'est un invariant testé, pas une supposition.
+
+### 8. (Optionnel) Renseigner HARPOCRATE_URL
+
+Si des automates, wallets ou webhooks à secrets sont utilisés : décommenter
+`HARPOCRATE_URL` dans `/data/.env`, puis redémarrer l'app :
+
+```bash
+docker compose -f /opt/docflow/docker-compose.prod.yml up -d --no-deps app
+```
+
+### 9. Configurer les sauvegardes
+
+- Sauvegarde applicative : créer un job de sauvegarde + un remote point
+  (FTP/FTPS/SFTP) depuis l'administration de l'app.
+- Filet de sécurité indépendant du worker applicatif : installer le cron
+  `pg_dump` décrit en § Sauvegarde.
+
+### 10. Vérification finale
+
+- `curl -sf https://docflow.yoops.org/health` → `200`.
+- `GET /api/setup/status` → confirme qu'un utilisateur existe (wizard
+  désactivé).
+- Login admin via l'IHM.
+- Si OIDC activé : tester un login fédéré **et** un login local (non-
+  régression du break-glass, cf. § Décision 4 de `01_ARCHITECTURE.md`).
+
+---
+
 ## Installation — une seule commande
 
 ```bash
@@ -79,6 +170,9 @@ Variables optionnelles disponibles dans `/data/.env` :
 
 ## Mise à jour
 
+Préalable : merger `dev` → `main` (§ Procédure complète, étape 1) pour que
+GHCR publie la nouvelle image `latest`. Puis, sur la VM :
+
 ```bash
 bash /opt/docflow/prod-deploy.sh
 ```
@@ -88,6 +182,76 @@ Le script télécharge la dernière version de `docker-compose.prod.yml`, tire l
 ---
 
 ## Déploiement dev (VM de test)
+
+### Procédure complète — première installation
+
+Checklist dans l'ordre, pour `test1` (192.168.10.166) ou toute VM de dev
+équivalente.
+
+#### 1. Pousser sur `dev`
+
+Depuis le poste de dev, le code doit être disponible sur le remote avant tout
+clone :
+
+```bash
+git push origin dev
+```
+
+#### 2. Se connecter sur la VM
+
+```bash
+ssh test1
+```
+
+#### 3. Générer une clé de déploiement dédiée (si pas encore fait)
+
+```bash
+ssh-keygen -t ed25519 -C "test1-docflow" -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+
+Donner la clé publique à enregistrer comme **Deploy Key GitHub** (lecture
+seule) sur le dépôt `ag-flow/doc`.
+
+#### 4. Cloner le repo
+
+```bash
+mkdir -p /opt/docflow
+git clone git@github.com:ag-flow/doc.git /opt/docflow
+cd /opt/docflow
+git checkout dev
+```
+
+#### 5. Lancer le déploiement
+
+```bash
+sudo ./dev-deploy.sh dev
+```
+
+`/data/.env` et `/data/pg_password.txt` sont initialisés automatiquement
+(copie de `deploy/.env.example` + secrets générés) — aucune saisie manuelle
+requise. → voir le détail de ce que fait le script ci-dessous.
+
+#### 6. Vérification finale
+
+- Lire le récapitulatif affiché en fin de script : URL d'accès, état du
+  compte admin, chemins `/data`, commande de suivi des logs.
+- Créer le premier compte admin via le wizard si aucun compte n'existe
+  (commande donnée dans le récapitulatif — même mécanisme qu'en prod, voir §
+  Premier accès).
+- `curl -sf http://<ip-vm>:8080/health` → `200`.
+
+### Redéploiement (après chaque push sur `dev`)
+
+```bash
+ssh test1
+cd /opt/docflow && sudo ./dev-deploy.sh dev
+```
+
+Idempotent, sans interruption de service au-delà du redémarrage du conteneur
+`app` (le service `postgres` n'est pas touché s'il est déjà sain).
+
+### Détail du script
 
 Le script `dev-deploy.sh` vit à la **racine du repo** — geste opérateur homogène
 avec les autres repos yoops :
