@@ -23,6 +23,7 @@ from docflow.documents.block_ops import (
 )
 from docflow.documents.changelog import log_change
 from docflow.documents.template_apply import compute_initial_content
+from docflow.events import outbox
 from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
@@ -184,9 +185,18 @@ async def _validate_type_position(
             "SELECT functional_type_ref FROM data_block WHERE id = $1", block_id
         )
         if block_ft != new_ft_id:
+            expected = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", block_ft
+            )
+            provided = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", new_ft_id
+            )
             raise HTTPException(
                 status_code=422,
-                detail="type non autorisé à la racine de ce bloc (position)",
+                detail=(
+                    "type non autorisé à la racine de ce bloc (position) : "
+                    f"attendu '{expected}', fourni '{provided}'"
+                ),
             )
     else:
         parent_ft = await conn.fetchval(
@@ -197,9 +207,21 @@ async def _validate_type_position(
             "SELECT parent FROM functional_type WHERE id = $1", new_ft_id
         )
         if new_ft_parent != parent_ft:
+            allowed = [
+                r["slug"]
+                for r in await conn.fetch(
+                    "SELECT slug FROM functional_type WHERE parent = $1", parent_ft
+                )
+            ]
+            provided = await conn.fetchval(
+                "SELECT slug FROM functional_type WHERE id = $1", new_ft_id
+            )
             raise HTTPException(
                 status_code=422,
-                detail="type non autorisé sous ce parent (position)",
+                detail=(
+                    "type non autorisé sous ce parent (position) : "
+                    f"fourni '{provided}', attendus {allowed or '(aucun — position feuille)'}"
+                ),
             )
 
 
@@ -329,6 +351,10 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                         detail="le parent doit appartenir au même bloc que le document",
                     )
                 parent_exposed = bool(parent_row["exposed"])
+            # DOC-04 : contrainte de position identique à set_document_parent —
+            # à la racine, le type doit être celui du bloc ; sous un parent, un fils
+            # direct du type du parent. create_document ne la gardait pas (bug MCO).
+            await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
             try:
@@ -389,8 +415,28 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                         conn, wk, new_doc_id, prop_id, prop_type, prop_value, prop_slug
                     )
             if ft_id is not None:
+                # Défauts du template (parité avec create_document_in_block/UI) : les
+                # propriétés non fournies dotées d'un default sont matérialisées.
+                await prop_writes.instantiate_default_values(conn, wk, new_doc_id, ft_id)
                 await prop_writes.apply_behaviors(conn, wk, new_doc_id, ft_id)
                 await prop_writes.assert_required_satisfied(conn, new_doc_id, ft_id)
+
+            block_slug = await conn.fetchval(
+                "SELECT slug FROM data_block WHERE id = $1", data.block_id
+            )
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.created.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(new_doc_id),
+                    "workspaceSlug": ws_slug,
+                    "blockSlug": block_slug,
+                    "functionalTypeSlug": data.functional_type_slug,
+                    "parentId": str(data.parent_id) if data.parent_id else None,
+                    "title": data.title,
+                },
+            )
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
         title=row["title"],
@@ -488,6 +534,17 @@ async def update_document(
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
                 await refresh_artifact_references(conn, doc_id, wk, new_content)
+                await outbox.enqueue(
+                    conn,
+                    event_code="docflow.document.updated.v1",
+                    workspace_wk=wk,
+                    business={
+                        "documentId": str(doc_id),
+                        "workspaceSlug": ws_slug,
+                        "version": new_v,
+                        "title": new_title,
+                    },
+                )
 
             # Métadonnées (parent, type, slug) — sans versioning
             meta: dict[str, object] = {}
@@ -576,6 +633,31 @@ async def update_document(
                 if type_changed and effective_ft is not None:
                     await prop_writes.assert_required_satisfied(conn, doc_id, effective_ft)
 
+            # Events structurels (norme workflow) : un reparentage → moved,
+            # un vrai changement de type → retyped.
+            if reparented:
+                await outbox.enqueue(
+                    conn,
+                    event_code="docflow.document.moved.v1",
+                    workspace_wk=wk,
+                    business={
+                        "documentId": str(doc_id),
+                        "workspaceSlug": ws_slug,
+                        "parentId": str(raw["parent_id"]) if raw["parent_id"] else None,
+                    },
+                )
+            if type_changed:
+                await outbox.enqueue(
+                    conn,
+                    event_code="docflow.document.retyped.v1",
+                    workspace_wk=wk,
+                    business={
+                        "documentId": str(doc_id),
+                        "workspaceSlug": ws_slug,
+                        "functionalTypeSlug": raw["functional_type_slug"],
+                    },
+                )
+
     return await get_document(pool, ws_slug, doc_id)
 
 
@@ -620,8 +702,12 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
             snap = await conn.fetchrow(
-                "SELECT doc_technical_key, title, type FROM document "
-                "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+                "SELECT d.doc_technical_key, d.title, d.type, "
+                "       db.slug AS block_slug, ft.slug AS functional_type_slug "
+                "FROM document d "
+                "JOIN data_block db ON db.id = d.data_block_ref "
+                "LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref "
+                "WHERE d.doc_technical_key = $1 AND d.workspace_technical_key = $2",
                 doc_id,
                 wk,
             )
@@ -630,6 +716,17 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             # Capturés AVANT la suppression : les références partent en cascade
             # avec le document et ses descendants.
             artifact_candidates = await collect_subtree_artifacts(conn, doc_id)
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.deleted.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(doc_id),
+                    "workspaceSlug": ws_slug,
+                    "blockSlug": snap["block_slug"],
+                    "functionalTypeSlug": snap["functional_type_slug"],
+                },
+            )
             await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
             await purge_unreferenced(conn, artifact_candidates)
             await log_change(conn, wk, doc_id, "D")
@@ -972,11 +1069,20 @@ async def set_property_value(
                     data.allowed_value_slug,
                 )
                 if allowed_value_ref is None:
+                    # Erreur auto-corrective : lister les slugs valides de la définition
+                    # pour qu'un agent puisse rejouer sans deviner.
+                    valid = await conn.fetch(
+                        "SELECT slug FROM properties_allowed_values "
+                        "WHERE property_def_ref = $1 ORDER BY position, created_at",
+                        prop_id,
+                    )
+                    slugs = [v["slug"] for v in valid]
                     raise HTTPException(
                         status_code=422,
                         detail=(
                             f"valeur autorisée '{data.allowed_value_slug}' introuvable "
-                            "ou n'appartient pas à cette définition (I-5)"
+                            f"ou n'appartient pas à cette définition (I-5) ; "
+                            f"valeurs autorisées : {', '.join(slugs) or '(aucune)'}"
                         ),
                     )
             if prop_type == "reference" and data.value is not None:
@@ -1099,6 +1205,21 @@ async def set_property_value(
             await log_change(conn, wk, doc_id, "P")
             # Tout enregistrement vaut révision : reposer les auto_now du type.
             await prop_writes.apply_behaviors(conn, wk, doc_id, type_id)
+            # Un changement de propriété (dont statut = restricted_list) est un
+            # event métier de premier ordre pour le pilotage workflow.
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.propertyChanged.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(doc_id),
+                    "workspaceSlug": ws_slug,
+                    "propSlug": prop_slug,
+                    "propType": prop_type,
+                    "value": data.value,
+                    "allowedValueSlug": data.allowed_value_slug,
+                },
+            )
 
     allowed_label: str | None = None
     if allowed_value_ref is not None:

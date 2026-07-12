@@ -35,13 +35,14 @@ async def test_create_document(
 
 
 async def test_create_document_with_type(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
+    block_id = await make_block(_WS, "epic", "epic-block")
     doc = await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(title="Epic Doc", functional_type_slug="epic", block_id=test_block["id"]),
+        DocumentCreate(title="Epic Doc", functional_type_slug="epic", block_id=block_id),
     )
     assert doc.functional_type_slug == "epic"
     assert doc.version == 1
@@ -343,9 +344,7 @@ async def test_delete_document_with_children_cascades(
 # ── Board query (DoD 6) ───────────────────────────────────────────────────────
 
 
-async def test_board_query_dod6(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
-) -> None:
+async def test_board_query_dod6(db_pool: asyncpg.Pool, test_workspace: dict, make_block) -> None:
     """DoD 6 : list_documents filtre par functional_type + prop + allowed_value.
 
     Crée 3 documents 'feature', positionne statut=done sur 2, statut=todo sur 1.
@@ -375,26 +374,21 @@ async def test_board_query_dod6(
         AllowedValueCreate(slug="done", label="Terminé", position=1),
     )
 
+    block_id = await make_block(_WS, "feature", "feature-block")
     feat_a = await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(
-            title="Feature A", functional_type_slug="feature", block_id=test_block["id"]
-        ),
+        DocumentCreate(title="Feature A", functional_type_slug="feature", block_id=block_id),
     )
     feat_b = await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(
-            title="Feature B", functional_type_slug="feature", block_id=test_block["id"]
-        ),
+        DocumentCreate(title="Feature B", functional_type_slug="feature", block_id=block_id),
     )
     feat_c = await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(
-            title="Feature C", functional_type_slug="feature", block_id=test_block["id"]
-        ),
+        DocumentCreate(title="Feature C", functional_type_slug="feature", block_id=block_id),
     )
 
     # A et B → done ; C → todo
@@ -429,23 +423,24 @@ async def test_board_query_dod6(
 
 
 async def test_board_query_functional_type_only(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     """list_documents filtré par functional_type seul (sans valeur)."""
     await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="epic", label="Epic"))
+    block_id = await make_block(_WS, "epic", "epic-block")
     await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(title="Epic 1", functional_type_slug="epic", block_id=test_block["id"]),
+        DocumentCreate(title="Epic 1", functional_type_slug="epic", block_id=block_id),
     )
     await doc_svc.create_document(
         db_pool,
         _WS,
-        DocumentCreate(title="Epic 2", functional_type_slug="epic", block_id=test_block["id"]),
+        DocumentCreate(title="Epic 2", functional_type_slug="epic", block_id=block_id),
     )
-    # Document sans type fonctionnel
+    # Document sans type fonctionnel (autorisé à la racine : type non contraint)
     await doc_svc.create_document(
-        db_pool, _WS, DocumentCreate(title="Doc sans type", block_id=test_block["id"])
+        db_pool, _WS, DocumentCreate(title="Doc sans type", block_id=block_id)
     )
 
     docs = await doc_svc.list_documents(db_pool, _WS, functional_type="epic")

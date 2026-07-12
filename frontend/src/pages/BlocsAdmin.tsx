@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react'
 import {
   api, ApiError, docsApi, referencesApi,
   type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
@@ -10,6 +10,7 @@ import {
 import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
 
@@ -72,6 +73,7 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
   const { t } = useTranslation()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [blocToDelete, setBlocToDelete] = useState<DataBlockOut | null>(null)
 
   const exposeMutation = useMutation({
     mutationFn: ({ slug, exposed }: { slug: string; exposed: boolean }) =>
@@ -80,6 +82,14 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
       void qc.invalidateQueries({ queryKey: ['blocs', wsSlug] })
     },
   })
+
+  function handleDeleted() {
+    // Le bloc et ses documents ont disparu : rafraîchir la liste ET les liens
+    // cassés (des références entrantes peuvent être devenues orphelines).
+    void qc.invalidateQueries({ queryKey: ['blocs', wsSlug] })
+    void qc.invalidateQueries({ queryKey: ['broken-links', wsSlug] })
+    setBlocToDelete(null)
+  }
 
   const { data: brokenLinks = [] } = useQuery<BrokenLinkBloc[]>({
     queryKey: ['broken-links', wsSlug],
@@ -93,6 +103,7 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
   )
 
   return (
+    <>
     <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b text-left text-gray-500">
@@ -152,12 +163,32 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
                 >
                   {t('blocs.open')}
                 </Button>
+                <button
+                  type="button"
+                  title={t('blocs.delete')}
+                  onClick={() => setBlocToDelete(bloc)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium
+                    text-red-600 transition-colors hover:bg-red-50"
+                  data-testid={`delete-bloc-${bloc.slug}`}
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             </td>
           </tr>
         )})}
       </tbody>
     </table>
+    {blocToDelete && (
+      <DeleteBlocDialog
+        wsSlug={wsSlug}
+        blockSlug={blocToDelete.slug}
+        blockLabel={blocToDelete.label}
+        onClose={() => setBlocToDelete(null)}
+        onDeleted={handleDeleted}
+      />
+    )}
+    </>
   )
 }
 

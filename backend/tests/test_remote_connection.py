@@ -127,6 +127,32 @@ async def test_connection_git_uses_ls_remote(
     assert calls["ssh_key_path"] is None
 
 
+async def test_connection_git_bitbucket_uses_bitbucket_host(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _make_point(
+        db_pool,
+        slug="pt-bitbucket",
+        point_type="git",
+        host="bitbucket.org",
+        auth_type="pat",
+        auth_storage="local",
+        auth_secret="app-password",
+        git_provider="bitbucket",
+        git_repo="team/repo",
+    )
+    calls: dict[str, object] = {}
+
+    def _fake_test_git(remote_url: str, **kwargs: object) -> None:
+        calls["remote_url"] = remote_url
+        calls.update(kwargs)
+
+    monkeypatch.setattr("docflow.backup.git_sync.test_git_connection", _fake_test_git)
+    result = await probe_connection(db_pool, "pt-bitbucket", _settings())
+    assert result == {"ok": True, "detail": "Connexion réussie"}
+    assert calls["remote_url"] == "https://bitbucket.org/team/repo.git"
+
+
 async def test_connection_unknown_point_raises_404(db_pool: asyncpg.Pool) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await probe_connection(db_pool, "missing", _settings())

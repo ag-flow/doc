@@ -34,16 +34,23 @@ interface UseFieldStateResult {
   setEdit: () => void
 }
 
-/** Construit le corps PUT selon le type de la propriété. */
+/** Construit le corps PUT selon le type de la propriété.
+ *
+ *  `expected_version` est `null` tant qu'aucune valeur explicite n'existe (la
+ *  propriété n'affiche que le défaut du type). Le backend exige alors 0 pour
+ *  une première écriture : on mappe `null → 0` ici, sinon pydantic rejette
+ *  (« Input should be a valid integer ») et le statut par défaut devient
+ *  impossible à modifier. */
 function buildBody(
   value: string | null,
   valueType: ValueType,
   expected_version: number | null,
-): { value?: string | null; allowed_value_slug?: string | null; expected_version: number | null } {
+): { value?: string | null; allowed_value_slug?: string | null; expected_version: number } {
+  const ev = expected_version ?? 0
   if (valueType === 'restricted_list') {
-    return { allowed_value_slug: value, expected_version }
+    return { allowed_value_slug: value, expected_version: ev }
   }
-  return { value, expected_version }
+  return { value, expected_version: ev }
 }
 
 function isConflictDetail(detail: unknown): detail is ValueConflictDetail {
@@ -55,10 +62,13 @@ function isConflictDetail(detail: unknown): detail is ValueConflictDetail {
   )
 }
 
-/** État local d'un champ de propriété, avec sauvegarde optimiste et conflit 409. */
+/** État local d'un champ de propriété, avec sauvegarde optimiste et conflit 409.
+ *  `onSaved` est appelé après chaque sauvegarde réussie (ex. rafraîchir une table
+ *  qui affiche la valeur ailleurs). */
 export function useFieldState(
   initialValue: string | null,
   baseVersion: number | null,
+  onSaved?: () => void,
 ): UseFieldStateResult {
   const [state, setState] = useState<FieldState>({
     status: 'idle',
@@ -92,6 +102,7 @@ export function useFieldState(
           buildBody(value, valueType, expected_version),
         )
         setState({ status: 'idle', value, baseVersion: res.version })
+        onSaved?.()
       } catch (err) {
         if (err instanceof ApiError && err.status === 409 && isConflictDetail(err.detail)) {
           setState((prev) => ({ ...prev, status: 'conflict', serverState: err.detail as FieldServerState }))
@@ -106,7 +117,7 @@ export function useFieldState(
         }
       }
     },
-    [],
+    [onSaved],
   )
 
   const save = useCallback(

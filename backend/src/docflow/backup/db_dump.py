@@ -52,9 +52,16 @@ class _TofuHostKeyPolicy(paramiko.MissingHostKeyPolicy):  # type: ignore[misc]
 
 
 def _dump_filename(workspace_slug: str | None, job_id: uuid.UUID) -> str:
+    """Nom d'archive : `docflow_<scope>_<YYYYMMDD_HHMMSS>_<job_id>.dump`.
+
+    Le nom porte la date du backup (tri chronologique) et l'id **complet** du job
+    (regroupement non ambigu des archives d'un même job) — cf. `archives.py` pour
+    le parsing/listing. Le scope ('all' ou slug de workspace) ne contient jamais
+    d'underscore, ce qui garantit un découpage stable des tokens.
+    """
     ts = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     scope = workspace_slug or "all"
-    return f"docflow_{scope}_{ts}_{str(job_id)[:8]}.dump"
+    return f"docflow_{scope}_{ts}_{job_id}.dump"
 
 
 def _strip_password(database_url: str) -> tuple[str, str | None]:

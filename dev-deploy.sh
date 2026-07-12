@@ -10,6 +10,16 @@
 # Usage :
 #   sudo ./dev-deploy.sh [BRANCH]
 #   ex : sudo ./dev-deploy.sh dev
+#
+# Reset du mot de passe d'un compte admin (stack déjà démarrée, aucune
+# synchro git ni rebuild). Email et mot de passe fournis par l'appelant —
+# le script n'en génère ni n'en affiche jamais :
+#   sudo ./dev-deploy.sh --reset EMAIL PASSWORD
+#
+# Purge complète de la base (irréversible sans backup — TOUTES les données
+# sont perdues : workspaces, documents, comptes). Confirmation littérale
+# obligatoire :
+#   sudo ./dev-deploy.sh --prune CONFIRM
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -24,17 +34,53 @@ main() {
     local PG_PASSWORD_FILE="${DATA_ROOT}/pg_password.txt"
     local COMPOSE_FILE="deploy/docker-compose.yml"
 
-    # ─── Argument : branche cible ─────────────────────────────────────────────
+    # ─── Arguments ────────────────────────────────────────────────────────────
     local TARGET_BRANCH=""
+    local MODE=""   # "" | "reset" | "prune" — mutuellement exclusifs
+    local RESET_EMAIL=""
+    local RESET_PASSWORD=""
+    local PRUNE_CONFIRM=""
     local arg
     for arg in "$@"; do
         case "$arg" in
+            --reset)
+                if [[ -n "$MODE" ]]; then
+                    echo "ERREUR : --reset et --prune sont exclusifs." >&2; exit 1
+                fi
+                MODE="reset" ;;
+            --prune)
+                if [[ -n "$MODE" ]]; then
+                    echo "ERREUR : --reset et --prune sont exclusifs." >&2; exit 1
+                fi
+                MODE="prune" ;;
             --*) echo "ERREUR : flag inconnu : $arg" >&2; exit 1 ;;
             *)
-                if [[ -n "$TARGET_BRANCH" ]]; then
-                    echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
-                fi
-                TARGET_BRANCH="$arg"
+                case "$MODE" in
+                    reset)
+                        if [[ -z "$RESET_EMAIL" ]]; then
+                            RESET_EMAIL="$arg"
+                        elif [[ -z "$RESET_PASSWORD" ]]; then
+                            RESET_PASSWORD="$arg"
+                        else
+                            echo "ERREUR : trop d'arguments pour --reset (attendu : EMAIL PASSWORD)." >&2
+                            exit 1
+                        fi
+                        ;;
+                    prune)
+                        if [[ -z "$PRUNE_CONFIRM" ]]; then
+                            PRUNE_CONFIRM="$arg"
+                        else
+                            echo "ERREUR : trop d'arguments pour --prune (attendu : CONFIRM)." >&2
+                            exit 1
+                        fi
+                        ;;
+                    *)
+                        if [[ -n "$TARGET_BRANCH" ]]; then
+                            echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
+                        fi
+                        TARGET_BRANCH="$arg"
+                        ;;
+                esac
                 ;;
         esac
     done
@@ -45,6 +91,26 @@ main() {
     fi
 
     cd "$APP_DIR"
+
+    if [[ "$MODE" == "reset" ]]; then
+        if [[ -z "$RESET_EMAIL" || -z "$RESET_PASSWORD" ]]; then
+            echo "ERREUR : usage : sudo ./dev-deploy.sh --reset EMAIL PASSWORD" >&2
+            exit 1
+        fi
+        reset_admin_password "$COMPOSE_FILE" "$RESET_EMAIL" "$RESET_PASSWORD"
+        return 0
+    fi
+
+    if [[ "$MODE" == "prune" ]]; then
+        if [[ "$PRUNE_CONFIRM" != "CONFIRM" ]]; then
+            echo "ERREUR : usage : sudo ./dev-deploy.sh --prune CONFIRM" >&2
+            echo "  Purge IRRÉVERSIBLE de toutes les données (workspaces, documents, comptes)." >&2
+            echo "  Le mot CONFIRM doit être tapé littéralement — pas de raccourci." >&2
+            exit 1
+        fi
+        prune_database "$COMPOSE_FILE"
+        return 0
+    fi
 
     # ─── 1) Git sync ──────────────────────────────────────────────────────────
     # reset --hard (et non pull --ff-only) : robuste quand le script se met à
@@ -147,22 +213,7 @@ main() {
     # ─── 4) Smoke /health ─────────────────────────────────────────────────────
     echo ""
     echo "==> [4/4] Smoke /health (timeout 90s)..."
-    local SMOKE_OK=0
-    local ELAPSED=0
-    while [[ $ELAPSED -lt 90 ]]; do
-        if curl -sf -m 3 "http://localhost:8080/health" &>/dev/null; then
-            SMOKE_OK=1; break
-        fi
-        sleep 5
-        ELAPSED=$(( ELAPSED + 5 ))
-    done
-
-    if [[ $SMOKE_OK -ne 1 ]]; then
-        echo "" >&2
-        echo "  ✗ /health ne répond pas après 90s" >&2
-        echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
-        exit 1
-    fi
+    smoke_test_health "$COMPOSE_FILE"
 
     # ─── Récapitulatif ────────────────────────────────────────────────────────
     local IP ADMIN_INFO
@@ -192,6 +243,110 @@ main() {
     echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
+}
+
+# ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────
+smoke_test_health() {
+    local COMPOSE_FILE="$1"
+    local SMOKE_OK=0
+    local ELAPSED=0
+    while [[ $ELAPSED -lt 90 ]]; do
+        if curl -sf -m 3 "http://localhost:8080/health" &>/dev/null; then
+            SMOKE_OK=1; break
+        fi
+        sleep 5
+        ELAPSED=$(( ELAPSED + 5 ))
+    done
+
+    if [[ $SMOKE_OK -ne 1 ]]; then
+        echo "" >&2
+        echo "  ✗ /health ne répond pas après 90s" >&2
+        echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
+        exit 1
+    fi
+}
+
+# ─── Purge complète de la base ─────────────────────────────────────────────────
+# Détruit le volume Postgres puis recrée la stack : base vide comme un premier
+# démarrage, migrations réappliquées automatiquement par l'app au boot. Ne
+# touche ni au dépôt git ni à l'image déjà buildée. IRRÉVERSIBLE sans backup —
+# la confirmation littérale est vérifiée par l'appelant (main), pas ici.
+prune_database() {
+    local COMPOSE_FILE="$1"
+
+    echo "==> [1/2] Purge du volume Postgres (down -v)..."
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans
+
+    echo ""
+    echo "==> Redémarrage de la stack (base vide)..."
+    docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+
+    echo ""
+    docker compose -f "$COMPOSE_FILE" ps
+
+    echo ""
+    echo "==> [2/2] Smoke /health (timeout 90s)..."
+    smoke_test_health "$COMPOSE_FILE"
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "  ✓ Base purgée — instance repartie à vide"
+    echo ""
+    echo "  Créer le premier compte admin :"
+    echo "    curl -X POST http://localhost:8080/api/setup/init-admin \\"
+    echo "         -H 'Content-Type: application/json' \\"
+    echo "         -d '{\"username\":\"admin\",\"email\":\"...\",\"password\":\"...\"}'"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+}
+
+# ─── Reset du mot de passe d'un compte admin ──────────────────────────────────
+# Stack déjà démarrée requise ; ne touche ni au dépôt git ni à l'image.
+# Email et mot de passe sont fournis par l'appelant : cette fonction n'en
+# génère ni n'en affiche jamais — rien de sensible n'apparaît dans la sortie
+# du script ni dans ses logs.
+reset_admin_password() {
+    local COMPOSE_FILE="$1"
+    local TARGET_EMAIL="$2"
+    local NEW_PASSWORD="$3"
+
+    echo "==> Reset du mot de passe admin (${TARGET_EMAIL})..."
+
+    local RUNNING
+    RUNNING="$(docker compose -f "$COMPOSE_FILE" ps --services --status running)"
+    if ! grep -qx "app" <<<"$RUNNING" || ! grep -qx "postgres" <<<"$RUNNING"; then
+        echo "ERREUR : la stack n'est pas démarrée (app + postgres) — lancer un déploiement d'abord." >&2
+        exit 1
+    fi
+
+    # La substitution de variable :'nom' de psql n'est appliquée qu'en mode
+    # script (stdin/-f) — PAS avec -c, qui envoie la commande telle quelle
+    # (vérifié empiriquement, contre-intuitif). D'où le `printf | psql`
+    # plutôt que `psql -c` pour toute requête paramétrée ci-dessous.
+    local EXISTS
+    EXISTS="$(printf '%s\n' "SELECT 1 FROM app_user WHERE email = :'email' AND is_admin = true;" \
+        | docker compose -f "$COMPOSE_FILE" exec -T postgres \
+            psql -U docflow -d docflow -v email="$TARGET_EMAIL" -tA)"
+    if [[ -z "$EXISTS" ]]; then
+        echo "ERREUR : aucun compte admin avec l'email '${TARGET_EMAIL}'." >&2
+        exit 1
+    fi
+
+    local NEW_HASH
+    # Hash calculé DANS le container app : garantit la même version
+    # d'argon2-cffi que celle utilisée par l'application elle-même. Le mot
+    # de passe transite par stdin, jamais en argv (évite qu'il apparaisse
+    # dans une liste de process).
+    NEW_HASH="$(printf '%s' "$NEW_PASSWORD" | docker compose -f "$COMPOSE_FILE" exec -T app \
+        python3 -c "import sys; from argon2 import PasswordHasher; print(PasswordHasher().hash(sys.stdin.read()))")"
+
+    printf '%s\n' "UPDATE app_user SET password_hash = :'hash' WHERE email = :'email';" \
+        | docker compose -f "$COMPOSE_FILE" exec -T postgres \
+            psql -U docflow -d docflow -v email="$TARGET_EMAIL" -v hash="$NEW_HASH" \
+        || { echo "ERREUR : la mise à jour en base a échoué." >&2; exit 1; }
+
+    echo "✓ Mot de passe mis à jour pour ${TARGET_EMAIL}."
 }
 
 main "$@"

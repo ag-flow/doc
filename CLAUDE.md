@@ -5,6 +5,20 @@
 
 **Colibri** commence systématiquement tes réponses par 🎺
 
+## mcp 
+Tu es connecté au mcp du protail devpod via le serveur claude-code
+
+## Backloag
+La gatway mcp propose une api pour se connecter à docflow
+docflow contient des workspace qui contiennent des blocs qui contiennent des documents.
+Allant sur le workspace=doc et bloc=planner tu as un backlog de tache à executer.
+
+Quand on te demande de traiter le backlog tu te connectes 
+Tu identifies les taches qui ne sont pas en status 'en review'
+Quand tu prends une tache tu passe le statusd 'en cours'
+Quand tu as finis tu passes le status de la tache 'en review'.
+
+
 ## Projet
 
 Application self-hosted de **gestion documentaire et de structures de données personnalisables**, organisée par workspace :
@@ -62,47 +76,19 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ## Déploiement sur la VM de test
 
-**Machine de test** : `test1` (192.168.10.166, root, clé `~/.ssh/id_ed25519`).
+**Machine de test** : `test1` (alias SSH configuré localement, root, clé `~/.ssh/id_ed25519`).
 **Répertoire sur la VM** : `/opt/docflow`.
 
-### Procédure complète (1ère fois)
+Procédure complète (1ère installation + redéploiement) : voir
+`deploy/DEPLOY.md` § **Déploiement dev (VM de test)** — c'est la référence
+unique, ne pas la dupliquer ici.
 
-```bash
-# 1. Commiter et pousser sur dev (depuis le poste de dev)
-git push origin dev
-
-# 2. Se connecter sur la VM
-ssh test1
-
-# 3. Générer une clé SSH dédiée sur la VM (si pas encore fait)
-ssh-keygen -t ed25519 -C "test1-docflow" -f ~/.ssh/id_ed25519 -N ""
-cat ~/.ssh/id_ed25519.pub
-# → donner la clé publique à enregistrer comme Deploy Key GitHub (lecture seule)
-
-# 4. Cloner le repo
-mkdir -p /opt/docflow
-git clone git@github.com:ag-flow/doc.git /opt/docflow
-cd /opt/docflow
-git checkout dev
-
-# 5. Lancer le déploiement — /data/.env et /data/pg_password.txt sont
-#    initialisés automatiquement (copie de deploy/.env.example + secrets générés)
-sudo ./dev-deploy.sh dev
-```
-
-### Redéploiement (après chaque push sur dev)
+Rappel rapide pour un redéploiement (le cas courant) :
 
 ```bash
 ssh test1
 cd /opt/docflow && sudo ./dev-deploy.sh dev
 ```
-
-Le script `dev-deploy.sh` (racine du repo) :
-1. `git fetch` + `checkout` + `reset --hard origin/dev`
-2. Init/réparation de `/data` : `.env` copié depuis `deploy/.env.example` si absent,
-   puis **réparation clé par clé** (tout secret manquant ou vide est régénéré)
-3. `docker compose build` + `down` + `up -d`
-4. Smoke test `GET /health` (timeout 90 s)
 
 ## Layout du code
 
@@ -188,7 +174,7 @@ Exécution **dans l'ordre** M1 → M9. Ne pas démarrer M(n+1) sans la Definitio
 
 ### Livraison
 
-- **`test1` (192.168.10.166) est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
+- **`test1` est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
 - Ne modifie pas `.env` sauf si demandé.
 - Commit messages en **français**, format conventionnel (`feat:`, `fix:`, `chore:`, `docs:`, `test:`…).
 

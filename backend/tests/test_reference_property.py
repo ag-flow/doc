@@ -29,7 +29,7 @@ async def test_create_reference_property_def(db_pool: asyncpg.Pool, test_workspa
 
 
 async def test_set_reference_property_value(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="rtype2", label="R2"))
@@ -39,6 +39,7 @@ async def test_set_reference_property_value(
         "rtype2",
         PropertiesDefCreate(slug="ref-v", label="Réf V", type="reference"),
     )
+    block_id = await make_block(ws, "rtype2", "rtype2-block")
     doc_src = await doc_svc.create_document(
         db_pool,
         ws,
@@ -46,7 +47,7 @@ async def test_set_reference_property_value(
             title="Source",
             parent_id=None,
             functional_type_slug="rtype2",
-            block_id=test_block["id"],
+            block_id=block_id,
         ),
     )
     doc_tgt = await doc_svc.create_document(
@@ -56,7 +57,7 @@ async def test_set_reference_property_value(
             title="Cible",
             parent_id=None,
             functional_type_slug="rtype2",
-            block_id=test_block["id"],
+            block_id=block_id,
         ),
     )
     src_id = doc_src.doc_technical_key
@@ -73,7 +74,7 @@ async def test_set_reference_property_value(
 
 
 async def test_reference_invalid_uuid(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="rtype3", label="R3"))
@@ -90,7 +91,7 @@ async def test_reference_invalid_uuid(
             title="Src",
             parent_id=None,
             functional_type_slug="rtype3",
-            block_id=test_block["id"],
+            block_id=await make_block(ws, "rtype3", "rtype3-block"),
         ),
     )
     with pytest.raises(HTTPException) as exc:
@@ -105,7 +106,7 @@ async def test_reference_invalid_uuid(
 
 
 async def test_reference_doc_not_in_workspace(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     import uuid
 
@@ -124,7 +125,7 @@ async def test_reference_doc_not_in_workspace(
             title="SrcNF",
             parent_id=None,
             functional_type_slug="rtype4",
-            block_id=test_block["id"],
+            block_id=await make_block(ws, "rtype4", "rtype4-block"),
         ),
     )
     with pytest.raises(HTTPException) as exc:
@@ -140,11 +141,13 @@ async def test_reference_doc_not_in_workspace(
 
 
 async def test_reference_target_type_constraint(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     ws = "test-ws"
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="tsrc5", label="Src"))
     await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="ttgt5", label="Tgt"))
+    src_block = await make_block(ws, "tsrc5", "tsrc5-block")
+    tgt_block = await make_block(ws, "ttgt5", "ttgt5-block")
 
     await prop_svc.create_def(
         db_pool,
@@ -164,7 +167,7 @@ async def test_reference_target_type_constraint(
             title="Src5",
             parent_id=None,
             functional_type_slug="tsrc5",
-            block_id=test_block["id"],
+            block_id=src_block,
         ),
     )
     doc_right = await doc_svc.create_document(
@@ -174,7 +177,7 @@ async def test_reference_target_type_constraint(
             title="Bon type",
             parent_id=None,
             functional_type_slug="ttgt5",
-            block_id=test_block["id"],
+            block_id=tgt_block,
         ),
     )
     doc_wrong = await doc_svc.create_document(
@@ -184,7 +187,7 @@ async def test_reference_target_type_constraint(
             title="Mauvais type",
             parent_id=None,
             functional_type_slug="tsrc5",
-            block_id=test_block["id"],
+            block_id=src_block,
         ),
     )
     src_id = doc_src.doc_technical_key

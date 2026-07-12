@@ -13,28 +13,35 @@ import { PropertyField } from './PropertyField'
 interface PropertiesPanelProps {
   ws: string
   docId: string
+  functionalTypeSlug: string | null
 }
 
 /**
- * Construit l'index slug-de-propriété → valeurs autorisées, à partir des
- * définitions de types (une propriété `restricted_list` tire ses options du
- * type qui la déclare).
+ * Construit l'index slug-de-propriété → valeurs autorisées pour LE type du
+ * document uniquement. Une propriété `restricted_list` tire ses options du type
+ * qui la déclare ; deux types différents peuvent déclarer le même slug (ex.
+ * `statut`) avec des valeurs autorisées distinctes. Balayer tous les types dans
+ * un index global par slug écraserait les options (dernier type gagne) et
+ * présenterait au document les valeurs d'un autre type — un choix alors rejeté
+ * par le backend (422 « valeur autorisée introuvable »). On scope donc au type
+ * réel du document.
  */
 function buildAllowedIndex(
   types: FunctionalTypeWithProps[],
+  functionalTypeSlug: string | null,
 ): Map<string, AllowedValueOut[]> {
   const index = new Map<string, AllowedValueOut[]>()
-  for (const type of types) {
-    for (const def of type.properties ?? []) {
-      if (def.type === 'restricted_list' && def.allowed_values) {
-        index.set(def.slug, [...def.allowed_values].sort((a, b) => a.position - b.position))
-      }
+  const type = types.find((t) => t.slug === functionalTypeSlug)
+  if (!type) return index
+  for (const def of type.properties ?? []) {
+    if (def.type === 'restricted_list' && def.allowed_values) {
+      index.set(def.slug, [...def.allowed_values].sort((a, b) => a.position - b.position))
     }
   }
   return index
 }
 
-export function PropertiesPanel({ ws, docId }: PropertiesPanelProps) {
+export function PropertiesPanel({ ws, docId, functionalTypeSlug }: PropertiesPanelProps) {
   const { t } = useTranslation()
 
   const { data: values = [], isLoading } = useQuery<PropertyValueOut[]>({
@@ -47,7 +54,10 @@ export function PropertiesPanel({ ws, docId }: PropertiesPanelProps) {
     queryFn: () => api.get(`/workspaces/${ws}/types/rich`),
   })
 
-  const allowedIndex = useMemo(() => buildAllowedIndex(types), [types])
+  const allowedIndex = useMemo(
+    () => buildAllowedIndex(types, functionalTypeSlug),
+    [types, functionalTypeSlug],
+  )
 
   return (
     <aside className="w-full" data-testid="properties-panel">

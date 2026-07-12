@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from docflow.remote import service as svc
 from docflow.remote.schemas import (
     RemoteCertificateCreate,
+    RemoteCertificateGenerate,
     RemotePointCreate,
     RemotePointUpdate,
 )
@@ -112,6 +113,50 @@ async def test_delete_certificate_not_found(db_pool: asyncpg.Pool) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await svc.delete_certificate(db_pool, "missing")
     assert exc_info.value.status_code == 404
+
+
+async def test_generate_certificate_returns_public_key_only(db_pool: asyncpg.Pool) -> None:
+    cert = await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(slug="cert-gen", label="Generated"),
+        _FERNET_KEY,
+    )
+    assert cert.slug == "cert-gen"
+    assert cert.cert_type == "ssh_key"
+    assert cert.public_part.startswith("ssh-ed25519 ")
+    assert cert.fingerprint is not None
+    assert not hasattr(cert, "private_key")
+    assert not hasattr(cert, "private_enc")
+
+
+async def test_generate_certificate_private_key_is_usable(db_pool: asyncpg.Pool) -> None:
+    """La clé privée générée est stockée chiffrée et redéchiffrable — jamais renvoyée en clair."""
+    await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(slug="cert-gen-rtt", label="Generated"),
+        _FERNET_KEY,
+    )
+    private_key = await svc.get_certificate_private_key(db_pool, "cert-gen-rtt", _FERNET_KEY)
+    assert "OPENSSH PRIVATE KEY" in private_key
+
+
+async def test_generate_certificate_produces_distinct_keys(db_pool: asyncpg.Pool) -> None:
+    a = await svc.generate_certificate(
+        db_pool, RemoteCertificateGenerate(slug="cert-gen-a", label="A"), _FERNET_KEY
+    )
+    b = await svc.generate_certificate(
+        db_pool, RemoteCertificateGenerate(slug="cert-gen-b", label="B"), _FERNET_KEY
+    )
+    assert a.public_part != b.public_part
+    assert a.fingerprint != b.fingerprint
+
+
+async def test_generate_certificate_duplicate_slug(db_pool: asyncpg.Pool) -> None:
+    body = RemoteCertificateGenerate(slug="cert-gen-dup", label="Dup")
+    await svc.generate_certificate(db_pool, body, _FERNET_KEY)
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.generate_certificate(db_pool, body, _FERNET_KEY)
+    assert exc_info.value.status_code == 409
 
 
 async def test_list_certificates(db_pool: asyncpg.Pool) -> None:
@@ -248,6 +293,22 @@ async def test_list_points(db_pool: asyncpg.Pool) -> None:
 
 
 # ── Validation Pydantic ───────────────────────────────────────────────────────
+
+
+def test_point_accepts_bitbucket_provider() -> None:
+    pt = RemotePointCreate(
+        slug="bb-pt",
+        label="Bitbucket",
+        point_type="git",
+        host="bitbucket.org",
+        username="user",
+        auth_type="pat",
+        auth_storage="vault",
+        auth_vault_ref="${vault://token}",
+        git_provider="bitbucket",
+        git_repo="team/repo",
+    )
+    assert pt.git_provider == "bitbucket"
 
 
 def test_point_git_requires_provider() -> None:

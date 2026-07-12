@@ -15,6 +15,25 @@ import asyncpg
 from docflow.backup.git_files import SLUG_SAFE
 
 
+async def resolve_block_scope(conn: asyncpg.Connection, block_id: uuid.UUID) -> set[uuid.UUID]:
+    """Retourne l'ensemble {block_id} ∪ descendance (CTE récursive sur data_block.parent).
+
+    Même pattern que blocks/service.py:count_block_dependents.
+    """
+    rows = await conn.fetch(
+        """
+        WITH RECURSIVE subtree AS (
+            SELECT id FROM data_block WHERE id = $1
+            UNION ALL
+            SELECT b.id FROM data_block b JOIN subtree s ON b.parent = s.id
+        )
+        SELECT id FROM subtree
+        """,
+        block_id,
+    )
+    return {r["id"] for r in rows}
+
+
 async def fetch_doc(conn: asyncpg.Connection, doc_id: uuid.UUID) -> dict[str, Any] | None:
     """Retourne les données brutes d'un document avec son contenu et ses propriétés."""
     row = await conn.fetchrow(
@@ -22,6 +41,7 @@ async def fetch_doc(conn: asyncpg.Connection, doc_id: uuid.UUID) -> dict[str, An
         SELECT d.doc_technical_key AS id, d.slug, d.title, d.updated_at,
                d.parent AS parent_id,
                d.workspace_technical_key AS workspace_id,
+               d.data_block_ref AS data_block_id,
                ft.slug AS functional_type_slug,
                dv.content
         FROM document d
@@ -86,14 +106,23 @@ async def build_path(
 
 
 async def fetch_ws_documents(
-    conn: asyncpg.Connection, workspace_id: uuid.UUID
+    conn: asyncpg.Connection,
+    workspace_id: uuid.UUID,
+    block_scope: set[uuid.UUID] | None = None,
 ) -> list[dict[str, Any]]:
-    """Retourne (id, slug, parent) de tous les documents du workspace."""
+    """Retourne (id, slug, parent) des documents du workspace.
+
+    `block_scope` restreint aux documents dont le bloc appartient à cet
+    ensemble (résolu via `resolve_block_scope`) — None = tout le workspace.
+    """
     rows = await conn.fetch(
         """
         SELECT doc_technical_key AS id, slug, parent
-        FROM document WHERE workspace_technical_key = $1
+        FROM document
+        WHERE workspace_technical_key = $1
+          AND ($2::uuid[] IS NULL OR data_block_ref = ANY($2::uuid[]))
         """,
         workspace_id,
+        list(block_scope) if block_scope is not None else None,
     )
     return [dict(r) for r in rows]

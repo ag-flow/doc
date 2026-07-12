@@ -21,6 +21,10 @@ class BackupJobCreate(BaseModel):
 
     # Périmètre — None = toute l'instance (git_sync uniquement)
     workspace_slug: str | None = None
+    # Sous-périmètre optionnel : un bloc (+ sa descendance) du workspace
+    # ci-dessus (git_sync uniquement). Requiert workspace_slug : un bloc
+    # appartient toujours à un workspace précis.
+    data_block_slug: str | None = None
 
     # Planification : exactement un des deux
     schedule_cron: str | None = None
@@ -37,6 +41,8 @@ class BackupJobCreate(BaseModel):
         has_interval = self.schedule_every_seconds is not None
         if has_cron == has_interval:
             raise ValueError("exactement un de schedule_cron ou schedule_every_seconds est requis")
+        if self.data_block_slug is not None and self.workspace_slug is None:
+            raise ValueError("data_block_slug requiert workspace_slug")
         return self
 
 
@@ -47,6 +53,7 @@ class BackupJobUpdate(BaseModel):
     enabled: bool
     remote_point_slug: str
     workspace_slug: str | None = None
+    data_block_slug: str | None = None
     schedule_cron: str | None = None
     schedule_every_seconds: int | None = Field(default=None, gt=0)
     git_base_path: str | None = None
@@ -57,6 +64,8 @@ class BackupJobUpdate(BaseModel):
         has_interval = self.schedule_every_seconds is not None
         if has_cron == has_interval:
             raise ValueError("exactement un de schedule_cron ou schedule_every_seconds est requis")
+        if self.data_block_slug is not None and self.workspace_slug is None:
+            raise ValueError("data_block_slug requiert workspace_slug")
         return self
 
 
@@ -68,6 +77,7 @@ class BackupJobOut(BaseModel):
     enabled: bool
     remote_point_slug: str
     workspace_slug: str | None
+    data_block_slug: str | None
     schedule_cron: str | None
     schedule_every_seconds: int | None
     git_base_path: str | None
@@ -75,6 +85,16 @@ class BackupJobOut(BaseModel):
     updated_at: datetime
     last_run_at: datetime | None
     last_run_status: str | None
+
+
+class DumpArchiveOut(BaseModel):
+    """Une archive de dump présente sur le remote point d'un job db_dump."""
+
+    filename: str
+    scope: str
+    job_id: str
+    created_at: datetime
+    size: int | None = None
 
 
 class BackupJobRunOut(BaseModel):

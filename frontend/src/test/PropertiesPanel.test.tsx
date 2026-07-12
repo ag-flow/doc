@@ -65,11 +65,11 @@ const richTypes = [
   },
 ]
 
-function renderPanel() {
+function renderPanel(functionalTypeSlug: string | null = 'epic') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <PropertiesPanel ws="ws" docId="d1" />
+      <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug={functionalTypeSlug} />
     </QueryClientProvider>,
   )
 }
@@ -247,6 +247,171 @@ describe('PropertiesPanel', () => {
     expect(screen.queryByTestId('property-conflict-title2')).not.toBeInTheDocument()
     // title2 reste éditable
     expect(screen.getByTestId('property-input-title2')).not.toBeDisabled()
+  })
+
+  // Régression : un statut à valeur par défaut (version null, jamais écrit
+  // explicitement) doit s'enregistrer avec expected_version 0 — sinon le
+  // backend rejette (« Input should be a valid integer ») et le statut par
+  // défaut est impossible à changer.
+  it('saves a default-only restricted_list with expected_version 0', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'status',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: null, // aucune valeur explicite : seul le défaut du type
+        value: null,
+        allowed_value_slug: 'todo',
+        allowed_value_label: 'À faire',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 1,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    renderPanel()
+    await waitFor(() => expect(screen.getByTestId('property-input-status')).toBeInTheDocument())
+
+    const select = screen.getByTestId('property-input-status')
+    fireEvent.change(select, { target: { value: 'done' } })
+    await act(async () => {
+      fireEvent.blur(select)
+    })
+
+    await waitFor(() => expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalled())
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith(
+      'ws',
+      'd1',
+      'status',
+      { allowed_value_slug: 'done', expected_version: 0 },
+    )
+    // Aucune erreur affichée.
+    expect(screen.queryByTestId('property-error-status')).not.toBeInTheDocument()
+  })
+
+  // Régression : deux types partagent le slug `status` avec des valeurs autorisées
+  // DIFFÉRENTES. Le select d'un document doit présenter les options de SON type,
+  // pas celles d'un autre type (sinon on envoie un slug étranger → 422 « valeur
+  // autorisée introuvable » sur une liste fermée).
+  it('scopes allowed values to the document type on slug collision', async () => {
+    const collidingTypes = [
+      {
+        slug: 'article',
+        label: 'Article',
+        properties: [
+          {
+            slug: 'status',
+            label: 'Statut',
+            type: 'restricted_list',
+            required: true,
+            behavior: null,
+            allowed_values: [
+              { slug: 'brouillon', label: 'Brouillon', color: null, position: 0 },
+              { slug: 'publie', label: 'Publiée', color: '#22c55e', position: 1 },
+            ],
+          },
+        ],
+      },
+      // Type balayé EN DERNIER : sans scoping, il écraserait l'index pour `status`.
+      {
+        slug: 'epic',
+        label: 'Epic',
+        properties: [
+          {
+            slug: 'status',
+            label: 'Statut',
+            type: 'restricted_list',
+            required: true,
+            behavior: null,
+            allowed_values: [
+              { slug: 'todo', label: 'À faire', color: '#3b82f6', position: 0 },
+              { slug: 'done', label: 'Terminé', color: '#22c55e', position: 1 },
+            ],
+          },
+        ],
+      },
+    ]
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'status',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: 1,
+        value: null,
+        allowed_value_slug: 'publie',
+        allowed_value_label: 'Publiée',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(collidingTypes)
+
+    renderPanel('article')
+    await waitFor(() => expect(screen.getByTestId('property-input-status')).toBeInTheDocument())
+
+    const select = screen.getByTestId('property-input-status') as HTMLSelectElement
+    const optionValues = Array.from(select.options).map((o) => o.value)
+    // Doit contenir les valeurs d'`article`, pas celles d'`epic`.
+    expect(optionValues).toContain('publie')
+    expect(optionValues).toContain('brouillon')
+    expect(optionValues).not.toContain('todo')
+    expect(optionValues).not.toContain('done')
+  })
+
+  // Une liste fermée s'enregistre dès le choix (au change), sans attendre le blur :
+  // choisir une valeur EST une action délibérée et discrète (comme un toggle bool).
+  it('saves a restricted_list immediately on change (no blur needed)', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'status',
+        prop_label: 'Statut',
+        type: 'restricted_list',
+        version: 1,
+        value: null,
+        allowed_value_slug: 'todo',
+        allowed_value_label: 'À faire',
+        required: true,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 2,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    renderPanel()
+    await waitFor(() => expect(screen.getByTestId('property-input-status')).toBeInTheDocument())
+
+    const select = screen.getByTestId('property-input-status')
+    await act(async () => {
+      fireEvent.change(select, { target: { value: 'done' } })
+    })
+
+    // Sauvegarde déclenchée par le change, sans blur.
+    await waitFor(() => expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalled())
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'status', {
+      allowed_value_slug: 'done',
+      expected_version: 1,
+    })
   })
 
   // État vide

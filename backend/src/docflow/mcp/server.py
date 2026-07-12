@@ -81,6 +81,8 @@ _TOOLS: list[Tool] = [
         description=(
             "Lit le contenu complet d'un document : id, title, contenu (markdown "
             "brut), functional_type_slug. "
+            "Ajoute 'warnings' (liste) lorsque des propriétés obligatoires du type "
+            "sont non renseignées : les renseigner avec set_property_value. "
             "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
             "au workspace indiqué. "
             "Lecture seule — aucun effet de bord."
@@ -329,9 +331,15 @@ _TOOLS: list[Tool] = [
             "Retourne toutes les propriétés du type fonctionnel du document avec "
             "leur valeur actuelle (null si non renseignée). "
             "Chaque entrée contient : prop_slug, label, type "
-            "(text | int | restricted_list), value (texte brut pour text/int), "
-            "allowed_value_slug + allowed_value_label (pour restricted_list). "
-            "Utiliser prop_slug et allowed_value_slug avec set_property_value "
+            "(text | int | restricted_list), required (bool — obligatoire), "
+            "value (texte brut pour text/int), "
+            "allowed_value_slug + allowed_value_label (valeur COURANTE, pour restricted_list). "
+            "Pour une restricted_list, l'entrée porte aussi allowed_values : la liste "
+            "COMPLÈTE des options possibles [{slug, label}] (le jeu de valeurs varie par "
+            "type fonctionnel) — utiliser ces slugs pour poser une valeur sans deviner. "
+            "Une entrée required=true avec value et allowed_value_slug null est "
+            "une valeur obligatoire manquante : la renseigner avec set_property_value. "
+            "Utiliser prop_slug + un slug de allowed_values avec set_property_value "
             "pour écrire une valeur. "
             "Lecture seule — aucun effet de bord."
         ),
@@ -349,7 +357,7 @@ _TOOLS: list[Tool] = [
         description=(
             "Lit la valeur actuelle d'une seule propriété d'un document. "
             "Retourne : prop_slug, label, type (text | int | restricted_list), "
-            "value (texte brut pour text/int, null si vide), "
+            "required (bool — obligatoire), value (texte brut pour text/int, null si vide), "
             "allowed_value_slug + allowed_value_label (pour restricted_list, null si vide). "
             "Préférer list_property_values pour lire toutes les propriétés d'un coup ; "
             "utiliser cet outil quand seule une propriété précise est nécessaire. "
@@ -532,6 +540,63 @@ _TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="list_blocks",
+        description=(
+            "Liste l'ossature complète des blocs d'un workspace. "
+            "LECTURE : aucun effet de bord. "
+            "Retourne pour chaque bloc : slug, label, functional_type_slug (type de "
+            "sa racine), parent_slug (null si bloc racine) et exposed. "
+            "À utiliser avant create_document (pour connaître les blocs et leur type) "
+            "et avant delete_block, pour ne pas créer de bloc ad hoc en doublon."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace (issu de list_workspaces)",
+                },
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="delete_block",
+        description=(
+            "Supprime un bloc d'un workspace. "
+            "SUPPRESSION EN CASCADE : les blocs enfants et TOUS les documents du "
+            "sous-arbre (avec leurs valeurs, versions et historique) sont détruits. "
+            "Irréversible. "
+            "GARDE : si le bloc a des dépendants (blocs enfants ou documents), l'appel "
+            "est refusé (erreur avec child_blocks / documents / dependents) tant que "
+            "confirm=true n'est pas fourni ; relire ces valeurs avant de confirmer. "
+            "Un bloc vide se supprime sans confirm. "
+            "Retourne {deleted: true, block_slug} en cas de succès."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {
+                    "type": "string",
+                    "description": "Slug du workspace",
+                },
+                "block_slug": {
+                    "type": "string",
+                    "description": "Slug du bloc à supprimer",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "true pour confirmer la suppression en cascade quand le bloc "
+                        "a des dépendants (défaut false ; cf. dependents dans la "
+                        "réponse d'erreur pour connaître le nombre concerné)"
+                    ),
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
         name="create_api_profile",
         description=(
             "Crée un profil d'accès API avec un périmètre limité à UN workspace. "
@@ -592,6 +657,132 @@ _TOOLS: list[Tool] = [
             "required": ["profile_id", "label"],
         },
     ),
+    Tool(
+        name="list_block_properties",
+        description=(
+            "Introspecte le schéma de propriétés d'un bloc SANS fournir de doc_id. "
+            "Découverte dynamique : les slugs de propriétés (dont le statut) sont propres "
+            "à chaque type fonctionnel. Retourne, pour le type racine du bloc ET ses types "
+            "descendants (les seuls instanciables dans le bloc), la liste des propriétés : "
+            "prop_slug, label, type (text|int|date|bool|url|float|restricted_list|reference), "
+            "required, default_value ; pour restricted_list, allowed_values (slug+label). "
+            "À utiliser avant set_property_value pour connaître les valeurs autorisées sans "
+            "lire un document témoin. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc à introspecter"},
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
+        name="list_block_objects",
+        description=(
+            "Liste les documents (objets) d'un bloc AVEC leurs valeurs de propriétés, "
+            "en une requête et de façon PAGINÉE (page 1-based, page_size borné). Chaque "
+            "objet porte id, title, functional_type_slug et la liste de ses valeurs "
+            "(prop_slug, type, value pour les scalaires, allowed_value_slug/label pour les "
+            "restricted_list). Évite de lire chaque document un par un. Combiner avec "
+            "list_block_properties pour interpréter les valeurs. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Taille de page (défaut 50, max 200)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
+        name="query_documents",
+        description=(
+            "Moteur de requête PAGINÉ sur les documents d'un bloc (QuerySpec) : filtres typés, "
+            "tri multi-clé, projection, sélection par type. Retourne la forme paginée de "
+            "list_block_objects (total, has_next, objects avec valeurs). Lecture seule.\n"
+            "- filters (rétro-compatible) : objet {prop_slug: valeur} → égalité.\n"
+            "- where : liste de clauses [{prop, op, value|values}]. Opérateurs par type : "
+            "text/url = eq|contains|starts_with ; int/float = eq|lt|gt|between ([min,max]) ; "
+            "date = eq|before|after|between ; restricted_list = eq|in (values=[slugs]) ; "
+            "bool/reference = eq. Un opérateur incompatible avec le type renvoie une erreur "
+            "listant les opérateurs valides.\n"
+            "- sort : liste [{key, dir}] (key = prop_slug | title | created_at ; dir = asc|desc ; "
+            "restricted_list trié par ordre de pipeline).\n"
+            "- projection : liste de prop_slug à remonter (défaut : toutes).\n"
+            "- type_slugs : restreint aux types d'objet donnés.\n"
+            "- page / page_size (défaut 50, max 100)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "filters": {
+                    "type": "object",
+                    "description": "Filtre d'égalité {prop_slug: valeur} (rétro-compatible)",
+                    "additionalProperties": {"type": "string"},
+                },
+                "where": {
+                    "type": "array",
+                    "description": "Clauses typées [{prop, op, value|values}]",
+                    "items": {"type": "object"},
+                },
+                "sort": {
+                    "type": "array",
+                    "description": "Tri multi-clé [{key, dir}]",
+                    "items": {"type": "object"},
+                },
+                "projection": {
+                    "type": "array",
+                    "description": "prop_slug à remonter (défaut : toutes)",
+                    "items": {"type": "string"},
+                },
+                "type_slugs": {
+                    "type": "array",
+                    "description": "Restreindre aux types d'objet donnés",
+                    "items": {"type": "string"},
+                },
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Taille de page (défaut 50, max 100)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
+    Tool(
+        name="list_block_tree",
+        description=(
+            "Arbre des documents d'un bloc (mode browse), PAGINÉ sur les RACINES "
+            "(≤100/page). Chaque racine porte son sous-arbre complet (children récursif) "
+            "et les valeurs de propriétés de chaque nœud. total/has_next comptent les "
+            "racines seules : les enfants d'une racine incluse ne consomment pas le "
+            "page_size. Chaque nœud : id, title, functional_type_slug, parent_id, "
+            "properties, children. Lecture seule."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
+                "page_size": {
+                    "type": "integer",
+                    "description": "Racines par page (défaut 50, max 100)",
+                },
+            },
+            "required": ["workspace_slug", "block_slug"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -636,6 +827,12 @@ _WS_TOOLS: dict[str, bool] = {
     "get_block_type": False,
     "set_property_value": True,
     "create_block": True,
+    "list_blocks": False,
+    "delete_block": True,
+    "list_block_properties": False,
+    "list_block_objects": False,
+    "query_documents": False,
+    "list_block_tree": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -734,6 +931,22 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _import_template(pool, arguments)
     if name == "create_block":
         return await _create_block(pool, arguments)
+    if name == "list_blocks":
+        return await _list_blocks(pool, str(arguments.get("workspace_slug", "")))
+    if name == "delete_block":
+        return await _delete_block(pool, arguments)
+    if name == "list_block_properties":
+        return await _list_block_properties(
+            pool,
+            str(arguments.get("workspace_slug", "")),
+            str(arguments.get("block_slug", "")),
+        )
+    if name == "list_block_objects":
+        return await _list_block_objects(pool, arguments)
+    if name == "query_documents":
+        return await _query_documents(pool, arguments)
+    if name == "list_block_tree":
+        return await _list_block_tree(pool, arguments)
     if name == "create_api_profile":
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
@@ -764,6 +977,43 @@ async def _require_workspace(conn: asyncpg.Connection, ws_slug: str) -> uuid.UUI
     if wk is None:
         raise ValueError(f"workspace '{ws_slug}' introuvable")
     return wk
+
+
+async def _required_unset_slugs(
+    conn: asyncpg.Connection, wk: uuid.UUID, doc_id: uuid.UUID
+) -> list[str]:
+    """Slugs des propriétés *required* du type du document dont la valeur est nulle.
+
+    Garde-fou consultatif au read : le contrat dur (422 à l'écriture, cf.
+    ``assert_required_satisfied``) ne protège que les créations. Un document
+    antérieur à l'ajout de la contrainte — ou dont la valeur par défaut n'a jamais
+    été instanciée — peut présenter une propriété obligatoire à null. On ignore
+    les propriétés à ``behavior`` (renseignées par le serveur). Le ``default_value``
+    n'est PAS considéré satisfaisant ici : s'il n'a pas été matérialisé en valeur,
+    le read renvoie bel et bien null et l'agent doit la renseigner.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT pd.slug
+        FROM properties_defs pd
+        JOIN document d ON d.functional_type_ref = pd.functional_type_ref
+                       AND d.workspace_technical_key = $1
+                       AND d.doc_technical_key = $2
+        LEFT JOIN properties_values pv ON pv.property_def_ref = pd.id
+                                      AND pv.document_ref = d.doc_technical_key
+        LEFT JOIN properties_value_version pvv
+               ON pvv.property_value_ref = pv.id
+              AND pvv.version_number = pv.version
+        WHERE pd.required
+          AND pd.behavior IS NULL
+          AND pvv.value IS NULL
+          AND pvv.allowed_value_ref IS NULL
+        ORDER BY pd.slug
+        """,
+        wk,
+        doc_id,
+    )
+    return [r["slug"] for r in rows]
 
 
 async def _list_types(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
@@ -813,9 +1063,17 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
             wk,
             uuid.UUID(doc_id),
         )
-    if row is None:
-        return _text({"error": f"document '{doc_id}' introuvable"})
-    return _text(dict(row))
+        if row is None:
+            return _text({"error": f"document '{doc_id}' introuvable"})
+        unset = await _required_unset_slugs(conn, wk, uuid.UUID(doc_id))
+    result = dict(row)
+    if unset:
+        result["warnings"] = [
+            "propriété(s) obligatoire(s) non renseignée(s) : "
+            + ", ".join(unset)
+            + " — les renseigner avec set_property_value"
+        ]
+    return _text(result)
 
 
 async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -897,12 +1155,17 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     if current_version is None:
         return _text({"error": f"document '{doc_id_str}' introuvable"})
 
+    # Ne renseigner que les champs réellement fournis : un champ omis doit rester
+    # « unset » (model_dump(exclude_unset=True) l'exclut) pour que le service
+    # reporte sa valeur courante au lieu de l'écraser à NULL (bug MCO).
+    update_fields: dict[str, object] = {"expected_version": current_version}
+    if "title" in args:
+        update_fields["title"] = title
+    if "contenu" in args:
+        update_fields["content"] = contenu
+
     try:
-        data = DocumentUpdate(
-            title=title,
-            content=contenu,
-            expected_version=current_version,
-        )
+        data = DocumentUpdate(**update_fields)
         doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
     except HTTPException as e:
         return _text({"error": e.detail})
@@ -1024,7 +1287,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
         wk = await _require_workspace(conn, ws_slug)
         rows = await conn.fetch(
             """
-            SELECT pd.slug AS prop_slug, pd.label, pd.type,
+            SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
@@ -1043,7 +1306,36 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             wk,
             uuid.UUID(doc_id),
         )
-    return _text([dict(r) for r in rows])
+        # Ensemble COMPLET des valeurs autorisées par propriété restricted_list du
+        # type du document (pas seulement la valeur courante) : un agent peut ainsi
+        # découvrir les slugs cibles de set_property_value sans deviner.
+        av_rows = await conn.fetch(
+            """
+            SELECT pd.slug AS prop_slug, pav.slug AS av_slug, pav.label AS av_label
+            FROM properties_defs pd
+            JOIN functional_type ft ON ft.id = pd.functional_type_ref
+            JOIN document d ON d.functional_type_ref = ft.id
+                           AND d.workspace_technical_key = $1
+                           AND d.doc_technical_key = $2
+            JOIN properties_allowed_values pav ON pav.property_def_ref = pd.id
+            WHERE pd.type = 'restricted_list'
+            ORDER BY pd.slug, pav.position, pav.created_at
+            """,
+            wk,
+            uuid.UUID(doc_id),
+        )
+    allowed_by_prop: dict[str, list[dict[str, str]]] = {}
+    for r in av_rows:
+        allowed_by_prop.setdefault(r["prop_slug"], []).append(
+            {"slug": r["av_slug"], "label": r["av_label"]}
+        )
+    result: list[dict[str, object]] = []
+    for r in rows:
+        entry = dict(r)
+        if entry["type"] == "restricted_list":
+            entry["allowed_values"] = allowed_by_prop.get(r["prop_slug"], [])
+        result.append(entry)
+    return _text(result)
 
 
 async def _get_property_value(
@@ -1053,7 +1345,7 @@ async def _get_property_value(
         wk = await _require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             """
-            SELECT pd.slug AS prop_slug, pd.label, pd.type,
+            SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
                    pvv.value,
                    pav.slug AS allowed_value_slug, pav.label AS allowed_value_label
             FROM properties_defs pd
@@ -1252,6 +1544,183 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
             "functional_type_slug": result.functional_type_slug,
         }
     )
+
+
+async def _list_blocks(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks import service as block_svc
+
+    try:
+        blocks = await block_svc.list_blocks(pool, ws_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(
+        [
+            {
+                "slug": b.slug,
+                "label": b.label,
+                "functional_type_slug": b.functional_type_slug,
+                "parent_slug": b.parent_slug,
+                "exposed": b.exposed,
+            }
+            for b in blocks
+        ]
+    )
+
+
+async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks import service as block_svc
+    from docflow.errors import DependentsConflictError
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    block_slug = str(args.get("block_slug", ""))
+    confirm = bool(args.get("confirm", False))
+
+    # Décompte préalable pour un message explicite (miroir de _delete_document).
+    try:
+        counts = await block_svc.count_block_dependents(pool, ws_slug, block_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    dependents = counts["child_blocks"] + counts["documents"]
+    if dependents > 0 and not confirm:
+        return _text(
+            {
+                "error": (
+                    f"la suppression du bloc '{block_slug}' détruirait en cascade "
+                    f"{counts['child_blocks']} bloc(s) enfant(s) et "
+                    f"{counts['documents']} document(s) (valeurs et historique compris) ; "
+                    "rappeler avec confirm=true pour confirmer"
+                ),
+                "child_blocks": counts["child_blocks"],
+                "documents": counts["documents"],
+                "dependents": dependents,
+            }
+        )
+
+    try:
+        await block_svc.delete_block(pool, ws_slug, block_slug, confirm=confirm)
+    except DependentsConflictError as e:
+        return _text({"error": e.detail, "dependents": e.dependents})
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    return _text({"deleted": True, "block_slug": block_slug})
+
+
+async def _list_block_properties(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.blocks.introspection import list_block_properties
+
+    try:
+        out = await list_block_properties(pool, ws_slug, block_slug)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+def _pagination_args(args: dict[str, object]) -> tuple[int, int]:
+    from docflow.documents.block_query import DEFAULT_PAGE_SIZE
+
+    page = int(str(args.get("page", 1)))
+    page_size = int(str(args.get("page_size", DEFAULT_PAGE_SIZE)))
+    return page, page_size
+
+
+async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.block_query import list_block_objects
+
+    page, page_size = _pagination_args(args)
+    try:
+        out = await list_block_objects(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("block_slug", "")),
+            page,
+            page_size,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.block_tree import TREE_DEFAULT_PAGE_SIZE, list_block_tree
+
+    page = int(str(args.get("page", 1)))
+    page_size = int(str(args.get("page_size", TREE_DEFAULT_PAGE_SIZE)))
+    try:
+        out = await list_block_tree(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("block_slug", "")),
+            page,
+            page_size,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
+
+
+async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from docflow.documents.block_query import query_documents
+    from docflow.schemas.query import FilterClause, QuerySpec, SortKey
+
+    ws = str(args.get("workspace_slug", ""))
+    block = str(args.get("block_slug", ""))
+    page, page_size = _pagination_args(args)
+
+    clauses: list[FilterClause] = []
+    try:
+        # Rétro-compatibilité : filters = {prop: valeur} → égalité.
+        raw_filters = args.get("filters")
+        if isinstance(raw_filters, dict):
+            clauses += [
+                FilterClause(prop=str(k), op="eq", value=str(v)) for k, v in raw_filters.items()
+            ]
+        # Forme riche : where = [{prop, op, value|values}].
+        raw_where = args.get("where")
+        if isinstance(raw_where, list):
+            clauses += [FilterClause(**w) for w in raw_where if isinstance(w, dict)]
+        raw_sort = args.get("sort")
+        sort = (
+            [SortKey(**s) for s in raw_sort if isinstance(s, dict)]
+            if isinstance(raw_sort, list)
+            else []
+        )
+        projection = args.get("projection")
+        type_slugs = args.get("type_slugs")
+        spec = QuerySpec(
+            workspace_slug=ws,
+            block_slug=block,
+            type_slugs=type_slugs if isinstance(type_slugs, list) else None,
+            filters=clauses,
+            sort=sort,
+            projection=projection if isinstance(projection, list) else None,
+            page=page,
+            page_size=page_size,
+        )
+    except ValidationError as e:
+        return _text({"error": f"QuerySpec invalide : {e}"})
+
+    try:
+        out = await query_documents(pool, ws, spec)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out.model_dump())
 
 
 async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:

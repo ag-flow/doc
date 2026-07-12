@@ -22,7 +22,14 @@
     "rootType": "Type racine",
     "selectType": "— choisir un type racine —",
     "empty": "Aucun bloc dans ce workspace",
-    "open": "Ouvrir"
+    "open": "Ouvrir",
+    "delete": "Supprimer",
+    "deleteTitle": "Supprimer le bloc",
+    "deleteConfirm": "Supprimer définitivement le bloc « {{label}} » ?",
+    "deleteEmptyHint": "Ce bloc est vide.",
+    "deleteWarnTitle": "Suppression en cascade",
+    "deleteConfirmCascade": "Supprimer quand même",
+    "deleting": "Suppression…"
   },
   "tpl": {
     "title": "Templates",
@@ -113,7 +120,6 @@
     "tree_mode": "Arbre",
     "list_mode": "Liste",
     "columns": "Colonnes",
-    "filter_all": "Tous",
     "noResults": "Aucun résultat pour ce filtre",
     "addChild": "Ajouter un enfant :",
     "addType": "Ajouter {{type}}",
@@ -122,12 +128,40 @@
     "deleteConfirmTitle": "Supprimer ce document ?",
     "deleteConfirmMsg": "Cette action est irréversible. Le document et ses enfants seront supprimés.",
     "deleteConfirm": "Supprimer définitivement",
-    "selectValue": "— choisir une valeur —"
+    "selectValue": "— choisir une valeur —",
+    "prev": "Précédent",
+    "next": "Suivant",
+    "pageIndicator": "Page {{page}} · {{total}} résultat(s)",
+    "clearQuery": "Effacer la requête",
+    "filter": {
+      "title": "Filtrer",
+      "apply": "Appliquer",
+      "clear": "Effacer",
+      "value": "Valeur",
+      "min": "Min",
+      "max": "Max",
+      "true": "Vrai",
+      "false": "Faux",
+      "op": {
+        "eq": "égal à",
+        "contains": "contient",
+        "starts_with": "commence par",
+        "lt": "inférieur à",
+        "gt": "supérieur à",
+        "between": "entre",
+        "before": "avant",
+        "after": "après",
+        "in": "parmi"
+      }
+    }
   },
   "editor": {
     "save": "Enregistrer",
     "saving": "Enregistrement…",
     "dirty": "Modifications non enregistrées",
+    "read": "Lecture",
+    "edit": "Éditer",
+    "readEmpty": "Ce document est vide. Cliquez sur « Éditer » pour commencer à écrire.",
     "leaveConfirm": {
       "title": "Modifications non enregistrées",
       "message": "Voulez-vous enregistrer vos modifications avant de quitter ?",

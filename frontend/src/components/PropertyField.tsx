@@ -10,35 +10,43 @@ interface PropertyFieldProps {
   docId: string
   prop: PropertyValueOut
   allowedValues: AllowedValueOut[]
+  /** Rendu compact (sans label ni marge) pour l'édition inline en cellule de table. */
+  compact?: boolean
+  /** Appelé après chaque sauvegarde réussie (ex. rafraîchir/fermer la cellule). */
+  onSaved?: () => void
 }
 
 function initialValue(prop: PropertyValueOut): string | null {
   return prop.type === 'restricted_list' ? prop.allowed_value_slug : prop.value
 }
 
-export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldProps) {
+export function PropertyField({ ws, docId, prop, allowedValues, compact = false, onSaved }: PropertyFieldProps) {
   const { t } = useTranslation()
   const valueType: ValueType = prop.type as ValueType
   const { state, setValue, save, keepServer, keepMine } = useFieldState(
     initialValue(prop),
     prop.version,
+    onSaved,
   )
+  const wrapperClass = compact ? '' : 'mb-4'
 
   // Propriété gérée par le serveur (behavior auto_now / auto_now_create) :
   // lecture seule — le backend refuse de toute façon l'écriture manuelle.
   if (prop.behavior) {
     return (
-      <div className="mb-4" data-testid={`property-${prop.prop_slug}`}>
-        <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
-          {prop.prop_label}
-          <span
-            className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600"
-            title={t('properties.autoHint')}
-            data-testid={`property-auto-badge-${prop.prop_slug}`}
-          >
-            {t('properties.auto')}
-          </span>
-        </label>
+      <div className={wrapperClass} data-testid={`property-${prop.prop_slug}`}>
+        {!compact && (
+          <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+            {prop.prop_label}
+            <span
+              className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600"
+              title={t('properties.autoHint')}
+              data-testid={`property-auto-badge-${prop.prop_slug}`}
+            >
+              {t('properties.auto')}
+            </span>
+          </label>
+        )}
         <p className="text-sm text-gray-700" data-testid={`property-input-${prop.prop_slug}`}>
           {prop.value ?? '—'}
         </p>
@@ -54,11 +62,13 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
   const saving = state.status === 'saving'
 
   return (
-    <div className="mb-4" data-testid={`property-${prop.prop_slug}`}>
-      <label htmlFor={fieldId} className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
-        {prop.prop_label}
-        {prop.required && <span className="text-red-500">*</span>}
-      </label>
+    <div className={wrapperClass} data-testid={`property-${prop.prop_slug}`}>
+      {!compact && (
+        <label htmlFor={fieldId} className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+          {prop.prop_label}
+          {prop.required && <span className="text-red-500">*</span>}
+        </label>
+      )}
 
       {prop.type === 'restricted_list' ? (
         <div className="flex flex-col gap-1">
@@ -68,9 +78,13 @@ export function PropertyField({ ws, docId, prop, allowedValues }: PropertyFieldP
             value={state.value ?? ''}
             disabled={saving}
             onChange={(e) => {
-              setValue(e.target.value || null)
+              // Une liste fermée s'enregistre dès le choix (action délibérée et
+              // discrète, comme le toggle bool ci-dessous) : on passe la valeur
+              // explicitement pour ne pas dépendre d'un `state.value` encore périmé.
+              const next = e.target.value || null
+              setValue(next)
+              void save(ws, docId, prop.prop_slug, valueType, next)
             }}
-            onBlur={commit}
             data-testid={`property-input-${prop.prop_slug}`}
           >
             <option value="">{t('properties.none')}</option>

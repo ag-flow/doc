@@ -392,6 +392,90 @@ async def test_dod2_default_value_instantiated(db_pool: asyncpg.Pool, test_works
     assert row["slug"] == "a-cadrer"
 
 
+async def _add_epic_statut_default(pool: asyncpg.Pool) -> None:
+    """Ajoute une propriété statut (restricted_list) sur epic avec défaut 'a-cadrer'."""
+    from docflow.schemas.properties import PropertiesDefUpdate
+
+    await prop_svc.create_def(
+        pool, _WS, "epic",
+        PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
+    )
+    await prop_svc.create_allowed_value(
+        pool, _WS, "epic", "statut",
+        AllowedValueCreate(slug="a-cadrer", label="À cadrer", position=0),
+    )
+    await prop_svc.create_allowed_value(
+        pool, _WS, "epic", "statut",
+        AllowedValueCreate(slug="cadre", label="Cadré", position=1),
+    )
+    await prop_svc.update_def(
+        pool, _WS, "epic", "statut", PropertiesDefUpdate(default_value="a-cadrer"),
+    )
+
+
+async def _doc_statut_slug(pool: asyncpg.Pool, doc_id: uuid.UUID) -> str | None:
+    row = await pool.fetchrow(
+        """
+        SELECT pav.slug
+        FROM properties_values pv
+        JOIN properties_value_version pvv
+            ON pvv.property_value_ref = pv.id AND pvv.version_number = pv.version
+        JOIN properties_allowed_values pav ON pav.id = pvv.allowed_value_ref
+        JOIN properties_defs pd ON pd.id = pv.property_def_ref
+        WHERE pv.document_ref = $1 AND pd.slug = 'statut'
+        """,
+        doc_id,
+    )
+    return row["slug"] if row is not None else None
+
+
+async def test_create_document_service_instantiates_default(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """US MCP : create_document (chemin service/MCP) applique le défaut du template.
+
+    Sans cette parité, une propriété required dotée d'un default reste NULL après
+    une création MCP — le bug tracé par l'US.
+    """
+    from docflow.schemas.document import DocumentCreate
+
+    block_id, _ = await _setup_agile_block(db_pool)
+    await _add_epic_statut_default(db_pool)
+
+    doc = await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Epic sans statut", slug="epic-sans-statut", block_id=block_id,
+            functional_type_slug="epic",
+        ),
+    )
+    assert await _doc_statut_slug(db_pool, doc.doc_technical_key) == "a-cadrer"
+
+
+async def test_create_document_service_provided_overrides_default(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Une valeur fournie dans 'properties' prime sur le défaut du template."""
+    from docflow.schemas.document import DocumentCreate
+
+    block_id, _ = await _setup_agile_block(db_pool)
+    await _add_epic_statut_default(db_pool)
+
+    doc = await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Epic cadré",
+            slug="epic-cadre",
+            block_id=block_id,
+            functional_type_slug="epic",
+            properties={"statut": "cadre"},
+        ),
+    )
+    assert await _doc_statut_slug(db_pool, doc.doc_technical_key) == "cadre"
+
+
 # ── DoD 5 : filtre préservant le chemin ───────────────────────────────────────
 
 

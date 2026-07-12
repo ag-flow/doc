@@ -306,6 +306,94 @@ export interface FunctionalTypeRich extends FunctionalType {
   properties: PropertyDefRich[]
 }
 
+// ── Moteur de requête (QuerySpec) ───────────────────────────────────────────
+
+/** Opérateurs de filtre — miroir de `Operator` (backend `schemas/query.py`). */
+export type QueryOperator =
+  | 'eq'
+  | 'contains'
+  | 'starts_with'
+  | 'lt'
+  | 'gt'
+  | 'between'
+  | 'in'
+  | 'before'
+  | 'after'
+
+export interface FilterClause {
+  prop: string
+  op: QueryOperator
+  /** Valeur unique — tous les opérateurs sauf 'in' et 'between'. */
+  value?: string | null
+  /** Valeurs multiples — 'in' (liste) ou 'between' (exactement [min, max]). */
+  values?: string[] | null
+}
+
+export interface SortKey {
+  /** slug de propriété | 'title' | 'created_at'. */
+  key: string
+  dir: 'asc' | 'desc'
+}
+
+/** Corps REST de POST .../blocks/{block}/query — miroir de `BlockQueryBody`
+ *  (backend `schemas/query.py`). Structure partagée : rejouable telle quelle
+ *  par une requête nommée (milestone ultérieur). */
+export interface BlockQueryBody {
+  type_slugs?: string[] | null
+  filters: FilterClause[]
+  sort: SortKey[]
+  projection?: string[] | null
+  page: number
+  page_size: number
+}
+
+/** Valeur d'une propriété d'un objet de requête (forme aplatie, sans couleur —
+ *  résoudre la couleur depuis les `allowed_values` du type si besoin). */
+export interface PropertyValueBrief {
+  prop_slug: string
+  type: string
+  value: string | null
+  allowed_value_slug: string | null
+  allowed_value_label: string | null
+}
+
+export interface BlockObjectOut {
+  id: string
+  title: string
+  functional_type_slug: string | null
+  properties: PropertyValueBrief[]
+}
+
+export interface BlockObjectsPage {
+  block_slug: string
+  page: number
+  page_size: number
+  total: number
+  has_next: boolean
+  objects: BlockObjectOut[]
+}
+
+/** Nœud de l'arbre `list_block_tree` : le document + ses valeurs + ses enfants directs. */
+export interface BlockTreeNode {
+  id: string
+  title: string
+  functional_type_slug: string | null
+  parent_id: string | null
+  properties: PropertyValueBrief[]
+  children: BlockTreeNode[]
+}
+
+/** Page de racines d'un bloc (mode browse) : `total`/`has_next` comptent les
+ *  racines uniquement — les enfants d'une racine incluse ne consomment pas le `page_size`. */
+export interface BlockTreePage {
+  block_slug: string
+  page: number
+  page_size: number
+  total: number
+  has_next: boolean
+  roots: BlockTreeNode[]
+}
+
 // ── Endpoints documents / blocks ────────────────────────────────────────────
 
 export const docsApi = {
@@ -324,6 +412,16 @@ export const docsApi = {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''
     return api.get<AllowedTypeOut[]>(`/workspaces/${ws}/blocks/${block}/allowed-types${qs}`)
   },
+
+  /** Mode requête (filtre/tri actif) : liste plate paginée serveur, ≤100/page. */
+  queryBlockDocuments: (ws: string, block: string, body: BlockQueryBody) =>
+    api.post<BlockObjectsPage>(`/workspaces/${ws}/blocks/${block}/query`, body),
+
+  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs. */
+  getBlockTree: (ws: string, block: string, page: number, pageSize: number) =>
+    api.get<BlockTreePage>(
+      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}`,
+    ),
 
   createDocument: (
     ws: string,
@@ -372,6 +470,14 @@ export const docsApi = {
 
   setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+
+  /** Supprime un bloc. Sans `confirm`, l'API refuse (409) si le bloc a des
+   *  dépendants — le message d'erreur porte le décompte à afficher avant de
+   *  reconfirmer avec `confirm=true` (cascade assumée). */
+  deleteBlock: (ws: string, blockSlug: string, confirm = false) =>
+    api.delete<void>(
+      `/workspaces/${ws}/blocks/${blockSlug}${confirm ? '?confirm=true' : ''}`,
+    ),
 }
 
 // ── Artefacts (images des documents) ────────────────────────────────────────

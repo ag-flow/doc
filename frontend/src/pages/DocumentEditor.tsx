@@ -15,6 +15,7 @@ import { MarkdownEditor, type MarkdownEditorHandle } from '../components/Markdow
 import { ReactionBar } from '../components/ReactionBar'
 import { CommentsPanel } from '../components/CommentsPanel'
 import { BacklinksPanel } from '../components/BacklinksPanel'
+import { DocumentReader } from '../components/DocumentReader'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
 
@@ -46,6 +47,8 @@ export function DocumentEditor() {
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Lecture « wiki » par défaut à l'ouverture ; bascule vers l'éditeur à la demande.
+  const [mode, setMode] = useState<'read' | 'edit'>('read')
   const [focusMode, setFocusMode] = useState(false)
   const [slugEdit, setSlugEdit] = useState(false)
   const [slugValue, setSlugValue] = useState<string>('')
@@ -236,6 +239,28 @@ export function DocumentEditor() {
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
   if (!doc || !ws || !docId || !blocSlug) return <div className="p-8">{t('error.notFound')}</div>
 
+  if (mode === 'read') {
+    return (
+      <DocumentReader
+        ws={ws}
+        blocSlug={blocSlug}
+        docId={docId}
+        doc={doc}
+        onEdit={() => setMode('edit')}
+      />
+    )
+  }
+
+  // Bascule vers la lecture : si des modifications sont en attente, on enregistre
+  // d'abord (l'éditeur va être démonté). En cas d'échec de sauvegarde, on reste en édition.
+  const switchToRead = async () => {
+    if (status === 'dirty' || status === 'error') {
+      const ok = await doSave()
+      if (!ok) return
+    }
+    setMode('read')
+  }
+
   return (
     <div className="p-6" data-testid="document-editor">
       <div className="mb-1 flex items-center gap-4">
@@ -289,6 +314,18 @@ export function DocumentEditor() {
               {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => void switchToRead()}
+            title={t('editor.read')}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
+              text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            data-testid="document-read-btn"
+          >
+            <Eye size={13} />
+            {t('editor.read')}
+          </button>
 
           <button
             type="button"
@@ -400,7 +437,7 @@ export function DocumentEditor() {
         </div>
         {!focusMode && (
           <div className="w-1/3 border-l border-gray-200 pl-6">
-            <PropertiesPanel ws={ws} docId={docId} />
+            <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </div>
         )}

@@ -37,7 +37,7 @@ def test_substitution_title_with_markdown_chars() -> None:
 
 
 async def test_template_applied_on_empty_body(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     """Corps vide + template → pré-rempli."""
     from docflow.documents import service as doc_svc
@@ -61,7 +61,7 @@ async def test_template_applied_on_empty_body(
             title="Ma feature",
             parent_id=None,
             functional_type_slug="t35a",
-            block_id=test_block["id"],
+            block_id=await make_block(ws, "t35a", "t35a-block"),
         ),
     )
     assert doc.content is not None
@@ -70,7 +70,7 @@ async def test_template_applied_on_empty_body(
 
 
 async def test_template_not_applied_on_provided_body(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     """Corps fourni → template ignoré (pas d'écrasement)."""
     from docflow.documents import service as doc_svc
@@ -95,14 +95,14 @@ async def test_template_not_applied_on_provided_body(
             parent_id=None,
             functional_type_slug="t35b",
             content="Mon brouillon personnel",
-            block_id=test_block["id"],
+            block_id=await make_block(ws, "t35b", "t35b-block"),
         ),
     )
     assert doc.content == "Mon brouillon personnel"
 
 
 async def test_existing_docs_unaffected_by_template_change(
-    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
 ) -> None:
     """Modifier le modèle n'altère pas les documents déjà créés."""
     from docflow.documents import service as doc_svc
@@ -120,7 +120,7 @@ async def test_existing_docs_unaffected_by_template_change(
             title="Old doc",
             parent_id=None,
             functional_type_slug="t35c",
-            block_id=test_block["id"],
+            block_id=await make_block(ws, "t35c", "t35c-block"),
         ),
     )
     # Ajouter un template après coup

@@ -12,7 +12,12 @@ import structlog
 from git import Git, GitCommandError, InvalidGitRepositoryError, Repo
 
 from docflow.backup.git_files import expected_file_paths, find_orphan_files, write_doc
-from docflow.backup.git_queries import build_path, fetch_doc, fetch_ws_documents
+from docflow.backup.git_queries import (
+    build_path,
+    fetch_doc,
+    fetch_ws_documents,
+    resolve_block_scope,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -152,6 +157,7 @@ async def run_git_sync(
     ssh_key_path: str | None,
     repos_root: pathlib.Path,
     git_http_env: dict[str, str] | None = None,
+    data_block_ref: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """
     Exécute une synchronisation git incrémentale en deux phases :
@@ -160,10 +166,18 @@ async def run_git_sync(
       lié à son event loop : jamais d'accès depuis un autre loop/thread) ;
     - phase git **bloquante** (`_git_phase`) déportée via `asyncio.to_thread`.
 
+    `data_block_ref` restreint la synchronisation à un bloc et sa descendance
+    (résolu une fois en `block_scope`) — None = tout le workspace, comportement
+    inchangé.
+
     Retourne {"last_change_seq", "files_written", "files_deleted", "commit_sha"}.
     Lève une exception en cas d'erreur — le caller gère le run_status.
     """
     async with pool.acquire() as conn:
+        block_scope: set[uuid.UUID] | None = None
+        if data_block_ref is not None:
+            block_scope = await resolve_block_scope(conn, data_block_ref)
+
         # 1. Changements depuis le dernier run
         where_ws = "AND workspace_technical_key = $2" if workspace_technical_key else ""
         params: list[Any] = [last_change_seq]
@@ -203,6 +217,8 @@ async def run_git_sync(
                 doc = await fetch_doc(conn, row["document_ref"])
                 if doc is None:
                     continue  # supprimé entre-temps — géré par reconciliation
+                if block_scope is not None and doc["data_block_id"] not in block_scope:
+                    continue  # hors du périmètre bloc de ce job
                 path_parts = await build_path(conn, row["document_ref"], ws_slug)
                 if path_parts is None:
                     log.warning("git_sync_skip_no_slug", doc_id=str(row["document_ref"]))
@@ -220,7 +236,7 @@ async def run_git_sync(
             )
             if not ws_slug:
                 continue  # workspace introuvable → ne rien purger
-            docs = await fetch_ws_documents(conn, ws_id)
+            docs = await fetch_ws_documents(conn, ws_id, block_scope=block_scope)
             reconcile[ws_slug] = expected_file_paths(ws_slug, docs)
 
     # Phases 4-7 : purement bloquantes (git + disque), hors du loop principal.

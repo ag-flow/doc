@@ -140,6 +140,35 @@ async def test_workspace(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, objec
 
 
 @pytest.fixture()
+def make_block(db_pool: asyncpg.Pool):  # type: ignore[no-untyped-def]
+    """Factory : crée un bloc typé `type_slug` (le type doit déjà exister).
+
+    Sert aux tests dont le document racine n'est pas du type du bloc partagé :
+    la contrainte de position impose que le type du bloc = celui de sa racine.
+    """
+
+    async def _make(ws_slug: str, type_slug: str, block_slug: str) -> uuid.UUID:
+        wk: uuid.UUID = await db_pool.fetchval(
+            "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+        )
+        type_id: uuid.UUID = await db_pool.fetchval(
+            "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = $2",
+            wk,
+            type_slug,
+        )
+        return await db_pool.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            block_slug,
+            block_slug,
+            type_id,
+            wk,
+        )
+
+    return _make
+
+
+@pytest.fixture()
 async def test_block(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> AsyncIterator[dict[str, object]]:
