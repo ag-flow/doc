@@ -246,10 +246,14 @@ reset_admin_password() {
         TARGET_EMAIL="$ADMIN_LIST"
     fi
 
+    # La substitution de variable :'nom' de psql n'est appliquée qu'en mode
+    # script (stdin/-f) — PAS avec -c, qui envoie la commande telle quelle
+    # (vérifié empiriquement, contre-intuitif). D'où le `printf | psql`
+    # plutôt que `psql -c` pour toute requête paramétrée ci-dessous.
     local EXISTS
-    EXISTS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres \
-        psql -U docflow -d docflow -v email="$TARGET_EMAIL" -tA -c \
-        "SELECT 1 FROM app_user WHERE email = :'email';")"
+    EXISTS="$(printf '%s\n' "SELECT 1 FROM app_user WHERE email = :'email';" \
+        | docker compose -f "$COMPOSE_FILE" exec -T postgres \
+            psql -U docflow -d docflow -v email="$TARGET_EMAIL" -tA)"
     if [[ -z "$EXISTS" ]]; then
         echo "ERREUR : aucun compte avec l'email '${TARGET_EMAIL}'." >&2
         exit 1
@@ -266,9 +270,9 @@ reset_admin_password() {
     NEW_HASH="$(printf '%s' "$NEW_PASSWORD" | docker compose -f "$COMPOSE_FILE" exec -T app \
         python3 -c "import sys; from argon2 import PasswordHasher; print(PasswordHasher().hash(sys.stdin.read()))")"
 
-    docker compose -f "$COMPOSE_FILE" exec -T postgres \
-        psql -U docflow -d docflow -v email="$TARGET_EMAIL" -v hash="$NEW_HASH" -c \
-        "UPDATE app_user SET password_hash = :'hash' WHERE email = :'email';" \
+    printf '%s\n' "UPDATE app_user SET password_hash = :'hash' WHERE email = :'email';" \
+        | docker compose -f "$COMPOSE_FILE" exec -T postgres \
+            psql -U docflow -d docflow -v email="$TARGET_EMAIL" -v hash="$NEW_HASH" \
         || { echo "ERREUR : la mise à jour en base a échoué." >&2; exit 1; }
 
     echo ""
