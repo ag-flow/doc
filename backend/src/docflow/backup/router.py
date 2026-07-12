@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from docflow.auth.deps import require_authenticated
-from docflow.backup import service
+from docflow.backup import runs, service
 from docflow.backup.schemas import (
     BackupJobCreate,
     BackupJobOut,
@@ -53,7 +53,27 @@ async def list_archives(slug: str, request: Request, _: None = _Auth) -> list[Du
 async def list_runs(
     slug: str,
     request: Request,
-    limit: int = Query(default=service.RUN_RETENTION, ge=1, le=100),
+    limit: int = Query(default=runs.RUN_RETENTION, ge=1, le=100),
     _: None = _Auth,
 ) -> list[BackupJobRunOut]:
-    return await service.list_runs(request.app.state.pool, slug, limit)
+    return await runs.list_runs(request.app.state.pool, slug, limit)
+
+
+@router.post(
+    "/jobs/{slug}/run",
+    response_model=BackupJobRunOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="trigger_backup_job_run",
+    summary="Déclenche un run immédiat du job, hors planification",
+)
+async def trigger_run(slug: str, request: Request, _: None = _Auth) -> BackupJobRunOut:
+    """Démarre le run en tâche de fond et répond aussitôt (le push git peut
+    dépasser le timeout d'un appelant HTTP synchrone, ex. une automation).
+    Le résultat se consulte via GET /jobs/{slug}/runs. 409 si un run est déjà
+    en cours pour ce job.
+
+    Endpoint conçu pour être référencé comme opération de contrat OpenAPI
+    dans le module Automations (déclenchement d'une sauvegarde git sur
+    changement de document, via une clé API dédiée).
+    """
+    return await runs.trigger_run_now(request.app.state.pool, request.app.state.settings, slug)

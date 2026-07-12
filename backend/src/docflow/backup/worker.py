@@ -9,7 +9,7 @@ from typing import Any
 import asyncpg
 import structlog
 
-from docflow.backup import service as svc
+from docflow.backup import runs
 from docflow.remote.connection import delete_key_file, resolve_dump_auth, resolve_git_auth
 
 log = structlog.get_logger(__name__)
@@ -53,12 +53,25 @@ def _is_due(job: dict[str, Any], now: datetime) -> bool:
 _DUMPS_ROOT = pathlib.Path("/data/backup-dumps")
 
 
-async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) -> None:
+async def run_job(
+    pool: asyncpg.Pool,
+    job: dict[str, Any],
+    settings: object,
+    *,
+    run_id: uuid.UUID | None = None,
+) -> None:
+    """Exécute un job de sauvegarde.
+
+    `run_id` : run déjà créé par l'appelant (déclenchement manuel via
+    `runs.trigger_run_now`) — sinon (planification normale du scheduler),
+    le run est créé ici.
+    """
     job_id: uuid.UUID = job["id"]
     log.info("backup_job_start", job_slug=job["slug"], strategy=job["strategy"])
 
-    async with pool.acquire() as conn:
-        run_id = await svc.start_run(conn, job_id)
+    if run_id is None:
+        async with pool.acquire() as conn:
+            run_id = await runs.start_run(conn, job_id)
 
     ssh_key_path: str | None = None
     try:
@@ -91,6 +104,7 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
                 ssh_key_path=ssh_key_path,
                 git_http_env=git_http_env,
                 repos_root=_REPOS_ROOT,
+                data_block_ref=job.get("data_block_id"),
             )
         else:
             host, port, username, password, ssh_key_path = await resolve_dump_auth(
@@ -121,7 +135,7 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
             )
 
         async with pool.acquire() as conn:
-            await svc.finish_run(
+            await runs.finish_run(
                 conn,
                 run_id,
                 status="success",
@@ -130,14 +144,14 @@ async def _run_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) ->
                 files_deleted=result["files_deleted"],
                 commit_sha=result["commit_sha"],
             )
-            await svc.prune_old_runs(conn, job_id)
+            await runs.prune_old_runs(conn, job_id)
         log.info("backup_job_success", job_slug=job["slug"], **result)
 
     except Exception as exc:
         log.error("backup_job_error", job_slug=job["slug"], error=str(exc))
         async with pool.acquire() as conn:
-            await svc.finish_run(conn, run_id, status="error", error_message=str(exc))
-            await svc.prune_old_runs(conn, job_id)
+            await runs.finish_run(conn, run_id, status="error", error_message=str(exc))
+            await runs.prune_old_runs(conn, job_id)
     finally:
         # La clé privée déchiffrée ne doit jamais rester sur disque au-delà du run.
         if ssh_key_path:
@@ -169,7 +183,7 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
         """
         SELECT j.id, j.slug, j.strategy, j.schedule_cron, j.schedule_every_seconds,
                j.git_base_path, j.workspace_technical_key AS workspace_id,
-               w.slug AS workspace_slug,
+               w.slug AS workspace_slug, j.data_block_ref AS data_block_id,
                rp.slug AS remote_point_slug,
                (SELECT r.started_at FROM backup_job_run r
                 WHERE r.job_id = j.id
@@ -188,7 +202,7 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
     _REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     _DUMPS_ROOT.mkdir(parents=True, exist_ok=True)
-    reconciled = await svc.reconcile_orphan_runs(pool)
+    reconciled = await runs.reconcile_orphan_runs(pool)
     if reconciled:
         log.warning("backup_orphan_runs_reconciled", count=reconciled)
     log.info("backup_worker_started")
@@ -197,7 +211,7 @@ async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
             now = datetime.now(tz=UTC)
             jobs = await _due_jobs(pool, now)
             for job in jobs:
-                asyncio.create_task(_run_job(pool, job, settings))
+                asyncio.create_task(run_job(pool, job, settings))
         except Exception:
             log.exception("backup_worker_tick_error")
         await asyncio.sleep(_TICK)

@@ -58,6 +58,8 @@ async def resolve_git_auth(
         git_host = "github.com"
     elif provider == "gitlab":
         git_host = "gitlab.com"
+    elif provider == "bitbucket":
+        git_host = "bitbucket.org"
     else:
         git_host = host
     base_url = f"{git_host}/{repo}.git"

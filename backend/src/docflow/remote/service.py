@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 
 import asyncpg
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 from fastapi import HTTPException
 
 from docflow.crypto import decrypt_str, encrypt_str
 from docflow.remote.schemas import (
     RemoteCertificateCreate,
+    RemoteCertificateGenerate,
     RemoteCertificateOut,
     RemotePointCreate,
     RemotePointOut,
@@ -42,32 +51,87 @@ async def list_certificates(pool: asyncpg.Pool) -> list[RemoteCertificateOut]:
     return [_cert_row(r) for r in rows]
 
 
+async def _insert_certificate(
+    conn: asyncpg.Connection,
+    *,
+    slug: str,
+    label: str,
+    cert_type: str,
+    public_part: str,
+    private_enc: bytes,
+    expires_at: datetime | None,
+) -> asyncpg.Record:
+    fp = _fingerprint(public_part)
+    try:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO remote_certificate
+                (slug, label, cert_type, public_part, private_enc, fingerprint, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, slug, label, cert_type, public_part, fingerprint, expires_at,
+                      created_at
+            """,
+            slug,
+            label,
+            cert_type,
+            public_part,
+            private_enc,
+            fp,
+            expires_at,
+        )
+    except asyncpg.UniqueViolationError as e:
+        raise HTTPException(409, "slug de certificat déjà utilisé") from e
+    assert row is not None
+    return row
+
+
 async def create_certificate(
     pool: asyncpg.Pool, body: RemoteCertificateCreate, fernet_key: str
 ) -> RemoteCertificateOut:
     private_enc = encrypt_str(fernet_key, body.private_key).encode()
-    fp = _fingerprint(body.public_part)
     async with pool.acquire() as conn:
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO remote_certificate
-                    (slug, label, cert_type, public_part, private_enc, fingerprint, expires_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING id, slug, label, cert_type, public_part, fingerprint, expires_at,
-                          created_at
-                """,
-                body.slug,
-                body.label,
-                body.cert_type,
-                body.public_part,
-                private_enc,
-                fp,
-                body.expires_at,
-            )
-        except asyncpg.UniqueViolationError as e:
-            raise HTTPException(409, "slug de certificat déjà utilisé") from e
-    assert row is not None
+        row = await _insert_certificate(
+            conn,
+            slug=body.slug,
+            label=body.label,
+            cert_type=body.cert_type,
+            public_part=body.public_part,
+            private_enc=private_enc,
+            expires_at=body.expires_at,
+        )
+    return _cert_row(row)
+
+
+async def generate_certificate(
+    pool: asyncpg.Pool, body: RemoteCertificateGenerate, fernet_key: str
+) -> RemoteCertificateOut:
+    """Génère une paire de clés SSH ed25519 côté serveur.
+
+    La clé privée ne quitte jamais ce processus en clair : chiffrée Fernet
+    avant écriture, seule la clé publique (et son empreinte) est retournée.
+    """
+    private_key = Ed25519PrivateKey.generate()
+    private_pem = private_key.private_bytes(
+        encoding=Encoding.PEM,
+        format=PrivateFormat.OpenSSH,
+        encryption_algorithm=NoEncryption(),
+    ).decode()
+    public_openssh = (
+        private_key.public_key()
+        .public_bytes(encoding=Encoding.OpenSSH, format=PublicFormat.OpenSSH)
+        .decode()
+    )
+    private_enc = encrypt_str(fernet_key, private_pem).encode()
+    async with pool.acquire() as conn:
+        row = await _insert_certificate(
+            conn,
+            slug=body.slug,
+            label=body.label,
+            cert_type="ssh_key",
+            public_part=public_openssh,
+            private_enc=private_enc,
+            expires_at=body.expires_at,
+        )
     return _cert_row(row)
 
 

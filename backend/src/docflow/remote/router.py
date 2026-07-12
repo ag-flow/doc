@@ -7,6 +7,7 @@ from docflow.remote import service
 from docflow.remote.probe import probe_connection
 from docflow.remote.schemas import (
     RemoteCertificateCreate,
+    RemoteCertificateGenerate,
     RemoteCertificateOut,
     RemotePointCreate,
     RemotePointOut,
@@ -47,6 +48,25 @@ async def create_certificate(
 
         raise HTTPException(422, "encryption_key non configurée")
     return await service.create_certificate(request.app.state.pool, body, key)
+
+
+@router.post(
+    "/certificates/generate",
+    response_model=RemoteCertificateOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_certificate(
+    body: RemoteCertificateGenerate,
+    request: Request,
+    _: None = _Auth,
+) -> RemoteCertificateOut:
+    """Génère une paire de clés SSH ed25519 côté serveur — clé privée jamais exposée."""
+    key = _fernet(request)
+    if not key:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, "encryption_key non configurée")
+    return await service.generate_certificate(request.app.state.pool, body, key)
 
 
 @router.get("/certificates/{slug}", response_model=RemoteCertificateOut)

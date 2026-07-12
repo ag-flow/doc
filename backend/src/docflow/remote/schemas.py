@@ -35,6 +35,19 @@ class RemoteCertificateCreate(BaseModel):
         return self
 
 
+class RemoteCertificateGenerate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    slug: str
+    label: str = Field(min_length=1, max_length=120)
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _validate_slug(self) -> RemoteCertificateGenerate:
+        _valid_slug(self.slug)
+        return self
+
+
 class RemoteCertificateOut(BaseModel):
     id: uuid.UUID
     slug: str
@@ -51,7 +64,7 @@ class RemoteCertificateOut(BaseModel):
 PointType = Literal["ftp", "ftps", "sftp", "git"]
 AuthType = Literal["password", "pat", "certificate"]
 AuthStorage = Literal["local", "vault"]
-GitProvider = Literal["github", "gitlab", "gitea", "custom"]
+GitProvider = Literal["github", "gitlab", "gitea", "bitbucket", "custom"]
 
 
 def _check_git_fields(point_type: str, git_provider: str | None, git_repo: str | None) -> None:
