@@ -15,6 +15,11 @@
 # synchro git ni rebuild). Email et mot de passe fournis par l'appelant —
 # le script n'en génère ni n'en affiche jamais :
 #   sudo ./dev-deploy.sh --reset EMAIL PASSWORD
+#
+# Purge complète de la base (irréversible sans backup — TOUTES les données
+# sont perdues : workspaces, documents, comptes). Confirmation littérale
+# obligatoire :
+#   sudo ./dev-deploy.sh --prune CONFIRM
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -31,29 +36,51 @@ main() {
 
     # ─── Arguments ────────────────────────────────────────────────────────────
     local TARGET_BRANCH=""
-    local RESET=0
+    local MODE=""   # "" | "reset" | "prune" — mutuellement exclusifs
     local RESET_EMAIL=""
     local RESET_PASSWORD=""
+    local PRUNE_CONFIRM=""
     local arg
     for arg in "$@"; do
         case "$arg" in
-            --reset) RESET=1 ;;
+            --reset)
+                if [[ -n "$MODE" ]]; then
+                    echo "ERREUR : --reset et --prune sont exclusifs." >&2; exit 1
+                fi
+                MODE="reset" ;;
+            --prune)
+                if [[ -n "$MODE" ]]; then
+                    echo "ERREUR : --reset et --prune sont exclusifs." >&2; exit 1
+                fi
+                MODE="prune" ;;
             --*) echo "ERREUR : flag inconnu : $arg" >&2; exit 1 ;;
             *)
-                if [[ "$RESET" -eq 1 ]]; then
-                    if [[ -z "$RESET_EMAIL" ]]; then
-                        RESET_EMAIL="$arg"
-                    elif [[ -z "$RESET_PASSWORD" ]]; then
-                        RESET_PASSWORD="$arg"
-                    else
-                        echo "ERREUR : trop d'arguments pour --reset (attendu : EMAIL PASSWORD)." >&2
-                        exit 1
-                    fi
-                elif [[ -n "$TARGET_BRANCH" ]]; then
-                    echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
-                else
-                    TARGET_BRANCH="$arg"
-                fi
+                case "$MODE" in
+                    reset)
+                        if [[ -z "$RESET_EMAIL" ]]; then
+                            RESET_EMAIL="$arg"
+                        elif [[ -z "$RESET_PASSWORD" ]]; then
+                            RESET_PASSWORD="$arg"
+                        else
+                            echo "ERREUR : trop d'arguments pour --reset (attendu : EMAIL PASSWORD)." >&2
+                            exit 1
+                        fi
+                        ;;
+                    prune)
+                        if [[ -z "$PRUNE_CONFIRM" ]]; then
+                            PRUNE_CONFIRM="$arg"
+                        else
+                            echo "ERREUR : trop d'arguments pour --prune (attendu : CONFIRM)." >&2
+                            exit 1
+                        fi
+                        ;;
+                    *)
+                        if [[ -n "$TARGET_BRANCH" ]]; then
+                            echo "ERREUR : plusieurs branches passées en argument." >&2; exit 1
+                        fi
+                        TARGET_BRANCH="$arg"
+                        ;;
+                esac
                 ;;
         esac
     done
@@ -65,12 +92,23 @@ main() {
 
     cd "$APP_DIR"
 
-    if [[ "$RESET" -eq 1 ]]; then
+    if [[ "$MODE" == "reset" ]]; then
         if [[ -z "$RESET_EMAIL" || -z "$RESET_PASSWORD" ]]; then
             echo "ERREUR : usage : sudo ./dev-deploy.sh --reset EMAIL PASSWORD" >&2
             exit 1
         fi
         reset_admin_password "$COMPOSE_FILE" "$RESET_EMAIL" "$RESET_PASSWORD"
+        return 0
+    fi
+
+    if [[ "$MODE" == "prune" ]]; then
+        if [[ "$PRUNE_CONFIRM" != "CONFIRM" ]]; then
+            echo "ERREUR : usage : sudo ./dev-deploy.sh --prune CONFIRM" >&2
+            echo "  Purge IRRÉVERSIBLE de toutes les données (workspaces, documents, comptes)." >&2
+            echo "  Le mot CONFIRM doit être tapé littéralement — pas de raccourci." >&2
+            exit 1
+        fi
+        prune_database "$COMPOSE_FILE"
         return 0
     fi
 
@@ -175,22 +213,7 @@ main() {
     # ─── 4) Smoke /health ─────────────────────────────────────────────────────
     echo ""
     echo "==> [4/4] Smoke /health (timeout 90s)..."
-    local SMOKE_OK=0
-    local ELAPSED=0
-    while [[ $ELAPSED -lt 90 ]]; do
-        if curl -sf -m 3 "http://localhost:8080/health" &>/dev/null; then
-            SMOKE_OK=1; break
-        fi
-        sleep 5
-        ELAPSED=$(( ELAPSED + 5 ))
-    done
-
-    if [[ $SMOKE_OK -ne 1 ]]; then
-        echo "" >&2
-        echo "  ✗ /health ne répond pas après 90s" >&2
-        echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
-        exit 1
-    fi
+    smoke_test_health "$COMPOSE_FILE"
 
     # ─── Récapitulatif ────────────────────────────────────────────────────────
     local IP ADMIN_INFO
@@ -218,6 +241,62 @@ main() {
     echo "  Env   : ${ENV_FILE} (+ ${PG_PASSWORD_FILE})"
     echo ""
     echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+}
+
+# ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────
+smoke_test_health() {
+    local COMPOSE_FILE="$1"
+    local SMOKE_OK=0
+    local ELAPSED=0
+    while [[ $ELAPSED -lt 90 ]]; do
+        if curl -sf -m 3 "http://localhost:8080/health" &>/dev/null; then
+            SMOKE_OK=1; break
+        fi
+        sleep 5
+        ELAPSED=$(( ELAPSED + 5 ))
+    done
+
+    if [[ $SMOKE_OK -ne 1 ]]; then
+        echo "" >&2
+        echo "  ✗ /health ne répond pas après 90s" >&2
+        echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
+        exit 1
+    fi
+}
+
+# ─── Purge complète de la base ─────────────────────────────────────────────────
+# Détruit le volume Postgres puis recrée la stack : base vide comme un premier
+# démarrage, migrations réappliquées automatiquement par l'app au boot. Ne
+# touche ni au dépôt git ni à l'image déjà buildée. IRRÉVERSIBLE sans backup —
+# la confirmation littérale est vérifiée par l'appelant (main), pas ici.
+prune_database() {
+    local COMPOSE_FILE="$1"
+
+    echo "==> [1/2] Purge du volume Postgres (down -v)..."
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans
+
+    echo ""
+    echo "==> Redémarrage de la stack (base vide)..."
+    docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+
+    echo ""
+    docker compose -f "$COMPOSE_FILE" ps
+
+    echo ""
+    echo "==> [2/2] Smoke /health (timeout 90s)..."
+    smoke_test_health "$COMPOSE_FILE"
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "  ✓ Base purgée — instance repartie à vide"
+    echo ""
+    echo "  Créer le premier compte admin :"
+    echo "    curl -X POST http://localhost:8080/api/setup/init-admin \\"
+    echo "         -H 'Content-Type: application/json' \\"
+    echo "         -d '{\"username\":\"admin\",\"email\":\"...\",\"password\":\"...\"}'"
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
 }
