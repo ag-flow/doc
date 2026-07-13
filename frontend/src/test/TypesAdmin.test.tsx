@@ -16,7 +16,8 @@ vi.mock('../lib/api', () => ({
 }))
 
 import { api } from '../lib/api'
-import { TypesAdmin } from '../pages/TypesAdmin'
+import { TypesAdmin, flattenTypeTree } from '../pages/TypesAdmin'
+import type { FunctionalTypeRich } from '../lib/api'
 
 function renderWithProviders(ws = 'my-ws') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -67,5 +68,42 @@ describe('TypesAdmin', () => {
     await waitFor(() =>
       expect(screen.getByText('Projet agile (v2) — agile-project')).toBeInTheDocument(),
     )
+  })
+})
+
+describe('flattenTypeTree', () => {
+  const mk = (slug: string, label: string, parent: string | null) =>
+    ({
+      id: slug,
+      slug,
+      label,
+      parent_slug: parent,
+      workspace_slug: 'ws',
+      content_template: null,
+      created_at: '',
+      updated_at: '',
+      properties: [],
+    }) as FunctionalTypeRich
+
+  it('ordonne racines puis enfants, avec profondeur', () => {
+    const flat = flattenTypeTree([
+      mk('story', 'User Story', 'feature'),
+      mk('epic', 'Epic', null),
+      mk('feature', 'Feature', 'epic'),
+      mk('section', 'Section', null),
+    ])
+    expect(flat.map((n) => n.type.slug)).toEqual(['epic', 'feature', 'story', 'section'])
+    expect(flat.map((n) => n.depth)).toEqual([0, 1, 2, 0])
+  })
+
+  it('traite un parent inconnu comme racine', () => {
+    const flat = flattenTypeTree([mk('orphelin', 'Orphelin', 'disparu')])
+    expect(flat).toHaveLength(1)
+    expect(flat[0].depth).toBe(0)
+  })
+
+  it('ne boucle pas sur un cycle de parenté', () => {
+    const flat = flattenTypeTree([mk('a', 'A', 'b'), mk('b', 'B', 'a')])
+    expect(flat).toHaveLength(2)
   })
 })

@@ -101,6 +101,7 @@
     "slug": "Identifiant (slug)",
     "label": "Libellé",
     "parent": "Parent",
+    "baseType": "Type de base",
     "none": "— aucun —",
     "delete": "Supprimer",
     "save": "Enregistrer",
