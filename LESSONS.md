@@ -50,3 +50,6 @@ Peut diverger des specs si une migration a été ajoutée entretemps (ex. wizard
 
 ## [filter_engine] Renumérotation des placeholders $n : fragile
 La renumérotation manuelle des `$i` → `$i+offset` (views/service.py) est fragile si les placeholders dépassent 9 (`$1`→`$11` peut matcher `$10`). Préférer construire la liste de params en séquence sans renumérotation.
+
+## [frontend] Typecheck local : `npx tsc -b`, jamais `tsc --noEmit`
+Le tsconfig racine est de type « solution » (uniquement des references) : `tsc --noEmit` ne vérifie RIEN et sort vert. Le build Docker fait `tsc -b` qui inclut les tests — toute nouvelle propriété requise dans une interface doit être ajoutée aux fixtures de test, et se vérifie en local avec `npx tsc -b`.
