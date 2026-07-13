@@ -40,10 +40,11 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --no-dev --no-install-project --frozen
 
-# Code source + migrations SQL + templates YAML
+# Code source + migrations SQL. Le répertoire templates/ n'est plus embarqué :
+# il est peuplé au runtime par la galerie (pull distant), on le crée vide.
 COPY backend/src/ ./src/
 COPY backend/migrations/ ./migrations/
-COPY templates/ ./templates/
+RUN mkdir -p ./templates
 RUN uv sync --no-dev --frozen
 
 # Assets frontend
