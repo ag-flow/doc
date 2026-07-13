@@ -455,3 +455,20 @@ async def test_generate_tls_certificate_rejects_past_expiry(db_pool: asyncpg.Poo
             _FERNET_KEY,
         )
     assert exc_info.value.status_code == 422
+
+
+async def test_generate_ssh_key_with_comment(db_pool: asyncpg.Pool) -> None:
+    """common_name = commentaire de la clé publique (repère dans authorized_keys)."""
+    cert = await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(slug="cert-gen-comment", label="G", common_name="deploy@docflow"),
+        _FERNET_KEY,
+    )
+    assert cert.public_part.startswith("ssh-ed25519 ")
+    assert cert.public_part.endswith(" deploy@docflow")
+    assert "\n" not in cert.public_part
+
+
+def test_generate_common_name_single_line() -> None:
+    with pytest.raises(ValueError):
+        RemoteCertificateGenerate(slug="x-y", label="X", common_name="a\nb")

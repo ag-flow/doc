@@ -170,6 +170,9 @@ async def generate_certificate(
         )
     else:
         public_part, private_pem = _generate_ssh_material()
+        if body.common_name:
+            # Commentaire de la clé (identité git / repère dans authorized_keys).
+            public_part = f"{public_part} {body.common_name}"
     private_enc = encrypt_str(fernet_key, private_pem).encode()
     async with pool.acquire() as conn:
         row = await _insert_certificate(

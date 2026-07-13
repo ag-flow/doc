@@ -20,6 +20,7 @@ vi.mock('../lib/api', async () => {
       list: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
+      generate: vi.fn(),
     },
     backupApi: {
       listJobs: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('../lib/api', async () => {
       createJob: vi.fn(),
       updateJob: vi.fn(),
       deleteJob: vi.fn(),
+      runJob: vi.fn(),
     },
     getToken: vi.fn(() => 'tok'),
   }
@@ -128,47 +130,44 @@ describe('RemotePage — génération de clé SSH', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Label')).toBeInTheDocument())
   }
 
-  it('disables Générer and explains why outside a secure context (no isSecureContext in jsdom)', async () => {
+  it('disables Générer until label and slug are filled', async () => {
     await openCertForm()
-    const btn = screen.getByRole('button', { name: /Générer/ })
+    const btn = screen.getByTestId('cert-generate')
     expect(btn).toBeDisabled()
-    expect(btn).toHaveAttribute('title', expect.stringContaining('HTTPS'))
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
+    await waitFor(() => expect(btn).not.toBeDisabled())
   })
 
-  it('uses the git identity field as the generated key comment when crypto is available', async () => {
-    vi.stubGlobal('isSecureContext', true)
+  it('generates server-side with the identity as key comment and closes the form', async () => {
+    vi.mocked(remoteCertsApi.generate).mockResolvedValue({
+      id: 'c1', slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key',
+      public_part: 'ssh-ed25519 AAAA deploy@docflow', fingerprint: 'fp', expires_at: null, created_at: '',
+    })
     await openCertForm()
-
-    const btn = screen.getByRole('button', { name: /Générer/ })
-    await waitFor(() => expect(btn).not.toBeDisabled())
-
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
     fireEvent.change(screen.getByTestId('cert-git-identity'), { target: { value: 'deploy@docflow' } })
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByTestId('cert-generate'))
 
-    await waitFor(
-      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
-      { timeout: 10000 },
-    )
-    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
-    expect(publicKey.startsWith('ssh-rsa ')).toBe(true)
-    expect(publicKey.endsWith('deploy@docflow')).toBe(true)
-  }, 15000)
+    await waitFor(() => expect(remoteCertsApi.generate).toHaveBeenCalledWith({
+      slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key', common_name: 'deploy@docflow',
+    }))
+    // Le formulaire se ferme : le certificat créé se copie depuis la liste
+    await waitFor(() => expect(screen.queryByTestId('cert-generate')).not.toBeInTheDocument())
+  })
 
-  it('falls back to the default comment when no identity is given', async () => {
-    vi.stubGlobal('isSecureContext', true)
+  it('sends common_name null when no identity is given', async () => {
+    vi.mocked(remoteCertsApi.generate).mockResolvedValue({
+      id: 'c1', slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key',
+      public_part: 'ssh-ed25519 AAAA', fingerprint: 'fp', expires_at: null, created_at: '',
+    })
     await openCertForm()
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
+    fireEvent.click(screen.getByTestId('cert-generate'))
 
-    const btn = screen.getByRole('button', { name: /Générer/ })
-    await waitFor(() => expect(btn).not.toBeDisabled())
-    fireEvent.click(btn)
-
-    await waitFor(
-      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
-      { timeout: 10000 },
-    )
-    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
-    expect(publicKey.endsWith('docflow-generated')).toBe(true)
-  }, 15000)
+    await waitFor(() => expect(remoteCertsApi.generate).toHaveBeenCalledWith({
+      slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key', common_name: null,
+    }))
+  })
 })
 
 const gitPoint: RemotePointOut = {
