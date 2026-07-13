@@ -80,6 +80,7 @@ describe('flattenTypeTree', () => {
       parent_slug: parent,
       workspace_slug: 'ws',
       content_template: null,
+      source_template: null,
       created_at: '',
       updated_at: '',
       properties: [],
