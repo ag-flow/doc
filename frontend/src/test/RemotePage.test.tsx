@@ -101,6 +101,18 @@ describe('RemotePage — test connection', () => {
     expect(remotePointsApi.test).toHaveBeenCalledWith('backup-101')
   })
 
+  it("save on edit strips the immutable slug from the PUT body", async () => {
+    vi.mocked(remotePointsApi.update).mockResolvedValue(pt1)
+    await openPointsTab()
+    fireEvent.click(screen.getByTestId('edit-point-backup-101'))
+    fireEvent.click(await screen.findByText('Enregistrer'))
+
+    await waitFor(() => expect(remotePointsApi.update).toHaveBeenCalled())
+    const [slug, body] = vi.mocked(remotePointsApi.update).mock.calls[0]
+    expect(slug).toBe('backup-101')
+    expect('slug' in (body as unknown as Record<string, unknown>)).toBe(false)
+  })
+
   it('shows a failure detail without throwing', async () => {
     vi.mocked(remotePointsApi.test).mockResolvedValue({
       ok: false,

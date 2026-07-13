@@ -521,7 +521,11 @@ function RemotePointsTab() {
     onError: (e) => setErr((e as Error).message),
   })
   const updateMut = useMutation({
-    mutationFn: ({ slug, body }: { slug: string; body: RemotePointBody }) => remotePointsApi.update(slug, body),
+    mutationFn: ({ slug, body }: { slug: string; body: RemotePointBody }) => {
+      // slug immuable : le backend (extra=forbid) rejette sa présence dans le corps
+      const { slug: _immutable, ...rest } = body
+      return remotePointsApi.update(slug, rest)
+    },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['remote-points'] }); setEditing(null) },
     onError: (e) => setErr((e as Error).message),
   })
