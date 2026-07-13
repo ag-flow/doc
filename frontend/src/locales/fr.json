@@ -102,6 +102,8 @@
     "label": "Libellé",
     "parent": "Parent",
     "baseType": "Type de base",
+    "templateGroup": "Template « {{template}} »",
+    "manualGroup": "Créés à la main",
     "none": "— aucun —",
     "delete": "Supprimer",
     "save": "Enregistrer",

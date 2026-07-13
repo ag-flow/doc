@@ -45,6 +45,34 @@ export function flattenTypeTree(types: FunctionalTypeRich[]): TypeNode[] {
   return out
 }
 
+interface TypeGroup {
+  /** Slug du template d'origine ; null = types créés à la main. */
+  template: string | null
+  nodes: TypeNode[]
+}
+
+/** Regroupe l'arbre par template d'origine de chaque racine (un descendant suit
+ *  sa racine, même si sa propre provenance diffère). Templates triés par slug,
+ *  groupe « à la main » en dernier. */
+export function groupTypeTree(types: FunctionalTypeRich[]): TypeGroup[] {
+  const byTemplate = new Map<string | null, TypeNode[]>()
+  let current: string | null = null
+  for (const node of flattenTypeTree(types)) {
+    if (node.depth === 0) current = node.type.source_template
+    byTemplate.set(current, [...(byTemplate.get(current) ?? []), node])
+  }
+  const templates = [...byTemplate.keys()]
+    .filter((k): k is string => k !== null)
+    .sort((a, b) => a.localeCompare(b))
+  const groups: TypeGroup[] = templates.map((tpl) => ({
+    template: tpl,
+    nodes: byTemplate.get(tpl)!,
+  }))
+  const manual = byTemplate.get(null)
+  if (manual) groups.push({ template: null, nodes: manual })
+  return groups
+}
+
 export function TypesAdmin() {
   const { t } = useTranslation()
   // Route sous /ws/:wsSlug/types — le paramètre s'appelle wsSlug
@@ -218,7 +246,23 @@ export function TypesAdmin() {
           </tr>
         </thead>
         <tbody>
-          {flattenTypeTree(types).map(({ type, depth }) => (
+          {groupTypeTree(types).map((group) => (
+            <Fragment key={group.template ?? '__manual__'}>
+              <tr data-testid={`type-group-${group.template ?? 'manual'}`}>
+                <td colSpan={4} className="pt-5 pb-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    {group.template !== null ? (
+                      <>
+                        <span className="mr-1.5">📦</span>
+                        {t('types.templateGroup', { template: group.template })}
+                      </>
+                    ) : (
+                      t('types.manualGroup')
+                    )}
+                  </span>
+                </td>
+              </tr>
+              {group.nodes.map(({ type, depth }) => (
             <Fragment key={type.slug}>
               <tr
                 className="border-b hover:bg-gray-50 cursor-pointer"
@@ -262,6 +306,8 @@ export function TypesAdmin() {
                   </td>
                 </tr>
               )}
+            </Fragment>
+              ))}
             </Fragment>
           ))}
         </tbody>

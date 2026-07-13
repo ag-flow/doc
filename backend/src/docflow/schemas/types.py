@@ -36,6 +36,8 @@ class FunctionalTypeOut(BaseModel):
     parent_slug: str | None
     workspace_slug: str
     content_template: str | None = None
+    # Slug du template ayant créé le type via import ; None = créé à la main.
+    source_template: str | None = None
     created_at: datetime
     updated_at: datetime
 

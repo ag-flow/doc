@@ -154,6 +154,8 @@ export interface FunctionalType {
   parent_slug: string | null
   workspace_slug: string
   content_template: string | null
+  /** Slug du template ayant créé le type via import ; null = créé à la main. */
+  source_template: string | null
   created_at: string
   updated_at: string
 }

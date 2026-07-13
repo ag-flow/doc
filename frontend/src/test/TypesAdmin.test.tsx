@@ -16,7 +16,7 @@ vi.mock('../lib/api', () => ({
 }))
 
 import { api } from '../lib/api'
-import { TypesAdmin, flattenTypeTree } from '../pages/TypesAdmin'
+import { TypesAdmin, flattenTypeTree, groupTypeTree } from '../pages/TypesAdmin'
 import type { FunctionalTypeRich } from '../lib/api'
 
 function renderWithProviders(ws = 'my-ws') {
@@ -105,5 +105,42 @@ describe('flattenTypeTree', () => {
   it('ne boucle pas sur un cycle de parenté', () => {
     const flat = flattenTypeTree([mk('a', 'A', 'b'), mk('b', 'B', 'a')])
     expect(flat).toHaveLength(2)
+  })
+})
+
+describe('groupTypeTree', () => {
+  const mk = (slug: string, label: string, parent: string | null, tpl: string | null) =>
+    ({
+      id: slug,
+      slug,
+      label,
+      parent_slug: parent,
+      workspace_slug: 'ws',
+      content_template: null,
+      source_template: tpl,
+      created_at: '',
+      updated_at: '',
+      properties: [],
+    }) as FunctionalTypeRich
+
+  it('regroupe par template de la racine, manuels en dernier', () => {
+    const groups = groupTypeTree([
+      mk('manuel', 'Manuel', null, null),
+      mk('epic', 'Epic', null, 'agile-basic'),
+      mk('feature', 'Feature', 'epic', 'agile-basic'),
+      mk('section', 'Section', null, 'doc-basic'),
+    ])
+    expect(groups.map((g) => g.template)).toEqual(['agile-basic', 'doc-basic', null])
+    expect(groups[0].nodes.map((n) => n.type.slug)).toEqual(['epic', 'feature'])
+    expect(groups[2].nodes.map((n) => n.type.slug)).toEqual(['manuel'])
+  })
+
+  it("un descendant suit sa racine même si sa provenance diffère", () => {
+    const groups = groupTypeTree([
+      mk('epic', 'Epic', null, 'agile-basic'),
+      mk('custom', 'Custom', 'epic', null),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].nodes.map((n) => n.type.slug)).toEqual(['epic', 'custom'])
   })
 })
