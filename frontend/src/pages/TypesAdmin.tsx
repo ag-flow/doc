@@ -250,7 +250,7 @@ export function TypesAdmin() {
             <Fragment key={group.template ?? '__manual__'}>
               <tr data-testid={`type-group-${group.template ?? 'manual'}`}>
                 <td colSpan={4} className="pt-5 pb-1">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <span className="text-xs font-semibold tracking-wide text-gray-500">
                     {group.template !== null ? (
                       <>
                         <span className="mr-1.5">📦</span>
