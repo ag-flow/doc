@@ -382,8 +382,11 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
       )}
 
       {isEdit && (
-        <div className="pt-1">
+        <div className="flex items-center gap-2 pt-1">
           <TestConnectionButton slug={initial!.slug} />
+          <span className="text-xs text-gray-400">
+            teste la configuration enregistrée — enregistrez d'abord vos modifications
+          </span>
         </div>
       )}
 
