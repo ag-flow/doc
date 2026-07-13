@@ -1007,6 +1007,10 @@ export const remoteCertsApi = {
   }) => api.post<RemoteCertificateOut>('/admin/remote/certificates', body),
   get: (slug: string) => api.get<RemoteCertificateOut>(`/admin/remote/certificates/${slug}`),
   delete: (slug: string) => api.delete(`/admin/remote/certificates/${slug}`),
+  /** Génération côté serveur (clé SSH ou certificat TLS auto-signé) : la clé
+   *  privée est chiffrée en base et n'est jamais renvoyée. */
+  generate: (body: RemoteCertificateGenerateBody) =>
+    api.post<RemoteCertificateOut>('/admin/remote/certificates/generate', body),
 }
 
 // ── Remote points ─────────────────────────────────────────────────────────────
@@ -1122,6 +1126,15 @@ export const backupApi = {
     api.put<BackupJobOut>(`/admin/backup/jobs/${slug}`, body),
   deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
   listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
+  runJob: (slug: string) => api.post<BackupJobRunOut>(`/admin/backup/jobs/${slug}/run`, {}),
+}
+
+export interface RemoteCertificateGenerateBody {
+  slug: string
+  label: string
+  cert_type?: 'ssh_key' | 'tls'
+  common_name?: string | null
+  expires_at?: string | null
 }
 
 // ── Setup wizard ─────────────────────────────────────────────────────────────

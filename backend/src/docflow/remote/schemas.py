@@ -40,6 +40,9 @@ class RemoteCertificateGenerate(BaseModel):
 
     slug: str
     label: str = Field(min_length=1, max_length=120)
+    cert_type: Literal["ssh_key", "tls"] = "ssh_key"
+    # CN du certificat TLS auto-signé (défaut : slug). Ignoré pour ssh_key.
+    common_name: str | None = Field(default=None, max_length=120)
     expires_at: datetime | None = None
 
     @model_validator(mode="after")

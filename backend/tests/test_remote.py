@@ -412,3 +412,46 @@ def test_update_certificate_requires_slug() -> None:
             username="user",
             auth_type="certificate",
         )
+
+
+async def test_generate_tls_certificate_self_signed(db_pool: asyncpg.Pool) -> None:
+    """cert_type=tls : certificat X.509 auto-signé, clé privée chiffrée redéchiffrable."""
+    cert = await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(
+            slug="cert-tls", label="TLS", cert_type="tls", common_name="docflow-ftps"
+        ),
+        _FERNET_KEY,
+    )
+    assert cert.cert_type == "tls"
+    assert cert.public_part.startswith("-----BEGIN CERTIFICATE-----")
+    assert cert.expires_at is not None  # défaut : +10 ans
+    assert not hasattr(cert, "private_key")
+
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    parsed = x509.load_pem_x509_certificate(cert.public_part.encode())
+    cns = parsed.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    assert cns[0].value == "docflow-ftps"
+    assert parsed.issuer == parsed.subject  # auto-signé
+
+    private_key = await svc.get_certificate_private_key(db_pool, "cert-tls", _FERNET_KEY)
+    assert "PRIVATE KEY" in private_key
+
+
+async def test_generate_tls_certificate_rejects_past_expiry(db_pool: asyncpg.Pool) -> None:
+    from datetime import UTC, datetime
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.generate_certificate(
+            db_pool,
+            RemoteCertificateGenerate(
+                slug="cert-tls-past",
+                label="TLS",
+                cert_type="tls",
+                expires_at=datetime(2020, 1, 1, tzinfo=UTC),
+            ),
+            _FERNET_KEY,
+        )
+    assert exc_info.value.status_code == 422

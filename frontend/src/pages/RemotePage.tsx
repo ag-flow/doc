@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Cpu, GitBranch,
-  Globe, HardDrive, KeyRound, Loader2, Network, Plug, Plus, ShieldCheck,
+  Globe, HardDrive, KeyRound, Loader2, Network, Play, Plug, Plus, ShieldCheck,
   Trash2, Wand2, XCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -143,6 +143,23 @@ function CertificatesTab() {
     },
     onError: (e) => setErr((e as Error).message),
   })
+  // TLS : génération côté serveur (certificat X.509 auto-signé) — le certificat
+  // est créé directement, la clé privée ne transite jamais par le navigateur.
+  const generateTlsMut = useMutation({
+    mutationFn: () => remoteCertsApi.generate({
+      slug: form.slug,
+      label: form.label,
+      cert_type: 'tls',
+      common_name: gitIdentity.trim() || null,
+    }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['remote-certs'] })
+      setShowForm(false)
+      setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' })
+      setGitIdentity('')
+    },
+    onError: (e) => setErr((e as Error).message),
+  })
   const delMut = useMutation({
     mutationFn: (slug: string) => remoteCertsApi.delete(slug),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['remote-certs'] }),
@@ -191,7 +208,7 @@ function CertificatesTab() {
               <option value="ssh_key">Clé SSH (git / SFTP)</option>
               <option value="tls">Certificat TLS (FTPS)</option>
             </select>
-            {form.cert_type === 'ssh_key' && (
+            {form.cert_type === 'ssh_key' ? (
               <Button
                 size="sm"
                 variant="secondary"
@@ -204,22 +221,36 @@ function CertificatesTab() {
                   : <><Wand2 className="h-3.5 w-3.5 mr-1" />{form.public_part ? 'Regénérer' : 'Générer'}</>
                 }
               </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => { setErr(null); generateTlsMut.mutate() }}
+                disabled={generateTlsMut.isPending || !form.slug || !form.label}
+                title="Génère un certificat auto-signé (RSA 2048, 10 ans) côté serveur et l'enregistre directement"
+                data-testid="cert-generate-tls"
+              >
+                {generateTlsMut.isPending
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Génération…</>
+                  : <><Wand2 className="h-3.5 w-3.5 mr-1" />Générer</>
+                }
+              </Button>
             )}
           </div>
 
-          {form.cert_type === 'ssh_key' && (
-            <Input
-              placeholder="Identité git (commentaire de la clé, ex. deploy@docflow) — optionnel"
-              value={gitIdentity}
-              onChange={e => setGitIdentity(e.target.value)}
-              data-testid="cert-git-identity"
-            />
-          )}
+          <Input
+            placeholder={form.cert_type === 'ssh_key'
+              ? 'Identité git (commentaire de la clé, ex. deploy@docflow) — optionnel'
+              : 'Common Name du certificat (défaut : slug) — optionnel'}
+            value={gitIdentity}
+            onChange={e => setGitIdentity(e.target.value)}
+            data-testid="cert-git-identity"
+          />
 
           <div className="relative">
             <textarea
               rows={4}
-              placeholder={form.cert_type === 'ssh_key' ? 'Clé publique (ssh-rsa …) — ou cliquez Générer' : 'Certificat PEM (-----BEGIN CERTIFICATE-----)'}
+              placeholder={form.cert_type === 'ssh_key' ? 'Clé publique (ssh-rsa …) — ou cliquez Générer' : 'Certificat PEM (-----BEGIN CERTIFICATE-----) — ou cliquez Générer'}
               className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none"
               value={form.public_part}
               onChange={e => setForm(p => ({ ...p, public_part: e.target.value }))}
@@ -703,6 +734,15 @@ function JobCard({ job }: { job: BackupJobOut }) {
     }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['backup-jobs'] }),
   })
+  const runMut = useMutation({
+    mutationFn: () => backupApi.runJob(job.slug),
+    onSuccess: () => {
+      // Le run tourne en tâche de fond (202) : déplier l'historique pour le suivre.
+      setExpanded(true)
+      void refetch()
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+    },
+  })
 
   return (
     <div className="rounded-lg border border-gray-200 overflow-hidden">
@@ -721,6 +761,18 @@ function JobCard({ job }: { job: BackupJobOut }) {
         <div className="flex items-center gap-2 shrink-0">
           {job.last_run_status && <RunStatus status={job.last_run_status} />}
           <button
+            onClick={() => runMut.mutate()}
+            disabled={runMut.isPending}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+            title="Déclencher un run immédiat, hors planification"
+            data-testid={`run-job-${job.slug}`}
+          >
+            {runMut.isPending
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Play className="h-3 w-3" />}
+            Lancer
+          </button>
+          <button
             onClick={() => toggleMut.mutate()}
             className={`text-xs px-2 py-1 rounded-full font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
           >
@@ -734,6 +786,12 @@ function JobCard({ job }: { job: BackupJobOut }) {
           </button>
         </div>
       </div>
+
+      {runMut.isError && (
+        <p className="px-4 pb-2 text-xs text-red-600 bg-white" data-testid={`run-job-error-${job.slug}`}>
+          {(runMut.error as Error).message}
+        </p>
+      )}
 
       {expanded && (
         <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
