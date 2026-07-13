@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Cpu, GitBranch,
@@ -625,7 +625,23 @@ function JobCard({ job }: { job: BackupJobOut }) {
     queryKey: ['backup-runs', job.slug],
     queryFn: () => backupApi.listRuns(job.slug),
     enabled: expanded,
+    // Un run tourne en tâche de fond : rafraîchir jusqu'à son état final,
+    // sinon « en cours… » reste affiché indéfiniment.
+    refetchInterval: (query) => {
+      const data = query.state.data as BackupJobRunOut[] | undefined
+      return data?.some((r) => r.status === 'running') ? 2000 : false
+    },
   })
+  const hasRunning = (runs as BackupJobRunOut[]).some((r) => r.status === 'running')
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    // À la fin d'un run (running → terminé), recharger la liste des jobs
+    // pour rafraîchir last_run_status.
+    if (wasRunning.current && !hasRunning) {
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+    }
+    wasRunning.current = hasRunning
+  }, [hasRunning, qc])
 
   const delMut = useMutation({
     mutationFn: () => backupApi.deleteJob(job.slug),
