@@ -29,11 +29,16 @@ class OidcConfigOut(BaseModel):
 
 
 class OidcPublicConfig(BaseModel):
-    """Config minimale exposée publiquement pour le frontend."""
+    """Config minimale exposée publiquement pour le frontend.
+
+    `authorization_endpoint` n'est renseigné que par GET /auth/oidc/config
+    (découverte serveur) — jamais stocké en base.
+    """
 
     issuer: str
     client_id: str
     enabled: bool
+    authorization_endpoint: str | None = None
 
 
 class OidcCallbackIn(BaseModel):

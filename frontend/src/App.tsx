@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { Breadcrumb } from './components/Breadcrumb'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
+import { OidcCallback } from './pages/OidcCallback'
 import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
 import { WorkspaceLayout } from './pages/WorkspaceLayout'
@@ -48,6 +49,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
+  { path: '/oidc/callback', element: <OidcCallback /> },
 
   {
     path: '/templates',

@@ -27,7 +27,13 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
-import { api, setToken } from '../lib/api'
+// Mock du flow OIDC : la redirection navigateur n'est pas testable en jsdom
+vi.mock('../lib/oidcClient', () => ({
+  beginOidcLogin: vi.fn(() => Promise.resolve()),
+}))
+
+import { api, setToken, setupApi } from '../lib/api'
+import { beginOidcLogin } from '../lib/oidcClient'
 
 describe('Login', () => {
   beforeEach(() => {
@@ -71,5 +77,31 @@ describe('Login', () => {
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'wrong' } })
     fireEvent.click(screen.getByTestId('submit-button'))
     await waitFor(() => expect(screen.getByText('Identifiants invalides')).toBeInTheDocument())
+  })
+
+  it('hides the OIDC button when /auth/methods says oidc=false', async () => {
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    await screen.findByTestId('email-input')
+    expect(screen.queryByTestId('oidc-button')).not.toBeInTheDocument()
+  })
+
+  it('shows the OIDC button when /auth/methods says oidc=true and starts the flow', async () => {
+    vi.mocked(setupApi.methods).mockResolvedValue({
+      local: true,
+      oidc: true,
+      needs_setup: false,
+    })
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    const button = await screen.findByTestId('oidc-button')
+    fireEvent.click(button)
+    await waitFor(() => expect(beginOidcLogin).toHaveBeenCalledTimes(1))
   })
 })

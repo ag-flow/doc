@@ -29,7 +29,7 @@ export class ApiError extends Error {
 
 /** Endpoints d'authentification : un 401 y est un échec de login légitime, pas une
  *  session expirée. On ne doit ni purger de token ni recharger la page. */
-const AUTH_PATHS = ['/auth/login', '/auth/methods', '/setup/init-admin']
+const AUTH_PATHS = ['/auth/login', '/auth/methods', '/auth/oidc', '/setup/init-admin']
 
 function isAuthPath(path: string): boolean {
   return AUTH_PATHS.some((p) => path.startsWith(p))
@@ -1139,4 +1139,25 @@ export interface InitAdminRequest {
 export const setupApi = {
   methods: () => api.get<AuthMethodsOut>('/auth/methods'),
   initAdmin: (body: InitAdminRequest) => api.post<{ id: string }>('/setup/init-admin', body),
+}
+
+// ── Login OIDC (endpoints publics) ───────────────────────────────────────────
+
+export interface OidcPublicConfig {
+  issuer: string
+  client_id: string
+  enabled: boolean
+  authorization_endpoint: string | null
+}
+
+export interface OidcCallbackRequest {
+  code: string
+  redirect_uri: string
+  nonce?: string
+}
+
+export const oidcLoginApi = {
+  config: () => api.get<OidcPublicConfig | null>('/auth/oidc/config'),
+  callback: (body: OidcCallbackRequest) =>
+    api.post<{ access_token: string; token_type: string }>('/auth/oidc/callback', body),
 }

@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from docflow.auth.jwt import create_token
 from docflow.config.settings import Settings
-from docflow.oidc.verify import OidcVerifyError, exchange_code, verify_id_token
+from docflow.oidc.verify import OidcVerifyError, exchange_code, fetch_discovery, verify_id_token
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.oidc import OidcCallbackIn, OidcConfigOut, OidcConfigSet, OidcPublicConfig
 from docflow.secrets.resolver import resolve
@@ -49,6 +49,28 @@ async def get_public_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
         client_id=row["client_id"],
         enabled=row["enabled"],
     )
+
+
+async def get_login_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
+    """Config publique enrichie de l'authorization_endpoint découvert chez l'issuer.
+
+    C'est ce que consomme la mire de connexion pour construire la redirection
+    authorization-code. La découverte reste côté serveur (cache + garde SSRF).
+    """
+    public = await get_public_config(pool)
+    if public is None:
+        return None
+    try:
+        discovery = await fetch_discovery(public.issuer)
+    except OidcVerifyError as exc:
+        log.warning("oidc_discovery_failed", reason=str(exc))
+        raise HTTPException(status_code=502, detail="issuer OIDC injoignable") from exc
+    endpoint = str(discovery.get("authorization_endpoint", ""))
+    if not endpoint:
+        raise HTTPException(
+            status_code=502, detail="authorization_endpoint absent du document de découverte"
+        )
+    return public.model_copy(update={"authorization_endpoint": endpoint})
 
 
 async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfigOut:
