@@ -423,14 +423,25 @@ dump plus récent que l'image déployée** : mettre d'abord l'image à jour.
 
 ### Et le miroir git ?
 
-Le backup `git_sync` est un **miroir lisible** (un `.md` + un `.json` par document,
-par workspace), pas une sauvegarde restaurable automatiquement : il ne contient
-ni les blocs, ni les types, ni les utilisateurs, ni les valeurs chiffrées. Il sert à :
+Le backup `git_sync` est un **export complet et lisible du contenu documentaire** :
 
-- consulter/griffonner l'historique des contenus (chaque commit = un état) ;
-- récupérer **manuellement** le texte d'un document perdu (copier le `.md`
-  dans l'éditeur, les propriétés sont dans le `.json`).
+```
+<workspace>/                      ← marqueur .docflow-workspace
+  <bloc>/<sous-bloc>/             ← un répertoire par bloc (hiérarchie réelle)
+    _block.yaml                   ← slug/label du bloc + template du type racine
+                                    (sous-types, propriétés, contraintes, valeurs autorisées)
+    <doc>.md                      ← contenu markdown du document
+    <doc>.json                    ← titre, type, propriétés
+    <doc>/<enfant>.md …           ← descendance du document
+```
 
-La restauration complète passe toujours par le dump Postgres. Un import retour
-automatique depuis le miroir git exigerait d'enrichir l'export (blocs, types)
-— chantier séparé, non couvert ici.
+Chaque commit est un état daté du contenu. Il permet de reconstruire un
+workspace : recréer les types depuis les `_block.yaml` (format aligné sur les
+templates importables), les blocs d'après l'arborescence, puis recoller les
+documents (`.md` + propriétés du `.json`).
+
+Il ne contient en revanche **ni les comptes, ni les certificats/secrets, ni
+l'historique des versions** : la restauration complète d'une instance passe
+toujours par le dump Postgres (§ ci-dessus). L'import retour automatisé du
+miroir est un chantier séparé — aujourd'hui la reprise depuis git est manuelle
+ou scriptée via l'API/MCP.

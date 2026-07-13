@@ -49,6 +49,11 @@ def expected_file_paths(workspace_slug: str, docs: list[dict[str, Any]]) -> set[
     by_id = {d["id"]: d for d in docs}
     expected: set[str] = set()
     for doc in docs:
+        # Préfixe de blocs du document (None = chaîne de blocs invalide → skip,
+        # même règle qu'à l'export ; absent = pas de blocs dans le chemin).
+        block_parts = doc.get("block_parts", [])
+        if block_parts is None:
+            continue
         parts: list[str] = []
         current: dict[str, Any] | None = doc
         seen: set[Any] = set()
@@ -66,7 +71,7 @@ def expected_file_paths(workspace_slug: str, docs: list[dict[str, Any]]) -> set[
                 break
         if not parts:
             continue
-        rel_dir = "/".join([workspace_slug, *parts[:-1]])
+        rel_dir = "/".join([workspace_slug, *block_parts, *parts[:-1]])
         expected.add(f"{rel_dir}/{parts[-1]}.md")
         expected.add(f"{rel_dir}/{parts[-1]}.json")
     return expected
@@ -75,13 +80,16 @@ def expected_file_paths(workspace_slug: str, docs: list[dict[str, Any]]) -> set[
 def find_orphan_files(
     base: pathlib.Path, workspace_slug: str, expected_paths: set[str]
 ) -> list[pathlib.Path]:
-    """Fichiers .md/.json du workspace dont le chemin complet n'est plus attendu."""
+    """Fichiers .md/.json/.yaml du workspace dont le chemin complet n'est plus
+    attendu. Le répertoire d'un workspace exporté est entièrement géré par le
+    sync (marqueur .docflow-workspace) : un _block.yaml de bloc supprimé est
+    purgé comme un document orphelin."""
     orphans: list[pathlib.Path] = []
     ws_dir = base / workspace_slug
     if not ws_dir.exists():
         return orphans
     for p in sorted(ws_dir.rglob("*")):
-        if not p.is_file() or p.suffix not in (".md", ".json"):
+        if not p.is_file() or p.suffix not in (".md", ".json", ".yaml"):
             continue
         if p.relative_to(base).as_posix() not in expected_paths:
             orphans.append(p)

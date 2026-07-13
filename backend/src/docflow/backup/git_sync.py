@@ -40,6 +40,7 @@ def _git_phase(
     to_write: list[tuple[list[str], dict[str, Any]]],
     reconcile: dict[str, set[str]],
     live_workspace_slugs: set[str] | None = None,
+    extra_files: list[tuple[list[str], str]] | None = None,
 ) -> tuple[int, int, str | None]:
     """Phase git purement bloquante : clone/pull, écritures disque, commit, push.
 
@@ -101,6 +102,14 @@ def _git_phase(
                 shutil.copy2(src, dst)
                 files_written += 1
 
+    # 5bis. Fichiers annexes (métadonnées de blocs `_block.yaml`) — contenu
+    # fourni par la phase DB, écrit tel quel.
+    for path_parts, content in extra_files or []:
+        dst = base.joinpath(*path_parts)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content, encoding="utf-8")
+        files_written += 1
+
     # 6. Supprimer les fichiers orphelins — réconciliation par chemin complet,
     # strictement restreinte aux workspaces couverts par le batch.
     files_deleted = 0
@@ -121,7 +130,9 @@ def _git_phase(
                 continue
             if (child / _WS_MARKER).exists() and child.name not in live_workspace_slugs:
                 files_deleted += sum(
-                    1 for p in child.rglob("*") if p.is_file() and p.suffix in (".md", ".json")
+                    1
+                    for p in child.rglob("*")
+                    if p.is_file() and p.suffix in (".md", ".json", ".yaml")
                 )
                 shutil.rmtree(child)
 
@@ -207,13 +218,14 @@ async def run_git_sync(
 
         to_write: list[tuple[list[str], dict[str, Any]]] = []
         reconcile: dict[str, set[str]] = {}
+        extra_files: list[tuple[list[str], str]] = []
 
         if last_change_seq == 0:
             # Premier run : le journal des changements ne couvre pas forcément
             # les documents antérieurs à sa mise en place → export initial
             # complet du périmètre, curseur posé au max courant du journal.
             new_seq = await conn.fetchval("SELECT COALESCE(MAX(seq), 0) FROM document_change_log")
-            to_write, reconcile = await collect_full_export(
+            to_write, reconcile, extra_files = await collect_full_export(
                 conn,
                 workspace_technical_key=workspace_technical_key,
                 workspace_slug=workspace_slug,
@@ -241,7 +253,7 @@ async def run_git_sync(
                     "files_deleted": 0,
                     "commit_sha": None,
                 }
-            new_seq, to_write, reconcile = collected
+            new_seq, to_write, reconcile, extra_files = collected
 
     # Phases 4-7 : purement bloquantes (git + disque), hors du loop principal.
     files_written, files_deleted, commit_sha = await asyncio.to_thread(
@@ -255,6 +267,7 @@ async def run_git_sync(
         to_write=to_write,
         reconcile=reconcile,
         live_workspace_slugs=live_ws_slugs,
+        extra_files=extra_files,
     )
 
     return {
