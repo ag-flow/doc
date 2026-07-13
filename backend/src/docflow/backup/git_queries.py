@@ -126,3 +126,113 @@ async def fetch_ws_documents(
         list(block_scope) if block_scope is not None else None,
     )
     return [dict(r) for r in rows]
+
+
+async def collect_full_export(
+    conn: asyncpg.Connection,
+    *,
+    workspace_technical_key: uuid.UUID | None,
+    workspace_slug: str | None,
+    block_scope: set[uuid.UUID] | None,
+) -> tuple[list[tuple[list[str], dict[str, Any]]], dict[str, set[str]]]:
+    """Collecte l'export initial complet du périmètre (premier run d'un job).
+
+    Le journal des changements ne couvre pas les documents antérieurs à sa
+    mise en place : on exporte donc tout le périmètre. Retourne
+    (to_write, reconcile) au même format que la collecte incrémentale.
+    """
+    from docflow.backup.git_files import expected_file_paths
+
+    if workspace_technical_key is not None:
+        ws_slug = workspace_slug or await conn.fetchval(
+            "SELECT slug FROM workspace WHERE workspace_technical_key = $1",
+            workspace_technical_key,
+        )
+        ws_list: list[tuple[uuid.UUID, str]] = (
+            [(workspace_technical_key, ws_slug)] if ws_slug else []
+        )
+    else:
+        ws_list = [
+            (r["workspace_technical_key"], r["slug"])
+            for r in await conn.fetch("SELECT workspace_technical_key, slug FROM workspace")
+        ]
+
+    to_write: list[tuple[list[str], dict[str, Any]]] = []
+    reconcile: dict[str, set[str]] = {}
+    for ws_id, ws_slug in ws_list:
+        docs = await fetch_ws_documents(conn, ws_id, block_scope=block_scope)
+        reconcile[ws_slug] = expected_file_paths(ws_slug, docs)
+        for d in docs:
+            doc = await fetch_doc(conn, d["id"])
+            if doc is None:
+                continue
+            path_parts = await build_path(conn, d["id"], ws_slug)
+            if path_parts is None:
+                continue
+            to_write.append((path_parts, doc))
+    return to_write, reconcile
+
+
+async def collect_incremental(
+    conn: asyncpg.Connection,
+    *,
+    workspace_technical_key: uuid.UUID | None,
+    workspace_slug: str | None,
+    last_change_seq: int,
+    block_scope: set[uuid.UUID] | None,
+) -> tuple[int, list[tuple[list[str], dict[str, Any]]], dict[str, set[str]]] | None:
+    """Collecte les documents modifiés depuis `last_change_seq` (journal).
+
+    Retourne (nouveau curseur, to_write, reconcile), ou None si aucun
+    changement. La réconciliation ne couvre que les workspaces présents dans
+    le batch : un workspace sans changement n'est jamais touché.
+    """
+    from docflow.backup.git_files import expected_file_paths
+
+    where_ws = "AND workspace_technical_key = $2" if workspace_technical_key else ""
+    params: list[Any] = [last_change_seq]
+    if workspace_technical_key:
+        params.append(workspace_technical_key)
+    change_rows = await conn.fetch(
+        f"""
+        SELECT seq, document_ref, nature, workspace_technical_key AS ws_id
+        FROM document_change_log
+        WHERE seq > $1 {where_ws}
+        ORDER BY seq
+        """,
+        *params,
+    )
+    if not change_rows:
+        return None
+
+    to_write: list[tuple[list[str], dict[str, Any]]] = []
+    for row in change_rows:
+        if row["nature"] in ("C", "U", "P"):
+            ws_slug = workspace_slug or await conn.fetchval(
+                "SELECT slug FROM workspace WHERE workspace_technical_key = $1",
+                row["ws_id"],
+            )
+            if not ws_slug:
+                continue
+            doc = await fetch_doc(conn, row["document_ref"])
+            if doc is None:
+                continue  # supprimé entre-temps — géré par la réconciliation
+            if block_scope is not None and doc["data_block_id"] not in block_scope:
+                continue  # hors du périmètre bloc de ce job
+            path_parts = await build_path(conn, row["document_ref"], ws_slug)
+            if path_parts is None:
+                continue  # document sans slug valide — même règle qu'à l'export complet
+            to_write.append((path_parts, doc))
+
+    reconcile: dict[str, set[str]] = {}
+    for ws_id in {row["ws_id"] for row in change_rows}:
+        ws_slug = workspace_slug or await conn.fetchval(
+            "SELECT slug FROM workspace WHERE workspace_technical_key = $1",
+            ws_id,
+        )
+        if not ws_slug:
+            continue  # workspace introuvable → ne rien purger
+        docs = await fetch_ws_documents(conn, ws_id, block_scope=block_scope)
+        reconcile[ws_slug] = expected_file_paths(ws_slug, docs)
+
+    return change_rows[-1]["seq"], to_write, reconcile

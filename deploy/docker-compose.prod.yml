@@ -12,6 +12,10 @@ services:
       # Les templates installés depuis la galerie sont écrits dans /app/templates
       # au runtime : sans volume, chaque redéploiement les efface.
       - templates:/app/templates
+      # État runtime du backup (/data DANS le conteneur — rien à voir avec le
+      # /data de l'hôte) : repos git locaux, dumps temporaires, known_hosts
+      # TOFU. Sans volume : re-clone complet et re-TOFU à chaque redéploiement.
+      - appdata:/data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
@@ -47,6 +51,7 @@ networks:
 volumes:
   pgdata:
   templates:
+  appdata:
 
 secrets:
   pg_password:

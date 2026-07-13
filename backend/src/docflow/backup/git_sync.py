@@ -11,15 +11,19 @@ import asyncpg
 import structlog
 from git import Git, GitCommandError, InvalidGitRepositoryError, Repo
 
-from docflow.backup.git_files import expected_file_paths, find_orphan_files, write_doc
+from docflow.backup.git_files import find_orphan_files, write_doc
 from docflow.backup.git_queries import (
-    build_path,
-    fetch_doc,
-    fetch_ws_documents,
+    collect_full_export,
+    collect_incremental,
     resolve_block_scope,
 )
 
 log = structlog.get_logger(__name__)
+
+# Marqueur déposé à la racine de chaque répertoire de workspace exporté :
+# la purge d'un workspace supprimé ne touche QUE les répertoires marqués —
+# un contenu étranger présent dans le repo n'est jamais détruit.
+_WS_MARKER = ".docflow-workspace"
 
 
 # ── Phase git bloquante ───────────────────────────────────────────────────────
@@ -35,6 +39,7 @@ def _git_phase(
     git_http_env: dict[str, str],
     to_write: list[tuple[list[str], dict[str, Any]]],
     reconcile: dict[str, set[str]],
+    live_workspace_slugs: set[str] | None = None,
 ) -> tuple[int, int, str | None]:
     """Phase git purement bloquante : clone/pull, écritures disque, commit, push.
 
@@ -103,6 +108,22 @@ def _git_phase(
         for orphan in find_orphan_files(base, ws_slug, expected_paths):
             orphan.unlink()
             files_deleted += 1
+
+    # 6bis. Marquer les workspaces exportés, puis purger ceux qui n'existent
+    # plus côté docflow (jobs d'instance uniquement : live_workspace_slugs).
+    for ws_slug in reconcile:
+        ws_dir = base / ws_slug
+        if ws_dir.exists():
+            (ws_dir / _WS_MARKER).write_text(ws_slug, encoding="utf-8")
+    if live_workspace_slugs is not None and base.exists():
+        for child in sorted(base.iterdir()):
+            if not child.is_dir() or child.name == ".git":
+                continue
+            if (child / _WS_MARKER).exists() and child.name not in live_workspace_slugs:
+                files_deleted += sum(
+                    1 for p in child.rglob("*") if p.is_file() and p.suffix in (".md", ".json")
+                )
+                shutil.rmtree(child)
 
     # 7. Commit + push
     repo.git.add(A=True)
@@ -178,66 +199,49 @@ async def run_git_sync(
         if data_block_ref is not None:
             block_scope = await resolve_block_scope(conn, data_block_ref)
 
-        # 1. Changements depuis le dernier run
-        where_ws = "AND workspace_technical_key = $2" if workspace_technical_key else ""
-        params: list[Any] = [last_change_seq]
-        if workspace_technical_key:
-            params.append(workspace_technical_key)
-        change_rows = await conn.fetch(
-            f"""
-            SELECT seq, document_ref, nature, workspace_technical_key AS ws_id
-            FROM document_change_log
-            WHERE seq > $1 {where_ws}
-            ORDER BY seq
-            """,
-            *params,
-        )
+        # 0. Jobs d'instance : liste des workspaces vivants, pour purger du
+        # repo ceux qui ont été supprimés (marqueur, cf. _git_phase).
+        live_ws_slugs: set[str] | None = None
+        if workspace_technical_key is None:
+            live_ws_slugs = {r["slug"] for r in await conn.fetch("SELECT slug FROM workspace")}
 
-        if not change_rows:
-            log.info("git_sync_no_changes", job_id=str(job_id))
-            return {
-                "last_change_seq": last_change_seq,
-                "files_written": 0,
-                "files_deleted": 0,
-                "commit_sha": None,
-            }
-
-        new_seq = change_rows[-1]["seq"]
-
-        # 2. Fetch les docs C/U
         to_write: list[tuple[list[str], dict[str, Any]]] = []
-        for row in change_rows:
-            if row["nature"] in ("C", "U", "P"):
-                ws_slug = workspace_slug or await conn.fetchval(
-                    "SELECT slug FROM workspace WHERE workspace_technical_key = $1",
-                    row["ws_id"],
-                )
-                if not ws_slug:
-                    continue
-                doc = await fetch_doc(conn, row["document_ref"])
-                if doc is None:
-                    continue  # supprimé entre-temps — géré par reconciliation
-                if block_scope is not None and doc["data_block_id"] not in block_scope:
-                    continue  # hors du périmètre bloc de ce job
-                path_parts = await build_path(conn, row["document_ref"], ws_slug)
-                if path_parts is None:
-                    log.warning("git_sync_skip_no_slug", doc_id=str(row["document_ref"]))
-                    continue
-                to_write.append((path_parts, doc))
-
-        # 3. Chemins attendus pour la réconciliation des suppressions.
-        # Périmètre = uniquement les workspaces présents dans le batch : un
-        # workspace sans changement n'apparaît pas ici et ne sera pas touché.
         reconcile: dict[str, set[str]] = {}
-        for ws_id in {row["ws_id"] for row in change_rows}:
-            ws_slug = workspace_slug or await conn.fetchval(
-                "SELECT slug FROM workspace WHERE workspace_technical_key = $1",
-                ws_id,
+
+        if last_change_seq == 0:
+            # Premier run : le journal des changements ne couvre pas forcément
+            # les documents antérieurs à sa mise en place → export initial
+            # complet du périmètre, curseur posé au max courant du journal.
+            new_seq = await conn.fetchval("SELECT COALESCE(MAX(seq), 0) FROM document_change_log")
+            to_write, reconcile = await collect_full_export(
+                conn,
+                workspace_technical_key=workspace_technical_key,
+                workspace_slug=workspace_slug,
+                block_scope=block_scope,
             )
-            if not ws_slug:
-                continue  # workspace introuvable → ne rien purger
-            docs = await fetch_ws_documents(conn, ws_id, block_scope=block_scope)
-            reconcile[ws_slug] = expected_file_paths(ws_slug, docs)
+            log.info(
+                "git_sync_initial_full_export",
+                job_id=str(job_id),
+                documents=len(to_write),
+            )
+        else:
+            # 1-3. Collecte incrémentale depuis le journal des changements.
+            collected = await collect_incremental(
+                conn,
+                workspace_technical_key=workspace_technical_key,
+                workspace_slug=workspace_slug,
+                last_change_seq=last_change_seq,
+                block_scope=block_scope,
+            )
+            if collected is None:
+                log.info("git_sync_no_changes", job_id=str(job_id))
+                return {
+                    "last_change_seq": last_change_seq,
+                    "files_written": 0,
+                    "files_deleted": 0,
+                    "commit_sha": None,
+                }
+            new_seq, to_write, reconcile = collected
 
     # Phases 4-7 : purement bloquantes (git + disque), hors du loop principal.
     files_written, files_deleted, commit_sha = await asyncio.to_thread(
@@ -250,6 +254,7 @@ async def run_git_sync(
         git_http_env=git_http_env or {},
         to_write=to_write,
         reconcile=reconcile,
+        live_workspace_slugs=live_ws_slugs,
     )
 
     return {

@@ -176,3 +176,63 @@ def test_git_phase_reconciles_covered_ws_only(tmp_path: pathlib.Path) -> None:
     # Workspace non couvert par le batch : intact
     assert (tree / "ws-b/doc-b.md").exists()
     assert (tree / "ws-b/doc-b.json").exists()
+
+
+def test_git_phase_prunes_deleted_workspace_dirs(tmp_path: pathlib.Path) -> None:
+    """Un répertoire de workspace MARQUÉ dont le workspace n'existe plus est
+    purgé ; un répertoire étranger (sans marqueur) n'est JAMAIS touché."""
+    remote_dir = _seed_remote(
+        tmp_path,
+        {
+            "ws-dead/.docflow-workspace": "ws-dead",
+            "ws-dead/doc.md": "x",
+            "ws-dead/doc.json": "{}",
+            "ws-live/.docflow-workspace": "ws-live",
+            "ws-live/doc.md": "y",
+            "ws-live/doc.json": "{}",
+            "docs/notes.md": "contenu étranger au sync",
+        },
+    )
+    written, deleted, sha = _git_phase(
+        repo_dir=tmp_path / "job",
+        remote_url=str(remote_dir),
+        git_branch="main",
+        git_base_path=None,
+        ssh_key_path=None,
+        git_http_env={},
+        to_write=[],
+        reconcile={},
+        live_workspace_slugs={"ws-live"},
+    )
+    assert deleted == 2  # ws-dead/doc.{md,json}
+    assert sha is not None
+
+    check = Repo.clone_from(str(remote_dir), tmp_path / "check", branch="main")
+    tree = pathlib.Path(check.working_dir)
+    assert not (tree / "ws-dead").exists()
+    assert (tree / "ws-live/doc.md").exists()
+    assert (tree / "docs/notes.md").exists()  # pas de marqueur → intouchable
+
+
+def test_git_phase_writes_workspace_marker(tmp_path: pathlib.Path) -> None:
+    remote_dir = _seed_remote(tmp_path, {"README.md": "seed"})
+    doc = {
+        "title": "Doc",
+        "content": "c",
+        "functional_type_slug": None,
+        "updated_at": datetime.now(tz=UTC),
+        "properties": {},
+    }
+    _git_phase(
+        repo_dir=tmp_path / "job",
+        remote_url=str(remote_dir),
+        git_branch="main",
+        git_base_path=None,
+        ssh_key_path=None,
+        git_http_env={},
+        to_write=[(["ws-a", "doc"], doc)],
+        reconcile={"ws-a": {"ws-a/doc.md", "ws-a/doc.json"}},
+    )
+    check = Repo.clone_from(str(remote_dir), tmp_path / "check", branch="main")
+    marker = pathlib.Path(check.working_dir) / "ws-a" / ".docflow-workspace"
+    assert marker.read_text(encoding="utf-8") == "ws-a"

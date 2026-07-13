@@ -344,6 +344,24 @@ Cron quotidien (2h) :
 
 ## Restauration
 
+### Prérequis vital — à faire AVANT d'avoir besoin de restaurer
+
+Le dump ne contient **pas** les fichiers de configuration de l'hôte. Sauvegarder
+hors du serveur (coffre, vault, autre machine) :
+
+- **`/data/.env`** — contient `ENCRYPTION_KEY` (clé Fernet) et `JWT_SECRET`.
+  Sans la **même** `ENCRYPTION_KEY`, tout ce qui est chiffré en base est
+  définitivement illisible après restauration : clés privées des certificats
+  (backup git/SFTP), secrets locaux des remote points, headers de webhooks,
+  secrets d'automates. C'est le point de non-retour n°1.
+- **`/data/pg_password.txt`** — mot de passe Postgres du compose.
+
+Le worker interne pousse les dumps sur le remote point du job (`docflow_<scope>_<date>_<heure>_<jobid>.dump`
+sur la machine FTP/FTPS/SFTP cible) ; la commande manuelle ci-dessus (§ Sauvegarde) les
+range dans `/data/backups`. Dans les deux cas, récupérer l'archive voulue avant de commencer.
+
+### Cas 1 — restauration par-dessus une instance existante
+
 La restauration **écrase le contenu existant** de la base (`--clean --if-exists`) : elle droppe
 chaque objet avant de le recréer, puis s'arrête à la première erreur (`--exit-on-error`) au lieu
 de continuer silencieusement sur une base dans un état mélangé.
@@ -363,3 +381,56 @@ une restauration incomplète, à ne pas exposer aux utilisateurs :
 ```bash
 docker compose -f /opt/docflow/docker-compose.prod.yml start app
 ```
+
+Au démarrage, `apply` rejoue les migrations manquantes si le dump provient d'une
+version plus ancienne que l'image — c'est le sens normal. **Ne jamais restaurer un
+dump plus récent que l'image déployée** : mettre d'abord l'image à jour.
+
+### Cas 2 — serveur tout neuf (reprise après sinistre)
+
+1. **Provisionner la machine** comme une installation normale (§ Procédure
+   complète, étapes 2-4) **mais sans créer le premier compte admin** — les
+   comptes reviendront avec le dump.
+2. **Restaurer la configuration hôte sauvegardée** — étape critique :
+   ```bash
+   # depuis la sauvegarde hors-serveur
+   cp .env.sauvegarde /data/.env               # même ENCRYPTION_KEY / JWT_SECRET qu'avant
+   cp pg_password.sauvegarde /data/pg_password.txt
+   chmod 600 /data/.env /data/pg_password.txt
+   ```
+   Si `/data/.env` a été perdu et régénéré : l'instance restaurée démarrera,
+   mais tous les secrets chiffrés en base sont perdus (recréer certificats,
+   secrets de remote points, webhooks…) et les sessions JWT sont invalidées.
+3. **Rapatrier l'archive** depuis la machine de sauvegarde :
+   ```bash
+   mkdir -p /data/backups
+   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_*.dump /data/backups/
+   ```
+4. **Démarrer Postgres seul**, restaurer, puis démarrer l'app :
+   ```bash
+   docker compose -f /opt/docflow/docker-compose.prod.yml up -d postgres
+   docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres \
+     pg_restore -U docflow -d docflow --clean --if-exists --no-owner --exit-on-error \
+     < /data/backups/docflow_all_YYYYMMDD_HHMMSS_….dump
+   echo "code de sortie pg_restore : $?"        # doit être 0
+   docker compose -f /opt/docflow/docker-compose.prod.yml up -d app
+   ```
+5. **Vérifier** : connexion avec un compte d'avant le sinistre, présence des
+   workspaces/documents, `Tester` sur les remote points (valide que
+   l'`ENCRYPTION_KEY` déchiffre bien les certificats), un run de backup manuel.
+6. Reconfigurer ce qui vit hors base : reverse proxy TLS, DNS, et la
+   sauvegarde de `/data/.env` du nouveau serveur.
+
+### Et le miroir git ?
+
+Le backup `git_sync` est un **miroir lisible** (un `.md` + un `.json` par document,
+par workspace), pas une sauvegarde restaurable automatiquement : il ne contient
+ni les blocs, ni les types, ni les utilisateurs, ni les valeurs chiffrées. Il sert à :
+
+- consulter/griffonner l'historique des contenus (chaque commit = un état) ;
+- récupérer **manuellement** le texte d'un document perdu (copier le `.md`
+  dans l'éditeur, les propriétés sont dans le `.json`).
+
+La restauration complète passe toujours par le dump Postgres. Un import retour
+automatique depuis le miroir git exigerait d'enrichir l'export (blocs, types)
+— chantier séparé, non couvert ici.
