@@ -33,7 +33,7 @@ vi.mock('../lib/api', async () => {
 })
 
 import { remotePointsApi, remoteCertsApi, backupApi, type RemotePointOut, type BackupJobOut } from '../lib/api'
-import { RemotePage } from '../pages/RemotePage'
+import { RemotePage, normalizeGitRepo } from '../pages/RemotePage'
 
 const pt1: RemotePointOut = {
   id: 'pt-1',
@@ -66,12 +66,10 @@ function renderPage() {
   )
 }
 
-async function openPointsTabAndEdit() {
+async function openPointsTab() {
   renderPage()
   fireEvent.click(screen.getByText('Remote Points'))
-  await waitFor(() => expect(screen.getByTestId('edit-point-backup-101')).toBeInTheDocument())
-  fireEvent.click(screen.getByTestId('edit-point-backup-101'))
-  await waitFor(() => expect(screen.getByTestId('test-connection-btn')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByTestId('test-point-backup-101')).toBeInTheDocument())
 }
 
 describe('RemotePage — test connection', () => {
@@ -82,21 +80,19 @@ describe('RemotePage — test connection', () => {
     vi.mocked(backupApi.listJobs).mockResolvedValue([])
   })
 
-  it('shows a test button only when editing an existing point', async () => {
-    renderPage()
-    fireEvent.click(screen.getByText('Remote Points'))
-    await waitFor(() => expect(screen.getByTestId('edit-point-backup-101')).toBeInTheDocument())
-    expect(screen.queryByTestId('test-connection-btn')).not.toBeInTheDocument()
+  it('shows a test button on each point row, and one more in the edit form', async () => {
+    await openPointsTab()
+    expect(screen.getAllByTestId('test-point-backup-101')).toHaveLength(1)
 
     fireEvent.click(screen.getByTestId('edit-point-backup-101'))
-    await waitFor(() => expect(screen.getByTestId('test-connection-btn')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByTestId('test-point-backup-101')).toHaveLength(2))
   })
 
   it('shows a success result and reuses the saved point (no unsaved form fields sent)', async () => {
     vi.mocked(remotePointsApi.test).mockResolvedValue({ ok: true, detail: 'Connexion réussie' })
-    await openPointsTabAndEdit()
+    await openPointsTab()
 
-    fireEvent.click(screen.getByTestId('test-connection-btn'))
+    fireEvent.click(screen.getByTestId('test-point-backup-101'))
 
     await waitFor(() => expect(screen.getByTestId('test-connection-result')).toBeInTheDocument())
     expect(screen.getByTestId('test-connection-result')).toHaveTextContent('Connexion réussie')
@@ -108,9 +104,9 @@ describe('RemotePage — test connection', () => {
       ok: false,
       detail: 'Authentication failed.',
     })
-    await openPointsTabAndEdit()
+    await openPointsTab()
 
-    fireEvent.click(screen.getByTestId('test-connection-btn'))
+    fireEvent.click(screen.getByTestId('test-point-backup-101'))
 
     await waitFor(() => expect(screen.getByTestId('test-connection-result')).toBeInTheDocument())
     expect(screen.getByTestId('test-connection-result')).toHaveTextContent('Authentication failed.')
@@ -262,5 +258,21 @@ describe('RemotePage — planification de sauvegarde', () => {
     await waitFor(() => expect(screen.getByText(/tous les jours à 04:30/)).toBeInTheDocument())
     expect(screen.getByText(/toutes les heures/)).toBeInTheDocument()
     expect(screen.getByText(/toutes les 120s/)).toBeInTheDocument()
+  })
+})
+
+describe('normalizeGitRepo', () => {
+  it('extrait org/nom depuis une URL https collée telle quelle', () => {
+    expect(normalizeGitRepo('https://github.com/ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+    expect(normalizeGitRepo('https://github.com/ag-flow/backup-docflow')).toBe('ag-flow/backup-docflow')
+  })
+
+  it('extrait org/nom depuis une URL SSH', () => {
+    expect(normalizeGitRepo('git@github.com:ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+    expect(normalizeGitRepo('ssh://git@github.com/ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+  })
+
+  it('laisse org/nom inchangé', () => {
+    expect(normalizeGitRepo('ag-flow/backup-docflow')).toBe('ag-flow/backup-docflow')
   })
 })

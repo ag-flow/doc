@@ -366,10 +366,6 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
 
   const isGit = form.point_type === 'git'
 
-  const testMut = useMutation({
-    mutationFn: () => remotePointsApi.test(initial!.slug),
-  })
-
   function setProvider(p: GitProvider) {
     const h = GIT_PROVIDER_HOST[p]
     setForm(f => ({ ...f, git_provider: p, host: h || f.host }))
@@ -464,34 +460,8 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
       )}
 
       {isEdit && (
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => testMut.mutate()}
-            disabled={testMut.isPending}
-            data-testid="test-connection-btn"
-          >
-            {testMut.isPending
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
-              : <Plug className="h-3.5 w-3.5 mr-1" />}
-            Tester la connexion
-          </Button>
-          {testMut.data && (
-            <span
-              className={`flex items-center gap-1 text-xs ${testMut.data.ok ? 'text-green-600' : 'text-red-600'}`}
-              data-testid="test-connection-result"
-            >
-              {testMut.data.ok ? <CheckCircle className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
-              {testMut.data.detail}
-            </span>
-          )}
-          {testMut.isError && (
-            <span className="flex items-center gap-1 text-xs text-red-600" data-testid="test-connection-result">
-              <XCircle className="h-3.5 w-3.5 shrink-0" />
-              {(testMut.error as Error).message}
-            </span>
-          )}
+        <div className="pt-1">
+          <TestConnectionButton slug={initial!.slug} />
         </div>
       )}
 
@@ -499,13 +469,70 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
         <Button
           size="sm"
           className="flex-1"
-          onClick={() => { if (submitting) return; onSave(form) }}
+          onClick={() => {
+            if (submitting) return
+            onSave({ ...form, git_repo: form.git_repo ? normalizeGitRepo(form.git_repo) : form.git_repo })
+          }}
           disabled={submitting}
         >
           Enregistrer
         </Button>
         <Button size="sm" variant="secondary" onClick={onCancel}>Annuler</Button>
       </div>
+    </div>
+  )
+}
+
+/** Champ « Repo » : accepte org/nom, mais aussi une URL https ou SSH collée
+ *  telle quelle (https://github.com/org/nom.git, git@github.com:org/nom.git…)
+ *  — on n'en retient que org/nom. */
+export function normalizeGitRepo(input: string): string {
+  const v = input.trim().replace(/\.git$/, '')
+  const m = v.match(/^(?:https?:\/\/[^/]+\/|git@[^:]+:|ssh:\/\/(?:git@)?[^/]+\/)(.+)$/)
+  return (m ? m[1] : v).replace(/^\/+|\/+$/g, '')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test de connexion — adapté au type par le backend (git ls-remote / sftp / ftp)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TestConnectionButton({ slug, compact = false }: { slug: string; compact?: boolean }) {
+  const testMut = useMutation({ mutationFn: () => remotePointsApi.test(slug) })
+  const detailClass = compact ? 'max-w-[260px] truncate' : ''
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => testMut.mutate()}
+        disabled={testMut.isPending}
+        data-testid={`test-point-${slug}`}
+      >
+        {testMut.isPending
+          ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+          : <Plug className="h-3.5 w-3.5 mr-1" />}
+        {compact ? 'Tester' : 'Tester la connexion'}
+      </Button>
+      {testMut.data && (
+        <span
+          className={`flex items-center gap-1 text-xs ${testMut.data.ok ? 'text-green-600' : 'text-red-600'}`}
+          title={testMut.data.detail}
+          data-testid="test-connection-result"
+        >
+          {testMut.data.ok ? <CheckCircle className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
+          <span className={detailClass}>{testMut.data.detail}</span>
+        </span>
+      )}
+      {testMut.isError && (
+        <span
+          className="flex items-center gap-1 text-xs text-red-600"
+          title={(testMut.error as Error).message}
+          data-testid="test-connection-result"
+        >
+          <XCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className={detailClass}>{(testMut.error as Error).message}</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -613,6 +640,7 @@ function RemotePointsTab() {
                 <CopyableUrl url={connectionUrl(pt)} />
               </div>
               <div className="flex items-center gap-1">
+                <TestConnectionButton slug={pt.slug} compact />
                 <button
                   onClick={() => setEditing(e => e === pt.slug ? null : pt.slug)}
                   className="text-xs text-indigo-600 hover:underline px-2 py-1"
