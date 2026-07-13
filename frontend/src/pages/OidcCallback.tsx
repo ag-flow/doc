@@ -27,6 +27,9 @@ export function OidcCallback() {
       .catch((err: unknown) => {
         const detail = (err as { detail?: unknown }).detail
         if (detail === 'PendingValidation') setPendingValidation(true)
+        // Le detail backend est un message sûr et actionnable (« liaison OIDC
+        // refusée: email non vérifié par l'IdP »…) : l'afficher tel quel.
+        else if (typeof detail === 'string' && detail) setError(detail)
         else setError(t('login.oidcError'))
       })
   }, [navigate, t])

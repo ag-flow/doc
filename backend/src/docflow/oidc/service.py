@@ -160,6 +160,7 @@ async def issue_token_for_verified_claims(
     sub = str(id_token_claims.get("sub", ""))
     name = str(id_token_claims.get("name", email))
     if not email or not sub:
+        log.warning("oidc_login_rejected", reason="claims manquants", has_email=bool(email))
         raise HTTPException(status_code=422, detail="claims OIDC manquants (email/sub)")
     # email_verified peut être un booléen (standard OIDC) ou une chaîne "true" selon l'IdP.
     email_verified_raw = id_token_claims.get("email_verified")
@@ -192,6 +193,11 @@ async def issue_token_for_verified_claims(
                     # sinon un sub attaquant portant l'email d'un compte local (admin) en
                     # prendrait le contrôle (account takeover). Cf. AUTH-02.
                     if not email_verified:
+                        log.warning(
+                            "oidc_login_rejected",
+                            reason="email non vérifié par l'IdP",
+                            email=email,
+                        )
                         raise HTTPException(
                             status_code=403,
                             detail="liaison OIDC refusée: email non vérifié par l'IdP",
@@ -216,8 +222,10 @@ async def issue_token_for_verified_claims(
                     )
     assert user_row is not None
     if user_row["disabled"]:
+        log.warning("oidc_login_rejected", reason="compte désactivé", email=email)
         raise HTTPException(status_code=403, detail="compte désactivé")
     if not user_row["validated"]:
+        log.info("oidc_login_pending_validation", email=email)
         raise HTTPException(status_code=403, detail="PendingValidation")
 
     user = AuthUser(
