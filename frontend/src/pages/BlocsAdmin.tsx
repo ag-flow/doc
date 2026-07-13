@@ -217,8 +217,22 @@ export function BlocsAdmin() {
     enabled: Boolean(wsSlug),
   })
 
-  // Types racines uniquement (sans parent)
-  const rootTypes = types.filter((t) => !t.parent_slug)
+  // Types racines uniquement (sans parent), groupés par template d'origine
+  // (templates triés, types créés à la main en dernier).
+  const rootTypeGroups = (() => {
+    const byTemplate = new Map<string | null, FunctionalType[]>()
+    for (const tp of types.filter((ty) => !ty.parent_slug)) {
+      byTemplate.set(tp.source_template, [...(byTemplate.get(tp.source_template) ?? []), tp])
+    }
+    for (const list of byTemplate.values()) list.sort((a, b) => a.label.localeCompare(b.label))
+    const templates = [...byTemplate.keys()]
+      .filter((k): k is string => k !== null)
+      .sort((a, b) => a.localeCompare(b))
+    const groups = templates.map((tpl) => ({ template: tpl as string | null, types: byTemplate.get(tpl)! }))
+    const manual = byTemplate.get(null)
+    if (manual) groups.push({ template: null, types: manual })
+    return groups
+  })()
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -332,10 +346,21 @@ export function BlocsAdmin() {
               required
             >
               <option value="">{t('blocs.selectType')}</option>
-              {rootTypes.map((tp) => (
-                <option key={tp.slug} value={tp.slug}>
-                  {tp.label} ({tp.slug})
-                </option>
+              {rootTypeGroups.map((group) => (
+                <optgroup
+                  key={group.template ?? '__manual__'}
+                  label={
+                    group.template !== null
+                      ? t('types.templateGroup', { template: group.template })
+                      : t('types.manualGroup')
+                  }
+                >
+                  {group.types.map((tp) => (
+                    <option key={tp.slug} value={tp.slug}>
+                      {tp.label} ({tp.slug})
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
