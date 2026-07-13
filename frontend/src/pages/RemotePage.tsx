@@ -396,7 +396,15 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
           className="flex-1"
           onClick={() => {
             if (submitting) return
-            onSave({ ...form, git_repo: form.git_repo ? normalizeGitRepo(form.git_repo) : form.git_repo })
+            const body = { ...form, git_repo: form.git_repo ? normalizeGitRepo(form.git_repo) : form.git_repo }
+            if (body.auth_type === 'certificate') {
+              // Reliquats du mode password/pat : incohérents avec l'auth par
+              // certificat (le CHECK SQL vault↔ref les refuse).
+              body.auth_storage = null
+              body.auth_secret = null
+              body.auth_vault_ref = null
+            }
+            onSave(body)
           }}
           disabled={submitting}
         >

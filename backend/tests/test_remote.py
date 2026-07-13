@@ -472,3 +472,41 @@ async def test_generate_ssh_key_with_comment(db_pool: asyncpg.Pool) -> None:
 def test_generate_common_name_single_line() -> None:
     with pytest.raises(ValueError):
         RemoteCertificateGenerate(slug="x-y", label="X", common_name="a\nb")
+
+
+async def test_update_point_certificate_ignores_stale_storage_fields(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Reliquat de formulaire : auth_storage='vault' sans ref avec auth certificat
+    ne doit plus violer le CHECK rp_vault_needs_ref (500) — champs neutralisés."""
+    await svc.create_certificate(db_pool, _cert(slug="cert-sftp"), _FERNET_KEY)
+    await svc.create_point(
+        db_pool,
+        RemotePointCreate(
+            slug="sftp-pt",
+            label="SFTP",
+            point_type="sftp",
+            host="h",
+            username="root",
+            auth_type="certificate",
+            certificate_slug="cert-sftp",
+        ),
+        None,
+    )
+    updated = await svc.update_point(
+        db_pool,
+        "sftp-pt",
+        RemotePointUpdate(
+            label="SFTP",
+            point_type="sftp",
+            host="h",
+            port=22,
+            username="root",
+            auth_type="certificate",
+            auth_storage="vault",  # reliquat incohérent envoyé par un client
+            certificate_slug="cert-sftp",
+        ),
+        None,
+    )
+    assert updated.auth_storage is None
+    assert updated.certificate_slug == "cert-sftp"

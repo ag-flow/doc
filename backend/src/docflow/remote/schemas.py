@@ -110,6 +110,17 @@ def _check_auth_fields(
             raise ValueError("certificate_slug requis pour l'auth par certificat")
 
 
+def _normalize_certificate_auth(model: RemotePointCreate | RemotePointUpdate) -> None:
+    """Auth par certificat : les champs password/pat n'ont pas de sens et le
+    CHECK SQL rp_vault_needs_ref refuse auth_storage='vault' sans vault_ref —
+    on les neutralise plutôt que de laisser un reliquat de formulaire produire
+    un 500."""
+    if model.auth_type == "certificate":
+        model.auth_storage = None
+        model.auth_secret = None
+        model.auth_vault_ref = None
+
+
 class RemotePointCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -135,6 +146,7 @@ class RemotePointCreate(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> RemotePointCreate:
         _valid_slug(self.slug)
+        _normalize_certificate_auth(self)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,
@@ -168,6 +180,7 @@ class RemotePointUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> RemotePointUpdate:
+        _normalize_certificate_auth(self)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,
