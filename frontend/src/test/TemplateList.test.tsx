@@ -3,7 +3,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import '../lib/i18n'
-import TemplateList from '../pages/TemplateList'
+import TemplateList, { normalizeSourceUrl } from '../pages/TemplateList'
 import { api } from '../lib/api'
 
 vi.mock('../lib/api', async () => {
@@ -64,5 +64,33 @@ describe('TemplateList', () => {
     await waitFor(() =>
       expect(screen.getByTestId('error')).toBeInTheDocument()
     )
+  })
+})
+
+describe('normalizeSourceUrl', () => {
+  it('convertit une URL github blob vers son équivalent raw', () => {
+    expect(
+      normalizeSourceUrl('https://github.com/ag-flow/ressources/blob/main/Docflow/templates/toc.txt'),
+    ).toBe('https://raw.githubusercontent.com/ag-flow/ressources/refs/heads/main/Docflow/templates')
+  })
+
+  it('convertit une URL github tree vers son équivalent raw', () => {
+    expect(
+      normalizeSourceUrl('https://github.com/ag-flow/ressources/tree/main/Docflow/templates/'),
+    ).toBe('https://raw.githubusercontent.com/ag-flow/ressources/refs/heads/main/Docflow/templates')
+  })
+
+  it('strippe toc.txt et le slash final sans toucher au reste', () => {
+    expect(normalizeSourceUrl('https://templates.example.com/base/toc.txt')).toBe(
+      'https://templates.example.com/base',
+    )
+    expect(normalizeSourceUrl('https://templates.example.com/base/')).toBe(
+      'https://templates.example.com/base',
+    )
+  })
+
+  it('laisse une URL raw déjà correcte inchangée', () => {
+    const raw = 'https://raw.githubusercontent.com/ag-flow/ressources/refs/heads/main/Docflow/templates'
+    expect(normalizeSourceUrl(raw)).toBe(raw)
   })
 })
