@@ -113,6 +113,18 @@ def _connect_ftp(*, host: str, port: int, username: str, password: str, tls: boo
     return ftp
 
 
+def _ftp_makedirs(ftp: Any, remote_dir: str) -> None:
+    """mkdir -p distant : descend segment par segment, crée ce qui manque."""
+    if remote_dir.startswith("/"):
+        ftp.cwd("/")
+    for segment in (s for s in remote_dir.split("/") if s):
+        try:
+            ftp.cwd(segment)
+        except ftplib.error_perm:
+            ftp.mkd(segment)
+            ftp.cwd(segment)
+
+
 def _upload_ftp(
     dump_path: pathlib.Path,
     filename: str,
@@ -126,7 +138,7 @@ def _upload_ftp(
 ) -> None:
     with _connect_ftp(host=host, port=port, username=username, password=password, tls=tls) as ftp:
         if remote_dir:
-            ftp.cwd(remote_dir)
+            _ftp_makedirs(ftp, remote_dir)
         with dump_path.open("rb") as f:
             ftp.storbinary(f"STOR {filename}", f)
 
@@ -166,6 +178,17 @@ def _connect_sftp(
     return ssh
 
 
+def _sftp_makedirs(sftp: Any, remote_dir: str) -> None:
+    """mkdir -p distant : crée chaque segment manquant du chemin (idempotent)."""
+    path = "/" if remote_dir.startswith("/") else ""
+    for segment in (s for s in remote_dir.split("/") if s):
+        path = f"{path.rstrip('/')}/{segment}" if path else segment
+        try:
+            sftp.stat(path)
+        except OSError:
+            sftp.mkdir(path)
+
+
 def _upload_sftp(
     dump_path: pathlib.Path,
     filename: str,
@@ -189,6 +212,8 @@ def _upload_sftp(
     try:
         sftp = ssh.open_sftp()
         try:
+            if remote_dir:
+                _sftp_makedirs(sftp, remote_dir)
             remote_path = f"{remote_dir}/{filename}" if remote_dir else filename
             sftp.put(str(dump_path), remote_path)
         finally:
