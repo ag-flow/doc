@@ -150,3 +150,52 @@ async def test_git_mirror_round_trip(db_pool: asyncpg.Pool, tmp_path: pathlib.Pa
         assert report2.docs_updated == 0
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", _WS)
+
+
+async def test_restore_from_remote_round_trip(
+    db_pool: asyncpg.Pool, tmp_path: pathlib.Path, monkeypatch
+) -> None:
+    """Réalimentation via l'API : clone du remote (auth simulée) + restore_tree."""
+    from docflow.backup import restore_remote
+
+    await _build_fixture(db_pool)
+    try:
+        wk: uuid.UUID = await db_pool.fetchval(
+            "SELECT workspace_technical_key FROM workspace WHERE slug=$1", _WS
+        )
+        remote_dir = _seed_remote(tmp_path)
+        await run_git_sync(
+            db_pool,
+            job_id=uuid.uuid4(),
+            workspace_technical_key=wk,
+            workspace_slug=_WS,
+            last_change_seq=0,
+            remote_url=str(remote_dir),
+            git_branch="main",
+            git_base_path=None,
+            ssh_key_path=None,
+            repos_root=tmp_path / "repos",
+        )
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", _WS)
+
+        async def fake_auth(pool, slug, settings):  # type: ignore[no-untyped-def]
+            return str(remote_dir), None, {}
+
+        class _FakePoint:
+            point_type = "git"
+            git_branch = "main"
+
+        async def fake_get_point(pool, slug):  # type: ignore[no-untyped-def]
+            return _FakePoint()
+
+        monkeypatch.setattr(restore_remote, "resolve_git_auth", fake_auth)
+        monkeypatch.setattr(restore_remote.rp_svc, "get_point", fake_get_point)
+
+        report = await restore_remote.restore_from_remote(
+            db_pool, object(), remote_point_slug="whatever"
+        )
+        assert report.errors == []
+        assert report.workspaces_created == 1
+        assert report.docs_created == 2
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", _WS)

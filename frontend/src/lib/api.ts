@@ -1134,6 +1134,18 @@ export const backupApi = {
   deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
   listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
   runJob: (slug: string) => api.post<BackupJobRunOut>(`/admin/backup/jobs/${slug}/run`, {}),
+  /** Réalimente l'instance depuis le miroir git d'un remote point (additif, idempotent). */
+  restoreGit: (body: { remote_point_slug: string; git_base_path?: string | null; workspace?: string | null }) =>
+    api.post<RestoreGitReport>('/admin/backup/restore-git', body),
+}
+
+export interface RestoreGitReport {
+  workspaces_created: number
+  blocks_created: number
+  types_imported: number
+  docs_created: number
+  docs_updated: number
+  errors: string[]
 }
 
 export interface RemoteCertificateGenerateBody {

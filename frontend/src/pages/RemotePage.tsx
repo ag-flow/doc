@@ -1007,6 +1007,91 @@ function BackupTab() {
           <JobCard key={j.id} job={j} onEdit={() => startEdit(j)} />
         ))}
       </div>
+
+      <RestoreGitPanel gitPoints={gitPoints} />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Restauration depuis le miroir git — réalimente l'instance (additif)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RestoreGitPanel({ gitPoints }: { gitPoints: RemotePointOut[] }) {
+  const qc = useQueryClient()
+  const [pointSlug, setPointSlug] = useState('')
+  const [basePath, setBasePath] = useState('')
+  const [workspace, setWorkspace] = useState('')
+
+  const restoreMut = useMutation({
+    mutationFn: () => backupApi.restoreGit({
+      remote_point_slug: pointSlug,
+      git_base_path: basePath.trim() || null,
+      workspace: workspace.trim() || null,
+    }),
+    onSuccess: () => void qc.invalidateQueries(),
+  })
+  const report = restoreMut.data
+
+  return (
+    <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-gray-900">Restauration depuis le miroir git</p>
+        <p className="text-xs text-gray-500 mt-1">
+          Clone le dépôt de sauvegarde du remote point et recrée workspaces, types, blocs et
+          documents. <span className="font-medium">Additif et rejouable</span> : crée ce qui manque,
+          réaligne les documents existants, ne supprime jamais rien.
+        </p>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Remote point git</label>
+          <select
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+            value={pointSlug}
+            onChange={e => setPointSlug(e.target.value)}
+            data-testid="restore-git-point"
+          >
+            <option value="">-- choisir --</option>
+            {gitPoints.map(p => <option key={p.slug} value={p.slug}>{p.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Sous-répertoire dans le repo (optionnel)</label>
+          <Input placeholder="backup/docflow" value={basePath} onChange={e => setBasePath(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Workspace seul (optionnel)</label>
+          <Input placeholder="vide = tous" value={workspace} onChange={e => setWorkspace(e.target.value)} />
+        </div>
+      </div>
+      <Button
+        size="sm"
+        onClick={() => restoreMut.mutate()}
+        disabled={!pointSlug || restoreMut.isPending}
+        data-testid="restore-git-btn"
+      >
+        {restoreMut.isPending
+          ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Restauration en cours…</>
+          : 'Restaurer'}
+      </Button>
+      {restoreMut.isError && (
+        <p className="text-xs text-red-600">{(restoreMut.error as Error).message}</p>
+      )}
+      {report && (
+        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 space-y-1" data-testid="restore-git-report">
+          <p>
+            {report.workspaces_created} workspace(s) créé(s) · {report.blocks_created} bloc(s) ·
+            {' '}{report.types_imported} import(s) de types · {report.docs_created} document(s) créé(s) ·
+            {' '}{report.docs_updated} réaligné(s)
+          </p>
+          {report.errors.length > 0 && (
+            <ul className="text-red-600 list-disc pl-4">
+              {report.errors.map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }

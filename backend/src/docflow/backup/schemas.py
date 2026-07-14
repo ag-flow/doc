@@ -118,3 +118,24 @@ class BackupJobRunOut(BaseModel):
     files_written: int | None
     files_deleted: int | None
     commit_sha: str | None
+
+
+class RestoreGitIn(BaseModel):
+    """Corps de POST /admin/backup/restore-git — réalimentation depuis le miroir."""
+
+    model_config = {"extra": "forbid"}
+
+    remote_point_slug: str
+    # Sous-répertoire du repo où vit l'export (le git_base_path du job d'origine).
+    git_base_path: str | None = None
+    # Restreindre à un seul workspace (slug) ; None = tous.
+    workspace: str | None = None
+
+
+class RestoreGitReport(BaseModel):
+    workspaces_created: int
+    blocks_created: int
+    types_imported: int
+    docs_created: int
+    docs_updated: int
+    errors: list[str]

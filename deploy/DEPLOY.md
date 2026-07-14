@@ -509,8 +509,16 @@ toujours par le dump Postgres (§ ci-dessus).
 
 #### Restaurer depuis le miroir git
 
-La commande de restauration recrée workspaces, types (via l'importeur de
-templates), blocs et documents depuis un clone du repo de sauvegarde.
+**Depuis l'IHM (voie normale)** : sur l'instance à réalimenter, recréer un
+certificat SSH (Générer, clé publique à déclarer en deploy key du repo de
+sauvegarde — lecture suffit) et un remote point git, puis onglet
+**Sauvegarde → Restauration depuis le miroir git** : choisir le point, le
+sous-répertoire éventuel (le « base path » du job d'origine), et Restaurer.
+Le bilan (créés/réalignés/erreurs) s'affiche à la fin.
+
+**En ligne de commande (équivalent)** : la CLI recrée workspaces, types (via
+l'importeur de templates), blocs et documents depuis un clone du repo de
+sauvegarde.
 **Additive et idempotente** : elle crée ce qui manque, réaligne
 titre/contenu/propriétés des documents existants, et ne supprime jamais rien
 — utilisable aussi bien sur une instance vide (serveur neuf, sans dump) que
