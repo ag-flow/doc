@@ -507,22 +507,50 @@ Il ne contient en revanche **ni les comptes, ni les certificats/secrets, ni
 l'historique des versions** : la restauration complète d'une instance passe
 toujours par le dump Postgres (§ ci-dessus).
 
-#### Restaurer depuis le miroir git
+#### Restaurer depuis le miroir git — procédure IHM (voie normale)
 
-**Depuis l'IHM (voie normale)** : sur l'instance à réalimenter, recréer un
-certificat SSH (Générer, clé publique à déclarer en deploy key du repo de
-sauvegarde — lecture suffit) et un remote point git, puis onglet
-**Sauvegarde → Restauration depuis le miroir git** : choisir le point, le
-sous-répertoire éventuel (le « base path » du job d'origine), et Restaurer.
-Le bilan (créés/réalignés/erreurs) s'affiche à la fin.
+Scénario type : l'instance a été recréée de zéro (installation § Procédure
+complète, premier compte admin créé) et on veut la réalimenter depuis le
+repo git de sauvegarde. Tout se passe dans **Connexions & Sauvegarde**.
 
-**En ligne de commande (équivalent)** : la CLI recrée workspaces, types (via
-l'importeur de templates), blocs et documents depuis un clone du repo de
-sauvegarde.
-**Additive et idempotente** : elle crée ce qui manque, réaligne
-titre/contenu/propriétés des documents existants, et ne supprime jamais rien
-— utilisable aussi bien sur une instance vide (serveur neuf, sans dump) que
-par-dessus une instance vivante.
+La restauration est **additive et rejouable** : elle crée ce qui manque,
+réaligne titre/contenu/propriétés des documents existants (matching par
+chemin de slugs), et ne supprime jamais rien. On peut la relancer sans
+risque, y compris par-dessus une instance vivante.
+
+1. **Certificats → Ajouter** : type « Clé SSH (git / SFTP) », label/slug
+   (ex. `restore-github`), **Générer**. Copier la clé publique depuis la
+   liste des certificats.
+2. **Côté GitHub/GitLab** : sur le repo de sauvegarde → *Settings → Deploy
+   keys → Add deploy key* → coller la clé publique. **La lecture seule
+   suffit** pour restaurer (ne cocher *Allow write access* que si ce point
+   servira aussi au job de sauvegarde ensuite).
+3. **Remote Points → Ajouter** : type Git, hébergeur GitHub, dépôt
+   `organisation/nom` (ex. `ag-flow/backup-docflow`), branche `main`, auth
+   « Clé SSH » → certificat de l'étape 1 → Enregistrer → **Tester** → ✓.
+4. **Sauvegarde → Restauration depuis le miroir git** :
+   - *Remote point git* : le point de l'étape 3 ;
+   - *Sous-répertoire* : le « base path » que le job de sauvegarde
+     d'origine utilisait (vide si l'export est à la racine du repo) ;
+   - *Workspace seul* : optionnel, pour ne réalimenter qu'un workspace ;
+   - **Restaurer**. L'opération clone le repo côté serveur (shallow, détruit
+     après usage) et peut durer plusieurs minutes sur un gros miroir.
+5. **Lire le bilan** affiché sous le bouton : workspaces/blocs créés,
+   imports de types, documents créés/réalignés, et la liste des erreurs
+   éventuelles — un élément en échec (conflit de types, propriété disparue)
+   n'empêche pas la restauration du reste. Corriger la cause puis
+   **relancer** : seuls les éléments manquants seront repris.
+6. **Vérifier** : arborescence des workspaces/blocs/documents, page Types
+   (types et hiérarchie recréés), contenu de quelques documents.
+7. **Remettre la sauvegarde en route** : recréer le job git (et donner le
+   droit d'écriture à la deploy key, ou créer une clé dédiée), relancer un
+   run manuel.
+
+**Ce que le miroir ne restaure pas** (contrairement au dump Postgres) :
+comptes utilisateurs, certificats/secrets, historique des versions,
+artefacts binaires. Pour une reprise totale → § Cas 2 avec le dump.
+
+#### Restaurer depuis le miroir git — en ligne de commande (équivalent)
 
 ```bash
 # 1. Cloner le repo de sauvegarde sur la VM
