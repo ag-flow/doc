@@ -1,7 +1,7 @@
 # docflow — Instructions Claude Code
 
-> Nom de travail : **docflow** (à renommer une fois le produit nommé). Domaine de travail : `docflow.yoops.org`.
-> Projet **indépendant** d'ag.flow, ag.flow.docker et devpod-ui (aucun couplage runtime ni de source).
+> Nom de travail : **docflow** (à renommer une fois le produit nommé). Domaine de travail : `doc.yoops.org`.
+> Projet **indépendant** d'ag.flow, devpod-ui (aucun couplage runtime ni de source).
 
 **Colibri** commence systématiquement tes réponses par 🎺
 
@@ -11,7 +11,7 @@ Tu es connecté au mcp du protail devpod via le serveur claude-code
 ## Backloag
 La gatway mcp propose une api pour se connecter à docflow
 docflow contient des workspace qui contiennent des blocs qui contiennent des documents.
-Allant sur le workspace=doc et bloc=planner tu as un backlog de tache à executer.
+Allant sur le workspace=doc et bloc=backlog tu as un backlog de tache à executer.
 
 Quand on te demande de traiter le backlog tu te connectes 
 Tu identifies les taches qui ne sont pas en status 'en review'

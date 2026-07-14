@@ -83,7 +83,7 @@ export function Breadcrumb() {
   if (crumbs.length === 0) return null
 
   return (
-    <div className="flex items-center gap-1 px-6 py-2.5 text-sm border-b border-gray-100 bg-white">
+    <div className="sticky top-0 z-30 flex items-center gap-1 px-6 py-2.5 text-sm border-b border-gray-100 bg-white">
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1">
           {i > 0 && <ChevronRight size={13} className="text-gray-300 shrink-0" />}
