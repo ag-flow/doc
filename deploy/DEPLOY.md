@@ -442,6 +442,28 @@ documents (`.md` + propriétés du `.json`).
 
 Il ne contient en revanche **ni les comptes, ni les certificats/secrets, ni
 l'historique des versions** : la restauration complète d'une instance passe
-toujours par le dump Postgres (§ ci-dessus). L'import retour automatisé du
-miroir est un chantier séparé — aujourd'hui la reprise depuis git est manuelle
-ou scriptée via l'API/MCP.
+toujours par le dump Postgres (§ ci-dessus).
+
+#### Restaurer depuis le miroir git
+
+La commande de restauration recrée workspaces, types (via l'importeur de
+templates), blocs et documents depuis un clone du repo de sauvegarde.
+**Additive et idempotente** : elle crée ce qui manque, réaligne
+titre/contenu/propriétés des documents existants, et ne supprime jamais rien
+— utilisable aussi bien sur une instance vide (serveur neuf, sans dump) que
+par-dessus une instance vivante.
+
+```bash
+# 1. Cloner le repo de sauvegarde sur la VM
+git clone git@github.com:org/backup-repo.git /tmp/restore-docflow
+
+# 2. Copier le clone dans le conteneur app et lancer la restauration
+docker compose -f /opt/docflow/docker-compose.prod.yml cp /tmp/restore-docflow app:/tmp/restore
+docker compose -f /opt/docflow/docker-compose.prod.yml exec app \
+  python -m docflow.backup.restore_git_cli /tmp/restore            # tout
+#                            … restore_git_cli /tmp/restore --workspace doc   # un seul workspace
+```
+
+La commande affiche le bilan (workspaces/blocs/documents créés, documents
+réalignés) et sort en erreur si un élément n'a pas pu être restauré (conflit
+de types, propriété disparue…) — les autres éléments sont restaurés quand même.
