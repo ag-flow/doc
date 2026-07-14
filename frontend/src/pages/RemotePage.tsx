@@ -674,6 +674,7 @@ function JobCard({ job, onEdit }: { job: BackupJobOut; onEdit: () => void }) {
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
       git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
+      retention_count: job.retention_count,
     }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['backup-jobs'] }),
   })
@@ -807,7 +808,7 @@ function BackupTab() {
     slug: '', label: '', strategy: 'git_sync', enabled: true,
     remote_point_slug: '', workspace_slug: null,
     schedule_cron: null, schedule_every_seconds: 3600,
-    git_base_path: null, include_restore_env: false,
+    git_base_path: null, include_restore_env: false, retention_count: null,
   }
   const [form, setForm] = useState<BackupJobBody & { slug: string }>(emptyForm)
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('daily')
@@ -821,6 +822,7 @@ function BackupTab() {
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
       git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
+      retention_count: job.retention_count,
     })
     // Retrouver le mode de planification depuis les valeurs enregistrées
     if (job.schedule_cron === '0 * * * *') {
@@ -934,6 +936,21 @@ function BackupTab() {
                 JWT_SECRET, DATABASE_URL). À réserver à un serveur de backup de confiance.
               </span>
             </label>
+          )}
+          {form.strategy === 'db_dump' && (
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">
+                Nombre de dumps à conserver sur le serveur (vide = tout garder)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="ex. 7 — les archives plus anciennes (et leur .key) sont supprimées après chaque run"
+                value={form.retention_count ?? ''}
+                onChange={e => setForm(p => ({ ...p, retention_count: e.target.value ? Number(e.target.value) : null }))}
+                data-testid="retention-count"
+              />
+            </div>
           )}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Planification</label>

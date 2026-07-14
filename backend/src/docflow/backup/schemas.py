@@ -35,6 +35,9 @@ class BackupJobCreate(BaseModel):
     # Dump uniquement : dépose aussi docflow_restore.env (clé de chiffrement,
     # JWT_SECRET, DATABASE_URL) dans le répertoire de destination.
     include_restore_env: bool = False
+    # Dump uniquement : nombre d'archives à conserver sur le remote
+    # (les plus anciennes au-delà sont purgées, .key compris). None = tout garder.
+    retention_count: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate(self) -> BackupJobCreate:
@@ -61,6 +64,7 @@ class BackupJobUpdate(BaseModel):
     schedule_every_seconds: int | None = Field(default=None, gt=0)
     git_base_path: str | None = None
     include_restore_env: bool = False
+    retention_count: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate(self) -> BackupJobUpdate:
@@ -86,6 +90,7 @@ class BackupJobOut(BaseModel):
     schedule_every_seconds: int | None
     git_base_path: str | None
     include_restore_env: bool = False
+    retention_count: int | None = None
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None

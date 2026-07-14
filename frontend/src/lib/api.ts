@@ -1087,6 +1087,7 @@ export interface BackupJobOut {
   schedule_every_seconds: number | null
   git_base_path: string | null
   include_restore_env: boolean
+  retention_count: number | null
   created_at: string
   updated_at: string
   last_run_at: string | null
@@ -1118,6 +1119,8 @@ export interface BackupJobBody {
   git_base_path?: string | null
   /** Dump uniquement : dépose <dump>.key (clé de chiffrement, JWT, DSN) à côté de l'archive. */
   include_restore_env?: boolean
+  /** Dump uniquement : nombre d'archives à conserver sur le remote (null = tout garder). */
+  retention_count?: number | null
 }
 
 export const backupApi = {
