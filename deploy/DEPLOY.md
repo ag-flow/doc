@@ -346,21 +346,56 @@ Cron quotidien (2h) :
 
 ### Prérequis vital — à faire AVANT d'avoir besoin de restaurer
 
-Le dump ne contient **pas** les fichiers de configuration de l'hôte. Sauvegarder
-hors du serveur (coffre, vault, autre machine) :
+Le dump ne contient **pas** la configuration de l'hôte. Ce qu'il faut comprendre
+sur les trois secrets de `/data/.env` :
 
-- **`/data/.env`** — contient `ENCRYPTION_KEY` (clé Fernet) et `JWT_SECRET`.
-  Sans la **même** `ENCRYPTION_KEY`, tout ce qui est chiffré en base est
-  définitivement illisible après restauration : clés privées des certificats
-  (backup git/SFTP), secrets locaux des remote points, headers de webhooks,
-  secrets d'automates. C'est le point de non-retour n°1.
-- **`/data/pg_password.txt`** — mot de passe Postgres du compose.
+| Secret | Perte = quoi ? | Doit venir de l'ancienne instance ? |
+|---|---|---|
+| `ENCRYPTION_KEY` | **Irréversible** : certificats (clés privées git/SFTP), secrets locaux des remote points, headers webhooks, secrets d'automates — illisibles à jamais | **OUI, impérativement** |
+| `JWT_SECRET` | Sessions ouvertes invalidées (les clés API survivent : hashées en base) | Souhaitable, pas critique |
+| `DATABASE_URL` / `pg_password.txt` | Rien — doit simplement correspondre au Postgres **local** de l'instance qui restaure | **NON** (garder ceux du nouveau serveur) |
 
-Le worker interne pousse les dumps sur le remote point du job (`docflow_<scope>_<date>_<heure>_<jobid>.dump`
-sur la machine FTP/FTPS/SFTP cible) ; la commande manuelle ci-dessus (§ Sauvegarde) les
-range dans `/data/backups`. Dans les deux cas, récupérer l'archive voulue avant de commencer.
+Deux façons d'avoir `ENCRYPTION_KEY`/`JWT_SECRET` sous la main le jour J :
+
+1. **Automatique** : cocher « Déposer le matériel de restauration » sur le job
+   dump — chaque archive `docflow_…​.dump` est alors accompagnée d'un
+   `docflow_…​.key` (mêmes nom et date) contenant les trois valeurs.
+2. **Manuelle** : copier `/data/.env` hors du serveur (coffre, vault, autre machine).
+
+Le worker pousse les archives sur le remote point du job
+(`docflow_<scope>_<date>_<heure>_<jobid>.dump`) ; la plus récente se repère par
+son nom : `ls -1 docflow_*.dump | sort | tail -1` sur la machine de backup.
+
+### La voie rapide — `deploy/restore.sh`
+
+Le script automatise toute la mécanique des deux cas ci-dessous : report des
+clés depuis un `.key` (auto-détecté à côté de l'archive), arrêt de l'app,
+`pg_restore` strict, redémarrage (avec relecture de `/data/.env`) uniquement
+si la restauration est complète, et rappel des vérifications. Confirmation
+littérale `RESTORE` exigée (`--yes` pour les scripts).
+
+```bash
+# par-dessus l'instance (cas 1) :
+sudo ./deploy/restore.sh /data/backups/docflow_all_…​.dump
+
+# serveur neuf (cas 2), après l'installation de base — le .key posé à côté
+# du .dump est détecté tout seul, sinon --key :
+sudo ./deploy/restore.sh /data/backups/docflow_all_…​.dump --key /data/backups/docflow_all_…​.key
+```
+
+Les deux cas ci-dessous détaillent ce que le script fait — utiles pour
+comprendre, déboguer, ou opérer à la main.
 
 ### Cas 1 — restauration par-dessus une instance existante
+
+Le `/data/.env` en place est le bon (même instance) : rien à toucher côté
+configuration. Si l'archive vient du worker, la rapatrier d'abord depuis la
+machine de backup (nom `docflow_<scope>_<date>_<heure>_<jobid>.dump`) :
+
+```bash
+mkdir -p /data/backups
+scp root@machine-backup:/chemin/docflow_all_…​.dump /data/backups/
+```
 
 La restauration **écrase le contenu existant** de la base (`--clean --if-exists`) : elle droppe
 chaque objet avant de le recréer, puis s'arrête à la première erreur (`--exit-on-error`) au lieu
@@ -388,38 +423,66 @@ dump plus récent que l'image déployée** : mettre d'abord l'image à jour.
 
 ### Cas 2 — serveur tout neuf (reprise après sinistre)
 
-1. **Provisionner la machine** comme une installation normale (§ Procédure
-   complète, étapes 2-4) **mais sans créer le premier compte admin** — les
-   comptes reviendront avec le dump.
-2. **Restaurer la configuration hôte sauvegardée** — étape critique :
-   ```bash
-   # depuis la sauvegarde hors-serveur
-   cp .env.sauvegarde /data/.env               # même ENCRYPTION_KEY / JWT_SECRET qu'avant
-   cp pg_password.sauvegarde /data/pg_password.txt
-   chmod 600 /data/.env /data/pg_password.txt
-   ```
-   Si `/data/.env` a été perdu et régénéré : l'instance restaurée démarrera,
-   mais tous les secrets chiffrés en base sont perdus (recréer certificats,
-   secrets de remote points, webhooks…) et les sessions JWT sont invalidées.
-3. **Rapatrier l'archive** depuis la machine de sauvegarde :
+> **Le point qui ne pardonne pas** : `ENCRYPTION_KEY` et `JWT_SECRET` doivent
+> être en place dans `/data/.env` **avant le premier démarrage de l'app**.
+> L'installeur, lui, en génère des neufs — d'où l'ordre ci-dessous. En
+> revanche, mot de passe Postgres et `DATABASE_URL` restent ceux du nouveau
+> serveur : le rôle Postgres est créé localement, le dump ne contient pas
+> les mots de passe de rôles.
+
+1. **Provisionner la machine et lancer l'installation** (§ Procédure complète,
+   étapes 2-4). Laisser l'installeur générer `/data/.env` et démarrer la
+   stack ; **ne pas créer le premier compte admin** (les comptes reviendront
+   avec le dump) et **ne rien configurer d'autre**.
+2. **Rapatrier depuis la machine de backup** l'archive la plus récente et son
+   `.key` (ou le `/data/.env` sauvegardé manuellement) :
    ```bash
    mkdir -p /data/backups
-   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_*.dump /data/backups/
+   # la plus récente : ls -1 docflow_*.dump | sort | tail -1 côté backup
+   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_JOBID.dump /data/backups/
+   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_JOBID.key  /data/backups/
+   chmod 600 /data/backups/*.key
    ```
-4. **Démarrer Postgres seul**, restaurer, puis démarrer l'app :
+3. **Reporter les clés de l'ancienne instance dans `/data/.env`** — c'est ce
+   que fait `restore.sh --key` (avec sauvegarde `.bak` de l'ancien fichier) ;
+   à la main :
    ```bash
-   docker compose -f /opt/docflow/docker-compose.prod.yml up -d postgres
-   docker compose -f /opt/docflow/docker-compose.prod.yml exec -T postgres \
-     pg_restore -U docflow -d docflow --clean --if-exists --no-owner --exit-on-error \
-     < /data/backups/docflow_all_YYYYMMDD_HHMMSS_….dump
-   echo "code de sortie pg_restore : $?"        # doit être 0
-   docker compose -f /opt/docflow/docker-compose.prod.yml up -d app
+   grep '^ENCRYPTION_KEY=\|^JWT_SECRET=' /data/backups/docflow_all_…​.key
+   # → recopier ces deux lignes dans /data/.env (à la place des valeurs générées)
    ```
-5. **Vérifier** : connexion avec un compte d'avant le sinistre, présence des
-   workspaces/documents, `Tester` sur les remote points (valide que
-   l'`ENCRYPTION_KEY` déchiffre bien les certificats), un run de backup manuel.
-6. Reconfigurer ce qui vit hors base : reverse proxy TLS, DNS, et la
-   sauvegarde de `/data/.env` du nouveau serveur.
+   **Ne PAS toucher** au `DATABASE_URL` du nouveau `/data/.env` ni à
+   `/data/pg_password.txt` : ils correspondent au Postgres local. La ligne
+   `DATABASE_URL` du `.key` ne sert qu'à documenter l'ancienne topologie.
+   Sans le `.key` ni copie de l'ancien `.env` : la restauration reste
+   possible, mais tous les secrets chiffrés sont perdus (recréer
+   certificats — et re-déclarer leurs clés publiques côté GitHub /
+   `authorized_keys` —, secrets de remote points, webhooks).
+4. **Arrêter l'app et restaurer** (l'app doit être arrêtée : `--clean` droppe
+   les objets sous ses pieds ; Postgres reste up) :
+   ```bash
+   cd /opt/docflow
+   docker compose -f docker-compose.prod.yml stop app
+   docker compose -f docker-compose.prod.yml exec -T postgres \
+     pg_restore -U docflow -d docflow --clean --if-exists --no-owner --exit-on-error \
+     < /data/backups/docflow_all_YYYYMMDD_HHMMSS_JOBID.dump
+   echo "code de sortie pg_restore : $?"        # doit être 0
+   ```
+5. **Redémarrer l'app** — le `/data/.env` modifié n'est relu qu'à la
+   re-création du conteneur, d'où `up -d --force-recreate` et non `start` :
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --force-recreate app
+   ```
+   Au boot, `apply` rejoue les migrations manquantes si le dump est plus
+   ancien que l'image (jamais l'inverse : cf. Cas 1).
+6. **Vérifier, dans cet ordre** :
+   - connexion avec un compte d'avant le sinistre (auth = données du dump) ;
+   - workspaces/documents présents ;
+   - **Tester** sur chaque remote point → ✓ (c'est LE test de
+     l'`ENCRYPTION_KEY` : il déchiffre la clé privée du certificat) ;
+   - un run de backup manuel de bout en bout.
+7. **Reconfigurer ce qui vit hors base et hors dump** : reverse proxy TLS,
+   DNS, et remettre en place la sauvegarde du nouveau `/data/.env` (ou
+   recocher l'option `.key` sur le job dump restauré).
 
 ### Et le miroir git ?
 
