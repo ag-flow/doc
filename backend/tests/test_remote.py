@@ -542,3 +542,32 @@ def test_git_repo_rejects_ambiguous_value() -> None:
             auth_type="certificate",
             certificate_slug="c",
         )
+
+
+async def test_migration_0039_normalizes_legacy_git_repo(db_pool: asyncpg.Pool) -> None:
+    """La migration de données réduit une URL collée héritée à org/nom.
+
+    Insertion directe (en contournant la validation applicative, comme les
+    lignes historiques), puis rejeu de l'UPDATE de la migration — idempotent.
+    """
+    import pathlib
+
+    await db_pool.execute(
+        """
+        INSERT INTO remote_point
+            (slug, label, point_type, host, username, git_provider, git_repo,
+             git_branch, auth_type, auth_storage, auth_secret_enc)
+        VALUES ('legacy-git', 'Legacy', 'git', 'github.com', 'git', 'github',
+                'https://github.com/ag-flow/backup-docflow.git', 'main', 'pat',
+                'local', 'x'::bytea)
+        """
+    )
+    try:
+        sql = (
+            pathlib.Path(__file__).parent.parent / "migrations" / "0039_normalize_git_repo.sql"
+        ).read_text(encoding="utf-8")
+        await db_pool.execute(sql)
+        repo = await db_pool.fetchval("SELECT git_repo FROM remote_point WHERE slug = 'legacy-git'")
+        assert repo == "ag-flow/backup-docflow"
+    finally:
+        await db_pool.execute("DELETE FROM remote_point WHERE slug = 'legacy-git'")
