@@ -35,7 +35,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 /** Layout principal : sidebar fixe à gauche + contenu scrollable. */
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50">
       <Sidebar />
       <div className="ml-14 flex flex-1 flex-col overflow-hidden">
         <Breadcrumb />
