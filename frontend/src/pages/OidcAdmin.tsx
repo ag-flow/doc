@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { oidcApi, type OidcConfigOut } from '../lib/api'
+import { type AuthMethodsOut, oidcApi, setupApi, type OidcConfigOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { SecretInput } from '../components/SecretInput'
@@ -62,6 +62,8 @@ export function OidcAdmin() {
     <div className="p-8 max-w-2xl">
       <h1 className="mb-1 text-2xl font-semibold text-gray-900">{t('oidc.title')}</h1>
       <p className="mb-6 text-sm text-gray-500">{t('oidc.subtitle')}</p>
+
+      <LocalLoginFlag />
 
       <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-6">
         {/* Issuer */}
@@ -301,5 +303,36 @@ function KeycloakGuide() {
         </div>
       </div>
     </details>
+  )
+}
+
+
+/** État du break-glass LOCAL_LOGIN_ENABLED — lecture seule : le flag vit dans
+ *  /data/.env (volontairement hors base) pour rester actionnable même quand
+ *  l'OIDC est en panne. */
+function LocalLoginFlag() {
+  const { data } = useQuery<AuthMethodsOut>({
+    queryKey: ['auth-methods'],
+    queryFn: () => setupApi.methods(),
+  })
+  if (!data) return null
+  return (
+    <div
+      className={`mb-6 rounded border px-4 py-3 text-sm ${data.local
+        ? 'border-gray-200 bg-gray-50 text-gray-600'
+        : 'border-amber-200 bg-amber-50 text-amber-800'}`}
+      data-testid="local-login-flag"
+    >
+      <p className="font-medium">
+        Connexion locale : {data.local ? 'activée' : 'désactivée (mode OIDC-only)'}
+      </p>
+      <p className="mt-1 text-xs">
+        Piloté par <span className="font-mono">LOCAL_LOGIN_ENABLED</span> dans{' '}
+        <span className="font-mono">/data/.env</span> (redémarrage de l'app requis).
+        C'est volontairement un réglage fichier, pas un réglage en base : en cas de
+        panne OIDC, remettre <span className="font-mono">true</span> et redémarrer
+        suffit à retrouver l'accès local.
+      </p>
+    </div>
   )
 }

@@ -24,8 +24,11 @@ async def auth_methods(request: Request) -> AuthMethodsOut:
     async with pool.acquire() as conn:
         count = await setup_service.user_count(conn)
         oidc_cfg = await oidc_service.get_public_config(pool)
+    # Tant qu'aucun utilisateur n'existe, le flag est ignoré : le wizard et le
+    # premier login doivent rester possibles quoi qu'il arrive.
+    local_enabled: bool = request.app.state.settings.local_login_enabled or count == 0
     return AuthMethodsOut(
-        local=True,
+        local=local_enabled,
         oidc=oidc_cfg is not None,
         needs_setup=count == 0,
     )
@@ -40,6 +43,9 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         count = await setup_service.user_count(conn)
         if count == 0:
             raise HTTPException(status_code=503, detail="SetupRequired")
+        if not request.app.state.settings.local_login_enabled:
+            # Mode OIDC-only (LOCAL_LOGIN_ENABLED=false dans /data/.env).
+            raise HTTPException(status_code=403, detail="connexion locale désactivée")
         row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.email)
 
     _invalid = HTTPException(status_code=401, detail="identifiants invalides")

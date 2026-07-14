@@ -17,6 +17,7 @@ export function Login() {
   const [loading, setLoading] = useState(false)
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
   const [oidcAvailable, setOidcAvailable] = useState(false)
+  const [localEnabled, setLocalEnabled] = useState(true)
   const [oidcLoading, setOidcLoading] = useState(false)
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export function Login() {
       .methods()
       .then((m) => {
         setOidcAvailable(m.oidc)
+        setLocalEnabled(m.local)
         setNeedsSetup(m.needs_setup)
       })
       .catch(() => setNeedsSetup(false))
@@ -71,6 +73,12 @@ export function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
         <h1 className="mb-6 text-2xl font-semibold text-gray-900">{t('login.title')}</h1>
+        {!localEnabled && (
+          <p className="mb-4 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600" data-testid="local-disabled-notice">
+            {t('login.localDisabled')}
+          </p>
+        )}
+        {localEnabled && (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -108,6 +116,7 @@ export function Login() {
             {t('login.submit')}
           </Button>
         </form>
+        )}
         {oidcAvailable && (
           <>
             <div className="my-4 flex items-center gap-3">

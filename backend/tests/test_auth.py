@@ -343,3 +343,35 @@ def test_can_disable_admin_when_another_local_exists(
         )
     assert resp.status_code == 200
     assert resp.json()["disabled"] is True
+
+
+def test_local_login_disabled_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+) -> None:
+    """LOCAL_LOGIN_ENABLED=false : mire sans connexion locale, /auth/login en 403.
+    Ignoré tant qu'aucun utilisateur n'existe (le wizard doit rester possible)."""
+    monkeypatch.setenv("LOCAL_LOGIN_ENABLED", "false")
+    with _make_client(monkeypatch, test_schema_url) as client:
+        # Aucun utilisateur : le flag est ignoré (setup wizard prioritaire)
+        m = client.get("/api/auth/methods").json()
+        assert m["local"] is True
+        assert m["needs_setup"] is True
+
+        # Créer l'admin via le wizard (sans login : il sera refusé ensuite)
+        r = client.post(
+            "/api/setup/init-admin",
+            json={"username": "bootstrap", "email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
+        )
+        assert r.status_code in (200, 201)
+
+        # Un utilisateur existe : le mode OIDC-only s'applique
+        m = client.get("/api/auth/methods").json()
+        assert m["local"] is False
+        r = client.post(
+            "/api/auth/login",
+            json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
+        )
+        assert r.status_code == 403
+        assert "désactivée" in r.json()["detail"]

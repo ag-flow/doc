@@ -163,6 +163,7 @@ Variables optionnelles disponibles dans `/data/.env` :
 | `HARPOCRATE_URL` | *(vide)* | URL Harpocrate pour résoudre les `${vault://…}` (automates, OIDC) |
 | `AUTOMATION_TICK_SECONDS` | `60` | Intervalle du worker d'automates (secondes) |
 | `LOG_LEVEL` | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOCAL_LOGIN_ENABLED` | `true` | `false` = mode OIDC-only : la mire ne propose plus la connexion locale. Break-glass : remettre `true` + redémarrer en cas de panne OIDC. Ignoré tant qu'aucun utilisateur n'existe. |
 
 > **`ENCRYPTION_KEY` est critique.** Une fois des données chiffrées en base (wallets, secrets, headers webhook), cette clé ne doit plus jamais changer. La sauvegarder en dehors du serveur.
 

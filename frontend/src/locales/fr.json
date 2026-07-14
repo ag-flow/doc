@@ -10,7 +10,8 @@
     "oidcLoading": "Connexion SSO en cours…",
     "oidcError": "Échec de la connexion SSO",
     "pendingValidation": "Votre compte est en attente de validation par un administrateur.",
-    "backToLogin": "Retour à la connexion"
+    "backToLogin": "Retour à la connexion",
+    "localDisabled": "La connexion locale est désactivée sur cette instance — utilisez le SSO."
   },
   "nav": {
     "workspaces": "Workspaces",

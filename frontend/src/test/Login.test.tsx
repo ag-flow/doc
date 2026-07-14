@@ -104,4 +104,19 @@ describe('Login', () => {
     fireEvent.click(button)
     await waitFor(() => expect(beginOidcLogin).toHaveBeenCalledTimes(1))
   })
+  it('hides the local form and shows a notice when local login is disabled', async () => {
+    vi.mocked(setupApi.methods).mockResolvedValue({
+      local: false,
+      oidc: true,
+      needs_setup: false,
+    })
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByTestId('local-disabled-notice')).toBeInTheDocument()
+    expect(screen.queryByTestId('email-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('oidc-button')).toBeInTheDocument()
+  })
 })
