@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, Eye, EyeOff, Link2, Maximize2, Minimize2 } from 'lucide-react'
+import { Check, Copy, Eye, EyeOff, Link2, Loader2, Maximize2, Minimize2, Save } from 'lucide-react'
 import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 
 const _SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
@@ -358,9 +358,12 @@ export function DocumentEditor() {
           <Button
             onClick={() => void doSave()}
             disabled={status === 'idle' || status === 'saving'}
+            title={t('editor.save')}
             data-testid="document-save-btn"
           >
-            {status === 'saving' ? t('editor.saving') : t('editor.save')}
+            {status === 'saving'
+              ? <Loader2 size={15} className="animate-spin" />
+              : <Save size={15} />}
           </Button>
         </div>
       </div>
@@ -427,8 +430,11 @@ export function DocumentEditor() {
                   size="sm"
                   onClick={() => void doSave()}
                   disabled={status === 'idle' || status === 'saving'}
+                  title={t('editor.save')}
                 >
-                  {status === 'saving' ? t('editor.saving') : t('editor.save')}
+                  {status === 'saving'
+                    ? <Loader2 size={14} className="animate-spin" />
+                    : <Save size={14} />}
                 </Button>
                 <button
                   type="button"

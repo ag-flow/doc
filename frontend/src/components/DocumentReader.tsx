@@ -44,9 +44,9 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   return (
     <div className="p-6" data-testid="document-reader">
       <div className="mx-auto max-w-[1200px]">
-        <div className="mb-6 flex items-start gap-4">
+        <div className="mb-6 flex items-center gap-4">
           <h1 className="text-3xl font-bold leading-tight text-gray-900">{doc.title}</h1>
-          <div className="ml-auto flex shrink-0 items-center gap-2 pt-1">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {doc.exposed && (
               <button
                 type="button"
