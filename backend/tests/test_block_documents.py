@@ -397,19 +397,31 @@ async def _add_epic_statut_default(pool: asyncpg.Pool) -> None:
     from docflow.schemas.properties import PropertiesDefUpdate
 
     await prop_svc.create_def(
-        pool, _WS, "epic",
+        pool,
+        _WS,
+        "epic",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
-        pool, _WS, "epic", "statut",
+        pool,
+        _WS,
+        "epic",
+        "statut",
         AllowedValueCreate(slug="a-cadrer", label="À cadrer", position=0),
     )
     await prop_svc.create_allowed_value(
-        pool, _WS, "epic", "statut",
+        pool,
+        _WS,
+        "epic",
+        "statut",
         AllowedValueCreate(slug="cadre", label="Cadré", position=1),
     )
     await prop_svc.update_def(
-        pool, _WS, "epic", "statut", PropertiesDefUpdate(default_value="a-cadrer"),
+        pool,
+        _WS,
+        "epic",
+        "statut",
+        PropertiesDefUpdate(default_value="a-cadrer"),
     )
 
 
@@ -446,7 +458,9 @@ async def test_create_document_service_instantiates_default(
         db_pool,
         _WS,
         DocumentCreate(
-            title="Epic sans statut", slug="epic-sans-statut", block_id=block_id,
+            title="Epic sans statut",
+            slug="epic-sans-statut",
+            block_id=block_id,
             functional_type_slug="epic",
         ),
     )

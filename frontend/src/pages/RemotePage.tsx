@@ -673,7 +673,7 @@ function JobCard({ job, onEdit }: { job: BackupJobOut; onEdit: () => void }) {
       label: job.label, enabled: !job.enabled,
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
-      git_base_path: job.git_base_path,
+      git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
     }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['backup-jobs'] }),
   })
@@ -807,7 +807,7 @@ function BackupTab() {
     slug: '', label: '', strategy: 'git_sync', enabled: true,
     remote_point_slug: '', workspace_slug: null,
     schedule_cron: null, schedule_every_seconds: 3600,
-    git_base_path: null,
+    git_base_path: null, include_restore_env: false,
   }
   const [form, setForm] = useState<BackupJobBody & { slug: string }>(emptyForm)
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('daily')
@@ -820,7 +820,7 @@ function BackupTab() {
       slug: job.slug, label: job.label, strategy: job.strategy, enabled: job.enabled,
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
-      git_base_path: job.git_base_path,
+      git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
     })
     // Retrouver le mode de planification depuis les valeurs enregistrées
     if (job.schedule_cron === '0 * * * *') {
@@ -919,6 +919,22 @@ function BackupTab() {
             </label>
             <Input placeholder={form.strategy === 'git_sync' ? 'backup/docflow' : '/backups/docflow'} value={form.git_base_path ?? ''} onChange={e => setForm(p => ({ ...p, git_base_path: e.target.value || null }))} />
           </div>
+          {form.strategy === 'db_dump' && (
+            <label className="flex items-start gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.include_restore_env ?? false}
+                onChange={e => setForm(p => ({ ...p, include_restore_env: e.target.checked }))}
+                data-testid="include-restore-env"
+              />
+              <span>
+                Déposer le matériel de restauration à côté de chaque archive
+                (<span className="font-mono text-xs">&lt;dump&gt;.key</span> : clé de chiffrement,
+                JWT_SECRET, DATABASE_URL). À réserver à un serveur de backup de confiance.
+              </span>
+            </label>
+          )}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Planification</label>
             <div className="flex gap-2">

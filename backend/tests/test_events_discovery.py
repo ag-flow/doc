@@ -62,9 +62,7 @@ def test_schema_catalog_and_versions(
         assert schema["hash"].startswith("sha256:")
 
         # Inconnus → 404 explicite.
-        assert (
-            client.get("/api/schemas/docflow.nope.v1/versions", headers=hdrs).status_code == 404
-        )
+        assert client.get("/api/schemas/docflow.nope.v1/versions", headers=hdrs).status_code == 404
         assert (
             client.get(
                 "/api/schemas/docflow.document.created.v1/versions/2", headers=hdrs

@@ -25,6 +25,7 @@ _JOB_SELECT = """
            w.slug AS workspace_slug,
            db.slug AS data_block_slug,
            j.schedule_cron, j.schedule_every_seconds, j.git_base_path,
+           j.include_restore_env,
            j.created_at, j.updated_at,
            (SELECT r.started_at FROM backup_job_run r
             WHERE r.job_id = j.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
@@ -96,8 +97,8 @@ async def create_job(pool: asyncpg.Pool, body: BackupJobCreate) -> BackupJobOut:
                 INSERT INTO backup_job
                     (slug, label, strategy, enabled, remote_point_id,
                      workspace_technical_key, data_block_ref, schedule_cron,
-                     schedule_every_seconds, git_base_path)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                     schedule_every_seconds, git_base_path, include_restore_env)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                 """,
                 body.slug,
                 body.label,
@@ -109,6 +110,7 @@ async def create_job(pool: asyncpg.Pool, body: BackupJobCreate) -> BackupJobOut:
                 body.schedule_cron,
                 body.schedule_every_seconds,
                 body.git_base_path,
+                body.include_restore_env,
             )
         except asyncpg.UniqueViolationError as e:
             raise HTTPException(409, "slug de job déjà utilisé") from e
@@ -140,7 +142,8 @@ async def update_job(pool: asyncpg.Pool, slug: str, body: BackupJobUpdate) -> Ba
             UPDATE backup_job SET
                 label=$2, enabled=$3, remote_point_id=$4,
                 workspace_technical_key=$5, data_block_ref=$6, schedule_cron=$7,
-                schedule_every_seconds=$8, git_base_path=$9, updated_at=now()
+                schedule_every_seconds=$8, git_base_path=$9,
+                include_restore_env=$10, updated_at=now()
             WHERE slug=$1
             """,
             slug,
@@ -152,6 +155,7 @@ async def update_job(pool: asyncpg.Pool, slug: str, body: BackupJobUpdate) -> Ba
             body.schedule_cron,
             body.schedule_every_seconds,
             body.git_base_path,
+            body.include_restore_env,
         )
         row = await conn.fetchrow(_JOB_SELECT + " WHERE j.slug = $1", slug)
     assert row is not None

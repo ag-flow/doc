@@ -203,6 +203,7 @@ const jobBase: BackupJobOut = {
   schedule_cron: null,
   schedule_every_seconds: 3600,
   git_base_path: null,
+  include_restore_env: false,
   created_at: '',
   updated_at: '',
   last_run_at: null,

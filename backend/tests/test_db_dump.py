@@ -92,7 +92,8 @@ def test_upload_ftp_with_remote_dir(tmp_path: pathlib.Path) -> None:
 
     mock_ftp.connect.assert_called_once_with("ftp.ex.com", 21, timeout=60)
     mock_ftp.login.assert_called_once_with("u", "p")
-    mock_ftp.cwd.assert_called_once_with("/backups")
+    # mkdir -p distant : descente segment par segment depuis la racine
+    assert [c.args[0] for c in mock_ftp.cwd.call_args_list] == ["/", "backups"]
     mock_ftp.storbinary.assert_called_once()
     mock_ftp.prot_p.assert_not_called()
 
@@ -330,3 +331,42 @@ def test_run_db_dump_ftp_missing_password(tmp_path: pathlib.Path) -> None:
                 dumps_root=tmp_path,
             )
     assert list(tmp_path.glob("*.dump")) == []
+
+
+def test_run_db_dump_uploads_restore_key(tmp_path: pathlib.Path) -> None:
+    """include_restore_env : un fichier <dump>.key part à côté de l'archive,
+    même nom de base, et les fichiers temporaires locaux sont nettoyés."""
+
+    def fake_pg_dump(database_url: str, dest: pathlib.Path) -> None:
+        dest.write_bytes(b"dump")
+
+    mock_sftp = MagicMock()
+    mock_ssh = MagicMock()
+    mock_ssh.open_sftp.return_value = mock_sftp
+
+    with (
+        patch("docflow.backup.db_dump._run_pg_dump", side_effect=fake_pg_dump),
+        patch("paramiko.SSHClient", return_value=mock_ssh),
+    ):
+        run_db_dump(
+            job_id=_JOB_ID,
+            workspace_slug=None,
+            database_url="postgresql://localhost/db",
+            point_type="sftp",
+            host="sftp.ex.com",
+            port=22,
+            username="u",
+            password=None,
+            ssh_key_path="/data/key.pem",
+            remote_dir=None,
+            dumps_root=tmp_path,
+            restore_env="ENCRYPTION_KEY=k\n",
+        )
+
+    uploaded = [c.args[1] for c in mock_sftp.put.call_args_list]
+    assert len(uploaded) == 2
+    dump_name = next(n for n in uploaded if n.endswith(".dump"))
+    key_name = next(n for n in uploaded if n.endswith(".key"))
+    assert key_name == dump_name.removesuffix(".dump") + ".key"
+    # nettoyage local : ni dump ni .key ne restent
+    assert list(tmp_path.iterdir()) == []

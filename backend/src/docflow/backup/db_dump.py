@@ -246,6 +246,23 @@ def test_sftp_connection(
         ssh.close()
 
 
+def build_restore_env(*, database_url: str, jwt_secret: str, encryption_key: str | None) -> str:
+    """Contenu du fichier .key déposé à côté du dump (include_restore_env).
+
+    C'est le matériel hors-dump nécessaire à une restauration sur serveur
+    neuf : sans ENCRYPTION_KEY, les secrets chiffrés du dump sont illisibles.
+    """
+    lines = [
+        "# Matériel de restauration docflow — généré par le job de sauvegarde.",
+        "# À PROTÉGER : permet de déchiffrer les secrets du dump associé.",
+        f"DATABASE_URL={database_url}",
+        f"JWT_SECRET={jwt_secret}",
+    ]
+    if encryption_key is not None:
+        lines.append(f"ENCRYPTION_KEY={encryption_key}")
+    return "\n".join(lines) + "\n"
+
+
 def run_db_dump(
     *,
     job_id: uuid.UUID,
@@ -259,15 +276,20 @@ def run_db_dump(
     ssh_key_path: str | None,
     remote_dir: str | None,
     dumps_root: pathlib.Path,
+    restore_env: str | None = None,
 ) -> dict[str, Any]:
     """Exécute un pg_dump et upload le fichier sur le remote point.
 
+    `restore_env` : contenu du fichier compagnon `<dump>.key` (matériel de
+    restauration) — déposé dans le même répertoire que le dump.
     Bloquant — à appeler depuis run_in_executor.
     Retourne un dict compatible avec finish_run.
     """
     dumps_root.mkdir(parents=True, exist_ok=True)
     filename = _dump_filename(workspace_slug, job_id)
     dump_path = dumps_root / filename
+    key_filename = filename.removesuffix(".dump") + ".key"
+    key_path = dumps_root / key_filename
 
     try:
         log.info("db_dump_start", job_id=str(job_id), filename=filename)
@@ -276,31 +298,38 @@ def run_db_dump(
         log.info("db_dump_done", filename=filename, size_bytes=size)
 
         eff_port = port or _DEFAULT_PORTS.get(point_type, 21)
+        to_upload: list[tuple[pathlib.Path, str]] = [(dump_path, filename)]
+        if restore_env is not None:
+            key_path.write_text(restore_env, encoding="utf-8")
+            key_path.chmod(0o600)
+            to_upload.append((key_path, key_filename))
 
         if point_type == "sftp":
-            _upload_sftp(
-                dump_path,
-                filename,
-                host=host,
-                port=eff_port,
-                username=username,
-                password=password,
-                ssh_key_path=ssh_key_path,
-                remote_dir=remote_dir,
-            )
+            for src, name in to_upload:
+                _upload_sftp(
+                    src,
+                    name,
+                    host=host,
+                    port=eff_port,
+                    username=username,
+                    password=password,
+                    ssh_key_path=ssh_key_path,
+                    remote_dir=remote_dir,
+                )
         elif point_type in ("ftp", "ftps"):
             if not password:
                 raise RuntimeError(f"mot de passe requis pour {point_type.upper()}")
-            _upload_ftp(
-                dump_path,
-                filename,
-                host=host,
-                port=eff_port,
-                username=username,
-                password=password,
-                remote_dir=remote_dir,
-                tls=(point_type == "ftps"),
-            )
+            for src, name in to_upload:
+                _upload_ftp(
+                    src,
+                    name,
+                    host=host,
+                    port=eff_port,
+                    username=username,
+                    password=password,
+                    remote_dir=remote_dir,
+                    tls=(point_type == "ftps"),
+                )
         else:
             raise RuntimeError(f"type de point non supporté pour db_dump : {point_type!r}")
 
@@ -315,3 +344,5 @@ def run_db_dump(
     finally:
         if dump_path.exists():
             dump_path.unlink()
+        if key_path.exists():
+            key_path.unlink()
