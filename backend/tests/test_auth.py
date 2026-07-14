@@ -375,3 +375,55 @@ def test_local_login_disabled_flag(
         )
         assert r.status_code == 403
         assert "désactivée" in r.json()["detail"]
+
+
+def test_oidc_only_via_config_and_reactivation(
+    monkeypatch: pytest.MonkeyPatch,
+    test_schema_url: str,
+    clean_admin_users: None,
+) -> None:
+    """Le flag de la page OIDC ne désactive le local QUE si l'OIDC est activé ;
+    désactiver l'OIDC réactive automatiquement la connexion locale."""
+    with _make_client(monkeypatch, test_schema_url) as client:
+        token = _setup_admin(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        body = {
+            "issuer": "https://issuer.example.com",
+            "client_id": "docflow",
+            "client_secret_ref": "inline-secret",
+            "enabled": False,
+            "disable_local_login": True,
+        }
+        # OIDC inactif : le flag est sans effet → local reste proposé
+        assert client.put("/api/admin/oidc", json=body, headers=headers).status_code == 200
+        assert client.get("/api/auth/methods").json()["local"] is True
+
+        # OIDC activé + flag → mode OIDC-only effectif
+        body["enabled"] = True
+        client.put("/api/admin/oidc", json=body, headers=headers)
+        assert client.get("/api/auth/methods").json()["local"] is False
+        r = client.post(
+            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+        )
+        assert r.status_code == 403
+
+        # Désactivation de l'OIDC → le local revient tout seul
+        body["enabled"] = False
+        client.put("/api/admin/oidc", json=body, headers=headers)
+        assert client.get("/api/auth/methods").json()["local"] is True
+
+        # Surcharge break-glass : env true force le local malgré le mode OIDC-only
+        body["enabled"] = True
+        client.put("/api/admin/oidc", json=body, headers=headers)
+
+    try:
+        monkeypatch.setenv("LOCAL_LOGIN_ENABLED", "true")
+        with _make_client(monkeypatch, test_schema_url) as client:
+            assert client.get("/api/auth/methods").json()["local"] is True
+    finally:
+        # Ne pas laisser la base en mode OIDC-only pour les tests suivants
+        monkeypatch.delenv("LOCAL_LOGIN_ENABLED", raising=False)
+        with _make_client(monkeypatch, test_schema_url) as client:
+            body["enabled"] = False
+            body["disable_local_login"] = False
+            client.put("/api/admin/oidc", json=body, headers=headers)

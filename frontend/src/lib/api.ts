@@ -773,6 +773,8 @@ export interface OidcConfigOut {
   issuer: string
   client_id: string
   enabled: boolean
+  /** Mode OIDC-only — sans effet tant que enabled est false. */
+  disable_local_login: boolean
   created_at: string
   updated_at: string
 }
@@ -782,6 +784,7 @@ export const oidcApi = {
   set: (body: {
     issuer: string
     client_id: string
+    disable_local_login?: boolean
     client_secret_ref: string
     enabled: boolean
   }) => api.put<OidcConfigOut>('/admin/oidc', body),

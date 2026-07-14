@@ -20,6 +20,7 @@ export function OidcAdmin() {
   const [clientId, setClientId] = useState('')
   const [secretRef, setSecretRef] = useState('')
   const [enabled, setEnabled] = useState(false)
+  const [disableLocal, setDisableLocal] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -28,12 +29,13 @@ export function OidcAdmin() {
       setIssuer(config.issuer)
       setClientId(config.client_id)
       setEnabled(config.enabled)
+      setDisableLocal(config.disable_local_login)
     }
   }, [config])
 
   const saveMutation = useMutation({
     mutationFn: () =>
-      oidcApi.set({ issuer, client_id: clientId, client_secret_ref: secretRef, enabled }),
+      oidcApi.set({ issuer, client_id: clientId, client_secret_ref: secretRef, enabled, disable_local_login: disableLocal }),
     onSuccess: (updated) => {
       void queryClient.setQueryData(['oidc-config'], updated)
       setSaveMsg(t('oidc.saved'))
@@ -123,6 +125,26 @@ export function OidcAdmin() {
             {enabled ? t('oidc.enabledOn') : t('oidc.enabledOff')}
           </span>
         </div>
+
+        {/* Mode OIDC-only */}
+        <label className="flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={disableLocal}
+            onChange={(e) => { setDisableLocal(e.target.checked); setSaveMsg(null) }}
+            data-testid="oidc-disable-local"
+          />
+          <span>
+            Désactiver la connexion locale (mode OIDC-only).
+            <span className="block text-xs text-gray-500">
+              Sans effet tant que l'OIDC n'est pas activé — et désactiver l'OIDC
+              réactive automatiquement la connexion locale. En cas de panne :
+              surcharge <span className="font-mono">LOCAL_LOGIN_ENABLED=true</span>{' '}
+              dans <span className="font-mono">/data/.env</span> + redémarrage.
+            </span>
+          </span>
+        </label>
 
         {saveMsg && (
           <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700"
@@ -327,11 +349,11 @@ function LocalLoginFlag() {
         Connexion locale : {data.local ? 'activée' : 'désactivée (mode OIDC-only)'}
       </p>
       <p className="mt-1 text-xs">
-        Piloté par <span className="font-mono">LOCAL_LOGIN_ENABLED</span> dans{' '}
-        <span className="font-mono">/data/.env</span> (redémarrage de l'app requis).
-        C'est volontairement un réglage fichier, pas un réglage en base : en cas de
-        panne OIDC, remettre <span className="font-mono">true</span> et redémarrer
-        suffit à retrouver l'accès local.
+        Piloté par la case « mode OIDC-only » ci-dessous (effective seulement
+        quand l'OIDC est activé). Surcharge break-glass possible :{' '}
+        <span className="font-mono">LOCAL_LOGIN_ENABLED=true</span> dans{' '}
+        <span className="font-mono">/data/.env</span> + redémarrage force le
+        retour de la connexion locale en cas de panne OIDC.
       </p>
     </div>
   )

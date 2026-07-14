@@ -12,11 +12,11 @@ class Settings(BaseSettings):
 
     database_url: str
     jwt_secret: Secret
-    # Break-glass OIDC-only : false = mire sans connexion locale (/auth/login
-    # refuse en 403). Volontairement piloté par /data/.env et non par la base :
-    # en cas de panne OIDC, remettre true + redémarrer suffit à retrouver
-    # l'accès local. Ignoré tant qu'aucun utilisateur n'existe (setup wizard).
-    local_login_enabled: bool = True
+    # Surcharge break-glass du mode OIDC-only, pilotée par /data/.env :
+    # absent (None) = suivre le réglage de la page de configuration OIDC ;
+    # true = connexion locale FORCÉE active (panne OIDC) ; false = forcée
+    # inactive. Ignorée tant qu'aucun utilisateur n'existe (setup wizard).
+    local_login_enabled: bool | None = None
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.

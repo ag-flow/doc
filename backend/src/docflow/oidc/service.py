@@ -15,7 +15,8 @@ from docflow.secrets.secret import Secret
 log = structlog.get_logger(__name__)
 
 _SELECT = """
-SELECT id, issuer, client_id, client_secret_ref, enabled, created_at, updated_at
+SELECT id, issuer, client_id, client_secret_ref, enabled, disable_local_login,
+       created_at, updated_at
 FROM oidc_config LIMIT 1
 """
 
@@ -26,6 +27,7 @@ def _to_out(row: asyncpg.Record) -> OidcConfigOut:
         issuer=row["issuer"],
         client_id=row["client_id"],
         enabled=row["enabled"],
+        disable_local_login=row["disable_local_login"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -73,6 +75,13 @@ async def get_login_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
     return public.model_copy(update={"authorization_endpoint": endpoint})
 
 
+async def local_login_disabled_by_oidc(pool: asyncpg.Pool) -> bool:
+    """Mode OIDC-only effectif : le flag ne compte que si l'OIDC est activé —
+    désactiver l'OIDC réactive donc automatiquement la connexion locale."""
+    row = await pool.fetchrow("SELECT enabled, disable_local_login FROM oidc_config LIMIT 1")
+    return bool(row and row["enabled"] and row["disable_local_login"])
+
+
 async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfigOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -80,30 +89,33 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
             if existing is None:
                 row = await conn.fetchrow(
                     """
-                    INSERT INTO oidc_config (issuer, client_id, client_secret_ref, enabled)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO oidc_config
+                        (issuer, client_id, client_secret_ref, enabled, disable_local_login)
+                    VALUES ($1, $2, $3, $4, $5)
                     RETURNING id, issuer, client_id, client_secret_ref,
-                              enabled, created_at, updated_at
+                              enabled, disable_local_login, created_at, updated_at
                     """,
                     data.issuer,
                     data.client_id,
                     data.client_secret_ref,
                     data.enabled,
+                    data.disable_local_login,
                 )
             else:
                 row = await conn.fetchrow(
                     """
                     UPDATE oidc_config
                     SET issuer = $1, client_id = $2, client_secret_ref = $3,
-                        enabled = $4, updated_at = now()
-                    WHERE id = $5
+                        enabled = $4, disable_local_login = $5, updated_at = now()
+                    WHERE id = $6
                     RETURNING id, issuer, client_id, client_secret_ref,
-                              enabled, created_at, updated_at
+                              enabled, disable_local_login, created_at, updated_at
                     """,
                     data.issuer,
                     data.client_id,
                     data.client_secret_ref,
                     data.enabled,
+                    data.disable_local_login,
                     existing["id"],
                 )
     assert row is not None
