@@ -447,7 +447,13 @@ export const docsApi = {
   patchDocument: (
     ws: string,
     docId: string,
-    body: { title?: string; content?: string; expected_version?: number; slug?: string },
+    body: {
+      title?: string; content?: string; expected_version?: number; slug?: string
+      /** null = déplacer à la racine du bloc. */
+      parent_id?: string | null
+      /** Conversion de type à la volée lors d'un déplacement. */
+      functional_type_slug?: string
+    },
   ) => api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}`, body),
 
   getDocumentValues: (ws: string, docId: string) =>
