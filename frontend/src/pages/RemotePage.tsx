@@ -329,14 +329,35 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Input placeholder="Host / URL" value={form.host} onChange={e => setForm(p => ({ ...p, host: e.target.value }))} />
-        <Input placeholder="Username" value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} />
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">
+            {isGit ? "Hôte git (serveur, pas l'URL du repo)" : 'Hôte (IP ou nom DNS)'}
+          </label>
+          <Input placeholder={isGit ? 'github.com' : '192.168.1.10'} value={form.host} onChange={e => setForm(p => ({ ...p, host: e.target.value }))} />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">
+            {isGit ? 'Utilisateur SSH (git chez GitHub/GitLab)' : 'Utilisateur'}
+          </label>
+          <Input placeholder={isGit ? 'git' : 'root'} value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} />
+        </div>
       </div>
 
       {isGit && (
         <div className="grid grid-cols-2 gap-3">
-          <Input placeholder="Repo (org/nom)" value={form.git_repo ?? ''} onChange={e => setForm(p => ({ ...p, git_repo: e.target.value }))} />
-          <Input placeholder="Branche (défaut: main)" value={form.git_branch ?? 'main'} onChange={e => setForm(p => ({ ...p, git_branch: e.target.value }))} />
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Dépôt — organisation/nom</label>
+            <Input placeholder="ag-flow/backup-docflow" value={form.git_repo ?? ''} onChange={e => setForm(p => ({ ...p, git_repo: e.target.value }))} />
+            <p className="text-xs text-gray-400 mt-1">
+              L'identifiant du dépôt chez l'hébergeur, pas un chemin (une URL collée est
+              réduite automatiquement). Le sous-répertoire de destination se choisit sur
+              le job de sauvegarde.
+            </p>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Branche</label>
+            <Input placeholder="main" value={form.git_branch ?? 'main'} onChange={e => setForm(p => ({ ...p, git_branch: e.target.value }))} />
+          </div>
         </div>
       )}
 
@@ -618,7 +639,7 @@ function RunStatus({ status }: { status: string }) {
   return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
 }
 
-function JobCard({ job }: { job: BackupJobOut }) {
+function JobCard({ job, onEdit }: { job: BackupJobOut; onEdit: () => void }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState(false)
   const { data: runs = [], refetch } = useQuery({
@@ -649,7 +670,7 @@ function JobCard({ job }: { job: BackupJobOut }) {
   })
   const toggleMut = useMutation({
     mutationFn: () => backupApi.updateJob(job.slug, {
-      label: job.label, strategy: job.strategy, enabled: !job.enabled,
+      label: job.label, enabled: !job.enabled,
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
       git_base_path: job.git_base_path,
@@ -699,6 +720,13 @@ function JobCard({ job }: { job: BackupJobOut }) {
             className={`text-xs px-2 py-1 rounded-full font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
           >
             {job.enabled ? 'Actif' : 'Inactif'}
+          </button>
+          <button
+            onClick={onEdit}
+            className="text-xs text-indigo-600 hover:underline px-1"
+            data-testid={`edit-job-${job.slug}`}
+          >
+            Éditer
           </button>
           <button onClick={() => { setExpanded(v => !v); if (!expanded) void refetch() }} className="text-gray-400 hover:text-gray-600">
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -773,27 +801,59 @@ function BackupTab() {
   const { data: jobs = [] } = useQuery({ queryKey: ['backup-jobs'], queryFn: backupApi.listJobs, refetchInterval: 15000 })
   const { data: points = [] } = useQuery({ queryKey: ['remote-points'], queryFn: remotePointsApi.list })
   const [showForm, setShowForm] = useState(false)
+  const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [form, setForm] = useState<BackupJobBody & { slug: string }>({
+  const emptyForm: BackupJobBody & { slug: string } = {
     slug: '', label: '', strategy: 'git_sync', enabled: true,
     remote_point_slug: '', workspace_slug: null,
     schedule_cron: null, schedule_every_seconds: 3600,
     git_base_path: null,
-  })
+  }
+  const [form, setForm] = useState<BackupJobBody & { slug: string }>(emptyForm)
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('daily')
   const [dailyTime, setDailyTime] = useState('03:00')
 
-  const createMut = useMutation({
+  function startEdit(job: BackupJobOut) {
+    setErr(null)
+    setEditingSlug(job.slug)
+    setForm({
+      slug: job.slug, label: job.label, strategy: job.strategy, enabled: job.enabled,
+      remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
+      schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
+      git_base_path: job.git_base_path,
+    })
+    // Retrouver le mode de planification depuis les valeurs enregistrées
+    if (job.schedule_cron === '0 * * * *') {
+      setScheduleMode('hourly')
+    } else if (job.schedule_cron) {
+      setScheduleMode('daily')
+      const time = cronToDailyTime(job.schedule_cron)
+      if (time) setDailyTime(time)
+    } else {
+      setScheduleMode('interval')
+    }
+    setShowForm(true)
+  }
+
+  const saveMut = useMutation({
     mutationFn: () => {
       const schedule = scheduleMode === 'interval'
         ? { schedule_cron: null, schedule_every_seconds: form.schedule_every_seconds }
         : scheduleMode === 'daily'
           ? { schedule_cron: dailyTimeToCron(dailyTime), schedule_every_seconds: null }
           : { schedule_cron: '0 * * * *', schedule_every_seconds: null }
-      const body = { ...form, ...schedule }
-      return backupApi.createJob(body as BackupJobBody & { slug: string })
+      // slug et stratégie immuables : jamais dans le corps d'un update
+      // (le backend, extra=forbid, les rejette)
+      const { slug, strategy, ...rest } = { ...form, ...schedule }
+      return editingSlug
+        ? backupApi.updateJob(editingSlug, rest)
+        : backupApi.createJob({ ...rest, strategy, slug })
     },
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['backup-jobs'] }); setShowForm(false) },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+      setShowForm(false)
+      setEditingSlug(null)
+    },
     onError: (e) => setErr((e as Error).message),
   })
 
@@ -805,7 +865,22 @@ function BackupTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">{(jobs as BackupJobOut[]).length} job{(jobs as BackupJobOut[]).length !== 1 ? 's' : ''}</p>
-        <Button size="sm" onClick={() => { setShowForm(v => !v); setErr(null) }}>
+        <Button
+          size="sm"
+          onClick={() => {
+            setErr(null)
+            if (showForm) {
+              setShowForm(false)
+              setEditingSlug(null)
+            } else {
+              setEditingSlug(null)
+              setForm(emptyForm)
+              setScheduleMode('daily')
+              setDailyTime('03:00')
+              setShowForm(true)
+            }
+          }}
+        >
           <Plus className="h-3.5 w-3.5 mr-1" />{showForm ? 'Annuler' : 'Nouveau job'}
         </Button>
       </div>
@@ -813,13 +888,13 @@ function BackupTab() {
       {showForm && (
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, slug: slugify(v) })) }} />
-            <Input placeholder="slug (auto)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
+            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, ...(editingSlug ? {} : { slug: slugify(v) }) })) }} />
+            <Input placeholder="slug (auto)" value={form.slug} disabled={editingSlug !== null} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Stratégie</label>
-              <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={form.strategy} onChange={e => setForm(p => ({ ...p, strategy: e.target.value as 'git_sync' | 'db_dump', remote_point_slug: '' }))}>
+              <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm disabled:opacity-60" disabled={editingSlug !== null} value={form.strategy} onChange={e => setForm(p => ({ ...p, strategy: e.target.value as 'git_sync' | 'db_dump', remote_point_slug: '' }))}>
                 <option value="git_sync">Sync git (documents)</option>
                 <option value="db_dump">Dump DB (pg_dump)</option>
               </select>
@@ -832,10 +907,18 @@ function BackupTab() {
               </select>
             </div>
           </div>
-          <Input placeholder="Workspace (vide = toute l'instance)" value={form.workspace_slug ?? ''} onChange={e => setForm(p => ({ ...p, workspace_slug: e.target.value || null }))} />
-          {form.strategy === 'git_sync' && (
-            <Input placeholder="Sous-répertoire dans le repo (optionnel)" value={form.git_base_path ?? ''} onChange={e => setForm(p => ({ ...p, git_base_path: e.target.value || null }))} />
-          )}
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Workspace (vide = toute l'instance)</label>
+            <Input placeholder="mon-workspace" value={form.workspace_slug ?? ''} onChange={e => setForm(p => ({ ...p, workspace_slug: e.target.value || null }))} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">
+              {form.strategy === 'git_sync'
+                ? 'Sous-répertoire de destination dans le repo (optionnel)'
+                : 'Répertoire de destination sur le serveur (optionnel, créé si absent)'}
+            </label>
+            <Input placeholder={form.strategy === 'git_sync' ? 'backup/docflow' : '/backups/docflow'} value={form.git_base_path ?? ''} onChange={e => setForm(p => ({ ...p, git_base_path: e.target.value || null }))} />
+          </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Planification</label>
             <div className="flex gap-2">
@@ -871,15 +954,25 @@ function BackupTab() {
             </div>
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
-          <Button size="sm" className="w-full" onClick={() => createMut.mutate()} disabled={createMut.isPending || !form.slug || !form.label || !form.remote_point_slug}>
-            {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Créer le job'}
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending || !form.slug || !form.label || !form.remote_point_slug}
+            data-testid="save-job-btn"
+          >
+            {saveMut.isPending
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : editingSlug ? 'Enregistrer' : 'Créer le job'}
           </Button>
         </div>
       )}
 
       <div className="space-y-3">
         {(jobs as BackupJobOut[]).length === 0 && !showForm && <p className="text-sm text-gray-400 text-center py-6">Aucun job de sauvegarde configuré.</p>}
-        {(jobs as BackupJobOut[]).map((j: BackupJobOut) => <JobCard key={j.id} job={j} />)}
+        {(jobs as BackupJobOut[]).map((j: BackupJobOut) => (
+          <JobCard key={j.id} job={j} onEdit={() => startEdit(j)} />
+        ))}
       </div>
     </div>
   )

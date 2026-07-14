@@ -287,3 +287,46 @@ describe('normalizeGitRepo', () => {
     expect(normalizeGitRepo('ag-flow/backup-docflow')).toBe('ag-flow/backup-docflow')
   })
 })
+
+describe('RemotePage — édition de job de sauvegarde', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(remotePointsApi.list).mockResolvedValue([gitPoint])
+    vi.mocked(remoteCertsApi.list).mockResolvedValue([])
+    vi.mocked(backupApi.listJobs).mockResolvedValue([
+      { ...jobBase, schedule_cron: '0 3 * * *', schedule_every_seconds: null },
+    ])
+  })
+
+  it('ouvre le formulaire pré-rempli et envoie un PUT sans slug ni strategy', async () => {
+    vi.mocked(backupApi.updateJob).mockResolvedValue(jobBase)
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+    fireEvent.click(await screen.findByTestId('edit-job-job-1'))
+
+    const label = (await screen.findByPlaceholderText('Label')) as HTMLInputElement
+    expect(label.value).toBe('Job 1')
+    fireEvent.change(label, { target: { value: 'Job renommé' } })
+    fireEvent.click(screen.getByTestId('save-job-btn'))
+
+    await waitFor(() => expect(backupApi.updateJob).toHaveBeenCalled())
+    const [slug, body] = vi.mocked(backupApi.updateJob).mock.calls[0]
+    expect(slug).toBe('job-1')
+    expect((body as Record<string, unknown>).label).toBe('Job renommé')
+    expect('slug' in (body as Record<string, unknown>)).toBe(false)
+    expect('strategy' in (body as Record<string, unknown>)).toBe(false)
+    expect((body as Record<string, unknown>).schedule_cron).toBe('0 3 * * *')
+  })
+
+  it("le toggle Actif n'envoie plus strategy (immuable, rejeté par le backend)", async () => {
+    vi.mocked(backupApi.updateJob).mockResolvedValue(jobBase)
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+    fireEvent.click(await screen.findByText('Actif'))
+
+    await waitFor(() => expect(backupApi.updateJob).toHaveBeenCalled())
+    const [, body] = vi.mocked(backupApi.updateJob).mock.calls[0]
+    expect('strategy' in (body as Record<string, unknown>)).toBe(false)
+    expect((body as Record<string, unknown>).enabled).toBe(false)
+  })
+})

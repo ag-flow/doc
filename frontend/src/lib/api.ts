@@ -1122,7 +1122,8 @@ export const backupApi = {
   createJob: (body: BackupJobBody & { slug: string }) =>
     api.post<BackupJobOut>('/admin/backup/jobs', body),
   getJob: (slug: string) => api.get<BackupJobOut>(`/admin/backup/jobs/${slug}`),
-  updateJob: (slug: string, body: BackupJobBody) =>
+  /** slug et strategy sont immuables : le backend (extra=forbid) les rejette du corps. */
+  updateJob: (slug: string, body: Omit<BackupJobBody, 'slug' | 'strategy'>) =>
     api.put<BackupJobOut>(`/admin/backup/jobs/${slug}`, body),
   deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
   listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
