@@ -18,7 +18,7 @@ import structlog
 from fastapi import HTTPException
 from git import GitCommandError, Repo
 
-from docflow.backup.restore_git import RestoreReport, restore_tree
+from docflow.backup.restore_git import RestoreReport, discover_export_bases, restore_tree
 from docflow.remote import service as rp_svc
 from docflow.remote.connection import delete_key_file, resolve_git_auth
 
@@ -60,10 +60,30 @@ async def restore_from_remote(
             log.warning("restore_git_clone_failed", point=remote_point_slug, error=str(e))
             raise HTTPException(502, f"clone du dépôt de sauvegarde échoué : {e}") from e
 
-        base = repo_dir / git_base_path if git_base_path else repo_dir
-        if not base.is_dir():
-            raise HTTPException(422, f"sous-répertoire '{git_base_path}' introuvable dans le dépôt")
-        report = await restore_tree(pool, base, only_workspace=workspace)
+        if git_base_path:
+            bases = [repo_dir / git_base_path]
+            if not bases[0].is_dir():
+                raise HTTPException(
+                    422, f"sous-répertoire '{git_base_path}' introuvable dans le dépôt"
+                )
+        else:
+            # Détection automatique : les marqueurs .docflow-workspace déposés
+            # à la sauvegarde portent l'emplacement exact des exports.
+            bases = discover_export_bases(repo_dir)
+            if not bases:
+                raise HTTPException(
+                    422,
+                    "aucun export docflow trouvé dans le dépôt (aucun marqueur .docflow-workspace)",
+                )
+        report = RestoreReport()
+        for base in bases:
+            partial = await restore_tree(pool, base, only_workspace=workspace)
+            report.workspaces_created += partial.workspaces_created
+            report.blocks_created += partial.blocks_created
+            report.types_imported += partial.types_imported
+            report.docs_created += partial.docs_created
+            report.docs_updated += partial.docs_updated
+            report.errors.extend(partial.errors)
         log.info(
             "restore_git_done",
             point=remote_point_slug,

@@ -1057,8 +1057,8 @@ function RestoreGitPanel({ gitPoints }: { gitPoints: RemotePointOut[] }) {
           </select>
         </div>
         <div>
-          <label className="text-xs text-gray-500 mb-1 block">Sous-répertoire dans le repo (optionnel)</label>
-          <Input placeholder="backup/docflow" value={basePath} onChange={e => setBasePath(e.target.value)} />
+          <label className="text-xs text-gray-500 mb-1 block">Sous-répertoire (vide = détection automatique)</label>
+          <Input placeholder="auto — détecté depuis la sauvegarde" value={basePath} onChange={e => setBasePath(e.target.value)} />
         </div>
         <div>
           <label className="text-xs text-gray-500 mb-1 block">Workspace seul (optionnel)</label>

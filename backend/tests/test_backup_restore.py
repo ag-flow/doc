@@ -155,7 +155,9 @@ async def test_git_mirror_round_trip(db_pool: asyncpg.Pool, tmp_path: pathlib.Pa
 async def test_restore_from_remote_round_trip(
     db_pool: asyncpg.Pool, tmp_path: pathlib.Path, monkeypatch
 ) -> None:
-    """Réalimentation via l'API : clone du remote (auth simulée) + restore_tree."""
+    """Réalimentation via l'API : clone du remote (auth simulée) + découverte
+    automatique du base path via les marqueurs .docflow-workspace — le
+    sous-répertoire du job d'origine n'a pas à être resaisi."""
     from docflow.backup import restore_remote
 
     await _build_fixture(db_pool)
@@ -172,7 +174,7 @@ async def test_restore_from_remote_round_trip(
             last_change_seq=0,
             remote_url=str(remote_dir),
             git_branch="main",
-            git_base_path=None,
+            git_base_path="backup/docflow",
             ssh_key_path=None,
             repos_root=tmp_path / "repos",
         )

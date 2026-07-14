@@ -53,6 +53,19 @@ class RestoreReport:
     errors: list[str] = field(default_factory=list)
 
 
+def discover_export_bases(root: pathlib.Path) -> list[pathlib.Path]:
+    """Répertoires « base » d'export dans un clone : parents des répertoires de
+    workspace marqués `.docflow-workspace` (déposés à la sauvegarde — le base
+    path du job d'origine n'a donc pas à être resaisi à la restauration).
+    Le contenu de .git est ignoré."""
+    bases: set[pathlib.Path] = set()
+    for marker in root.rglob(_WS_MARKER):
+        if ".git" in marker.parts:
+            continue
+        bases.add(marker.parent.parent)
+    return sorted(bases)
+
+
 async def restore_tree(
     pool: asyncpg.Pool, base: pathlib.Path, only_workspace: str | None = None
 ) -> RestoreReport:

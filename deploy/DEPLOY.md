@@ -530,8 +530,10 @@ risque, y compris par-dessus une instance vivante.
    « Clé SSH » → certificat de l'étape 1 → Enregistrer → **Tester** → ✓.
 4. **Sauvegarde → Restauration depuis le miroir git** :
    - *Remote point git* : le point de l'étape 3 ;
-   - *Sous-répertoire* : le « base path » que le job de sauvegarde
-     d'origine utilisait (vide si l'export est à la racine du repo) ;
+   - *Sous-répertoire* : **laisser vide** — l'emplacement de l'export est
+     détecté automatiquement grâce aux marqueurs déposés à la sauvegarde
+     (le champ ne sert qu'à forcer un emplacement précis si le repo
+     contient plusieurs exports et qu'on n'en veut qu'un) ;
    - *Workspace seul* : optionnel, pour ne réalimenter qu'un workspace ;
    - **Restaurer**. L'opération clone le repo côté serveur (shallow, détruit
      après usage) et peut durer plusieurs minutes sur un gros miroir.
