@@ -75,12 +75,21 @@ def _git_phase(
             if repo_dir.exists():
                 shutil.rmtree(repo_dir)
             repo_dir.mkdir(parents=True)
-            repo = Repo.clone_from(
-                remote_url,
-                repo_dir,
-                branch=git_branch,
-                env=env,
-            )
+            try:
+                repo = Repo.clone_from(remote_url, repo_dir, branch=git_branch, env=env)
+            except GitCommandError:
+                # Branche cible absente : dépôt distant vide (tout premier
+                # backup) ou branche jamais créée. Cloner sans branche puis la
+                # créer localement — une erreur d'auth échoue ici aussi et
+                # remonte normalement.
+                shutil.rmtree(repo_dir)
+                repo_dir.mkdir(parents=True)
+                repo = Repo.clone_from(remote_url, repo_dir, env=env)
+                if repo.head.is_valid():
+                    repo.git.checkout("-B", git_branch)
+                else:
+                    # dépôt entièrement vide : brancher HEAD sur la branche cible
+                    repo.git.symbolic_ref("HEAD", f"refs/heads/{git_branch}")
             repo.git.update_environment(**env)
     except GitCommandError as e:
         raise RuntimeError(f"git clone/pull échoué : {e}") from e

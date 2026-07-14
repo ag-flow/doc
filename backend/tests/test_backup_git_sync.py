@@ -236,3 +236,35 @@ def test_git_phase_writes_workspace_marker(tmp_path: pathlib.Path) -> None:
     check = Repo.clone_from(str(remote_dir), tmp_path / "check", branch="main")
     marker = pathlib.Path(check.working_dir) / "ws-a" / ".docflow-workspace"
     assert marker.read_text(encoding="utf-8") == "ws-a"
+
+
+def test_git_phase_initializes_empty_remote(tmp_path: pathlib.Path) -> None:
+    """Tout premier backup vers un dépôt distant VIDE (aucun commit) : la
+    branche cible est créée et poussée au lieu d'échouer sur clone --branch."""
+    remote_dir = tmp_path / "remote.git"
+    Repo.init(remote_dir, bare=True)
+
+    doc = {
+        "title": "Doc",
+        "content": "premier",
+        "functional_type_slug": None,
+        "updated_at": datetime.now(tz=UTC),
+        "properties": {},
+    }
+    written, deleted, sha = _git_phase(
+        repo_dir=tmp_path / "job",
+        remote_url=str(remote_dir),
+        git_branch="main",
+        git_base_path=None,
+        ssh_key_path=None,
+        git_http_env={},
+        to_write=[(["ws-a", "doc"], doc)],
+        reconcile={"ws-a": {"ws-a/doc.md", "ws-a/doc.json"}},
+    )
+    assert written == 2
+    assert sha is not None
+
+    check = Repo.clone_from(str(remote_dir), tmp_path / "check", branch="main")
+    assert (pathlib.Path(check.working_dir) / "ws-a/doc.md").read_text(
+        encoding="utf-8"
+    ) == "premier"
