@@ -510,3 +510,35 @@ async def test_update_point_certificate_ignores_stale_storage_fields(
     )
     assert updated.auth_storage is None
     assert updated.certificate_slug == "cert-sftp"
+
+
+def test_git_repo_normalized_from_pasted_url() -> None:
+    """Une URL collée telle quelle est réduite à org/nom — la valeur stockée
+    compose l'URL de clone (git@host:repo.git), elle doit être irréprochable."""
+    p = RemotePointCreate(
+        slug="git-pt",
+        label="Git",
+        point_type="git",
+        host="github.com",
+        username="git",
+        git_provider="github",
+        git_repo="https://github.com/ag-flow/backup-docflow.git",
+        auth_type="certificate",
+        certificate_slug="c",
+    )
+    assert p.git_repo == "ag-flow/backup-docflow"
+
+
+def test_git_repo_rejects_ambiguous_value() -> None:
+    with pytest.raises(ValueError):
+        RemotePointCreate(
+            slug="git-pt",
+            label="Git",
+            point_type="git",
+            host="github.com",
+            username="git",
+            git_provider="github",
+            git_repo="git@github.com:https://github.com/x/y.git",
+            auth_type="certificate",
+            certificate_slug="c",
+        )

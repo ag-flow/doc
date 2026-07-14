@@ -74,6 +74,23 @@ AuthStorage = Literal["local", "vault"]
 GitProvider = Literal["github", "gitlab", "gitea", "bitbucket", "custom"]
 
 
+_GIT_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+_GIT_URL_RE = re.compile(r"^(?:https?://[^/]+/|git@[^:]+:|ssh://(?:git@)?[^/]+/)(.+)$")
+
+
+def _normalize_git_repo(value: str) -> str:
+    """Accepte org/nom, mais aussi une URL https ou SSH collée telle quelle —
+    n'en retient que org/nom. Refuse tout reste ambigu (schéma, deux-points…) :
+    la valeur stockée compose l'URL de clone, elle doit être irréprochable."""
+    v = value.strip().removesuffix(".git")
+    m = _GIT_URL_RE.match(v)
+    if m:
+        v = m.group(1).strip("/").removesuffix(".git")
+    if not _GIT_REPO_RE.match(v):
+        raise ValueError("git_repo : attendu « organisation/nom » (ou une URL de repo valide)")
+    return v
+
+
 def _check_git_fields(point_type: str, git_provider: str | None, git_repo: str | None) -> None:
     if point_type == "git":
         if not git_provider:
@@ -147,6 +164,8 @@ class RemotePointCreate(BaseModel):
     def _validate(self) -> RemotePointCreate:
         _valid_slug(self.slug)
         _normalize_certificate_auth(self)
+        if self.point_type == "git" and self.git_repo:
+            self.git_repo = _normalize_git_repo(self.git_repo)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,
@@ -181,6 +200,8 @@ class RemotePointUpdate(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> RemotePointUpdate:
         _normalize_certificate_auth(self)
+        if self.point_type == "git" and self.git_repo:
+            self.git_repo = _normalize_git_repo(self.git_repo)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,
