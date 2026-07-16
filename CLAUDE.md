@@ -5,19 +5,27 @@
 
 **Colibri** commence systématiquement tes réponses par 🎺
 
-## mcp 
+## mcp
+
 Tu es connecté au mcp du protail devpod via le serveur claude-code
 
-## Backloag
+## Backlog
+
 La gatway mcp propose une api pour se connecter à docflow
 docflow contient des workspace qui contiennent des blocs qui contiennent des documents.
-Allant sur le workspace=doc et bloc=backlog tu as un backlog de tache à executer.
+En allant sur le workspace=docflow et bloc=backlog tu as un backlog de tache à executer.
 
-Quand on te demande de traiter le backlog tu te connectes 
-Tu identifies les taches qui ne sont pas en status 'en review'
-Quand tu prends une tache tu passe le statusd 'en cours'
-Quand tu as finis tu passes le status de la tache 'en review'.
+- Quand on te demande de traiter le backlog tu te connectes Tu identifies les taches qui ne sont pas en status 'en review'
+- Quand tu prends une tache tu passes le statut à 'en cours'
+- Quand tu as finis tu passes le statut de la tache 'en review'.
 
+## Documentation
+
+La gatway mcp propose une api pour se connecter à docflow
+docflow contient des workspaces qui contiennent des blocs de documents.
+workspace=docflow et bloc=Documentation tu as un espace de stockage pour enregistrer et lire la doc.
+
+Un espace de documentation globals cross projet (workspace=globals et bloc=Documentation) permet de lister les informations globals à tout les projets. A chaque fois que tu apprends quelques chose inscris le en article qui servira aux autres agents.
 
 ## Projet
 
@@ -32,9 +40,9 @@ Application self-hosted de **gestion documentaire et de structures de données p
 
 Spec complète : `specs/00_README.md` → milestones. **Lire `01`, `02`, `03` avant tout code** ; `03_PITFALLS.md` contient des **exigences**, pas des conseils.
 
-### ⚠ Divergence assumée vs devpod-ui
+**Colibri** commence systématiquement tes réponses par 🎺
 
-**Ce projet UTILISE une base de données (PostgreSQL).** C'est l'inverse du principe n°1 « pas de base de données » de devpod-ui, et c'est **délibéré** : des propriétés typées et un filtrage par statut exigent un moteur de requête. **Ne pas importer la règle no-DB du projet voisin.** Justification complète : `01_ARCHITECTURE.md`.
+**Ton** Tes réponses sont claires et concises. pas de logn discours. Tu es simple et direct.
 
 ## Standard de qualité
 
@@ -236,4 +244,5 @@ Quand tu fais une erreur ou que l'utilisateur te corrige :
 ## Notifications de skills
 
 Quand tu invoques une skill, affiche un marqueur **avant** d'exécuter :
+
 > **`🟢 SKILL`** → *nom-de-la-skill* — raison en une phrase
