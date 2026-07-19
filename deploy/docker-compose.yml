@@ -50,6 +50,31 @@ services:
     networks:
       - internal
 
+  # Collecteur de logs : pousse la sortie stdout des conteneurs de la stack
+  # (app, postgres, alloy) vers Loki. Config : deploy/alloy-config.alloy.
+  # LOKI_URL / LOKI_HOSTNAME surchargeables via l'environnement ou un .env
+  # dans le répertoire de déploiement ; défauts = Loki de dev.
+  alloy:
+    image: grafana/alloy:v1.5.1
+    restart: unless-stopped
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=0.0.0.0:12345
+    environment:
+      LOKI_URL: "${LOKI_URL:-http://192.168.10.116:3100/loki/api/v1/push}"
+      LOKI_HOSTNAME: "${LOKI_HOSTNAME:-docflow-dev}"
+    volumes:
+      - ./alloy-config.alloy:/etc/alloy/config.alloy:ro
+      # Accès en lecture seule à l'API Docker (logs de tous les conteneurs).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - app
+    networks:
+      - internal
+
 networks:
   internal:
     driver: bridge
@@ -58,6 +83,7 @@ volumes:
   pgdata:
   templates:
   appdata:
+  alloy-data:
 
 secrets:
   pg_password:

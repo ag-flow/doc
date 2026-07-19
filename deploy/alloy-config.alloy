@@ -1,0 +1,51 @@
+// Collecteur Alloy de la stack docflow : récupère les logs des conteneurs
+// Docker de l'hôte (app, postgres, alloy…) et les pousse vers Loki.
+//
+// Modelé sur le collecteur du portail (ag-flow/workflow deploy/alloy-config.alloy),
+// réduit à la source Docker : c'est elle qui capte la sortie stdout structlog
+// JSON de docflow. Paramétré par deux variables d'environnement injectées par
+// le docker-compose : LOKI_URL (endpoint push) et LOKI_HOSTNAME (label host).
+
+// ── Source : conteneurs Docker ───────────────────────────────────────────────
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.containers.output
+  forward_to    = [loki.write.central.receiver]
+  relabel_rules = discovery.relabel.containers.rules
+}
+
+// ── Sortie Loki ──────────────────────────────────────────────────────────────
+
+loki.write "central" {
+  endpoint {
+    url = env("LOKI_URL")
+  }
+
+  external_labels = {
+    host   = env("LOKI_HOSTNAME"),
+    module = "docflow",
+  }
+}
