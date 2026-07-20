@@ -12,7 +12,7 @@ from mcp.types import TextContent, Tool
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
 from docflow.mcp import artifact_tools
-from docflow.mcp.session import current_session, require_identity
+from docflow.mcp.session import acting_identity, current_session, require_identity
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
@@ -1622,7 +1622,9 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
 
     try:
         data = WorkspaceCreate(slug=ws_slug, label=label, description=description)
-        result = await ws_svc.create_workspace(pool, data, owner_id=None)
+        # Estampillage OBO : le workspace est attribué à l'utilisateur AGISSANT
+        # (l'humain si l'OBO du portail l'a résolu, sinon l'identité de la clé).
+        result = await ws_svc.create_workspace(pool, data, owner_id=acting_identity().id)
     except ValidationError as e:
         return _text({"error": e.errors(include_url=False)})
     except HTTPException as e:
