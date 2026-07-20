@@ -502,11 +502,12 @@ async def _mcp_identity(db_pool: asyncpg.Pool) -> tuple[object, object]:
         "Artifact MCP",
     )
     assert row is not None
+    # Superadmin : bypass de l'accès-utilisateur (workspace de test owner NULL).
     user = AuthUser(
         id=row["id"],
         email="artifact-mcp@test.local",
         label="Artifact MCP",
-        is_admin=False,
+        is_admin=True,
         validated=True,
         disabled=False,
     )

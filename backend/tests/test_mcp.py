@@ -40,7 +40,10 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "sync_child_documents" in tool_names
     assert "find_by_dedup_key" in tool_names
     assert "set_dedup_key" in tool_names
-    assert len(_TOOLS) == 32
+    assert "list_workspace_members" in tool_names
+    assert "add_workspace_member" in tool_names
+    assert "remove_workspace_member" in tool_names
+    assert len(_TOOLS) == 35
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:

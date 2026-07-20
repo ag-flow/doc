@@ -144,11 +144,13 @@ async def mcp_session(db_pool: asyncpg.Pool) -> AsyncIterator[uuid.UUID]:
     )
     assert row is not None
     uid: uuid.UUID = row["id"]
+    # Superadmin : bypass de l'accès-utilisateur (les workspaces des fixtures
+    # sont créés en SQL avec owner NULL — l'enforcement les refuserait sinon).
     user = AuthUser(
         id=uid,
         email="mcp-tools@test.local",
         label="MCP Tools",
-        is_admin=False,
+        is_admin=True,
         validated=True,
         disabled=False,
     )
@@ -201,6 +203,9 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "list_block_tree",
         "find_by_dedup_key",
         "set_dedup_key",
+        "list_workspace_members",
+        "add_workspace_member",
+        "remove_workspace_member",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 

@@ -13,6 +13,7 @@ from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
 from docflow.mcp import artifact_tools
 from docflow.mcp.session import acting_identity, current_session, require_identity
+from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
@@ -891,6 +892,71 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "doc_id"],
         },
     ),
+    Tool(
+        name="list_workspace_members",
+        description=(
+            "Liste les membres d'un workspace : email et role ('owner' | 'member'). "
+            "Retourne aussi owner_email (propriétaire du workspace, distinct des "
+            "membres explicites ; null si aucun owner). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="add_workspace_member",
+        description=(
+            "Ajoute un utilisateur comme membre d'un workspace (accès à tout son "
+            "contenu). ÉCRITURE. "
+            "L'utilisateur est résolu par son email et doit être validé et non "
+            "désactivé, sinon erreur. role vaut 'member' (défaut) ou 'owner'. "
+            "Ré-appeler avec un role différent met à jour le rôle (idempotent). "
+            "GARDE : seuls l'owner du workspace ou un superadmin peuvent gérer les "
+            "membres."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "member_email": {
+                    "type": "string",
+                    "description": "Email de l'utilisateur à ajouter (doit exister, validé, actif)",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": ["owner", "member"],
+                    "description": "Rôle du membre (défaut 'member')",
+                },
+            },
+            "required": ["workspace_slug", "member_email"],
+        },
+    ),
+    Tool(
+        name="remove_workspace_member",
+        description=(
+            "Retire un membre d'un workspace (l'utilisateur perd l'accès s'il n'est "
+            "ni owner ni superadmin). ÉCRITURE. "
+            "L'utilisateur est résolu par son email. "
+            "GARDE : seuls l'owner du workspace ou un superadmin peuvent gérer les "
+            "membres."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "member_email": {
+                    "type": "string",
+                    "description": "Email du membre à retirer",
+                },
+            },
+            "required": ["workspace_slug", "member_email"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -944,6 +1010,9 @@ _WS_TOOLS: dict[str, bool] = {
     "list_block_tree": False,
     "find_by_dedup_key": False,
     "set_dedup_key": True,
+    "list_workspace_members": False,
+    "add_workspace_member": True,
+    "remove_workspace_member": True,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -976,12 +1045,52 @@ def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextConte
     return None
 
 
+async def _check_user_access(
+    pool: asyncpg.Pool, name: str, arguments: dict[str, object]
+) -> list[TextContent] | None:
+    """Applique l'accès-utilisateur (owner/membre/superadmin) au workspace visé.
+
+    Se cumule avec ``_check_tool_authz`` (scope de clé) : une session clé API
+    doit satisfaire les deux. Superadmin (``is_admin``) → bypass. ``create_workspace``
+    est exempté (il crée un nouveau workspace). Si le workspace n'existe pas, on
+    laisse le handler répondre son 404 habituel.
+    """
+    session = current_session()
+    if session is None:
+        return None
+    user = acting_identity()
+    if user.is_admin or name == "create_workspace":
+        return None
+    if name in _WS_TOOLS or name == "import_template":
+        ws_slug = str(arguments.get("workspace_slug", ""))
+        async with pool.acquire() as conn:
+            ws_key: uuid.UUID | None = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+            )
+            if ws_key is None:
+                return None
+            if not await user_can_access_workspace(conn, ws_key, user):
+                return _text(
+                    {
+                        "error": (
+                            f"outil {name} : accès refusé au workspace "
+                            f"'{ws_slug}' pour l'utilisateur"
+                        )
+                    }
+                )
+    return None
+
+
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
 async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
     pool = _get_pool()
     log.info("mcp_call_tool", tool=name)
 
     denied = _check_tool_authz(name, arguments)
+    if denied is not None:
+        return denied
+
+    denied = await _check_user_access(pool, name, arguments)
     if denied is not None:
         return denied
 
@@ -1068,6 +1177,12 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
         return await _generate_api_key(pool, arguments)
+    if name == "list_workspace_members":
+        return await _list_workspace_members(pool, arguments)
+    if name == "add_workspace_member":
+        return await _add_workspace_member(pool, arguments)
+    if name == "remove_workspace_member":
+        return await _remove_workspace_member(pool, arguments)
     if name == "create_artifact":
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
     if name == "get_artifact":
@@ -1080,10 +1195,17 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
     rows = await pool.fetch("SELECT slug, label, description FROM workspace ORDER BY slug")
     session = current_session()
-    if session is not None and not session.unrestricted:
-        assert session.api_key_scopes is not None
-        allowed = allowed_workspace_slugs(session.api_key_scopes)
-        rows = [r for r in rows if r["slug"] in allowed]
+    if session is not None:
+        # Filtre scope de clé API (session restreinte) — inchangé.
+        if not session.unrestricted:
+            assert session.api_key_scopes is not None
+            key_allowed = allowed_workspace_slugs(session.api_key_scopes)
+            rows = [r for r in rows if r["slug"] in key_allowed]
+        # Filtre accès-utilisateur (owner/membre/superadmin). None = superadmin
+        # (tout). Intersection avec le scope de clé le cas échéant.
+        user_allowed = await accessible_workspace_slugs(pool, session.acting_user)
+        if user_allowed is not None:
+            rows = [r for r in rows if r["slug"] in user_allowed]
     return _text([dict(r) for r in rows])
 
 
@@ -1973,3 +2095,53 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
             "label": created.label,
         }
     )
+
+
+async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    try:
+        out = await members.list_members(pool, str(args.get("workspace_slug", "")))
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)
+
+
+async def _add_workspace_member(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    role = str(args["role"]) if args.get("role") else "member"
+    try:
+        out = await members.add_member(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("member_email", "")),
+            role,
+            acting_identity(),
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)
+
+
+async def _remove_workspace_member(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    try:
+        out = await members.remove_member(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("member_email", "")),
+            acting_identity(),
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)
