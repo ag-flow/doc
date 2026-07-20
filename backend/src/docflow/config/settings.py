@@ -44,3 +44,6 @@ class Settings(BaseSettings):
     event_source: str = "docflow"
     # Intervalle de balayage de l'outbox par le worker (secondes).
     event_worker_tick_seconds: int = 15
+    # Rétention des events LIVRÉS dans l'outbox : purgés au-delà (heures). Les
+    # entrées dead-letter (failed_at) sont conservées pour inspection.
+    event_outbox_purge_after_hours: int = 24

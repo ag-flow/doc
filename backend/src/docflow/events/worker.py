@@ -29,6 +29,9 @@ _HTTP_TIMEOUT = 10.0
 _CLAIM_BATCH = 20
 _BACKOFF_BASE = 30  # secondes
 _BACKOFF_CAP = 3600  # 1 h
+# Au-delà, l'event passe en dead-letter (failed_at) et n'est plus re-tenté :
+# un event rejeté en permanence ne doit pas boucler indéfiniment.
+MAX_ATTEMPTS = 8
 
 # Poster injectable : (corps brut, en-têtes) → code HTTP. Isole l'I/O réseau
 # pour les tests.
@@ -40,7 +43,7 @@ _CLAIM = """
 UPDATE event_outbox SET next_attempt_at = now() + interval '60 seconds'
 WHERE id IN (
     SELECT id FROM event_outbox
-    WHERE sent_at IS NULL AND next_attempt_at <= now()
+    WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now()
     ORDER BY created_at
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -61,15 +64,42 @@ async def _mark_sent(pool: asyncpg.Pool, event_id: uuid.UUID) -> None:
 
 
 async def _mark_failed(pool: asyncpg.Pool, event_id: uuid.UUID, attempts: int, error: str) -> None:
+    new_attempts = attempts + 1
+    if new_attempts >= MAX_ATTEMPTS:
+        # Dead-letter : plus aucune tentative ; la ligne reste pour inspection.
+        await pool.execute(
+            "UPDATE event_outbox SET attempts = $2, failed_at = now(), last_error = $3 "
+            "WHERE id = $1",
+            event_id,
+            new_attempts,
+            error[:2000],
+        )
+        log.error("event_delivery_dead_letter", event_id=str(event_id), attempts=new_attempts)
+        return
     delay = _backoff_seconds(attempts)
     await pool.execute(
-        "UPDATE event_outbox SET attempts = attempts + 1, "
-        "next_attempt_at = now() + make_interval(secs => $2), last_error = $3 "
+        "UPDATE event_outbox SET attempts = $2, "
+        "next_attempt_at = now() + make_interval(secs => $3), last_error = $4 "
         "WHERE id = $1",
         event_id,
+        new_attempts,
         float(delay),
         error[:2000],
     )
+
+
+async def purge_delivered(pool: asyncpg.Pool, *, older_than_hours: int) -> int:
+    """Supprime les events LIVRÉS plus vieux que le seuil (rétention outbox).
+
+    Les entrées dead-letter (`failed_at`) sont conservées pour inspection —
+    seules les livraisons réussies sont purgées.
+    """
+    result = await pool.execute(
+        "DELETE FROM event_outbox WHERE sent_at IS NOT NULL "
+        "AND sent_at < now() - make_interval(hours => $1)",
+        older_than_hours,
+    )
+    return int(result.split()[-1])
 
 
 async def drain_once(
@@ -126,6 +156,7 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
     base = str(settings.workflow_ingestion_url).rstrip("/")
     endpoint = f"{base}/events/{settings.workflow_source_id}"
     tick = getattr(settings, "event_worker_tick_seconds", 15)
+    purge_hours = getattr(settings, "event_outbox_purge_after_hours", 24)
     secret: str | None = None
 
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -142,6 +173,7 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
                         settings.workflow_hmac_secret, pool=pool, settings=settings
                     )
                 await drain_once(pool, secret=secret, poster=poster)
+                await purge_delivered(pool, older_than_hours=purge_hours)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
