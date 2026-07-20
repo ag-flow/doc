@@ -29,8 +29,9 @@ from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
 from docflow.errors import DependentsConflictError
 from docflow.events import outbox as events_outbox
+from docflow.events.producer_config import seed_from_env_if_empty as seed_events_producer
+from docflow.events.producer_router import router as events_producer_router
 from docflow.events.router import router as events_router
-from docflow.events.worker import emission_configured
 from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
@@ -83,8 +84,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await open_pool(settings.database_url)
     await apply(pool)
     configure_mcp(pool, settings)
-    # Producteur d'events : n'émettre (enqueue) que si le workflow est configuré.
-    events_outbox.configure(enabled=emission_configured(settings), source=settings.event_source)
+    # Producteur d'events : seed initial depuis l'env (si jamais configuré) puis
+    # reconcile → l'émission (enqueue) est pilotée par la config DB, à chaud.
+    await seed_events_producer(pool, settings)
+    await events_outbox.reconcile(pool)
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))
@@ -145,6 +148,7 @@ app.include_router(references_router, prefix=_API)
 app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
 app.include_router(events_router, prefix=_API)
+app.include_router(events_producer_router, prefix=_API)
 app.include_router(export_router, prefix=_API)
 app.include_router(views_router, prefix=_API)
 app.include_router(apikeys_router, prefix=_API)

@@ -31,16 +31,38 @@ _SYSTEM_FIELDS = frozenset(
 
 _enabled: bool = False
 _source: str = "docflow"
+# Allowlist des eventCodes relayés. None = « tous autorisés » (rétro-compat :
+# un appel à `configure` sans `allowed_events` ne filtre pas). Un set explicite
+# (posé par `reconcile` depuis la config DB) applique le fail-closed : un set
+# vide relaie zéro event.
+_allowed_events: set[str] | None = None
 
 
-def configure(*, enabled: bool, source: str) -> None:
-    global _enabled, _source
+def configure(*, enabled: bool, source: str, allowed_events: set[str] | None = None) -> None:
+    global _enabled, _source, _allowed_events
     _enabled = enabled
     _source = source
+    _allowed_events = allowed_events
 
 
 def is_enabled() -> bool:
     return _enabled
+
+
+async def reconcile(pool: asyncpg.Pool) -> None:
+    """Reconfigure l'émission depuis la config DB (activation, source, allowlist).
+
+    Appelé au boot et à chaque tick du worker : propage aux handlers web l'état
+    piloté en admin. Pose TOUJOURS une allowlist explicite (set) → fail-closed.
+    """
+    from docflow.events import producer_config
+
+    cfg = await producer_config.get_config(pool)
+    configure(
+        enabled=cfg["enabled"],
+        source=cfg["source_uri"],
+        allowed_events=set(cfg["allowed_events"]),
+    )
 
 
 def build_envelope(
@@ -109,6 +131,11 @@ async def enqueue(
         return
     if not catalog.is_known(event_code):
         log.warning("event_code_unknown", event_code=event_code)
+        return
+    # Allowlist fail-closed : quand un set explicite est posé (via reconcile),
+    # seuls ses eventCodes sont relayés — set vide = aucun relais. Un None
+    # (configure sans allowlist) laisse tout passer (rétro-compat).
+    if _allowed_events is not None and event_code not in _allowed_events:
         return
     event_id = _event_id(event_code, dedup_key)
     occurred_at = datetime.now(UTC)

@@ -141,6 +141,7 @@ async def _resolve_secret(secret_obj: Any, *, pool: asyncpg.Pool, settings: Any)
 
 
 def emission_configured(settings: Any) -> bool:
+    """Émission seedable depuis l'env : les trois réglages workflow présents."""
     return bool(
         getattr(settings, "workflow_ingestion_url", None)
         and getattr(settings, "workflow_source_id", None)
@@ -148,16 +149,28 @@ def emission_configured(settings: Any) -> bool:
     )
 
 
+def _drainable(cfg: dict[str, Any]) -> bool:
+    """La config DB permet-elle de draîner ? (activée + endpoint + secret posés)."""
+    return bool(cfg["enabled"] and cfg["ingestion_url"] and cfg["source_id"] and cfg["secret_ref"])
+
+
 async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
-    """Boucle de fond : ne démarre réellement que si l'émission est configurée."""
-    if not emission_configured(settings):
-        log.info("event_worker_disabled")
-        return
-    base = str(settings.workflow_ingestion_url).rstrip("/")
-    endpoint = f"{base}/events/{settings.workflow_source_id}"
+    """Boucle de fond pilotée par la config DB (reconfiguration à chaud).
+
+    À chaque tick : `outbox.reconcile` propage enabled/source/allowlist aux
+    handlers web, puis on relit la config DB. Si elle est complète et activée,
+    on draîne + purge ; sinon on reste au repos (aucun redémarrage requis).
+    """
+    from docflow.events import outbox, producer_config
+    from docflow.secrets.secret import Secret
+
     tick = getattr(settings, "event_worker_tick_seconds", 15)
     purge_hours = getattr(settings, "event_outbox_purge_after_hours", 24)
-    secret: str | None = None
+    # Cache (ref, secret résolu) invalidé quand secret_ref change.
+    secret_cache: tuple[str, str] | None = None
+    # Endpoint courant (réaffecté à chaque tick) — poster défini une seule fois
+    # hors boucle pour ne pas capturer une variable de boucle (B023).
+    endpoint = ""
 
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
 
@@ -165,15 +178,20 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
             resp = await client.post(endpoint, content=body, headers=headers)
             return resp.status_code
 
-        log.info("event_worker_started", endpoint=endpoint)
+        log.info("event_worker_started")
         while True:
             try:
-                if secret is None:
-                    secret = await _resolve_secret(
-                        settings.workflow_hmac_secret, pool=pool, settings=settings
-                    )
-                await drain_once(pool, secret=secret, poster=poster)
-                await purge_delivered(pool, older_than_hours=purge_hours)
+                await outbox.reconcile(pool)
+                cfg = await producer_config.get_config(pool)
+                if _drainable(cfg):
+                    base = str(cfg["ingestion_url"]).rstrip("/")
+                    endpoint = f"{base}/events/{cfg['source_id']}"
+                    ref: str = cfg["secret_ref"]
+                    if secret_cache is None or secret_cache[0] != ref:
+                        resolved = await _resolve_secret(Secret(ref), pool=pool, settings=settings)
+                        secret_cache = (ref, resolved)
+                    await drain_once(pool, secret=secret_cache[1], poster=poster)
+                    await purge_delivered(pool, older_than_hours=purge_hours)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
