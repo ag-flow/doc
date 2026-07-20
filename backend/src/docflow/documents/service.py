@@ -436,6 +436,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
                     "parentId": str(data.parent_id) if data.parent_id else None,
                     "title": data.title,
                 },
+                dedup_key=str(new_doc_id),
             )
     return DocumentOut(
         doc_technical_key=row["doc_technical_key"],
@@ -544,6 +545,7 @@ async def update_document(
                         "version": new_v,
                         "title": new_title,
                     },
+                    dedup_key=f"{doc_id}:{new_v}",
                 )
 
             # Métadonnées (parent, type, slug) — sans versioning
@@ -726,6 +728,7 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
                     "blockSlug": snap["block_slug"],
                     "functionalTypeSlug": snap["functional_type_slug"],
                 },
+                dedup_key=str(doc_id),
             )
             await conn.execute("DELETE FROM document WHERE doc_technical_key = $1", doc_id)
             await purge_unreferenced(conn, artifact_candidates)
@@ -1219,6 +1222,7 @@ async def set_property_value(
                     "value": data.value,
                     "allowedValueSlug": data.allowed_value_slug,
                 },
+                dedup_key=f"{doc_id}:{prop_slug}:{return_version}",
             )
 
     allowed_label: str | None = None

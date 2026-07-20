@@ -425,6 +425,7 @@ async def create_document_in_block(
                     "parentId": str(body.parent_id) if body.parent_id else None,
                     "title": body.title,
                 },
+                dedup_key=str(doc_id),
             )
 
     return DocumentOut(
