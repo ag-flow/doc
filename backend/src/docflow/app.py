@@ -84,9 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await apply(pool)
     configure_mcp(pool, settings)
     # Producteur d'events : n'émettre (enqueue) que si le workflow est configuré.
-    events_outbox.configure(
-        enabled=emission_configured(settings), source=settings.event_source
-    )
+    events_outbox.configure(enabled=emission_configured(settings), source=settings.event_source)
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))

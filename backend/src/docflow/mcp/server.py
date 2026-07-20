@@ -783,6 +783,64 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "block_slug"],
         },
     ),
+    Tool(
+        name="sync_child_documents",
+        description=(
+            "Synchronise en une opération d'ensemble les documents enfants d'un "
+            "parent à partir d'une propriété de corrélation 'external_id'. "
+            "ÉCRITURE : réconcilie une livraison (items) avec les enfants existants "
+            "du parent, du type child_type_slug. "
+            "Par item (external_id obligatoire) : présent en base ET dans items → "
+            "update (titre/contenu/propriétés qui diffèrent) ou unchanged si rien ne "
+            "change ; absent en base → create (enfant du parent). "
+            "Si exhaustive=true, un enfant présent en base mais absent des items voit "
+            "sa propriété 'status' passée à 'removed_at_source' (JAMAIS de "
+            "suppression) → removed_marked ; s'il l'est déjà, unchanged. "
+            "exhaustive=false → aucun marquage de retrait. "
+            "Opération idempotente : un rejeu à l'identique n'écrit rien. "
+            "Le type enfant DOIT posséder une propriété 'external_id' ; le marquage de "
+            "retrait exige une propriété 'status' (restricted_list) avec une valeur "
+            "autorisée 'removed_at_source' — sinon l'item concerné est reporté dans "
+            "'errors' sans faire échouer l'opération. "
+            "Retourne {created, updated, unchanged, removed_marked} (listes d'ids), "
+            "counts (compteurs) et errors (items en échec)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "parent_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document parent dont on synchronise les enfants",
+                },
+                "child_type_slug": {
+                    "type": "string",
+                    "description": "Slug du type fonctionnel des enfants (ex. 'capture_item')",
+                },
+                "items": {
+                    "type": "array",
+                    "description": (
+                        "Liste des items à synchroniser. Chaque item : external_id "
+                        "(chaîne, obligatoire — clé de corrélation), title (chaîne), "
+                        "contenu (chaîne markdown, optionnel), properties (objet "
+                        "{slug: valeur} optionnel ; pour une restricted_list, la valeur "
+                        "est le slug de la valeur autorisée)."
+                    ),
+                    "items": {"type": "object"},
+                },
+                "exhaustive": {
+                    "type": "boolean",
+                    "description": (
+                        "true = les enfants absents des items sont marqués retirés "
+                        "(status=removed_at_source) ; false (défaut) = aucun marquage"
+                    ),
+                    "default": False,
+                },
+            },
+            "required": ["workspace_slug", "parent_id", "child_type_slug", "items"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -822,6 +880,7 @@ _WS_TOOLS: dict[str, bool] = {
     "update_document": True,
     "set_document_parent": True,
     "delete_document": True,
+    "sync_child_documents": True,
     "workspace_exists": False,
     "block_exists": False,
     "get_block_type": False,
@@ -894,6 +953,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _set_document_parent(pool, arguments)
     if name == "delete_document":
         return await _delete_document(pool, arguments)
+    if name == "sync_child_documents":
+        return await _sync_child_documents(pool, arguments)
     if name == "workspace_exists":
         return await _workspace_exists(pool, str(arguments.get("workspace_slug", "")))
     if name == "block_exists":
@@ -1245,6 +1306,32 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         return _text({"error": e.detail})
 
     return _text({"deleted": True, **snapshot})
+
+
+async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.sync import sync_child_documents
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    child_type_slug = str(args.get("child_type_slug", ""))
+    exhaustive = bool(args.get("exhaustive", False))
+    try:
+        parent_id = uuid.UUID(str(args.get("parent_id", "")))
+    except ValueError:
+        return _text({"error": "parent_id : UUID invalide"})
+
+    raw_items = args.get("items")
+    if not isinstance(raw_items, list) or not all(isinstance(i, dict) for i in raw_items):
+        return _text({"error": "items : liste d'objets attendue"})
+
+    try:
+        result = await sync_child_documents(
+            pool, ws_slug, parent_id, child_type_slug, raw_items, exhaustive
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
 
 
 async def _workspace_exists(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:

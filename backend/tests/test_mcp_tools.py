@@ -152,6 +152,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "generate_api_key",
         "set_document_parent",
         "delete_document",
+        "sync_child_documents",
         "workspace_exists",
         "block_exists",
         "get_block_type",
