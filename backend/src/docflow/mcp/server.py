@@ -841,6 +841,56 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "parent_id", "child_type_slug", "items"],
         },
     ),
+    Tool(
+        name="find_by_dedup_key",
+        description=(
+            "Recherche les documents d'un workspace par CLEF DE DÉDOUBLONNAGE. "
+            "Le `text` fourni est normalisé (trim + minuscules) puis hashé en "
+            "sha256 côté serveur ; retourne tous les documents dont la clef "
+            "correspond (0..N — aucune unicité n'est imposée). Typiquement appelé "
+            "AVANT un dépôt idempotent : un résultat vide (total=0) signifie « pas "
+            "encore stocké ». Retourne {dedup_sha256, total, documents[]}. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "Clef de dédoublonnage en clair (normalisée trim+minuscules "
+                        "puis hashée en sha256 côté serveur)"
+                    ),
+                },
+            },
+            "required": ["workspace_slug", "text"],
+        },
+    ),
+    Tool(
+        name="set_dedup_key",
+        description=(
+            "Pose la CLEF DE DÉDOUBLONNAGE d'un document. Le `text` est normalisé "
+            "(trim + minuscules) puis stocké sous forme de sha256 — la clef en "
+            "clair n'est jamais conservée. ÉCRITURE. La clef est nullable et NON "
+            "unique : poser la même valeur sur deux documents est autorisé (c'est "
+            "l'appelant qui décide d'un doublon, l'application ne l'empêche pas). "
+            "Un `text` vide ou omis efface la clef (remet à null). Retourne "
+            "{updated, doc_id, dedup_sha256}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {"type": "string", "format": "uuid", "description": "UUID du document"},
+                "text": {
+                    "type": "string",
+                    "description": "Clef de dédoublonnage en clair ; vide ou omis = efface la clef",
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
 ]
 
@@ -892,6 +942,8 @@ _WS_TOOLS: dict[str, bool] = {
     "list_block_objects": False,
     "query_documents": False,
     "list_block_tree": False,
+    "find_by_dedup_key": False,
+    "set_dedup_key": True,
     **artifact_tools.ARTIFACT_WS_TOOLS,
 }
 
@@ -955,6 +1007,10 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _delete_document(pool, arguments)
     if name == "sync_child_documents":
         return await _sync_child_documents(pool, arguments)
+    if name == "find_by_dedup_key":
+        return await _find_by_dedup_key(pool, arguments)
+    if name == "set_dedup_key":
+        return await _set_dedup_key(pool, arguments)
     if name == "workspace_exists":
         return await _workspace_exists(pool, str(arguments.get("workspace_slug", "")))
     if name == "block_exists":
@@ -1329,6 +1385,39 @@ async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> 
         result = await sync_child_documents(
             pool, ws_slug, parent_id, child_type_slug, raw_items, exhaustive
         )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def _find_by_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.dedup import find_by_dedup_key
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    text = str(args.get("text", ""))
+    try:
+        result = await find_by_dedup_key(pool, ws_slug, text)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def _set_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.dedup import set_dedup_key
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+    raw_text = args.get("text")
+    text = str(raw_text) if raw_text is not None else None
+    try:
+        result = await set_dedup_key(pool, ws_slug, doc_id, text)
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(result)
