@@ -206,6 +206,16 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "list_workspace_members",
         "add_workspace_member",
         "remove_workspace_member",
+        "create_dataset",
+        "list_datasets",
+        "get_dataset",
+        "add_dataset_column",
+        "update_dataset_column",
+        "delete_dataset_column",
+        "add_dataset_row",
+        "update_dataset_row",
+        "delete_dataset_row",
+        "query_dataset",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 

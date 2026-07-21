@@ -11,7 +11,7 @@ from mcp.types import TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
-from docflow.mcp import artifact_tools
+from docflow.mcp import artifact_tools, dataset_tools
 from docflow.mcp.session import acting_identity, current_session, require_identity
 from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
 
@@ -958,6 +958,7 @@ _TOOLS: list[Tool] = [
         },
     ),
     *artifact_tools.ARTIFACT_TOOLS,
+    *dataset_tools.DATASET_TOOLS,
 ]
 
 mcp_server = Server("docflow")
@@ -1014,6 +1015,7 @@ _WS_TOOLS: dict[str, bool] = {
     "add_workspace_member": True,
     "remove_workspace_member": True,
     **artifact_tools.ARTIFACT_WS_TOOLS,
+    **dataset_tools.DATASET_WS_TOOLS,
 }
 
 # Outils structurels : réservés aux profils admin quand la session vient d'une clé API.
@@ -1189,6 +1191,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await artifact_tools.handle_get_artifact(pool, arguments)
     if name == "get_artifact_link":
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
+    if name in dataset_tools.DATASET_WS_TOOLS:
+        return await dataset_tools.handle(name, pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})
 
 

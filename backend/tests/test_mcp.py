@@ -43,7 +43,20 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "list_workspace_members" in tool_names
     assert "add_workspace_member" in tool_names
     assert "remove_workspace_member" in tool_names
-    assert len(_TOOLS) == 35
+    for _t in (
+        "create_dataset",
+        "list_datasets",
+        "get_dataset",
+        "add_dataset_column",
+        "update_dataset_column",
+        "delete_dataset_column",
+        "add_dataset_row",
+        "update_dataset_row",
+        "delete_dataset_row",
+        "query_dataset",
+    ):
+        assert _t in tool_names
+    assert len(_TOOLS) == 45
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
