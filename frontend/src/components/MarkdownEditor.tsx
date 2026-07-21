@@ -7,14 +7,17 @@ import {
   getDefaultReactSlashMenuItems,
 } from '@blocknote/react'
 import '@blocknote/mantine/style.css'
-import { Link } from 'lucide-react'
+import { Link, Table } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { MermaidBlock } from './MermaidBlock'
+import { DatasetBlock } from './DatasetBlock'
 import {
-  parseMarkdownWithMermaid,
-  serializeMarkdownWithMermaid,
-  type MarkdownEditorApi,
-} from '../lib/mermaidMarkdown'
+  parseMarkdownWithBlocks,
+  serializeMarkdownWithBlocks,
+  type BlockMarkdownEditorApi,
+} from '../lib/datasetMarkdown'
 import { type DocumentSearchResult } from '../lib/api'
+import { datasetsApi } from '../lib/datasetsApi'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
 
@@ -32,7 +35,7 @@ function filterItems<T extends { title: string; aliases?: string[] }>(
 }
 
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock() },
+  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock(), dataset: DatasetBlock() },
 })
 
 export interface MarkdownEditorHandle {
@@ -49,6 +52,7 @@ interface MarkdownEditorProps {
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   ({ initialContent, onDirty, wsSlug }, ref) => {
+    const { t } = useTranslation()
     // uploadFile : collage/drop d'une image → POST artefact, l'URL retournée est
     // stockée dans le bloc image et sérialisée en markdown ![nom](url).
     // resolveFileUrl : l'endpoint est authentifié Bearer, l'affichage passe par
@@ -73,8 +77,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       loadedRef.current = true
       let cancelled = false
       void (async () => {
-        const api = editor as unknown as MarkdownEditorApi
-        const blocks = await parseMarkdownWithMermaid(api, initialContent ?? '')
+        const api = editor as unknown as BlockMarkdownEditorApi
+        const blocks = await parseMarkdownWithBlocks(api, initialContent ?? '')
         if (cancelled) return
         if (blocks.length > 0) {
           editor.replaceBlocks(editor.document, blocks as never)
@@ -85,7 +89,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     }, [editor, initialContent])
 
     useImperativeHandle(ref, () => ({
-      getMarkdown: () => serializeMarkdownWithMermaid(editor as unknown as MarkdownEditorApi),
+      getMarkdown: () => serializeMarkdownWithBlocks(editor as unknown as BlockMarkdownEditorApi),
     }), [editor])
 
     const handleLinkSelect = useCallback((doc: DocumentSearchResult) => {
@@ -104,6 +108,28 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       key: 'link-document',
     }
 
+    // Crée un dataset vide et insère son bloc de référence à la position courante.
+    const insertDataset = useCallback(async () => {
+      if (!wsSlug) return
+      const slug = `dataset-${Date.now().toString(36)}`
+      const ds = await datasetsApi.createDataset(wsSlug, { slug, label: t('dataset.defaultLabel') })
+      editor.insertBlocks(
+        [{ type: 'dataset', props: { datasetId: ds.id } }] as never,
+        editor.getTextCursorPosition().block,
+        'after',
+      )
+    }, [editor, wsSlug, t])
+
+    const datasetSlashItem = {
+      title: t('dataset.slashTitle'),
+      subtext: t('dataset.slashHint'),
+      onItemClick: () => { void insertDataset() },
+      aliases: ['dataset', 'tableau', 'table', 'grille', 'données'],
+      group: 'Insérer',
+      icon: <Table size={18} />,
+      key: 'dataset',
+    }
+
     return (
       <div className="rounded border border-gray-200 bg-white" data-testid="markdown-editor">
         <BlockNoteView
@@ -116,7 +142,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
               triggerCharacter="/"
               getItems={async (query) =>
                 filterItems(
-                  [linkSlashItem, ...getDefaultReactSlashMenuItems(editor)],
+                  [linkSlashItem, datasetSlashItem, ...getDefaultReactSlashMenuItems(editor)],
                   query,
                 )
               }

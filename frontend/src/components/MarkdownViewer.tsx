@@ -4,11 +4,12 @@ import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import { MermaidBlock } from './MermaidBlock'
+import { DatasetBlock } from './DatasetBlock'
 import { resolveArtifactUrl } from '../lib/artifacts'
-import { parseMarkdownWithMermaid, type MarkdownEditorApi } from '../lib/mermaidMarkdown'
+import { parseMarkdownWithBlocks, type BlockMarkdownEditorApi } from '../lib/datasetMarkdown'
 
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock() },
+  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock(), dataset: DatasetBlock() },
 })
 
 interface MarkdownViewerProps {
@@ -26,8 +27,8 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
     loadedRef.current = true
     let cancelled = false
     void (async () => {
-      const api = editor as unknown as MarkdownEditorApi
-      const blocks = await parseMarkdownWithMermaid(api, content ?? '')
+      const api = editor as unknown as BlockMarkdownEditorApi
+      const blocks = await parseMarkdownWithBlocks(api, content ?? '')
       if (cancelled) return
       if (blocks.length > 0) {
         editor.replaceBlocks(editor.document, blocks as never)

@@ -275,6 +275,36 @@
     "forbidden": "Accès refusé — réservé aux superadmins.",
     "navLink": "Admin OIDC"
   },
+  "dataset": {
+    "loading": "Chargement du tableau…",
+    "loadError": "Impossible de charger le tableau.",
+    "empty": "Aucune ligne",
+    "export": "Exporter CSV",
+    "import": "Importer CSV",
+    "importPreview": "Aperçu de l'import — vérifiez les types de colonnes",
+    "addRow": "Ajouter une ligne",
+    "deleteRow": "Supprimer la ligne",
+    "addColumn": "Ajouter une colonne",
+    "deleteColumn": "Supprimer la colonne",
+    "columnLabel": "Libellé de colonne",
+    "add": "Ajouter",
+    "cancel": "Annuler",
+    "modeReplace": "Remplacer le contenu",
+    "modeAppend": "Ajouter aux lignes existantes",
+    "missingRef": "Référence de dataset manquante.",
+    "noWorkspace": "Aucun workspace sélectionné.",
+    "defaultLabel": "Nouveau tableau",
+    "slashTitle": "Tableau (dataset)",
+    "slashHint": "Insérer une grille de données",
+    "type": {
+      "text": "Texte",
+      "int": "Entier",
+      "float": "Décimal",
+      "date": "Date",
+      "bool": "Booléen",
+      "url": "URL"
+    }
+  },
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"
