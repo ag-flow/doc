@@ -24,6 +24,7 @@ from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
+from docflow.datasets.router import router as datasets_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
@@ -151,6 +152,7 @@ app.include_router(events_router, prefix=_API)
 app.include_router(events_producer_router, prefix=_API)
 app.include_router(export_router, prefix=_API)
 app.include_router(views_router, prefix=_API)
+app.include_router(datasets_router, prefix=_API)
 app.include_router(apikeys_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 
