@@ -54,9 +54,11 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
         "update_dataset_row",
         "delete_dataset_row",
         "query_dataset",
+        "import_dataset_csv",
+        "export_dataset_csv",
     ):
         assert _t in tool_names
-    assert len(_TOOLS) == 45
+    assert len(_TOOLS) == 47
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:

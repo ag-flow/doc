@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Literal, cast
 
 import asyncpg
 from fastapi import HTTPException
 from mcp.types import TextContent, Tool
 
-from docflow.datasets import service
+from docflow.datasets import csv_io, service
 from docflow.datasets.query import query_dataset
 from docflow.mcp.session import acting_identity
 
@@ -225,9 +226,69 @@ DATASET_TOOLS: list[Tool] = [
             "required": ["workspace_slug", "dataset_id"],
         },
     ),
+    Tool(
+        name="import_dataset_csv",
+        description=(
+            "Importe un CSV dans un dataset. ÉCRITURE. Sans dataset_id, crée un dataset "
+            "(slug + label requis) ; avec dataset_id, importe dans l'existant (404 si "
+            "hors workspace). has_header (défaut true) : la 1ʳᵉ ligne nomme les "
+            "colonnes. Le type de chaque colonne est INFÉRÉ (int → float → date → "
+            "bool → text) en scannant toutes ses valeurs. mode='replace' (défaut) "
+            "purge colonnes et lignes avant import ; mode='append' conserve les "
+            "colonnes et mappe les en-têtes par slug (en-tête inconnu → colonne text). "
+            "Une ligne d'arité incorrecte ou non convertible est reportée dans errors "
+            "(échantillon) SANS faire échouer l'import. Retourne {dataset_id, "
+            "columns_created, rows_created, rows_skipped, errors}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": _WS,
+                "dataset_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du dataset cible (omis = créer un dataset)",
+                },
+                "slug": {"type": "string", "description": "Slug du dataset à créer"},
+                "label": {"type": "string", "description": "Label du dataset à créer"},
+                "csv": {"type": "string", "description": "Contenu CSV (délimiteur ,)"},
+                "has_header": {
+                    "type": "boolean",
+                    "description": "1ʳᵉ ligne = en-têtes (défaut true)",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "replace (défaut) purge ; append conserve et mappe par slug",
+                },
+            },
+            "required": ["workspace_slug", "csv"],
+        },
+    ),
+    Tool(
+        name="export_dataset_csv",
+        description=(
+            "Exporte un dataset en CSV. Lecture seule. En-tête = slugs (défaut) ou "
+            "labels (header='label') ; colonnes triées par position, lignes par "
+            "position ; valeurs = représentation texte d'origine. Retourne {csv}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": _WS,
+                "dataset_id": _DS,
+                "header": {
+                    "type": "string",
+                    "enum": ["slug", "label"],
+                    "description": "Ligne d'en-tête : slug (défaut) ou label",
+                },
+            },
+            "required": ["workspace_slug", "dataset_id"],
+        },
+    ),
 ]
 
-# outil → écriture ? (create/add/update/delete = True ; list/get/query = False)
+# outil → écriture ? (create/add/update/delete/import = True ; list/get/query/export = False)
 DATASET_WS_TOOLS: dict[str, bool] = {
     "create_dataset": True,
     "list_datasets": False,
@@ -239,6 +300,8 @@ DATASET_WS_TOOLS: dict[str, bool] = {
     "update_dataset_row": True,
     "delete_dataset_row": True,
     "query_dataset": False,
+    "import_dataset_csv": True,
+    "export_dataset_csv": False,
 }
 
 
@@ -346,7 +409,43 @@ async def _dispatch(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> l
                 _opt_int(args, "page_size") or 50,
             )
         )
+    if name == "import_dataset_csv":
+        return _text(
+            await csv_io.import_csv(
+                pool,
+                ws,
+                dataset_id=_opt_uuid(args, "dataset_id"),
+                slug=_opt_str(args, "slug"),
+                label=_opt_str(args, "label"),
+                csv_text=str(args.get("csv", "")),
+                has_header=bool(args.get("has_header", True)),
+                mode=_csv_mode(args),
+                created_by=acting_identity().id,
+            )
+        )
+    if name == "export_dataset_csv":
+        text = await csv_io.export_csv(pool, ws, _dataset_id(args), header=_csv_header(args))
+        return _text({"csv": text})
     return _text({"error": f"outil dataset inconnu : {name}"})
+
+
+def _csv_mode(args: dict[str, object]) -> Literal["replace", "append"]:
+    mode = str(args.get("mode", "replace"))
+    if mode not in ("replace", "append"):
+        raise HTTPException(status_code=422, detail=f"mode inconnu : '{mode}'")
+    return cast("Literal['replace', 'append']", mode)
+
+
+def _csv_header(args: dict[str, object]) -> Literal["slug", "label"]:
+    header = str(args.get("header", "slug"))
+    if header not in ("slug", "label"):
+        raise HTTPException(status_code=422, detail=f"header inconnu : '{header}'")
+    return cast("Literal['slug', 'label']", header)
+
+
+def _opt_uuid(args: dict[str, object], key: str) -> uuid.UUID | None:
+    val = args.get(key)
+    return uuid.UUID(str(val)) if val else None
 
 
 def _opt_str(args: dict[str, object], key: str) -> str | None:

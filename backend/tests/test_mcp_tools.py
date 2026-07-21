@@ -216,6 +216,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "update_dataset_row",
         "delete_dataset_row",
         "query_dataset",
+        "import_dataset_csv",
+        "export_dataset_csv",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 
