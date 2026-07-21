@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     artifact_link_ttl_seconds: int = 900
     # Purge des artefacts jamais référencés (brouillons abandonnés)
     artifact_purge_after_hours: int = 24
+    # Purge des datasets jamais référencés (brouillons abandonnés)
+    dataset_purge_after_hours: int = 24
     # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
     public_base_url: str | None = None
 

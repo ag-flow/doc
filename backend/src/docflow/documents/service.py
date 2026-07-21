@@ -14,6 +14,7 @@ from docflow.artifacts.service import (
     purge_unreferenced,
     refresh_artifact_references,
 )
+from docflow.datasets.references import refresh_dataset_references
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
@@ -391,6 +392,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             await log_change(conn, wk, row["doc_technical_key"], "C")
             await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
             await refresh_artifact_references(conn, row["doc_technical_key"], wk, initial_content)
+            await refresh_dataset_references(conn, row["doc_technical_key"], wk, initial_content)
 
             # Valeurs initiales de propriétés + contrat required (contrat dur :
             # la création échoue si une required sans default/behavior manque).
@@ -535,6 +537,7 @@ async def update_document(
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
                 await refresh_artifact_references(conn, doc_id, wk, new_content)
+                await refresh_dataset_references(conn, doc_id, wk, new_content)
                 await outbox.enqueue(
                     conn,
                     event_code="docflow.document.updated.v1",

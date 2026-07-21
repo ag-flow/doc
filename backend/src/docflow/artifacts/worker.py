@@ -7,6 +7,7 @@ import structlog
 
 from docflow.artifacts.service import purge_stale
 from docflow.config.settings import Settings
+from docflow.datasets.references import purge_stale_datasets
 
 log = structlog.get_logger(__name__)
 
@@ -14,11 +15,12 @@ _TICK_SECONDS = 3600  # une passe de purge par heure suffit largement
 
 
 async def purge_loop(pool: asyncpg.Pool, settings: Settings) -> None:
-    """Purge périodique des artefacts jamais référencés (brouillons abandonnés).
+    """Purge périodique des artefacts et datasets jamais référencés.
 
-    Les artefacts dont la dernière référence disparaît sont supprimés
-    immédiatement dans la transaction du save/delete ; cette boucle ne couvre
-    que le cas d'une image collée dans un brouillon jamais enregistré.
+    Les artefacts / datasets dont la dernière référence disparaît sont
+    supprimés immédiatement dans la transaction du save ; cette boucle ne
+    couvre que le cas d'un binaire ou d'un dataset créé dans un brouillon
+    jamais enregistré (aucune référence ne sera jamais posée).
     """
     while True:
         await asyncio.sleep(_TICK_SECONDS)
@@ -30,3 +32,13 @@ async def purge_loop(pool: asyncpg.Pool, settings: Settings) -> None:
             raise
         except Exception:
             log.error("artifact_purge_failed", exc_info=True)
+        try:
+            purged_ds = await purge_stale_datasets(
+                pool, older_than_hours=settings.dataset_purge_after_hours
+            )
+            if purged_ds:
+                log.info("dataset_purge", purged=purged_ds)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.error("dataset_purge_failed", exc_info=True)
