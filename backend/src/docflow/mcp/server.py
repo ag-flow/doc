@@ -957,6 +957,34 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "member_email"],
         },
     ),
+    Tool(
+        name="find_referencing_documents",
+        description=(
+            "Retourne toutes les pages qui RÉFÉRENCENT une page cible (backlinks), "
+            "en fusionnant DEUX sources : un lien de contenu markdown "
+            "(docflow://doc/...) OU une propriété de type reference pointant la "
+            "cible. À utiliser AVANT un copier→supprimer pour vérifier qu'aucune "
+            "page ne pointe encore vers la cible (liens qui deviendraient cassés). "
+            "Chaque entrée : source_id (UUID de la page source), source_title, "
+            "block_slug (slug du bloc de la source), via ('content' ou 'property') ; "
+            "pour via='property', prop_slug (slug de la propriété reference) ; "
+            "pour via='content', label (libellé du lien). "
+            "Retourne {error: ...} si le document ou le workspace est introuvable. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la page cible dont on veut les backlinks",
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
     *dataset_tools.DATASET_TOOLS,
 ]
@@ -1014,6 +1042,7 @@ _WS_TOOLS: dict[str, bool] = {
     "list_workspace_members": False,
     "add_workspace_member": True,
     "remove_workspace_member": True,
+    "find_referencing_documents": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
     **dataset_tools.DATASET_WS_TOOLS,
 }
@@ -1179,6 +1208,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
         return await _generate_api_key(pool, arguments)
+    if name == "find_referencing_documents":
+        return await _find_referencing_documents(pool, arguments)
     if name == "list_workspace_members":
         return await _list_workspace_members(pool, arguments)
     if name == "add_workspace_member":
@@ -2099,6 +2130,25 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
             "label": created.label,
         }
     )
+
+
+async def _find_referencing_documents(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.references import service as ref_svc
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+    try:
+        result = await ref_svc.find_referencing_documents(pool, ws_slug, doc_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
 
 
 async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:

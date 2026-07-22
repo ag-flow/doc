@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
+from fastapi import HTTPException
 from pydantic import BaseModel
 
 from docflow.db.helpers import require_workspace
@@ -173,6 +174,86 @@ async def get_backlinks(
         )
         for r in rows
     ]
+
+
+async def find_referencing_documents(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+) -> list[dict[str, object]]:
+    """Pages référençant doc_id, en fusionnant liens de contenu ET propriétés reference.
+
+    Deux sources :
+    - contenu : réutilise ``get_backlinks`` (table ``document_reference``) ;
+    - propriété : valeur COURANTE d'une propriété de type ``reference`` pointant
+      la cible (``properties_value_version.target_document_ref``).
+
+    Dédup par (source_id, via, prop_slug|None), tri par ``source_title``.
+    Lève 404 si ``doc_id`` n'appartient pas au workspace.
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+        if exists is None:
+            raise HTTPException(status_code=404, detail=f"document '{doc_id}' introuvable")
+        prop_rows = await conn.fetch(
+            """
+            SELECT src.doc_technical_key AS source_id,
+                   src.title             AS source_title,
+                   db.slug               AS block_slug,
+                   pd.slug               AS prop_slug
+            FROM properties_values pv
+            JOIN properties_value_version pvv
+                   ON pvv.property_value_ref = pv.id
+                  AND pvv.version_number = pv.version
+            JOIN properties_defs pd  ON pd.id = pv.property_def_ref
+            JOIN document src        ON src.doc_technical_key = pv.document_ref
+            JOIN data_block db       ON db.id = src.data_block_ref
+            WHERE pvv.target_document_ref = $1
+              AND src.workspace_technical_key = $2
+            """,
+            doc_id,
+            wk,
+        )
+
+    content = await get_backlinks(pool, ws_slug, doc_id)
+
+    seen: set[tuple[str, str, str | None]] = set()
+    items: list[dict[str, object]] = []
+    for bl in content:
+        key = (str(bl.source_id), "content", None)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "source_id": str(bl.source_id),
+                "source_title": bl.source_title,
+                "block_slug": bl.bloc,
+                "via": "content",
+                "label": bl.target_label,
+            }
+        )
+    for r in prop_rows:
+        key = (str(r["source_id"]), "property", r["prop_slug"])
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "source_id": str(r["source_id"]),
+                "source_title": r["source_title"],
+                "block_slug": r["block_slug"],
+                "via": "property",
+                "prop_slug": r["prop_slug"],
+            }
+        )
+    items.sort(key=lambda it: str(it["source_title"]))
+    return items
 
 
 async def broken_links_detail(
