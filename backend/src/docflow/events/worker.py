@@ -1,8 +1,8 @@
 """Worker de livraison de l'outbox d'events vers l'ingestion workflow.
 
 Balaie périodiquement les events non envoyés, les signe (HMAC corps brut) et
-les POST vers `{workflow_ingestion_url}/events/{workflow_source_id}`. Retry
-borné par backoff exponentiel ; l'`_eventId` (= id de ligne) est réutilisé tel
+les POST vers l'URL d'envoi complète (`ingestion_url`, collée depuis workflow).
+Retry borné par backoff exponentiel ; l'`_eventId` (= id de ligne) est réutilisé tel
 quel à chaque tentative → déduplication idempotente côté workflow.
 
 Le claim utilise `FOR UPDATE SKIP LOCKED` + un bail (`next_attempt_at` poussé)
@@ -151,7 +151,7 @@ def emission_configured(settings: Any) -> bool:
 
 def _drainable(cfg: dict[str, Any]) -> bool:
     """La config DB permet-elle de draîner ? (activée + endpoint + secret posés)."""
-    return bool(cfg["enabled"] and cfg["ingestion_url"] and cfg["source_id"] and cfg["secret_ref"])
+    return bool(cfg["enabled"] and cfg["ingestion_url"] and cfg["secret_ref"])
 
 
 async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
@@ -184,8 +184,9 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
                 await outbox.reconcile(pool)
                 cfg = await producer_config.get_config(pool)
                 if _drainable(cfg):
-                    base = str(cfg["ingestion_url"]).rstrip("/")
-                    endpoint = f"{base}/events/{cfg['source_id']}"
+                    # ingestion_url = l'URL d'envoi COMPLÈTE (à coller depuis
+                    # workflow) : on POST directement dessus, aucun ajout.
+                    endpoint = str(cfg["ingestion_url"])
                     ref: str = cfg["secret_ref"]
                     if secret_cache is None or secret_cache[0] != ref:
                         resolved = await _resolve_secret(Secret(ref), pool=pool, settings=settings)

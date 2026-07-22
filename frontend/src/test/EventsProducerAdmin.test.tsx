@@ -74,7 +74,6 @@ describe('EventsProducerAdmin', () => {
     await waitFor(() =>
       expect((screen.getByTestId('ep-ingestion-url') as HTMLInputElement).value).toBe('https://workflow.example/ing'),
     )
-    expect((screen.getByTestId('ep-source-id') as HTMLInputElement).value).toBe('docflow-prod')
     // Catalogue rendu, event pré-coché depuis la liste blanche
     await waitFor(() =>
       expect(screen.getByTestId('ep-event-docflow.document.created.v1')).toBeChecked(),
@@ -95,7 +94,6 @@ describe('EventsProducerAdmin', () => {
       expect(vi.mocked(eventsProducerApi.update)).toHaveBeenCalledWith(
         expect.objectContaining({
           ingestion_url: 'https://workflow.example/ing',
-          source_id: 'docflow-prod',
           allowed_events: ['docflow.document.created.v1', 'docflow.document.updated.v1'],
         }),
       ),

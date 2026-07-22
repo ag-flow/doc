@@ -33,7 +33,6 @@ export function EventsProducerAdmin() {
 
   const [enabled, setEnabled] = useState(false)
   const [ingestionUrl, setIngestionUrl] = useState('')
-  const [sourceId, setSourceId] = useState('')
   const [sourceUri, setSourceUri] = useState('')
   const [selectedSecretId, setSelectedSecretId] = useState('')
   const [allowed, setAllowed] = useState<string[]>([])
@@ -46,7 +45,6 @@ export function EventsProducerAdmin() {
     if (config) {
       setEnabled(config.enabled)
       setIngestionUrl(config.ingestion_url ?? '')
-      setSourceId(config.source_id ?? '')
       setSourceUri(config.source_uri)
       setAllowed(config.allowed_events)
     }
@@ -59,7 +57,6 @@ export function EventsProducerAdmin() {
       const body = {
         enabled,
         ingestion_url: ingestionUrl.trim() || null,
-        source_id: sourceId.trim() || null,
         source_uri: sourceUri.trim() || 'docflow',
         allowed_events: allowed,
         ...(selectedSecretId ? { secret_ref: `\${hmac://${selectedSecretId}}` } : {}),
@@ -102,7 +99,7 @@ export function EventsProducerAdmin() {
   }
 
   const events = catalog?.events ?? []
-  const canTest = Boolean(ingestionUrl.trim() && sourceId.trim() && secretConfigured)
+  const canTest = Boolean(ingestionUrl.trim() && secretConfigured)
 
   return (
     <div className="p-8 max-w-2xl">
@@ -117,16 +114,6 @@ export function EventsProducerAdmin() {
             onChange={(e) => { setIngestionUrl(e.target.value); setSaveMsg(null) }}
             placeholder="https://workflow.yoops.org"
             data-testid="ep-ingestion-url"
-          />
-        </Field>
-
-        {/* source_id */}
-        <Field label={t('eventsProducer.sourceId')} hint={t('eventsProducer.sourceIdHint')}>
-          <Input
-            value={sourceId}
-            onChange={(e) => { setSourceId(e.target.value); setSaveMsg(null) }}
-            placeholder="ef7ae716-5a45-47b1-850c-0333b6b44b44"
-            data-testid="ep-source-id"
           />
         </Field>
 
@@ -348,14 +335,6 @@ function Code({ children }: { children: ReactNode }) {
   )
 }
 
-function Block({ children }: { children: string }) {
-  return (
-    <pre className="mt-1.5 overflow-x-auto rounded-md bg-gray-900 px-4 py-3 font-mono text-xs text-gray-100">
-      {children}
-    </pre>
-  )
-}
-
 function WiringGuide() {
   const { t } = useTranslation()
   return (
@@ -367,7 +346,8 @@ function WiringGuide() {
         <Step n={1} title="Créer la source inbound côté workflow">
           <p>
             Dans ag.flow workflow, créez une source d'ingestion (inbound) qui accepte les events
-            docflow. Notez son <Code>source_id</Code> et l'URL de base de l'ingestion.
+            docflow. Copiez son <strong>« URL d'envoi »</strong> en mode <strong>Complète</strong>{' '}
+            (à coller telle quelle, ex. <Code>https://workflow.yoops.org/events/&lt;guid&gt;</Code>).
           </p>
         </Step>
         <Step n={2} title="Importer le contrat d'events (Discovery côté workflow)">
@@ -392,16 +372,18 @@ function WiringGuide() {
             workflow).
           </p>
         </Step>
-        <Step n={3} title="Stocker le secret HMAC dans Harpocrate">
-          <p>Chaque event est signé HMAC-SHA256 (en-tête <Code>x-signature</Code>). Le même secret est partagé avec le workflow :</p>
-          <Block>{'harpocrate put docflow/workflow_hmac <secret-partagé>'}</Block>
-          <p className="mt-2">Référence à saisir dans le formulaire :</p>
-          <Block>{'${vault://docflow/workflow_hmac}'}</Block>
+        <Step n={3} title="Créer le secret HMAC (partagé avec workflow)">
+          <p>
+            Chaque event est signé HMAC-SHA256 (en-tête <Code>x-signature</Code>). Dans{' '}
+            <em>Clés API → onglet HMAC</em>, générez un secret, <strong>copiez sa valeur</strong> et
+            renseignez-la comme secret du <strong>schéma de signature</strong> côté workflow (le
+            même des deux côtés).
+          </p>
         </Step>
         <Step n={4} title="Renseigner et enregistrer le formulaire">
           <ul className="list-inside list-disc space-y-1">
-            <li>URL d'ingestion + <Code>source_id</Code> de l'étape 1</li>
-            <li>Référence vault du secret de l'étape 3</li>
+            <li>Collez l'« URL d'envoi » complète de l'étape 1</li>
+            <li>Sélectionnez le secret HMAC de l'étape 3</li>
             <li>Cochez les eventCode à émettre (liste blanche)</li>
           </ul>
         </Step>

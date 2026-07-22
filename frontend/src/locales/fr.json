@@ -281,10 +281,8 @@
   "eventsProducer": {
     "title": "Connexion workflow (events)",
     "subtitle": "Émission des events docflow vers l'ingestion ag.flow workflow (superadmin uniquement).",
-    "ingestionUrl": "URL d'ingestion workflow (base)",
-    "ingestionUrlHint": "Base SANS /events/… (ex. https://workflow.yoops.org). L'event est posté en POST {base}/events/{source_id}.",
-    "sourceId": "Identifiant de source (source_id / GUID)",
-    "sourceIdHint": "Le GUID de la source inbound côté workflow (ex. ef7ae716-…), pas un nom libre. C'est le {guid} de POST {base}/events/{guid}.",
+    "ingestionUrl": "URL d'envoi (complète)",
+    "ingestionUrlHint": "Collez l'« URL d'envoi » complète fournie par workflow (ex. https://workflow.yoops.org/events/ef7ae716-…). docflow POST directement dessus, sans rien ajouter.",
     "sourceUri": "URI de source (_source)",
     "sourceUriHint": "Valeur du champ système _source de l'enveloppe. Défaut : docflow.",
     "secretRef": "Référence vault du secret HMAC",

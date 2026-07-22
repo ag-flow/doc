@@ -284,8 +284,7 @@ def test_test_connection_ok(
             headers=hdrs,
             json={
                 "enabled": True,
-                "ingestion_url": "https://wf.example",
-                "source_id": "docflow",
+                "ingestion_url": "https://wf.example/events/ef7ae716",
                 "secret_ref": _VAULT_REF,
             },
         )
@@ -305,8 +304,8 @@ def test_test_connection_ok(
         r = client.post("/api/admin/events-producer/test-connection", headers=hdrs)
         assert r.status_code == 200
         assert r.json() == {"status": 202, "ok": True}
-        # Le POST a bien visé {ingestion_url}/events/{source_id}.
-        assert calls[0][0] == "https://wf.example/events/docflow"
+        # Le POST vise l'URL d'envoi COMPLÈTE telle quelle (aucun ajout).
+        assert calls[0][0] == "https://wf.example/events/ef7ae716"
         # L'event de test est hors catalogue et signé.
         env = json.loads(calls[0][1])
         assert env["_eventCode"] == "docflow.testevent.v1"

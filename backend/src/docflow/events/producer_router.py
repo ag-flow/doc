@@ -97,16 +97,17 @@ async def test_connection(request: Request, _: AuthUser = _SuperAdmin) -> dict[s
     pool = request.app.state.pool
     settings = request.app.state.settings
     cfg = await producer_config.get_config(pool)
-    if not (cfg["ingestion_url"] and cfg["source_id"] and cfg["secret_ref"]):
+    if not (cfg["ingestion_url"] and cfg["secret_ref"]):
         raise HTTPException(
             status_code=400,
-            detail="config producteur incomplète (ingestion_url, source_id, secret_ref requis)",
+            detail="config producteur incomplète (ingestion_url et secret_ref requis)",
         )
     secret = await _resolve_secret(Secret(cfg["secret_ref"]), pool=pool, settings=settings)
     envelope = _build_test_envelope(cfg["source_uri"])
     body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json", SIGNATURE_HEADER: sign_body(secret, body)}
-    url = f"{str(cfg['ingestion_url']).rstrip('/')}/events/{cfg['source_id']}"
+    # ingestion_url = l'URL d'envoi COMPLÈTE : on POST directement dessus.
+    url = str(cfg["ingestion_url"])
     try:
         status = await _poster(url, body, headers)
     except Exception as exc:
