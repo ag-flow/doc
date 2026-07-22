@@ -1,73 +1,11 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, RefreshCw, Trash2, Pencil, Plus, Upload } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
-import { contractsApi, automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
-
-// ── Import contrat ────────────────────────────────────────────────────────────
-
-function ContractImportForm({ onDone }: { onDone: () => void }) {
-  const qc = useQueryClient()
-  const [label, setLabel] = useState('')
-  const [url, setUrl] = useState('')
-  const [jsonText, setJsonText] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const importMut = useMutation({
-    mutationFn: (body: Parameters<typeof contractsApi.import>[0]) => contractsApi.import(body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['contracts'] }); onDone() },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  function submit() {
-    setError(null)
-    if (!label.trim()) return setError('Libellé requis')
-    if (url.trim()) {
-      importMut.mutate({ label: label.trim(), source_url: url.trim(), raw_spec: {} })
-    } else {
-      try {
-        const raw_spec = JSON.parse(jsonText) as object
-        importMut.mutate({ label: label.trim(), raw_spec })
-      } catch {
-        setError('JSON invalide')
-      }
-    }
-  }
-
-  return (
-    <div className="mt-3 space-y-2 rounded-md border border-gray-200 bg-gray-50 p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium mb-1">Libellé</label>
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ag-flow.rag" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">URL source (ou coller le JSON ci-dessous)</label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/openapi.json" />
-        </div>
-      </div>
-      {!url.trim() && (
-        <textarea
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          className="w-full rounded border border-gray-300 p-2 text-xs font-mono h-28 resize-y"
-          placeholder="Coller ici le contrat OpenAPI en JSON…"
-        />
-      )}
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      <div className="flex gap-2">
-        <Button size="sm" onClick={submit} disabled={importMut.isPending}>
-          {importMut.isPending ? 'Import…' : 'Importer'}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onDone}>Annuler</Button>
-      </div>
-    </div>
-  )
-}
+import { automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
 
 // ── Page principale ───────────────────────────────────────────────────────────
 
@@ -75,32 +13,15 @@ export function AutomatesPage() {
   const { wsSlug: ws } = useParams<{ wsSlug: string }>()
   const qc = useQueryClient()
 
-  const [showImport, setShowImport] = useState(false)
   const [expandedAuto, setExpandedAuto] = useState<string | null>(null)
   const [dialogAuto, setDialogAuto] = useState<AutomationOut | null | 'new'>()
   const [dialogError, setDialogError] = useState<string | null>(null)
-
-  const { data: contracts = [], isLoading: cLoading } = useQuery({
-    queryKey: ['contracts'],
-    queryFn: () => contractsApi.list(),
-    staleTime: 30_000,
-  })
 
   const { data: automations = [], isLoading: aLoading } = useQuery({
     queryKey: ['automations', ws],
     queryFn: () => automationsApi.list(ws!),
     enabled: !!ws,
     staleTime: 15_000,
-  })
-
-  const refreshMut = useMutation({
-    mutationFn: (id: string) => contractsApi.refresh(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
-  })
-
-  const deleteContractMut = useMutation({
-    mutationFn: (id: string) => contractsApi.delete(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
   })
 
   const createMut = useMutation({
@@ -146,50 +67,13 @@ export function AutomatesPage() {
         traitement sans écrire de code d'intégration.
       </p>
 
-      {/* ── Contrats ── */}
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold">Contrats OpenAPI</h2>
-          <Button size="sm" onClick={() => setShowImport((v) => !v)}>
-            <Upload size={13} className="mr-1.5" />
-            {showImport ? 'Annuler' : 'Importer'}
-          </Button>
-        </div>
-        {showImport && <ContractImportForm onDone={() => setShowImport(false)} />}
-        {cLoading ? (
-          <p className="text-sm text-gray-400">Chargement…</p>
-        ) : contracts.length === 0 ? (
-          <p className="text-sm text-gray-500">Aucun contrat importé.</p>
-        ) : (
-          <div className="space-y-2">
-            {contracts.map((c) => (
-              <div key={c.id} className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-4 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <span className="font-medium text-sm">{c.label}</span>
-                  {c.version && <span className="ml-2 text-xs text-gray-400">v{c.version}</span>}
-                  {c.source_url && (
-                    <span className="ml-2 text-xs text-gray-400 truncate">{c.source_url}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {c.source_url && (
-                    <button type="button" onClick={() => refreshMut.mutate(c.id)}
-                      disabled={refreshMut.isPending}
-                      title="Rafraîchir depuis l'URL source"
-                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
-                      <RefreshCw size={14} />
-                    </button>
-                  )}
-                  <button type="button" onClick={() => { if (confirm(`Supprimer « ${c.label} » ?`)) deleteContractMut.mutate(c.id) }}
-                    className="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <p className="mb-6 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600">
+        <FileJson size={15} className="shrink-0 text-gray-400" />
+        Les <strong>contrats OpenAPI</strong> sont partagés entre workspaces.
+        <Link to="/contracts" className="font-medium text-indigo-600 hover:underline">
+          Gérer les contrats →
+        </Link>
+      </p>
 
       {/* ── Automates ── */}
       <section>

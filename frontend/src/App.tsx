@@ -23,6 +23,7 @@ import { AutomatesPage } from './pages/AutomatesPage'
 import { UsersAdmin } from './pages/UsersAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
+import { ContractsAdmin } from './pages/ContractsAdmin'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -122,6 +123,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><ApiKeysPage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/contracts',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ContractsAdmin /></AppLayout>
       </ProtectedRoute>
     ),
   },

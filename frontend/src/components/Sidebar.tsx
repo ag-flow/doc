@@ -16,6 +16,7 @@ import {
   Zap,
   Users,
   Radio,
+  FileJson,
 } from 'lucide-react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -134,8 +135,9 @@ export function Sidebar() {
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Clés API — accessible à tous les utilisateurs */}
+      {/* Global, accessible à tous les utilisateurs */}
       <div className="flex flex-col items-center gap-1 mb-1">
+        <NavItem to="/contracts" icon={FileJson} label="Contrats OpenAPI" />
         <NavItem to="/api-keys" icon={KeySquare} label="Clés API" />
       </div>
 
