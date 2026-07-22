@@ -348,12 +348,27 @@ function WiringGuide() {
             docflow. Notez son <Code>source_id</Code> et l'URL de base de l'ingestion.
           </p>
         </Step>
-        <Step n={2} title="Importer le contrat d'events">
+        <Step n={2} title="Importer le contrat d'events (Discovery côté workflow)">
           <p>
-            docflow expose son catalogue d'events (contrat producteur) en lecture sur{' '}
-            <Code>GET /api/schemas</Code> (et{' '}
-            <Code>/api/schemas/{'{'}eventCode{'}'}/versions/{'{'}v{'}'}</Code>). Le workflow y copie
-            la forme des events qu'il recevra.
+            Côté workflow, créez une source de contrat <strong>Discovery</strong> pointant vers{' '}
+            <strong>docflow</strong> (le producteur) — <em>pas</em> vers workflow :
+          </p>
+          <ul className="mt-2 list-inside list-disc space-y-1">
+            <li>
+              URL : <Code>https://doc.yoops.org/api/schemas</Code> — en{' '}
+              <strong>HTTPS</strong> (un <Code>http://</Code> renvoie un 301 que la discovery ne
+              suit pas).
+            </li>
+            <li>
+              Authentification : <Code>/api/schemas</Code> exige un Bearer token. Créez une{' '}
+              <strong>clé API docflow</strong> (page <em>Clés API</em>) et renseignez-la comme
+              secret <Code>auth_ref</Code> de la source discovery.
+            </li>
+          </ul>
+          <p className="mt-2 text-xs text-gray-400">
+            Rappel du sens : ici workflow <em>lit</em> le contrat chez docflow. L'URL de workflow,
+            elle, se met dans le champ « URL d'ingestion workflow » ci-dessus (émission docflow →
+            workflow).
           </p>
         </Step>
         <Step n={3} title="Stocker le secret HMAC dans Harpocrate">
