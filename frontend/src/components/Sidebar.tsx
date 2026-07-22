@@ -15,6 +15,7 @@ import {
   LogOut,
   Zap,
   Users,
+  Radio,
 } from 'lucide-react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -147,6 +148,7 @@ export function Sidebar() {
             <NavItem to="/admin/users" icon={Users} label="Utilisateurs" />
             <NavItem to="/admin/vault" icon={KeyRound} label="Wallets Vault" />
             <NavItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
+            <NavItem to="/admin/events-producer" icon={Radio} label="Connexion workflow" />
             <NavItem to="/admin/remote" icon={HardDrive} label="Connexions & Sauvegarde" />
           </div>
         </>

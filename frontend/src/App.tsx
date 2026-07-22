@@ -17,6 +17,7 @@ import { BlockDocumentList } from './pages/BlockDocumentList'
 import { DocumentEditor } from './pages/DocumentEditor'
 import { WebhooksAdmin } from './pages/WebhooksAdmin'
 import { OidcAdmin } from './pages/OidcAdmin'
+import { EventsProducerAdmin } from './pages/EventsProducerAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
 import { UsersAdmin } from './pages/UsersAdmin'
@@ -97,6 +98,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><OidcAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/admin/events-producer',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><EventsProducerAdmin /></AppLayout>
       </ProtectedRoute>
     ),
   },

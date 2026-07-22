@@ -790,6 +790,52 @@ export const oidcApi = {
   }) => api.put<OidcConfigOut>('/admin/oidc', body),
 }
 
+// ── Producteur d'events workflow ─────────────────────────────────────────────
+
+export interface EventsProducerConfigOut {
+  enabled: boolean
+  ingestion_url: string | null
+  source_id: string | null
+  source_uri: string
+  allowed_events: string[]
+  /** Le secret HMAC n'est jamais renvoyé — seul ce booléen l'indique. */
+  secret_configured: boolean
+}
+
+export interface EventsProducerUpdate {
+  enabled?: boolean
+  ingestion_url?: string | null
+  source_id?: string | null
+  source_uri?: string | null
+  /** Référence vault ${vault://...} — jamais le secret en clair. */
+  secret_ref?: string | null
+  allowed_events?: string[]
+}
+
+export interface EventCatalogEntry {
+  eventCode: string
+  latestVersion: number
+  title: string
+  description: string
+  deprecated: boolean
+}
+
+export interface EventCatalog {
+  revision: string
+  specVersion: string
+  events: EventCatalogEntry[]
+}
+
+export const eventsProducerApi = {
+  get: () => api.get<EventsProducerConfigOut>('/admin/events-producer'),
+  update: (body: EventsProducerUpdate) =>
+    api.put<EventsProducerConfigOut>('/admin/events-producer', body),
+  testConnection: () =>
+    api.post<{ status: number; ok: boolean }>('/admin/events-producer/test-connection', {}),
+  /** Catalogue des eventCode émis (contrat producteur exposé via /api/schemas). */
+  catalog: () => api.get<EventCatalog>('/schemas'),
+}
+
 // ── Webhooks ────────────────────────────────────────────────────────────────
 
 export const webhooksApi = {
