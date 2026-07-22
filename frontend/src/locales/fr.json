@@ -83,6 +83,9 @@
   },
   "ws": {
     "title": "Workspaces",
+    "subtitle": "Vos espaces de travail. Ouvrez-en un pour accéder à ses blocs et documents.",
+    "empty": "Aucun workspace pour l'instant. Créez-en un pour démarrer.",
+    "archivedBadge": "Archivé",
     "create": "Nouveau workspace",
     "slug": "Identifiant (slug)",
     "label": "Libellé",
