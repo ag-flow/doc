@@ -37,8 +37,11 @@ async def _insert(
 
 def test_sign_body_matches_hmac() -> None:
     body = b'{"a":1}'
-    expected = "sha256=" + hmac.new(b"topsecret", body, hashlib.sha256).hexdigest()
+    # Hexdigest brut (64 car.), SANS préfixe sha256= (contrat consommateur).
+    expected = hmac.new(b"topsecret", body, hashlib.sha256).hexdigest()
     assert sign_body("topsecret", body) == expected
+    assert not sign_body("topsecret", body).startswith("sha256=")
+    assert len(sign_body("topsecret", body)) == 64
 
 
 def test_emission_configured() -> None:

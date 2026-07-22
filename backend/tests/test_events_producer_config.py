@@ -309,7 +309,7 @@ def test_test_connection_ok(
         # L'event de test est hors catalogue et signé.
         env = json.loads(calls[0][1])
         assert env["_eventCode"] == "docflow.testevent.v1"
-        assert "X-Signature" in calls[0][2]
+        assert "x-signature" in calls[0][2]
 
     # Aucune ligne outbox créée par le test-connection.
     async def _count() -> int:
