@@ -19,6 +19,10 @@ En allant sur le workspace=docflow et bloc=backlog tu as un backlog de tache à 
 - Quand tu prends une tache tu passes le statut à 'en cours'
 - Quand tu as finis tu passes le statut de la tache 'en review'.
 
+## Logs
+
+Tu as acces à la centralisation des logs par le service mcp.
+
 ## Documentation
 
 La gatway mcp propose une api pour se connecter à docflow
