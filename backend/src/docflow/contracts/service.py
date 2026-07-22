@@ -118,9 +118,34 @@ async def list_contracts(pool: asyncpg.Pool) -> list[ContractOut]:
     return [_row_to_out(r) for r in rows]
 
 
+async def _fetch_spec(url: str) -> dict[str, Any]:
+    """Récupère un contrat OpenAPI depuis une URL (SSRF-safe). JSON attendu."""
+    try:
+        await validate_public_url(url)
+    except SSRFError as exc:
+        raise HTTPException(422, f"URL de source refusée : {exc}") from exc
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+        resp.raise_for_status()
+        spec = resp.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Impossible de récupérer le contrat : {exc}") from exc
+    except ValueError as exc:  # JSON invalide (ex. YAML)
+        raise HTTPException(422, f"Le contrat n'est pas du JSON valide : {exc}") from exc
+    if not isinstance(spec, dict):
+        raise HTTPException(422, "Le contrat récupéré n'est pas un objet OpenAPI.")
+    return spec
+
+
 async def import_contract(pool: asyncpg.Pool, body: ContractImport) -> ContractOut:
-    version = _extract_version(body.raw_spec)
-    raw_json = json.dumps(body.raw_spec)
+    raw_spec: dict[str, Any] = body.raw_spec
+    # URL fournie sans spec inline → on télécharge tout de suite (sinon le
+    # contrat resterait vide jusqu'à un refresh, et aucune opération n'apparaît).
+    if body.source_url and not raw_spec:
+        raw_spec = await _fetch_spec(body.source_url)
+    version = _extract_version(raw_spec)
+    raw_json = json.dumps(raw_spec)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO openapi_contract (label, source_url, version, raw_spec) "
@@ -181,19 +206,7 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
     if not row["source_url"]:
         raise HTTPException(422, "Ce contrat n'a pas de source_url (import manuel).")
 
-    try:
-        await validate_public_url(row["source_url"])
-    except SSRFError as exc:
-        raise HTTPException(422, f"URL de source refusée : {exc}") from exc
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(row["source_url"])
-        resp.raise_for_status()
-        raw_spec: dict[str, object] = resp.json()
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Impossible de récupérer le contrat : {exc}") from exc
-
+    raw_spec = await _fetch_spec(row["source_url"])
     version = _extract_version(raw_spec)
     raw_json = json.dumps(raw_spec)
     async with pool.acquire() as conn:
