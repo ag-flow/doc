@@ -45,9 +45,11 @@ export function AutomationRunHistory({ ws, automationId }: Props) {
           {runs.map((run) => (
             <tr key={run.id} className="border-b border-gray-50 hover:bg-gray-50">
               <td className="py-1 pr-4 font-mono text-gray-500 truncate max-w-[120px]">
-                {run.document_ref.slice(0, 8)}…
+                {run.document_ref ? `${run.document_ref.slice(0, 8)}…` : '—'}
               </td>
-              <td className="py-1 pr-4 text-gray-600">v{run.document_version}</td>
+              <td className="py-1 pr-4 text-gray-600">
+                {run.document_version != null ? `v${run.document_version}` : '—'}
+              </td>
               <td className="py-1 pr-4">
                 <span
                   className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${

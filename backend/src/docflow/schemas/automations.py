@@ -36,6 +36,9 @@ class AutomationCreate(BaseModel):
 
     label: str
     active: bool = True
+    # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
+    event_codes: list[str] = []
+    # Rétro-compat : anciennes cases C/U (backfillées vers event_codes en base).
     on_create: bool = False
     on_update: bool = False
     delay_minutes: int = 0
@@ -52,6 +55,7 @@ class AutomationUpdate(BaseModel):
 
     label: str | None = None
     active: bool | None = None
+    event_codes: list[str] | None = None
     on_create: bool | None = None
     on_update: bool | None = None
     delay_minutes: int | None = None
@@ -68,6 +72,7 @@ class AutomationOut(BaseModel):
     workspace_technical_key: uuid.UUID
     label: str
     active: bool
+    event_codes: list[str]
     on_create: bool
     on_update: bool
     delay_minutes: int
@@ -84,8 +89,8 @@ class AutomationOut(BaseModel):
 class AutomationRunOut(BaseModel):
     id: uuid.UUID
     automation_ref: uuid.UUID
-    document_ref: uuid.UUID
-    document_version: int
+    document_ref: uuid.UUID | None
+    document_version: int | None
     change_log_seq: int
     status: str
     executed_at: datetime

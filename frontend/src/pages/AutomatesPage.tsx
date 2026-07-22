@@ -216,7 +216,7 @@ export function AutomatesPage() {
                   <div className="flex-1 min-w-0">
                     <span className={`font-medium text-sm ${!a.active ? 'text-gray-400' : ''}`}>{a.label}</span>
                     <span className="ml-2 text-xs text-gray-400">
-                      {[a.on_create && 'C', a.on_update && 'U'].filter(Boolean).join('/')} · {a.http_method}
+                      {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
                     {!a.active && <span className="ml-2 text-xs text-amber-600">inactif</span>}

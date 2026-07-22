@@ -951,6 +951,7 @@ export interface AutomationOut {
   workspace_technical_key: string
   label: string
   active: boolean
+  event_codes: string[]
   on_create: boolean
   on_update: boolean
   delay_minutes: number
@@ -967,6 +968,7 @@ export interface AutomationOut {
 export interface AutomationCreate {
   label: string
   active?: boolean
+  event_codes?: string[]
   on_create?: boolean
   on_update?: boolean
   delay_minutes?: number
@@ -981,8 +983,8 @@ export interface AutomationCreate {
 export interface AutomationRunOut {
   id: string
   automation_ref: string
-  document_ref: string
-  document_version: number
+  document_ref: string | null
+  document_version: number | null
   change_log_seq: number
   status: string
   executed_at: string

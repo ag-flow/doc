@@ -53,3 +53,6 @@ La renumérotation manuelle des `$i` → `$i+offset` (views/service.py) est frag
 
 ## [frontend] Typecheck local : `npx tsc -b`, jamais `tsc --noEmit`
 Le tsconfig racine est de type « solution » (uniquement des references) : `tsc --noEmit` ne vérifie RIEN et sort vert. Le build Docker fait `tsc -b` qui inclut les tests — toute nouvelle propriété requise dans une interface doit être ajoutée aux fixtures de test, et se vérifie en local avec `npx tsc -b`.
+
+## [automations] Le contenu document vit dans document_version, pas document
+`document` n'a PAS de colonne `content` : le contenu courant = `document_version.content` à `version_number = document.version` (JOIN). L'ancien worker lisait `SELECT content FROM document` (cassé, jamais testé → silencieux). Toute lecture du contenu passe par le JOIN document_version.

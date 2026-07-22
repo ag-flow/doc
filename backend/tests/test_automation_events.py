@@ -1,0 +1,182 @@
+"""Automates déclenchés par les EVENTS (journal document_event).
+
+Couvre : (1) outbox.enqueue écrit document_event même producteur désactivé ;
+(2) le worker consomme les events filtrés par event_codes, substitue le contenu
+du document ET les propriétés de l'event, enregistre le run et dédup.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any
+
+import asyncpg
+import pytest
+
+from docflow.automations import worker
+from docflow.events import outbox
+
+_UPDATED = "docflow.document.updated.v1"
+_CREATED = "docflow.document.created.v1"
+
+
+class _FakeResp:
+    status_code = 200
+    is_success = True
+
+
+class _FakeClient:
+    def __init__(self, *a: Any, **k: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> _FakeClient:
+        return self
+
+    async def __aexit__(self, *a: Any) -> bool:
+        return False
+
+    async def request(
+        self, method: str, url: str, headers: Any = None, content: Any = None
+    ) -> _FakeResp:
+        _CALLS.append({"method": method, "url": url, "headers": headers, "content": content})
+        return _FakeResp()
+
+
+_CALLS: list[dict[str, Any]] = []
+
+
+async def _mk_ws_doc(pool: asyncpg.Pool) -> tuple[uuid.UUID, str, uuid.UUID]:
+    slug = f"auto-ev-{uuid.uuid4().hex[:8]}"
+    wk = await pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) RETURNING workspace_technical_key",
+        slug,
+        "Auto Ev",
+    )
+    ft = await pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ($1,$2,$3) RETURNING id",
+        "t",
+        "T",
+        wk,
+    )
+    block = await pool.fetchval(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ($1,$2,$3,$4) RETURNING id",
+        "b",
+        "B",
+        ft,
+        wk,
+    )
+    doc_id = await pool.fetchval(
+        "INSERT INTO document (workspace_technical_key, data_block_ref, functional_type_ref, "
+        "title, version) VALUES ($1,$2,$3,$4,1) RETURNING doc_technical_key",
+        wk,
+        block,
+        ft,
+        "Titre doc",
+    )
+    await pool.execute(
+        "INSERT INTO document_version (document_ref, version_number, title, content) "
+        "VALUES ($1, 1, $2, $3)",
+        doc_id,
+        "Titre doc",
+        "Contenu du doc",
+    )
+    return wk, slug, doc_id
+
+
+async def test_enqueue_records_document_event_even_when_producer_disabled(
+    db_pool: asyncpg.Pool,
+) -> None:
+    outbox.configure(enabled=False, source="docflow", allowed_events=None)
+    wk, _slug, doc_id = await _mk_ws_doc(db_pool)
+    before = await db_pool.fetchval("SELECT count(*) FROM document_event")
+    async with db_pool.acquire() as conn, conn.transaction():
+        await outbox.enqueue(
+            conn,
+            event_code=_UPDATED,
+            workspace_wk=wk,
+            business={"documentId": str(doc_id), "workspaceSlug": _slug, "version": 2},
+        )
+    after = await db_pool.fetchval("SELECT count(*) FROM document_event")
+    assert after == before + 1
+    row = await db_pool.fetchrow(
+        "SELECT event_code, document_ref, business FROM document_event "
+        "WHERE document_ref = $1 ORDER BY seq DESC LIMIT 1",
+        doc_id,
+    )
+    assert row["event_code"] == _UPDATED
+    biz = json.loads(row["business"]) if isinstance(row["business"], str) else row["business"]
+    assert biz["workspaceSlug"] == _slug
+
+
+async def test_worker_triggers_on_event_with_variables_and_dedup(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+
+    # Un event 'updated' pour ce document.
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 3}),
+    )
+    # Un event 'created' NON sélectionné → ne doit pas déclencher.
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _CREATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,0,$4,$5,$6) RETURNING id",
+        wk,
+        "RAG",
+        [_UPDATED],
+        "https://rag.example/index",
+        "POST",
+        json.dumps({"doc": "{content}", "ws": "{event.workspaceSlug}", "v": "{event.version}"}),
+    )
+
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, delay_minutes, url, http_method, "
+        "body_template FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+    await worker.run_tick(db_pool, automation, object())
+
+    # Un seul appel (updated), pas created.
+    assert len(_CALLS) == 1
+    body = json.loads(_CALLS[0]["content"].decode())
+    assert body["doc"] == "Contenu du doc"       # {content} substitué
+    assert body["ws"] == slug                     # {event.workspaceSlug} substitué
+    assert body["v"] == "3"                       # {event.version} substitué (str)
+
+    # Un run enregistré, statut ok.
+    runs = await db_pool.fetch(
+        "SELECT status, event_seq FROM automation_run WHERE automation_ref = $1", auto_id
+    )
+    assert len(runs) == 1
+    assert runs[0]["status"] == "ok"
+
+    # Dédup : rejouer le tick ne refait pas l'appel.
+    await worker.run_tick(db_pool, automation, object())
+    assert len(_CALLS) == 1

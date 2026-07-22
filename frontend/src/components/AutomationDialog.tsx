@@ -4,7 +4,14 @@ import { Plus, Trash2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
-import { contractsApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut } from '../lib/api'
+import { contractsApi, eventsProducerApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut } from '../lib/api'
+
+// Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
+// champs métier des events documentaires ; celles absentes rendent une chaîne vide).
+const EVENT_VARS = [
+  'event.code', 'event.workspaceSlug', 'event.blockSlug',
+  'event.parentId', 'event.version', 'event.functionalTypeSlug',
+]
 
 interface Props {
   ws?: string
@@ -34,8 +41,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
 
   const [label, setLabel] = useState(initial?.label ?? '')
   const [active, setActive] = useState(initial?.active ?? true)
-  const [onCreate, setOnCreate] = useState(initial?.on_create ?? false)
-  const [onUpdate, setOnUpdate] = useState(initial?.on_update ?? false)
+  const [eventCodes, setEventCodes] = useState<string[]>(initial?.event_codes ?? [])
   const [delay, setDelay] = useState(String(initial?.delay_minutes ?? 0))
   const [url, setUrl] = useState(initial?.url ?? '')
   const [method, setMethod] = useState(initial?.http_method ?? 'POST')
@@ -66,7 +72,19 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     staleTime: 60_000,
   })
 
+  // Catalogue public des eventCodes (source unique des types déclencheurs).
+  const { data: catalog } = useQuery({
+    queryKey: ['events-catalog'],
+    queryFn: () => eventsProducerApi.catalog(),
+    staleTime: 300_000,
+  })
+  const eventTypes = catalog?.events ?? []
+
   const operations = contractDetail?.operations ?? []
+
+  function toggleEvent(code: string) {
+    setEventCodes((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]))
+  }
 
   function insertVariable(v: string) {
     const cur = jsonRef.current?.getValue() ?? ''
@@ -95,7 +113,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
         enabled: h.enabled,
       }))
     onSave({
-      label, active, on_create: onCreate, on_update: onUpdate,
+      label, active, event_codes: eventCodes,
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
       operation_id: operationId || null,
@@ -117,19 +135,28 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
             <input type="checkbox" id="active" checked={active} onChange={(e) => setActive(e.target.checked)} />
             <label htmlFor="active" className="text-sm">Actif</label>
           </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-1.5 text-sm">
-              <input type="checkbox" checked={onCreate} onChange={(e) => setOnCreate(e.target.checked)} />
-              À la création
-            </label>
-            <label className="flex items-center gap-1.5 text-sm">
-              <input type="checkbox" checked={onUpdate} onChange={(e) => setOnUpdate(e.target.checked)} />
-              À la modification
-            </label>
-          </div>
           <div>
             <label className="block text-sm font-medium mb-1">Délai débounce (minutes)</label>
             <Input type="number" min={0} value={delay} onChange={(e) => setDelay(e.target.value)} className="w-24" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">Events déclencheurs</label>
+            <div className="grid grid-cols-2 gap-1.5 rounded border border-gray-200 p-2">
+              {eventTypes.map((ev) => (
+                <label key={ev.eventCode} className="flex items-start gap-1.5 text-sm" data-testid={`auto-event-${ev.eventCode}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={eventCodes.includes(ev.eventCode)}
+                    onChange={() => toggleEvent(ev.eventCode)}
+                  />
+                  <span>
+                    {ev.title}
+                    <span className="block font-mono text-[10px] text-gray-400">{ev.eventCode}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -170,11 +197,11 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="text-sm font-medium">Corps (JSON)</label>
-            <div className="flex gap-1">
-              {['{id_document}','{title}','{content}'].map((v) => (
-                <button key={v} type="button" onClick={() => insertVariable(v.slice(1,-1))}
+            <div className="flex flex-wrap gap-1 justify-end">
+              {['id_document', 'title', 'content', ...EVENT_VARS].map((v) => (
+                <button key={v} type="button" onClick={() => insertVariable(v)}
                   className="rounded bg-gray-100 px-2 py-0.5 text-xs font-mono hover:bg-gray-200">
-                  {v}
+                  {`{${v}}`}
                 </button>
               ))}
             </div>

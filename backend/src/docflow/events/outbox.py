@@ -109,6 +109,38 @@ def _event_id(event_code: str, dedup_key: str | None) -> uuid.UUID:
     return uuid.uuid5(_EVENT_NAMESPACE, f"{event_code}|{dedup_key}")
 
 
+def _as_uuid(value: Any) -> uuid.UUID | None:
+    """Parse un uuid string tolérant (None si absent/invalide)."""
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+async def _record_document_event(
+    conn: asyncpg.Connection,
+    event_code: str,
+    workspace_wk: uuid.UUID | None,
+    business: dict[str, Any],
+) -> None:
+    """Journal DURABLE de l'event (consommé par les automates).
+
+    Écrit TOUJOURS, indépendamment de l'émission workflow externe (activation /
+    allowlist) : les automates internes ne doivent pas dépendre du producteur.
+    """
+    await conn.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1, $2, $3, $4::jsonb)",
+        workspace_wk,
+        _as_uuid(business.get("documentId")),
+        event_code,
+        json.dumps(business, ensure_ascii=False),
+    )
+
+
 async def enqueue(
     conn: asyncpg.Connection,
     *,
@@ -117,24 +149,25 @@ async def enqueue(
     business: dict[str, Any],
     dedup_key: str | None = None,
 ) -> None:
-    """Écrit un event dans l'outbox (dans la transaction courante).
+    """Écrit un event : journal durable `document_event` PUIS outbox producteur.
 
-    No-op si l'émission est désactivée. Ne lève jamais pour un eventCode hors
-    catalogue : on ne publie que des events déclarés dans la découverte — un
-    code inconnu est un bug producteur, journalisé, pas propagé à la mutation.
+    Le journal `document_event` est écrit inconditionnellement (source des
+    automates). L'écriture outbox (émission workflow externe) reste gouvernée
+    par l'activation + l'allowlist fail-closed. Ne lève jamais pour un eventCode
+    hors catalogue : code inconnu = bug producteur, journalisé, pas propagé.
 
     `dedup_key` (optionnel) rend `_eventId` déterministe (uuid5) : un ré-enqueue
     du même changement logique est absorbé par `ON CONFLICT DO NOTHING` (dédup
     producteur), sans jamais faire échouer la mutation.
     """
-    if not _enabled:
-        return
     if not catalog.is_known(event_code):
         log.warning("event_code_unknown", event_code=event_code)
         return
-    # Allowlist fail-closed : quand un set explicite est posé (via reconcile),
-    # seuls ses eventCodes sont relayés — set vide = aucun relais. Un None
-    # (configure sans allowlist) laisse tout passer (rétro-compat).
+    # 1) Journal durable des events (automates) — toujours.
+    await _record_document_event(conn, event_code, workspace_wk, business)
+    # 2) Outbox producteur workflow — gated (activation + allowlist).
+    if not _enabled:
+        return
     if _allowed_events is not None and event_code not in _allowed_events:
         return
     event_id = _event_id(event_code, dedup_key)

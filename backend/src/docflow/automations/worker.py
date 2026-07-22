@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from typing import Any
 
 import asyncpg
 import httpx
@@ -13,6 +15,8 @@ from docflow.net.ssrf import SSRFError, validate_public_url
 log = structlog.get_logger(__name__)
 
 _HTTP_TIMEOUT = 15.0
+# Rétention du journal d'events consommé par les automates (heures).
+_EVENT_RETENTION_HOURS = 168  # 7 jours
 
 
 # ── Résolution de secret ──────────────────────────────────────────────────────
@@ -34,17 +38,70 @@ async def resolve_secret(secret_ref: str, *, pool: asyncpg.Pool, settings: objec
     )
 
 
-# ── Contenu courant du document ───────────────────────────────────────────────
+# ── Variables exposées au template ────────────────────────────────────────────
 
 
-async def _current_content(conn: asyncpg.Connection, doc_id: uuid.UUID) -> str | None:
-    val: str | None = await conn.fetchval(
-        "SELECT content FROM document WHERE doc_technical_key = $1", doc_id
+async def _doc_snapshot(
+    conn: asyncpg.Connection, doc_id: uuid.UUID
+) -> tuple[str | None, str | None]:
+    """Titre + contenu courant du document (None, None s'il n'existe plus).
+
+    Le contenu vit dans document_version à la version courante du document.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT d.title, dv.content
+        FROM document d
+        LEFT JOIN document_version dv
+            ON dv.document_ref = d.doc_technical_key AND dv.version_number = d.version
+        WHERE d.doc_technical_key = $1
+        """,
+        doc_id,
     )
-    return val
+    if row is None:
+        return None, None
+    return row["title"], row["content"]
 
 
-# ── Avance le curseur ─────────────────────────────────────────────────────────
+def _parse_business(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _variables(
+    event_code: str,
+    business: dict[str, Any],
+    doc_id: uuid.UUID | None,
+    title: str | None,
+    content: str | None,
+) -> dict[str, str]:
+    """Variables du body_template : contenu doc + propriétés de l'event.
+
+    - `{id_document}`, `{title}`, `{content}` : snapshot courant du document.
+    - `{event.code}` : l'eventCode déclencheur.
+    - `{event.<prop>}` : chaque propriété métier de l'event (documentId,
+      workspaceSlug, blockSlug, parentId, version, functionalTypeSlug…).
+    """
+    doc_ref = str(doc_id) if doc_id else str(business.get("documentId", ""))
+    variables: dict[str, str] = {
+        "id_document": doc_ref,
+        "title": title or "",
+        "content": content or "",
+        "event.code": event_code,
+    }
+    for key, value in business.items():
+        variables[f"event.{key}"] = "" if value is None else str(value)
+    return variables
+
+
+# ── Curseur ───────────────────────────────────────────────────────────────────
 
 
 async def _advance(conn: asyncpg.Connection, automation_id: uuid.UUID, seq: int) -> None:
@@ -66,17 +123,20 @@ async def _advance(conn: asyncpg.Connection, automation_id: uuid.UUID, seq: int)
 async def execute(
     conn: asyncpg.Connection,
     automation: asyncpg.Record,
-    doc: asyncpg.Record,
-    version: int,
+    event: dict[str, Any],
     pool: asyncpg.Pool,
     settings: object,
 ) -> str:
-    content = await _current_content(conn, doc["doc_technical_key"])
-    variables = {
-        "id_document": str(doc["doc_technical_key"]),
-        "title": doc["title"] or "",
-        "content": content or "",
-    }
+    """Exécute l'appel HTTP de l'automate pour un event donné.
+
+    `event` = {event_code, document_ref (uuid|None), business (dict|json str)}.
+    """
+    business = _parse_business(event["business"])
+    doc_id: uuid.UUID | None = event["document_ref"]
+    title, content = (None, None)
+    if doc_id is not None:
+        title, content = await _doc_snapshot(conn, doc_id)
+    variables = _variables(event["event_code"], business, doc_id, title, content)
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
@@ -109,7 +169,7 @@ async def execute(
             log.warning(
                 "automation_body_render_failed",
                 automation_id=str(automation["id"]),
-                doc_id=str(doc["doc_technical_key"]),
+                event_code=event["event_code"],
             )
             return "failed"
         headers.setdefault("Content-Type", "application/json")
@@ -120,7 +180,6 @@ async def execute(
         log.warning(
             "automation_url_rejected",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
             error=str(exc),
         )
         return "failed"
@@ -137,8 +196,8 @@ async def execute(
         log.info(
             "automation_executed",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
-            version=version,
+            event_code=event["event_code"],
+            doc_id=str(doc_id) if doc_id else None,
             http_status=resp.status_code,
             status=status,
         )
@@ -147,7 +206,7 @@ async def execute(
         log.warning(
             "automation_http_failed",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
+            event_code=event["event_code"],
             error=str(exc),
         )
         return "failed"
@@ -157,12 +216,8 @@ async def execute(
 
 
 async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
-    natures: list[str] = []
-    if automation["on_create"]:
-        natures.append("C")
-    if automation["on_update"]:
-        natures.append("U")
-    if not natures:
+    codes: list[str] = list(automation["event_codes"] or [])
+    if not codes:
         return
 
     async with pool.acquire() as conn:
@@ -176,92 +231,101 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
 
         rows = await conn.fetch(
             """
-            SELECT seq, document_ref FROM document_change_log
+            SELECT seq, document_ref, event_code, business FROM document_event
             WHERE workspace_technical_key = $1
               AND seq > $2
-              AND nature = ANY($3::text[])
+              AND event_code = ANY($3::text[])
             ORDER BY seq ASC
             LIMIT 100
             """,
             automation["workspace_technical_key"],
             cursor,
-            natures,
+            codes,
         )
 
-        # Le curseur représente le plus petit `seq` non encore traité. On
-        # l'avance au fil des changements tant qu'aucun document « chaud »
-        # (dans sa fenêtre de debounce) n'a été rencontré. Dès qu'on diffère
-        # un document chaud, on gèle le curseur (`deferred = True`) afin de le
-        # retraiter à un tick ultérieur, tout en CONTINUANT à traiter les
-        # autres documents du batch : un seul document fréquemment édité ne
-        # doit pas affamer les automations du reste du workspace. Les
-        # changements traités au-delà du curseur gelé sont protégés contre un
-        # double traitement par la table `automation_run` (already_done).
+        # Le curseur = plus petit seq non traité. On l'avance tant qu'aucun
+        # document « chaud » (dans sa fenêtre de debounce) n'est rencontré ;
+        # dès qu'on diffère un document chaud, on gèle le curseur (deferred)
+        # sans bloquer le reste du batch. La table automation_run (event_seq)
+        # protège contre le double traitement des events au-delà du gel.
         deferred = False
 
         for row in rows:
-            doc = await conn.fetchrow(
-                "SELECT doc_technical_key, version, title "
-                "FROM document WHERE doc_technical_key = $1",
-                row["document_ref"],
-            )
-            if doc is None:
-                if not deferred:
-                    await _advance(conn, automation["id"], row["seq"])
-                continue
-
-            version: int = doc["version"]
+            event_seq: int = row["seq"]
 
             already_done = await conn.fetchval(
-                """
-                SELECT 1 FROM automation_run
-                WHERE automation_ref = $1
-                  AND document_ref = $2
-                  AND document_version = $3
-                """,
+                "SELECT 1 FROM automation_run WHERE automation_ref = $1 AND event_seq = $2",
                 automation["id"],
-                doc["doc_technical_key"],
-                version,
+                event_seq,
             )
             if already_done:
                 if not deferred:
-                    await _advance(conn, automation["id"], row["seq"])
+                    await _advance(conn, automation["id"], event_seq)
                 continue
 
-            if automation["delay_minutes"] > 0:
+            doc_ref: uuid.UUID | None = row["document_ref"]
+            if automation["delay_minutes"] > 0 and doc_ref is not None:
                 hot = await conn.fetchval(
                     """
-                    SELECT 1 FROM document_change_log
+                    SELECT 1 FROM document_event
                     WHERE document_ref = $1
                       AND occurred_at > now() - ($2 || ' minutes')::interval
                     LIMIT 1
                     """,
-                    doc["doc_technical_key"],
+                    doc_ref,
                     str(automation["delay_minutes"]),
                 )
                 if hot:
-                    # Document chaud : on le laisse mûrir sans avancer le
-                    # curseur au-delà de lui, mais on ne bloque pas le batch.
                     deferred = True
                     continue
 
-            status = await execute(conn, automation, doc, version, pool, settings)
+            event = {
+                "event_code": row["event_code"],
+                "document_ref": doc_ref,
+                "business": row["business"],
+            }
+            status = await execute(conn, automation, event, pool, settings)
+
+            version: int | None = None
+            if doc_ref is not None:
+                version = await conn.fetchval(
+                    "SELECT version FROM document WHERE doc_technical_key = $1", doc_ref
+                )
 
             await conn.execute(
                 """
                 INSERT INTO automation_run
-                    (automation_ref, document_ref, document_version, change_log_seq, status)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (automation_ref, document_ref, document_version) DO NOTHING
+                    (automation_ref, document_ref, document_version, change_log_seq,
+                     event_seq, status)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (automation_ref, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
                 """,
                 automation["id"],
-                doc["doc_technical_key"],
+                doc_ref,
                 version,
-                row["seq"],
+                event_seq,
+                event_seq,
                 status,
             )
             if not deferred:
-                await _advance(conn, automation["id"], row["seq"])
+                await _advance(conn, automation["id"], event_seq)
+
+
+# ── Purge du journal d'events ─────────────────────────────────────────────────
+
+
+async def _purge_events(pool: asyncpg.Pool) -> None:
+    """Purge les events plus vieux que la rétention ET déjà dépassés par TOUS
+    les curseurs d'automation (aucun automate ne les retraitera)."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM document_event
+            WHERE occurred_at < now() - ($1 || ' hours')::interval
+              AND seq <= COALESCE((SELECT min(last_seq) FROM automation_cursor), seq)
+            """,
+            str(_EVENT_RETENTION_HOURS),
+        )
 
 
 # ── Boucle principale ─────────────────────────────────────────────────────────
@@ -270,7 +334,7 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
 async def tick(pool: asyncpg.Pool, settings: object) -> None:
     async with pool.acquire() as conn:
         automations = await conn.fetch(
-            "SELECT id, workspace_technical_key, on_create, on_update, "
+            "SELECT id, workspace_technical_key, event_codes, "
             "delay_minutes, url, http_method, body_template "
             "FROM automation WHERE active = true"
         )
@@ -284,6 +348,11 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
                 automation_id=str(automation["id"]),
                 error=str(exc),
             )
+
+    try:
+        await _purge_events(pool)
+    except Exception as exc:
+        log.error("automation_event_purge_failed", error=str(exc))
 
 
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:

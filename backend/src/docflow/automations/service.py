@@ -39,6 +39,7 @@ def _row_to_out(row: asyncpg.Record, headers: list[AutomationHeaderOut]) -> Auto
         workspace_technical_key=row["workspace_technical_key"],
         label=row["label"],
         active=row["active"],
+        event_codes=list(row["event_codes"] or []),
         on_create=row["on_create"],
         on_update=row["on_update"],
         delay_minutes=row["delay_minutes"],
@@ -78,7 +79,7 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationO
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT id, workspace_technical_key, label, active, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE workspace_technical_key = $1 ORDER BY label",
@@ -98,15 +99,16 @@ async def create_automation(
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, on_create, on_update, delay_minutes, "
-            " contract_ref, operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) "
-            "RETURNING id, workspace_technical_key, label, active, on_create, on_update, "
-            "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
-            "created_at, updated_at",
+            "(workspace_technical_key, label, active, event_codes, on_create, on_update, "
+            " delay_minutes, contract_ref, operation_id, url, http_method, body_template) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) "
+            "RETURNING id, workspace_technical_key, label, active, event_codes, on_create, "
+            "on_update, delay_minutes, contract_ref, operation_id, url, http_method, "
+            "body_template, created_at, updated_at",
             wk,
             body.label,
             body.active,
+            body.event_codes,
             body.on_create,
             body.on_update,
             body.delay_minutes,
@@ -128,7 +130,7 @@ async def get_automation(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, label, active, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
@@ -166,6 +168,7 @@ async def update_automation(
             scalar_map: set[str] = {
                 "label",
                 "active",
+                "event_codes",
                 "on_create",
                 "on_update",
                 "delay_minutes",
@@ -189,7 +192,7 @@ async def update_automation(
             await _upsert_headers(conn, automation_id, headers_data)
 
         row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, label, active, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE id = $1",
@@ -251,9 +254,8 @@ async def replay_run(
         wk = await require_workspace(conn, ws_slug)
 
         auto_row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, on_create, on_update, delay_minutes, "
-            "url, http_method, body_template FROM automation "
-            "WHERE id=$1 AND workspace_technical_key=$2",
+            "SELECT id, workspace_technical_key, url, http_method, body_template "
+            "FROM automation WHERE id=$1 AND workspace_technical_key=$2",
             automation_id,
             wk,
         )
@@ -261,7 +263,7 @@ async def replay_run(
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
 
         run_row = await conn.fetchrow(
-            "SELECT id, document_ref, document_version, change_log_seq, status "
+            "SELECT id, document_ref, event_seq, status "
             "FROM automation_run WHERE id=$1 AND automation_ref=$2",
             run_id,
             automation_id,
@@ -269,22 +271,26 @@ async def replay_run(
         if run_row is None:
             raise HTTPException(404, f"Run {run_id} introuvable.")
 
-        doc = await conn.fetchrow(
-            "SELECT doc_technical_key, version, title FROM document WHERE doc_technical_key=$1",
-            run_row["document_ref"],
+        # L'event déclencheur (journal durable). Purgé → rejeu impossible.
+        ev = await conn.fetchrow(
+            "SELECT event_code, document_ref, business FROM document_event WHERE seq = $1",
+            run_row["event_seq"],
         )
-        if doc is None:
-            raise HTTPException(422, "Document supprimé, rejeu impossible.")
+        if ev is None:
+            raise HTTPException(422, "Event source purgé, rejeu impossible.")
 
-        status = await execute(conn, auto_row, doc, doc["version"], pool, settings)
+        event = {
+            "event_code": ev["event_code"],
+            "document_ref": ev["document_ref"],
+            "business": ev["business"],
+        }
+        status = await execute(conn, auto_row, event, pool, settings)
 
         updated = await conn.fetchrow(
-            "UPDATE automation_run SET status=$1, executed_at=now(), document_version=$2 "
-            "WHERE id=$3 "
+            "UPDATE automation_run SET status=$1, executed_at=now() WHERE id=$2 "
             "RETURNING id, automation_ref, document_ref, document_version, "
             "change_log_seq, status, executed_at",
             status,
-            doc["version"],
             run_id,
         )
     assert updated is not None
