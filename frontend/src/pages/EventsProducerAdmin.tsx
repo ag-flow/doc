@@ -382,9 +382,8 @@ function WiringGuide() {
               suit pas).
             </li>
             <li>
-              Authentification : <Code>/api/schemas</Code> exige un Bearer token. Créez une{' '}
-              <strong>clé API docflow</strong> (page <em>Clés API</em>) et renseignez-la comme
-              secret <Code>auth_ref</Code> de la source discovery.
+              Authentification : <strong>aucune</strong>. <Code>/api/schemas</Code> est public
+              (métadonnées de contrat only) — laissez <Code>auth_ref</Code> vide.
             </li>
           </ul>
           <p className="mt-2 text-xs text-gray-400">

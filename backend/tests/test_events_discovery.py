@@ -25,10 +25,14 @@ def _auth(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-def test_schemas_requires_auth() -> None:
-    # Sans lifespan : le 401 tombe avant tout accès DB (token manquant).
-    client = TestClient(app)
-    assert client.get("/api/schemas").status_code == 401
+def test_schemas_is_public(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str
+) -> None:
+    # Découverte du contrat = endpoint PUBLIC : accessible sans token.
+    with _client(monkeypatch, test_schema_url) as client:
+        r = client.get("/api/schemas")
+    assert r.status_code == 200
+    assert len(r.json()["events"]) == 6
 
 
 def test_schema_catalog_and_versions(
