@@ -3,12 +3,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   eventsProducerApi,
+  hmacSecretsApi,
   type EventCatalog,
   type EventsProducerConfigOut,
+  type HmacSecretOut,
 } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
-import { SecretInput } from '../components/SecretInput'
 
 export function EventsProducerAdmin() {
   const { t } = useTranslation()
@@ -24,12 +25,17 @@ export function EventsProducerAdmin() {
     queryFn: () => eventsProducerApi.catalog(),
     retry: false,
   })
+  const { data: hmacSecrets = [] } = useQuery<HmacSecretOut[]>({
+    queryKey: ['hmac-secrets'],
+    queryFn: () => hmacSecretsApi.list(),
+    retry: false,
+  })
 
   const [enabled, setEnabled] = useState(false)
   const [ingestionUrl, setIngestionUrl] = useState('')
   const [sourceId, setSourceId] = useState('')
   const [sourceUri, setSourceUri] = useState('')
-  const [secretRef, setSecretRef] = useState('')
+  const [selectedSecretId, setSelectedSecretId] = useState('')
   const [allowed, setAllowed] = useState<string[]>([])
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -46,7 +52,7 @@ export function EventsProducerAdmin() {
     }
   }, [config])
 
-  const secretConfigured = Boolean(config?.secret_configured) || Boolean(secretRef.trim())
+  const secretConfigured = Boolean(config?.secret_configured) || Boolean(selectedSecretId)
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -56,7 +62,7 @@ export function EventsProducerAdmin() {
         source_id: sourceId.trim() || null,
         source_uri: sourceUri.trim() || 'docflow',
         allowed_events: allowed,
-        ...(secretRef.trim() ? { secret_ref: secretRef.trim() } : {}),
+        ...(selectedSecretId ? { secret_ref: `\${hmac://${selectedSecretId}}` } : {}),
       }
       return eventsProducerApi.update(body)
     },
@@ -64,7 +70,7 @@ export function EventsProducerAdmin() {
       void queryClient.setQueryData(['events-producer-config'], updated)
       setSaveMsg(t('eventsProducer.saved'))
       setSaveError(null)
-      setSecretRef('')
+      setSelectedSecretId('')
     },
     onError: (err: Error) => {
       setSaveError(err.message)
@@ -134,19 +140,35 @@ export function EventsProducerAdmin() {
           />
         </Field>
 
-        {/* Secret HMAC */}
-        <Field label={t('eventsProducer.secretRef')} hint={t('eventsProducer.secretRefHint')}>
-          <SecretInput
-            value={secretRef}
-            onChange={(v) => { setSecretRef(v); setSaveMsg(null) }}
-            placeholder={t('eventsProducer.secretRefPlaceholder')}
-          />
-          <p className={`mt-1 text-xs ${config?.secret_configured ? 'text-green-600' : 'text-amber-600'}`}>
-            {config?.secret_configured
-              ? t('eventsProducer.secretConfigured') + ' ' + t('eventsProducer.secretRefMasked')
+        {/* Secret HMAC — sélection parmi les secrets gérés (onglet HMAC des Clés API) */}
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            {t('eventsProducer.secretRef')}
+          </label>
+          <select
+            value={selectedSecretId}
+            onChange={(e) => { setSelectedSecretId(e.target.value); setSaveMsg(null) }}
+            data-testid="ep-secret-select"
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          >
+            <option value="">
+              {config?.secret_configured
+                ? t('eventsProducer.secretKeepCurrent')
+                : t('eventsProducer.secretChoose')}
+            </option>
+            {hmacSecrets.map((s) => (
+              <option key={s.id} value={s.id}>{s.label} ({s.slug})</option>
+            ))}
+          </select>
+          <p className={`mt-1 text-xs ${config?.secret_configured || selectedSecretId ? 'text-green-600' : 'text-amber-600'}`}>
+            {config?.secret_configured || selectedSecretId
+              ? t('eventsProducer.secretConfigured')
               : t('eventsProducer.secretMissing')}
           </p>
-        </Field>
+          <a href="/api-keys" className="mt-1 inline-block text-xs text-indigo-600 hover:underline">
+            {t('eventsProducer.manageHmac')}
+          </a>
+        </div>
 
         {/* Events autorisés */}
         <div>

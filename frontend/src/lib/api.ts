@@ -766,6 +766,31 @@ export const secretsApi = {
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }
 
+// ── Secrets HMAC (par utilisateur ; valeur copiable par le propriétaire) ──────
+
+export interface HmacSecretOut {
+  id: string
+  slug: string
+  label: string
+  created_at: string
+  updated_at: string
+}
+
+export interface HmacSecretCreated extends HmacSecretOut {
+  /** Valeur renvoyée UNE fois à la création (copie immédiate). */
+  value: string
+}
+
+export const hmacSecretsApi = {
+  list: () => api.get<HmacSecretOut[]>('/hmac-secrets'),
+  /** value omis → généré côté serveur. */
+  create: (body: { label: string; slug: string; value?: string }) =>
+    api.post<HmacSecretCreated>('/hmac-secrets', body),
+  /** Re-révèle la valeur (bouton copier). Réservé au propriétaire. */
+  reveal: (id: string) => api.get<{ value: string }>(`/hmac-secrets/${id}/reveal`),
+  delete: (id: string) => api.delete(`/hmac-secrets/${id}`),
+}
+
 // ── OIDC admin ──────────────────────────────────────────────────────────────
 
 export interface OidcConfigOut {

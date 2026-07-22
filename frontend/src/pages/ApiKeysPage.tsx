@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key, ShieldCheck, Plug } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { HmacSecretsTab } from '../components/HmacSecretsTab'
 import {
   api,
   apiProfilesApi,
@@ -721,7 +722,7 @@ function McpUrlBanner() {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'profiles' | 'keys'
+type Tab = 'profiles' | 'keys' | 'hmac'
 
 export function ApiKeysPage() {
   const [activeTab, setActiveTab] = useState<Tab>('profiles')
@@ -732,7 +733,7 @@ export function ApiKeysPage() {
       <McpUrlBanner />
 
       <div className="flex gap-1 mb-6 border-b border-gray-200">
-        {([['profiles', 'Profils API'], ['keys', 'Clés API']] as [Tab, string][]).map(
+        {([['profiles', 'Profils API'], ['keys', 'Clés API'], ['hmac', 'HMAC']] as [Tab, string][]).map(
           ([tab, label]) => (
             <button
               key={tab}
@@ -743,6 +744,7 @@ export function ApiKeysPage() {
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
+              data-testid={`apikeys-tab-${tab}`}
             >
               {label}
             </button>
@@ -750,7 +752,9 @@ export function ApiKeysPage() {
         )}
       </div>
 
-      {activeTab === 'profiles' ? <ProfilesTab /> : <KeysTab />}
+      {activeTab === 'profiles' && <ProfilesTab />}
+      {activeTab === 'keys' && <KeysTab />}
+      {activeTab === 'hmac' && <HmacSecretsTab />}
     </div>
   )
 }

@@ -7,6 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.vault import (
+    HmacSecretCreate,
+    HmacSecretCreated,
+    HmacSecretOut,
+    HmacSecretReveal,
     VaultSecretCreate,
     VaultSecretOut,
     VaultWalletCreate,
@@ -64,4 +68,36 @@ async def create_secret(
 
 @router.delete("/admin/secrets/{secret_id}", status_code=204)
 async def delete_secret(secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
+    await service.delete_secret(request.app.state.pool, user.id, secret_id)
+
+
+# ── Secrets HMAC (par utilisateur ; valeur copiable par le propriétaire) ──────
+
+
+@router.get("/hmac-secrets", response_model=list[HmacSecretOut])
+async def list_hmac_secrets(request: Request, user: AuthUser = _Auth) -> list[HmacSecretOut]:
+    return await service.list_hmac_secrets(request.app.state.pool, user.id)
+
+
+@router.post("/hmac-secrets", response_model=HmacSecretCreated, status_code=201)
+async def create_hmac_secret(
+    body: HmacSecretCreate, request: Request, user: AuthUser = _Auth
+) -> HmacSecretCreated:
+    return await service.create_hmac_secret(request.app.state.pool, user.id, body, _key(request))
+
+
+@router.get("/hmac-secrets/{secret_id}/reveal", response_model=HmacSecretReveal)
+async def reveal_hmac_secret(
+    secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth
+) -> HmacSecretReveal:
+    value = await service.reveal_hmac_secret(
+        request.app.state.pool, user.id, secret_id, _key(request)
+    )
+    return HmacSecretReveal(value=value)
+
+
+@router.delete("/hmac-secrets/{secret_id}", status_code=204)
+async def delete_hmac_secret(
+    secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth
+) -> None:
     await service.delete_secret(request.app.state.pool, user.id, secret_id)

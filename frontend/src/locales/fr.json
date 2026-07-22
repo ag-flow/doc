@@ -293,6 +293,9 @@
     "secretRefMasked": "Secret actuel masqué — ressaisissez pour le remplacer.",
     "secretConfigured": "Secret HMAC configuré.",
     "secretMissing": "Aucun secret HMAC — l'émission ne peut pas signer les events.",
+    "secretChoose": "— choisir un secret HMAC —",
+    "secretKeepCurrent": "— conserver le secret actuel —",
+    "manageHmac": "Gérer les secrets HMAC →",
     "allowedEvents": "Events autorisés à l'émission",
     "allowedEventsHint": "Liste blanche : seuls les eventCode cochés sont émis (fail-closed).",
     "selectAll": "Tout cocher",
@@ -312,6 +315,22 @@
     "forbidden": "Accès refusé — réservé aux superadmins.",
     "guideTitle": "Procédure — Câbler docflow vers workflow",
     "navLink": "Connexion workflow"
+  },
+  "hmac": {
+    "empty": "Aucun secret HMAC. Générez-en un ou collez une valeur partagée avec le pair.",
+    "label": "Libellé",
+    "slug": "Slug (identifiant)",
+    "value": "Valeur",
+    "valuePlaceholder": "laisser vide pour générer",
+    "valueHint": "Collez une valeur existante, ou laissez vide pour générer un secret aléatoire.",
+    "add": "Créer",
+    "addGenerate": "Générer et créer",
+    "addBtn": "Nouveau secret HMAC",
+    "copy": "Copier la valeur",
+    "createdOnce": "Secret créé. Copiez la valeur pour la renseigner côté pair (workflow).",
+    "delete": "Supprimer",
+    "deleteTitle": "Supprimer le secret HMAC ?",
+    "deleteConfirm": "Supprimer « {{name}} » ? Toute connexion qui l'utilise cessera de signer."
   },
   "dataset": {
     "loading": "Chargement du tableau…",

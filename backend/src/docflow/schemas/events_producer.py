@@ -48,9 +48,13 @@ class EventsProducerConfigUpdate(BaseModel):
 
     @field_validator("secret_ref")
     @classmethod
-    def _vault_ref(cls, v: str | None) -> str | None:
+    def _secret_ref(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        if not (v.startswith("${vault://") and v.endswith("}")):
-            raise ValueError("secret_ref doit être une référence vault ${vault://...}")
+        is_vault = v.startswith("${vault://") and v.endswith("}")
+        is_hmac = v.startswith("${hmac://") and v.endswith("}")
+        if not (is_vault or is_hmac):
+            raise ValueError(
+                "secret_ref doit être une référence ${vault://...} ou ${hmac://...}"
+            )
         return v

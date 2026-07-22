@@ -14,12 +14,18 @@ vi.mock('../lib/api', async () => {
       testConnection: vi.fn(),
       catalog: vi.fn(),
     },
-    vaultApi: { listWallets: vi.fn() },
+    hmacSecretsApi: { list: vi.fn(), create: vi.fn(), reveal: vi.fn(), delete: vi.fn() },
     getToken: vi.fn(() => 'tok'),
   }
 })
 
-import { eventsProducerApi, vaultApi, type EventsProducerConfigOut, type EventCatalog } from '../lib/api'
+import {
+  eventsProducerApi,
+  hmacSecretsApi,
+  type EventsProducerConfigOut,
+  type EventCatalog,
+  type HmacSecretOut,
+} from '../lib/api'
 import { EventsProducerAdmin } from '../pages/EventsProducerAdmin'
 
 const catalog: EventCatalog = {
@@ -40,6 +46,10 @@ const cfg: EventsProducerConfigOut = {
   secret_configured: true,
 }
 
+const hmacSecrets: HmacSecretOut[] = [
+  { id: 'hs-1', slug: 'wf-prod', label: 'WF prod', created_at: '', updated_at: '' },
+]
+
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -54,7 +64,7 @@ function renderPage() {
 describe('EventsProducerAdmin', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(vaultApi.listWallets).mockResolvedValue([])
+    vi.mocked(hmacSecretsApi.list).mockResolvedValue(hmacSecrets)
     vi.mocked(eventsProducerApi.catalog).mockResolvedValue(catalog)
   })
 
@@ -93,6 +103,22 @@ describe('EventsProducerAdmin', () => {
     // Secret laissé vide → pas de secret_ref dans le corps (on ne réécrit pas l'existant)
     const body = vi.mocked(eventsProducerApi.update).mock.calls[0][0]
     expect(body).not.toHaveProperty('secret_ref')
+  })
+
+  it('sélectionner un secret HMAC envoie une référence ${hmac://id}', async () => {
+    vi.mocked(eventsProducerApi.get).mockResolvedValue({ ...cfg, secret_configured: false })
+    vi.mocked(eventsProducerApi.update).mockResolvedValue(cfg)
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('ep-secret-select')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByTestId('ep-secret-select'), { target: { value: 'hs-1' } })
+    fireEvent.click(screen.getByTestId('ep-save-btn'))
+
+    await waitFor(() =>
+      expect(vi.mocked(eventsProducerApi.update)).toHaveBeenCalledWith(
+        expect.objectContaining({ secret_ref: '${hmac://hs-1}' }),
+      ),
+    )
   })
 
   it('affiche le résultat du test de connexion', async () => {
