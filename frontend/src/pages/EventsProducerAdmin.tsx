@@ -115,7 +115,7 @@ export function EventsProducerAdmin() {
           <Input
             value={ingestionUrl}
             onChange={(e) => { setIngestionUrl(e.target.value); setSaveMsg(null) }}
-            placeholder="https://workflow.yoops.org/ingestion"
+            placeholder="https://workflow.yoops.org"
             data-testid="ep-ingestion-url"
           />
         </Field>
@@ -125,7 +125,7 @@ export function EventsProducerAdmin() {
           <Input
             value={sourceId}
             onChange={(e) => { setSourceId(e.target.value); setSaveMsg(null) }}
-            placeholder="docflow-prod"
+            placeholder="ef7ae716-5a45-47b1-850c-0333b6b44b44"
             data-testid="ep-source-id"
           />
         </Field>
