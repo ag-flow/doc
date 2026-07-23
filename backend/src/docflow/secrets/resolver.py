@@ -12,6 +12,9 @@ from docflow.secrets.secret import Secret
 _VAULT_RE = re.compile(r"^\$\{vault://([^/:]+):(/.+)\}$")
 # Référence vers un secret HMAC local (par id global) : ${hmac://<uuid>}.
 _HMAC_RE = re.compile(r"^\$\{hmac://([0-9a-fA-F-]{36})\}$")
+# Référence vers un secret utilisateur (Mes secrets) par id : ${secret://<uuid>}.
+# Résolu côté serveur uniquement (worker) — jamais exposé à l'UI.
+_SECRET_RE = re.compile(r"^\$\{secret://([0-9a-fA-F-]{36})\}$")
 
 log = structlog.get_logger(__name__)
 
@@ -43,6 +46,17 @@ async def resolve(
         value = await resolve_hmac_value(pool, uuid.UUID(mh.group(1)), enc_key)
         if value is None:
             raise ValueError(f"Secret HMAC « {mh.group(1)} » introuvable dans la base.")
+        return value
+
+    ms = _SECRET_RE.match(raw)
+    if ms:
+        if pool is None or enc_key is None:
+            raise ValueError("pool and enc_key are required to resolve a secret reference")
+        from docflow.vault.service import resolve_user_secret_value
+
+        value = await resolve_user_secret_value(pool, uuid.UUID(ms.group(1)), enc_key)
+        if value is None:
+            raise ValueError(f"Secret « {ms.group(1)} » introuvable dans la base.")
         return value
 
     m = _VAULT_RE.match(raw)

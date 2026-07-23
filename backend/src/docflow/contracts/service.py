@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from docflow.net.ssrf import SSRFError, validate_public_url
 from docflow.schemas.contracts import (
+    AuthHeaderRequirement,
     ContractDetailOut,
     ContractImport,
     ContractOut,
@@ -73,6 +74,57 @@ def _body_skeleton(raw_spec: Any, op: Any) -> dict[str, object] | None:
     return result or None
 
 
+def _auth_headers_for(raw_spec: Any, op: Any) -> list[AuthHeaderRequirement]:
+    """Headers d'auth requis par l'opération, déduits des securitySchemes.
+
+    Sécurité effective = celle de l'opération, sinon celle de la racine.
+    Gère HTTP bearer/basic (→ Authorization) et apiKey-in-header (→ son name).
+    Les autres schémas (oauth2, apiKey in query/cookie…) sont ignorés.
+    """
+    comps = raw_spec.get("components")
+    schemes = comps.get("securitySchemes", {}) if isinstance(comps, dict) else {}
+    security = op.get("security")
+    if security is None:
+        security = raw_spec.get("security", [])
+    if not isinstance(security, list) or not isinstance(schemes, dict):
+        return []
+
+    seen: set[str] = set()
+    result: list[AuthHeaderRequirement] = []
+    for req in security:
+        if not isinstance(req, dict):
+            continue
+        for scheme_name in req:
+            scheme = schemes.get(scheme_name)
+            if not isinstance(scheme, dict):
+                continue
+            stype = scheme.get("type")
+            header: str | None = None
+            prefix = ""
+            if stype == "http":
+                s = str(scheme.get("scheme", "")).lower()
+                if s == "bearer":
+                    header, prefix = "Authorization", "Bearer "
+                elif s == "basic":
+                    header, prefix = "Authorization", "Basic "
+            elif stype == "apiKey" and scheme.get("in") == "header":
+                name = scheme.get("name")
+                if isinstance(name, str):
+                    header, prefix = name, ""
+            if not header or header in seen:
+                continue
+            seen.add(header)
+            result.append(
+                AuthHeaderRequirement(
+                    header=header,
+                    value_prefix=prefix,
+                    scheme_name=str(scheme_name),
+                    scheme_type=str(stype or ""),
+                )
+            )
+    return result
+
+
 def list_operations(raw_spec: Any) -> list[OperationOut]:
     ops: list[OperationOut] = []
     for path, item in raw_spec.get("paths", {}).items():
@@ -90,6 +142,7 @@ def list_operations(raw_spec: Any) -> list[OperationOut]:
                     parameters=op.get("parameters", []),
                     request_body=op.get("requestBody"),
                     body_skeleton=_body_skeleton(raw_spec, op),
+                    auth_headers=_auth_headers_for(raw_spec, op),
                 )
             )
     return ops

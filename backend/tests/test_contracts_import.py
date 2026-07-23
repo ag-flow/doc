@@ -83,3 +83,37 @@ async def test_import_inline_spec_does_not_fetch(
     )
     detail = await service.get_contract_detail(db_pool, out.id)
     assert len(detail.operations) == 1
+
+
+_SECURED_SPEC: dict[str, Any] = {
+    "openapi": "3.1.0",
+    "info": {"version": "1"},
+    "components": {
+        "securitySchemes": {
+            "BearerApiKey": {"type": "http", "scheme": "bearer"},
+            "XKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+        }
+    },
+    "paths": {
+        "/bearer": {"post": {"operationId": "b", "security": [{"BearerApiKey": []}]}},
+        "/apikey": {"get": {"operationId": "a", "security": [{"XKey": []}]}},
+        "/open": {"get": {"operationId": "o"}},
+    },
+}
+
+
+def test_operation_auth_headers_from_security() -> None:
+    ops = {o.operation_id: o for o in service.list_operations(_SECURED_SPEC)}
+
+    bearer = ops["b"].auth_headers
+    assert len(bearer) == 1
+    assert bearer[0].header == "Authorization"
+    assert bearer[0].value_prefix == "Bearer "
+
+    apikey = ops["a"].auth_headers
+    assert len(apikey) == 1
+    assert apikey[0].header == "X-API-Key"
+    assert apikey[0].value_prefix == ""
+
+    # Opération sans security (et pas de security racine) → aucun header d'auth.
+    assert ops["o"].auth_headers == []

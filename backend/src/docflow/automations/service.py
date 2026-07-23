@@ -26,7 +26,7 @@ async def _fetch_headers(
     conn: asyncpg.Connection, automation_id: uuid.UUID
 ) -> list[AutomationHeaderOut]:
     rows = await conn.fetch(
-        "SELECT id, name, value, secret_ref, required, enabled "
+        "SELECT id, name, value, secret_ref, value_prefix, required, enabled "
         "FROM automation_header WHERE automation_ref = $1 ORDER BY name",
         automation_id,
     )
@@ -61,12 +61,13 @@ async def _upsert_headers(
     for h in headers:
         await conn.execute(
             "INSERT INTO automation_header "
-            "(automation_ref, name, value, secret_ref, required, enabled) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
+            "(automation_ref, name, value, secret_ref, value_prefix, required, enabled) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
             automation_id,
             h.name,
             h.value,
             h.secret_ref,
+            h.value_prefix,
             h.required,
             h.enabled,
         )

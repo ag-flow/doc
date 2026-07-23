@@ -903,6 +903,13 @@ export interface ContractOut {
   updated_at: string
 }
 
+export interface AuthHeaderRequirement {
+  header: string
+  value_prefix: string
+  scheme_name: string
+  scheme_type: string
+}
+
 export interface OperationOut {
   operation_id: string | null
   method: string
@@ -911,6 +918,7 @@ export interface OperationOut {
   parameters: object[]
   request_body: object | null
   body_skeleton: Record<string, unknown> | null
+  auth_headers: AuthHeaderRequirement[]
 }
 
 export interface ContractDetailOut {
@@ -933,6 +941,7 @@ export interface AutomationHeaderIn {
   name: string
   value?: string | null
   secret_ref?: string | null
+  value_prefix?: string | null
   required?: boolean
   enabled?: boolean
 }
@@ -942,6 +951,7 @@ export interface AutomationHeaderOut {
   name: string
   value: string | null
   secret_ref: string | null
+  value_prefix: string | null
   required: boolean
   enabled: boolean
 }

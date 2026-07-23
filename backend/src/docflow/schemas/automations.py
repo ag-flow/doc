@@ -12,6 +12,8 @@ class AutomationHeaderIn(BaseModel):
     name: str
     value: str | None = None
     secret_ref: str | None = None
+    # Préfixe de la valeur finale (ex. "Bearer " pour un schéma HTTP bearer).
+    value_prefix: str | None = None
     required: bool = False
     enabled: bool = True
 
@@ -27,6 +29,7 @@ class AutomationHeaderOut(BaseModel):
     name: str
     value: str | None
     secret_ref: str | None
+    value_prefix: str | None
     required: bool
     enabled: bool
 

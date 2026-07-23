@@ -204,6 +204,24 @@ async def reveal_hmac_secret(
     return decrypt_str(enc_key, row["value_enc"])
 
 
+async def resolve_user_secret_value(
+    pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str
+) -> str | None:
+    """Résout la valeur d'un secret utilisateur par son id (tous kinds).
+
+    Utilisé par le résolveur `${secret://<uuid>}` (worker d'automate) pour
+    injecter une valeur secrète (ex. clé API externe) dans un header. Résolution
+    par id global, côté serveur — la valeur n'est jamais renvoyée à l'API.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT value_enc FROM user_secret WHERE id = $1", secret_id
+        )
+    if row is None:
+        return None
+    return decrypt_str(enc_key, row["value_enc"])
+
+
 async def resolve_hmac_value(
     pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str
 ) -> str | None:

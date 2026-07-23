@@ -139,6 +139,30 @@ async def test_resolver_hmac_ref(
     assert value == "resolved-secret-9"
 
 
+async def test_resolver_secret_ref(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """`${secret://<uuid>}` résout un secret utilisateur (Mes secrets) par id."""
+    with _client(monkeypatch, test_schema_url) as client:
+        hdrs = _auth(client)
+        r = client.post(
+            "/api/admin/secrets",
+            json={"label": "RAG", "slug": "rag", "value": "rag-key-123"},
+            headers=hdrs,
+        )
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+
+    pool = await asyncpg.create_pool(test_schema_url)
+    try:
+        value = await resolve(
+            Secret(f"${{secret://{sid}}}"), harpocrate_url=None, pool=pool, enc_key=_ENC_KEY
+        )
+    finally:
+        await pool.close()
+    assert value == "rag-key-123"
+
+
 async def test_resolver_hmac_ref_unknown_raises() -> None:
     pool = None
     with pytest.raises(ValueError, match="pool and enc_key"):

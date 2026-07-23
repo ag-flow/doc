@@ -4,7 +4,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
-import { contractsApi, eventsProducerApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut } from '../lib/api'
+import { contractsApi, eventsProducerApi, secretsApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut } from '../lib/api'
 
 // Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
 // champs métier des events documentaires ; celles absentes rendent une chaîne vide).
@@ -27,13 +27,14 @@ interface HeaderRow {
   name: string
   value: string
   secretRef: string
+  valuePrefix: string
   isSecret: boolean
   required: boolean
   enabled: boolean
 }
 
 function newRow(): HeaderRow {
-  return { id: crypto.randomUUID(), name: '', value: '', secretRef: '', isSecret: false, required: false, enabled: true }
+  return { id: crypto.randomUUID(), name: '', value: '', secretRef: '', valuePrefix: '', isSecret: false, required: false, enabled: true }
 }
 
 export function AutomationDialog({ initial, onSave, onClose, saving, error }: Props) {
@@ -53,6 +54,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
       name: h.name,
       value: h.value ?? '',
       secretRef: h.secret_ref ?? '',
+      valuePrefix: h.value_prefix ?? '',
       isSecret: h.secret_ref != null,
       required: h.required,
       enabled: h.enabled,
@@ -80,6 +82,13 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
   })
   const eventTypes = catalog?.events ?? []
 
+  // Secrets (Mes secrets) proposés en liste de sélection pour les headers d'auth.
+  const { data: secrets = [] } = useQuery({
+    queryKey: ['user-secrets'],
+    queryFn: () => secretsApi.list(),
+    staleTime: 60_000,
+  })
+
   const operations = contractDetail?.operations ?? []
 
   function toggleEvent(code: string) {
@@ -99,6 +108,26 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     if (op.body_skeleton) {
       jsonRef.current?.setValue(JSON.stringify(op.body_skeleton, null, 2))
     }
+    // Sécurité du contrat → ajoute les headers d'auth requis (en mode secret,
+    // avec préfixe de valeur, ex. « Bearer »). Ne double pas un header existant.
+    if (op.auth_headers?.length) {
+      setHeaders((prev) => {
+        const names = new Set(prev.map((h) => h.name.toLowerCase()))
+        const add: HeaderRow[] = op.auth_headers
+          .filter((a) => !names.has(a.header.toLowerCase()))
+          .map((a) => ({
+            id: crypto.randomUUID(),
+            name: a.header,
+            value: '',
+            secretRef: '',
+            valuePrefix: a.value_prefix,
+            isSecret: true,
+            required: true,
+            enabled: true,
+          }))
+        return add.length ? [...prev, ...add] : prev
+      })
+    }
   }
 
   function submit() {
@@ -109,6 +138,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
         name: h.name.trim(),
         value: h.isSecret ? null : h.value || null,
         secret_ref: h.isSecret ? h.secretRef || null : null,
+        value_prefix: h.valuePrefix || null,
         required: h.required,
         enabled: h.enabled,
       }))
@@ -164,7 +194,8 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
           <div>
             <label className="block text-sm font-medium mb-1">Contrat OpenAPI</label>
             <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              value={contractId} onChange={(e) => { setContractId(e.target.value); setOperationId('') }}>
+              value={contractId} onChange={(e) => { setContractId(e.target.value); setOperationId('') }}
+              data-testid="auto-contract-select">
               <option value="">— aucun —</option>
               {contracts.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
@@ -172,7 +203,8 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
           <div>
             <label className="block text-sm font-medium mb-1">Opération</label>
             <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              value={operationId} onChange={(e) => selectOperation(e.target.value)} disabled={!contractId}>
+              value={operationId} onChange={(e) => selectOperation(e.target.value)} disabled={!contractId}
+              data-testid="auto-operation-select">
               <option value="">— sélectionner —</option>
               {operations.map((op) => (
                 <option key={op.operation_id ?? op.path} value={op.operation_id ?? ''}>
@@ -220,20 +252,32 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
           {headers.map((h, i) => (
             <div key={h.id} className="mb-2 flex items-center gap-2">
               <Input value={h.name} onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, name:e.target.value} : r))}
-                placeholder="Nom" className="w-40" />
+                placeholder="Nom" className="w-36" data-testid={`header-name-${i}`} />
+              <Input value={h.valuePrefix}
+                onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, valuePrefix:e.target.value} : r))}
+                placeholder="préfixe" title="Préfixe de valeur (ex. « Bearer »)"
+                className="w-24 font-mono text-xs" />
               <label className="flex items-center gap-1 text-xs whitespace-nowrap">
                 <input type="checkbox" checked={h.isSecret}
                   onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, isSecret:e.target.checked} : r))} />
                 Secret
               </label>
-              {h.isSecret
-                ? <Input value={h.secretRef}
-                    onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
-                    placeholder="${vault://wallet:/chemin}" className="flex-1 font-mono text-xs" />
-                : <Input value={h.value}
-                    onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
-                    placeholder="Valeur" className="flex-1" />
-              }
+              {h.isSecret ? (
+                <select value={h.secretRef}
+                  onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
+                  className="flex-1 rounded border border-gray-300 px-2 py-2 text-xs"
+                  data-testid={`header-secret-${i}`}>
+                  <option value="">— choisir un secret —</option>
+                  {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
+                  {h.secretRef && !secrets.some((s) => `\${secret://${s.id}}` === h.secretRef) && (
+                    <option value={h.secretRef}>{h.secretRef} (existant)</option>
+                  )}
+                </select>
+              ) : (
+                <Input value={h.value}
+                  onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
+                  placeholder="Valeur" className="flex-1" />
+              )}
               <button type="button" onClick={() => setHeaders((arr) => arr.filter((_, j) => j !== i))}
                 className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
             </div>

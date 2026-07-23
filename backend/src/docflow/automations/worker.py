@@ -140,17 +140,17 @@ async def execute(
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
-        "SELECT name, value, secret_ref, enabled FROM automation_header WHERE automation_ref = $1",
+        "SELECT name, value, secret_ref, value_prefix, enabled "
+        "FROM automation_header WHERE automation_ref = $1",
         automation["id"],
     )
     for h in header_rows:
         if not h["enabled"]:
             continue
+        prefix = h["value_prefix"] or ""
         if h["secret_ref"]:
             try:
-                headers[h["name"]] = await resolve_secret(
-                    h["secret_ref"], pool=pool, settings=settings
-                )
+                resolved = await resolve_secret(h["secret_ref"], pool=pool, settings=settings)
             except Exception as exc:
                 log.error(
                     "automation_secret_resolution_failed",
@@ -159,8 +159,9 @@ async def execute(
                     error=str(exc),
                 )
                 return "failed"
+            headers[h["name"]] = prefix + resolved
         elif h["value"] is not None:
-            headers[h["name"]] = h["value"]
+            headers[h["name"]] = prefix + h["value"]
 
     body: str | None = None
     if automation["body_template"]:
