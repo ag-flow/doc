@@ -95,9 +95,15 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     setEventCodes((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]))
   }
 
-  function insertVariable(v: string) {
-    const cur = jsonRef.current?.getValue() ?? ''
-    jsonRef.current?.setValue(cur + `{${v}}`)
+  const [copiedVar, setCopiedVar] = useState<string | null>(null)
+  async function copyVariable(v: string) {
+    try {
+      await navigator.clipboard?.writeText(`{${v}}`)
+      setCopiedVar(v)
+      setTimeout(() => setCopiedVar(null), 1200)
+    } catch {
+      /* presse-papier indisponible : on ignore */
+    }
   }
 
   function selectOperation(opId: string) {
@@ -231,9 +237,12 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
             <label className="text-sm font-medium">Corps (JSON)</label>
             <div className="flex flex-wrap gap-1 justify-end">
               {['id_document', 'title', 'content', ...EVENT_VARS].map((v) => (
-                <button key={v} type="button" onClick={() => insertVariable(v)}
-                  className="rounded bg-gray-100 px-2 py-0.5 text-xs font-mono hover:bg-gray-200">
-                  {`{${v}}`}
+                <button key={v} type="button" onClick={() => copyVariable(v)}
+                  title="Copier dans le presse-papier"
+                  className={`rounded px-2 py-0.5 text-xs font-mono transition-colors ${
+                    copiedVar === v ? 'bg-green-100 text-green-700' : 'bg-gray-100 hover:bg-gray-200'
+                  }`}>
+                  {copiedVar === v ? '✓ copié' : `{${v}}`}
                 </button>
               ))}
             </div>
