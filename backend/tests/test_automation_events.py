@@ -152,7 +152,14 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
         [_UPDATED],
         "https://rag.example/index",
         "POST",
-        json.dumps({"doc": "{content}", "ws": "{event.workspaceSlug}", "v": "{event.version}"}),
+        json.dumps(
+            {
+                "doc": "{content}",
+                "ws": "{event.workspaceSlug}",
+                "v": "{event.version}",
+                "url": "{doc_url}",
+            }
+        ),
     )
 
     automation = await db_pool.fetchrow(
@@ -161,7 +168,10 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
         auto_id,
     )
 
-    await worker.run_tick(db_pool, automation, object())
+    class _Settings:
+        public_base_url = "https://doc.example"
+
+    await worker.run_tick(db_pool, automation, _Settings())
 
     # Un seul appel (updated), pas created.
     assert len(_CALLS) == 1
@@ -169,6 +179,8 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     assert body["doc"] == "Contenu du doc"       # {content} substitué
     assert body["ws"] == slug                     # {event.workspaceSlug} substitué
     assert body["v"] == "3"                       # {event.version} substitué (str)
+    # {doc_url} = URL de consultation absolue (public_base_url + chemin app).
+    assert body["url"] == f"https://doc.example/ws/{slug}/blocs/b/documents/{doc_id}"
 
     # Un run enregistré, statut ok.
     runs = await db_pool.fetch(

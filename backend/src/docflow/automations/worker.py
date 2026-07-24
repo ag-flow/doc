@@ -41,17 +41,30 @@ async def resolve_secret(secret_ref: str, *, pool: asyncpg.Pool, settings: objec
 # ── Variables exposées au template ────────────────────────────────────────────
 
 
-async def _doc_snapshot(
-    conn: asyncpg.Connection, doc_id: uuid.UUID
-) -> tuple[str | None, str | None]:
-    """Titre + contenu courant du document (None, None s'il n'existe plus).
+class _Snapshot:
+    __slots__ = ("title", "content", "ws_slug", "block_slug")
 
-    Le contenu vit dans document_version à la version courante du document.
+    def __init__(
+        self, title: str | None, content: str | None, ws_slug: str | None, block_slug: str | None
+    ) -> None:
+        self.title = title
+        self.content = content
+        self.ws_slug = ws_slug
+        self.block_slug = block_slug
+
+
+async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapshot | None:
+    """Snapshot courant du document (None s'il n'existe plus).
+
+    Contenu = document_version à la version courante ; ws_slug/block_slug servent
+    à construire l'URL de consultation.
     """
     row = await conn.fetchrow(
         """
-        SELECT d.title, dv.content
+        SELECT d.title, dv.content, w.slug AS ws_slug, b.slug AS block_slug
         FROM document d
+        JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+        LEFT JOIN data_block b ON b.id = d.data_block_ref
         LEFT JOIN document_version dv
             ON dv.document_ref = d.doc_technical_key AND dv.version_number = d.version
         WHERE d.doc_technical_key = $1
@@ -59,8 +72,24 @@ async def _doc_snapshot(
         doc_id,
     )
     if row is None:
-        return None, None
-    return row["title"], row["content"]
+        return None
+    return _Snapshot(row["title"], row["content"], row["ws_slug"], row["block_slug"])
+
+
+def _doc_url(
+    base_url: str | None,
+    doc_id: uuid.UUID | None,
+    ws_slug: str | None,
+    block_slug: str | None,
+) -> str:
+    """URL de consultation du document dans docflow.
+
+    Absolue si public_base_url est configuré, sinon chemin relatif. Vide si les
+    éléments manquent (ex. document supprimé)."""
+    if not (doc_id and ws_slug and block_slug):
+        return ""
+    path = f"/ws/{ws_slug}/blocs/{block_slug}/documents/{doc_id}"
+    return f"{base_url.rstrip('/')}{path}" if base_url else path
 
 
 def _parse_business(raw: Any) -> dict[str, Any]:
@@ -79,12 +108,13 @@ def _variables(
     event_code: str,
     business: dict[str, Any],
     doc_id: uuid.UUID | None,
-    title: str | None,
-    content: str | None,
+    snap: _Snapshot | None,
+    base_url: str | None,
 ) -> dict[str, str]:
-    """Variables du body_template : contenu doc + propriétés de l'event.
+    """Variables du body_template : contenu doc + URL + propriétés de l'event.
 
     - `{id_document}`, `{title}`, `{content}` : snapshot courant du document.
+    - `{doc_url}` : URL de consultation du document dans docflow.
     - `{event.code}` : l'eventCode déclencheur.
     - `{event.<prop>}` : chaque propriété métier de l'event (documentId,
       workspaceSlug, blockSlug, parentId, version, functionalTypeSlug…).
@@ -92,8 +122,14 @@ def _variables(
     doc_ref = str(doc_id) if doc_id else str(business.get("documentId", ""))
     variables: dict[str, str] = {
         "id_document": doc_ref,
-        "title": title or "",
-        "content": content or "",
+        "title": snap.title or "" if snap else "",
+        "content": snap.content or "" if snap else "",
+        "doc_url": _doc_url(
+            base_url,
+            doc_id,
+            snap.ws_slug if snap else None,
+            snap.block_slug if snap else None,
+        ),
         "event.code": event_code,
     }
     for key, value in business.items():
@@ -133,10 +169,9 @@ async def execute(
     """
     business = _parse_business(event["business"])
     doc_id: uuid.UUID | None = event["document_ref"]
-    title, content = (None, None)
-    if doc_id is not None:
-        title, content = await _doc_snapshot(conn, doc_id)
-    variables = _variables(event["event_code"], business, doc_id, title, content)
+    snap = await _doc_snapshot(conn, doc_id) if doc_id is not None else None
+    base_url = getattr(settings, "public_base_url", None)
+    variables = _variables(event["event_code"], business, doc_id, snap, base_url)
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
