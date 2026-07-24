@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
@@ -18,6 +19,21 @@ log = structlog.get_logger(__name__)
 _HTTP_TIMEOUT = 15.0
 # Rétention du journal d'events consommé par les automates (heures).
 _EVENT_RETENTION_HOURS = 168  # 7 jours
+# Longueur max de l'extrait du corps de réponse remonté (test « jouer l'event »).
+_BODY_EXCERPT = 500
+
+
+@dataclass
+class ExecResult:
+    """Résultat d'un appel d'automate : statut + détails HTTP (pour l'aperçu).
+
+    `status` = 'ok'/'failed' (2xx = ok). `http_status`/`body` renseignés quand
+    l'appel HTTP a bien eu lieu ; `body` porte sinon la raison de l'échec amont
+    (secret, corps, URL)."""
+
+    status: str
+    http_status: int | None = None
+    body: str | None = None
 
 
 # ── Résolution de secret ──────────────────────────────────────────────────────
@@ -163,7 +179,7 @@ async def execute(
     event: dict[str, Any],
     pool: asyncpg.Pool,
     settings: object,
-) -> str:
+) -> ExecResult:
     """Exécute l'appel HTTP de l'automate pour un event donné.
 
     `event` = {event_code, document_ref (uuid|None), business (dict|json str)}.
@@ -194,7 +210,7 @@ async def execute(
                     header=h["name"],
                     error=str(exc),
                 )
-                return "failed"
+                return ExecResult("failed", body=f"résolution du secret « {h['name']} » échouée")
             headers[h["name"]] = prefix + resolved
         elif h["value"] is not None:
             headers[h["name"]] = prefix + h["value"]
@@ -208,7 +224,7 @@ async def execute(
                 automation_id=str(automation["id"]),
                 event_code=event["event_code"],
             )
-            return "failed"
+            return ExecResult("failed", body="corps JSON invalide après substitution")
         headers.setdefault("Content-Type", "application/json")
 
     try:
@@ -219,7 +235,7 @@ async def execute(
             automation_id=str(automation["id"]),
             error=str(exc),
         )
-        return "failed"
+        return ExecResult("failed", body=f"URL refusée : {exc}")
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -238,7 +254,7 @@ async def execute(
             http_status=resp.status_code,
             status=status,
         )
-        return status
+        return ExecResult(status, resp.status_code, resp.text[:_BODY_EXCERPT])
     except Exception as exc:
         log.warning(
             "automation_http_failed",
@@ -246,7 +262,7 @@ async def execute(
             event_code=event["event_code"],
             error=str(exc),
         )
-        return "failed"
+        return ExecResult("failed", body=str(exc))
 
 
 # ── Tick par automate ─────────────────────────────────────────────────────────
@@ -321,7 +337,7 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 "document_ref": doc_ref,
                 "business": row["business"],
             }
-            status = await execute(conn, automation, event, pool, settings)
+            status = (await execute(conn, automation, event, pool, settings)).status
 
             version: int | None = None
             if doc_ref is not None:

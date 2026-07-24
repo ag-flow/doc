@@ -315,7 +315,7 @@ async def replay_run(
             "document_ref": ev["document_ref"],
             "business": ev["business"],
         }
-        status = await execute(conn, auto_row, event, pool, settings)
+        status = (await execute(conn, auto_row, event, pool, settings)).status
 
         updated = await conn.fetchrow(
             "UPDATE automation_run SET status=$1, executed_at=now() WHERE id=$2 "
@@ -375,5 +375,11 @@ async def run_next_pending(
             "document_ref": ev["document_ref"],
             "business": ev["business"],
         }
-        result = await execute(conn, auto, event, pool, settings)
-    return {"status": result, "event_code": ev["event_code"], "event_seq": ev["seq"]}
+        res = await execute(conn, auto, event, pool, settings)
+    return {
+        "status": res.status,
+        "http_status": res.http_status,
+        "body": res.body,
+        "event_code": ev["event_code"],
+        "event_seq": ev["seq"],
+    }

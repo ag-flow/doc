@@ -24,6 +24,7 @@ _CREATED = "docflow.document.created.v1"
 class _FakeResp:
     status_code = 200
     is_success = True
+    text = '{"ok": true}'
 
 
 class _FakeClient:

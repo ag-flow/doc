@@ -48,19 +48,21 @@ export function AutomatesPage() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
   })
 
-  const [runMsg, setRunMsg] = useState<Record<string, string>>({})
+  const [runMsg, setRunMsg] = useState<Record<string, { text: string; err: boolean }>>({})
   const runNextMut = useMutation({
     mutationFn: (id: string) => automationsApi.runNext(ws!, id),
     onSuccess: (res, id) => {
-      const map: Record<string, string> = {
-        ok: 'Event courant joué — appel envoyé (OK)',
-        failed: "Event courant joué — l'appel a échoué",
-        no_pending: 'Aucun event en attente',
-        no_events: 'Aucun event déclencheur sélectionné',
+      let entry: { text: string; err: boolean }
+      if (res.status === 'no_pending') entry = { text: 'Aucun event en attente', err: false }
+      else if (res.status === 'no_events') entry = { text: 'Aucun event déclencheur sélectionné', err: true }
+      else {
+        const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
+        const body = res.body ? ` — ${res.body.replace(/\s+/g, ' ').slice(0, 160)}` : ''
+        entry = { text: `Event joué (${http})${body}`, err: res.status === 'failed' }
       }
-      setRunMsg((m) => ({ ...m, [id]: map[res.status] ?? res.status }))
+      setRunMsg((m) => ({ ...m, [id]: entry }))
     },
-    onError: (e: Error, id) => setRunMsg((m) => ({ ...m, [id]: e.message })),
+    onError: (e: Error, id) => setRunMsg((m) => ({ ...m, [id]: { text: e.message, err: true } })),
   })
 
   function saveAuto(data: AutomationCreate) {
@@ -124,7 +126,11 @@ export function AutomatesPage() {
                       {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
-                    {runMsg[a.id] && <span className="ml-2 text-xs text-indigo-600">{runMsg[a.id]}</span>}
+                    {runMsg[a.id] && (
+                      <span className={`ml-2 text-xs ${runMsg[a.id].err ? 'text-red-600' : 'text-indigo-600'}`}>
+                        {runMsg[a.id].text}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {/* Events en attente (au-delà du curseur) */}

@@ -1015,9 +1015,13 @@ export const automationsApi = {
   replay: (ws: string, id: string, runId: string) =>
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
   runNext: (ws: string, id: string) =>
-    api.post<{ status: string; event_code?: string; event_seq?: number }>(
-      `/workspaces/${ws}/automations/${id}/run-next`, {},
-    ),
+    api.post<{
+      status: string
+      http_status?: number | null
+      body?: string | null
+      event_code?: string
+      event_seq?: number
+    }>(`/workspaces/${ws}/automations/${id}/run-next`, {}),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
