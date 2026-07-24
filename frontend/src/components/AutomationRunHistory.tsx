@@ -12,6 +12,48 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
+// Définition générique de chaque code HTTP, affichée en info-bulle (survol).
+const HTTP_HINTS: Record<number, string> = {
+  200: 'HTTP 200 OK — la requête a réussi.',
+  201: 'HTTP 201 Created — la ressource a été créée.',
+  202: 'HTTP 202 Accepted — requête acceptée (traitement asynchrone).',
+  204: 'HTTP 204 No Content — succès, sans corps de réponse.',
+  301: 'HTTP 301 — redirection permanente (docflow ne suit pas les redirections).',
+  302: 'HTTP 302 — redirection (docflow ne suit pas les redirections).',
+  307: 'HTTP 307 — redirection temporaire (non suivie).',
+  308: 'HTTP 308 — redirection permanente (non suivie).',
+  400: 'HTTP 400 Bad Request — requête malformée (syntaxe ou paramètres invalides).',
+  401: "HTTP 401 Unauthorized — authentification manquante ou invalide (clé/jeton).",
+  403: 'HTTP 403 Forbidden — authentifié mais accès refusé (droits insuffisants).',
+  404: 'HTTP 404 Not Found — ressource ou endpoint introuvable (URL erronée ?).',
+  405: "HTTP 405 Method Not Allowed — la méthode HTTP n'est pas autorisée sur cette URL.",
+  409: "HTTP 409 Conflict — conflit avec l'état actuel de la ressource (ex. doublon).",
+  422: 'HTTP 422 Unprocessable Entity — la requête est bien formée mais ses données sont '
+    + 'sémantiquement invalides : la cible les a comprises mais refuse de les traiter '
+    + '(validation métier échouée, ex. workspace ou champ inexistant).',
+  429: 'HTTP 429 Too Many Requests — trop d’appels (limite de débit atteinte).',
+  500: 'HTTP 500 Internal Server Error — erreur interne côté cible.',
+  502: 'HTTP 502 Bad Gateway — la passerelle/proxy en amont a échoué.',
+  503: 'HTTP 503 Service Unavailable — service indisponible (surcharge/maintenance).',
+  504: 'HTTP 504 Gateway Timeout — délai dépassé côté passerelle.',
+}
+
+function httpHint(code: number | null): string {
+  if (code == null) {
+    return "Échec avant l'appel HTTP (résolution du secret, corps invalide ou URL refusée)."
+  }
+  return (
+    HTTP_HINTS[code] ??
+    (code >= 500
+      ? `HTTP ${code} — erreur serveur : la cible a rencontré un problème.`
+      : code >= 400
+        ? `HTTP ${code} — erreur client : la cible a refusé la requête.`
+        : code >= 300
+          ? `HTTP ${code} — redirection (non suivie par docflow).`
+          : `HTTP ${code}.`)
+  )
+}
+
 function pretty(body: string | null): string {
   if (!body) return ''
   try {
@@ -57,9 +99,12 @@ export function AutomationRunHistory({ ws, automationId }: Props) {
                 className="text-gray-400 hover:text-gray-700">
                 {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
-              <span className={`inline-block rounded-full px-2 py-0.5 font-medium ${
-                run.status === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-              }`}>
+              <span
+                title={httpHint(run.http_status)}
+                className={`inline-block cursor-help rounded-full px-2 py-0.5 font-medium ${
+                  run.status === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                }`}
+              >
                 {run.status === 'ok' ? '✓' : '✗'} {httpLabel}
               </span>
               {run.event_code && (
