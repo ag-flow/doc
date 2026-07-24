@@ -39,7 +39,7 @@ describe('AutomationDialog — sécurité du contrat', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(contractsApi.list).mockResolvedValue([contract])
-    vi.mocked(contractsApi.detail).mockResolvedValue({ contract, operations: [opBearer] })
+    vi.mocked(contractsApi.detail).mockResolvedValue({ contract, operations: [opBearer], servers: ['http://rag.example'] })
     vi.mocked(eventsProducerApi.catalog).mockResolvedValue({ revision: 'r', specVersion: '1.0', events: [] })
     vi.mocked(secretsApi.list).mockResolvedValue([
       { id: 's1', slug: 'rag', label: 'RAG key', created_at: '', updated_at: '' },
@@ -65,6 +65,17 @@ describe('AutomationDialog — sécurité du contrat', () => {
     // Sélectionner le secret pose la référence ${secret://id}.
     fireEvent.change(secretSelect, { target: { value: '${secret://s1}' } })
     expect(secretSelect.value).toBe('${secret://s1}')
+  })
+
+  it('construit l’URL d’appel (server + path) à la sélection de l’opération', async () => {
+    renderDialog()
+    await waitFor(() => expect(screen.getByRole('option', { name: 'RAG' })).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('auto-contract-select'), { target: { value: 'c1' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: /POST \/index/ })).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('auto-operation-select'), { target: { value: 'index' } })
+    await waitFor(() =>
+      expect((screen.getByTestId('auto-url') as HTMLInputElement).value).toBe('http://rag.example/index'),
+    )
   })
 
   it('ajoute le header d’auth à l’OUVERTURE d’un automate existant (sans changer d’opération)', async () => {

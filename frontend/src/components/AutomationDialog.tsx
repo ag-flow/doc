@@ -153,6 +153,13 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     if (op.body_skeleton) {
       jsonRef.current?.setValue(JSON.stringify(op.body_skeleton, null, 2))
     }
+    // Si le contrat déclare un serveur, construire l'URL d'appel : server + path.
+    const server = contractDetail?.servers?.[0]
+    if (server) {
+      const base = server.replace(/\/+$/, '')
+      const path = op.path.startsWith('/') ? op.path : `/${op.path}`
+      setUrl(`${base}${path}`)
+    }
     addAuthHeadersFor(op)
   }
 
@@ -250,7 +257,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium mb-1">URL</label>
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" data-testid="auto-url" />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Méthode</label>

@@ -924,6 +924,7 @@ export interface OperationOut {
 export interface ContractDetailOut {
   contract: ContractOut
   operations: OperationOut[]
+  servers: string[]
 }
 
 export const contractsApi = {

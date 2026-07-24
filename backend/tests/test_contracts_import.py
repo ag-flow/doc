@@ -102,6 +102,19 @@ _SECURED_SPEC: dict[str, Any] = {
 }
 
 
+def test_server_urls_extracted() -> None:
+    assert service._server_urls({"servers": [{"url": "http://rag.example"}]}) == ["http://rag.example"]
+    assert service._server_urls({"servers": [{"url": "  "}, {"nope": 1}, "x"]}) == []
+    assert service._server_urls({}) == []
+
+
+async def test_contract_detail_exposes_servers(db_pool: asyncpg.Pool) -> None:
+    spec = {**_SPEC, "servers": [{"url": "http://rag.example"}]}
+    out = await service.import_contract(db_pool, ContractImport(label="srv", raw_spec=spec))
+    detail = await service.get_contract_detail(db_pool, out.id)
+    assert detail.servers == ["http://rag.example"]
+
+
 def test_operation_auth_headers_from_security() -> None:
     ops = {o.operation_id: o for o in service.list_operations(_SECURED_SPEC)}
 

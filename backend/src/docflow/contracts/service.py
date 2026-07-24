@@ -125,6 +125,18 @@ def _auth_headers_for(raw_spec: Any, op: Any) -> list[AuthHeaderRequirement]:
     return result
 
 
+def _server_urls(raw_spec: Any) -> list[str]:
+    """URLs de serveur déclarées par le contrat (spec.servers[].url)."""
+    servers = raw_spec.get("servers")
+    if not isinstance(servers, list):
+        return []
+    return [
+        s["url"]
+        for s in servers
+        if isinstance(s, dict) and isinstance(s.get("url"), str) and s["url"].strip()
+    ]
+
+
 def list_operations(raw_spec: Any) -> list[OperationOut]:
     ops: list[OperationOut] = []
     for path, item in raw_spec.get("paths", {}).items():
@@ -231,7 +243,11 @@ async def get_contract_detail(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Con
         imported_at=row["imported_at"],
         updated_at=row["updated_at"],
     )
-    return ContractDetailOut(contract=contract, operations=list_operations(raw_spec))
+    return ContractDetailOut(
+        contract=contract,
+        operations=list_operations(raw_spec),
+        servers=_server_urls(raw_spec),
+    )
 
 
 async def update_contract(

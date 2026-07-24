@@ -53,3 +53,6 @@ class OperationOut(BaseModel):
 class ContractDetailOut(BaseModel):
     contract: ContractOut
     operations: list[OperationOut]
+    # URLs de serveur déclarées par le contrat (spec.servers[].url) — servent à
+    # construire l'URL d'appel (server + path) à la sélection de l'opération.
+    servers: list[str] = []
