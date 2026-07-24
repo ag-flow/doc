@@ -4,7 +4,7 @@ import { Plus, Trash2, X } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
-import { contractsApi, eventsProducerApi, secretsApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut } from '../lib/api'
+import { contractsApi, eventsProducerApi, secretsApi, type AutomationCreate, type AutomationHeaderIn, type AutomationOut, type OperationOut } from '../lib/api'
 
 // Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
 // champs métier des events documentaires ; celles absentes rendent une chaîne vide).
@@ -62,7 +62,8 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
       value: h.value ?? '',
       secretRef: h.secret_ref ?? '',
       valuePrefix: h.value_prefix ?? '',
-      isSecret: h.secret_ref != null,
+      // Un header d'auth (préfixe posé, pas encore de secret) reste en mode secret.
+      isSecret: h.secret_ref != null || (h.value == null && !!h.value_prefix),
       required: h.required,
       enabled: h.enabled,
     })) ?? []
@@ -113,6 +114,37 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     }
   }
 
+  // Ajoute les headers d'auth requis par la sécurité de l'opération (mode
+  // secret + préfixe, ex. « Bearer »). Idempotent : ne double pas un header
+  // déjà présent (par nom).
+  function addAuthHeadersFor(op: OperationOut) {
+    if (!op.auth_headers?.length) return
+    setHeaders((prev) => {
+      const names = new Set(prev.map((h) => h.name.toLowerCase()))
+      const add: HeaderRow[] = op.auth_headers
+        .filter((a) => !names.has(a.header.toLowerCase()))
+        .map((a) => ({
+          id: crypto.randomUUID(),
+          name: a.header,
+          value: '',
+          secretRef: '',
+          valuePrefix: a.value_prefix,
+          isSecret: true,
+          required: true,
+          enabled: true,
+        }))
+      return add.length ? [...prev, ...add] : prev
+    })
+  }
+
+  // À l'ouverture (ou quand le catalogue d'opérations se charge), ajoute les
+  // headers d'auth de l'opération déjà sélectionnée — sans toucher au body.
+  useEffect(() => {
+    const op = operations.find((o) => o.operation_id === operationId)
+    if (op) addAuthHeadersFor(op)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [operations, operationId])
+
   function selectOperation(opId: string) {
     setOperationId(opId)
     const op = operations.find((o) => o.operation_id === opId)
@@ -121,26 +153,7 @@ export function AutomationDialog({ initial, onSave, onClose, saving, error }: Pr
     if (op.body_skeleton) {
       jsonRef.current?.setValue(JSON.stringify(op.body_skeleton, null, 2))
     }
-    // Sécurité du contrat → ajoute les headers d'auth requis (en mode secret,
-    // avec préfixe de valeur, ex. « Bearer »). Ne double pas un header existant.
-    if (op.auth_headers?.length) {
-      setHeaders((prev) => {
-        const names = new Set(prev.map((h) => h.name.toLowerCase()))
-        const add: HeaderRow[] = op.auth_headers
-          .filter((a) => !names.has(a.header.toLowerCase()))
-          .map((a) => ({
-            id: crypto.randomUUID(),
-            name: a.header,
-            value: '',
-            secretRef: '',
-            valuePrefix: a.value_prefix,
-            isSecret: true,
-            required: true,
-            enabled: true,
-          }))
-        return add.length ? [...prev, ...add] : prev
-      })
-    }
+    addAuthHeadersFor(op)
   }
 
   function submit() {

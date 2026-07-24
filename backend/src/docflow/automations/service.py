@@ -161,7 +161,11 @@ async def update_automation(
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
 
-        headers_data = raw.pop("headers", None)
+        # Présence de "headers" dans le body : on réécrit depuis les objets
+        # pydantic (body.headers), pas depuis le dump (dicts) — _upsert_headers
+        # attend des objets (h.name, …).
+        headers_present = "headers" in raw
+        raw.pop("headers", None)
 
         if raw:
             sets: list[str] = []
@@ -189,8 +193,8 @@ async def update_automation(
                 *values,
             )
 
-        if headers_data is not None:
-            await _upsert_headers(conn, automation_id, headers_data)
+        if headers_present:
+            await _upsert_headers(conn, automation_id, body.headers or [])
 
         row = await conn.fetchrow(
             "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
