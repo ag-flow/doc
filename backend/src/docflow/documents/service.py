@@ -23,6 +23,7 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
 from docflow.events import outbox
 from docflow.references.service import refresh_references
@@ -320,6 +321,63 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
     return _row_doc(row)
 
 
+_DOC_INSERT_SQL = """
+INSERT INTO document
+    (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref, exposed)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING doc_technical_key, title, type, version, parent,
+          data_block_ref, exposed, slug, created_at, updated_at
+"""
+
+
+async def _insert_document(
+    conn: asyncpg.Connection,
+    wk: uuid.UUID,
+    data: DocumentCreate,
+    ft_id: uuid.UUID | None,
+    parent_exposed: bool,
+) -> asyncpg.Record:
+    """Insère le document en gérant le slug d'instance.
+
+    - Slug EXPLICITE : une tentative ; collision → 409 (intention appelant).
+    - Slug ABSENT : dérivé du titre, unique par fratrie (suffixe incrémental).
+      Le rejeu est protégé par un savepoint (course concurrente).
+    """
+    if data.slug is not None:
+        try:
+            row = await conn.fetchrow(
+                _DOC_INSERT_SQL, data.title, data.slug, data.parent_id,
+                ft_id, wk, data.block_id, parent_exposed,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
+            ) from exc
+        assert row is not None
+        return row
+
+    base = document_base_slug(data.title)
+    i = await next_free_child_suffix(conn, wk, data.parent_id, base)
+    while True:
+        candidate = base if i == 0 else f"{base}-{i}"
+        try:
+            async with conn.transaction():  # savepoint : rejeu sûr sur collision
+                row = await conn.fetchrow(
+                    _DOC_INSERT_SQL, data.title, candidate, data.parent_id,
+                    ft_id, wk, data.block_id, parent_exposed,
+                )
+        except asyncpg.UniqueViolationError:
+            i = 2 if i == 0 else i + 1
+            if i > 10_000:
+                raise HTTPException(
+                    status_code=500, detail="génération de slug : trop de collisions"
+                ) from None
+            continue
+        assert row is not None
+        return row
+
+
 async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -358,30 +416,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
-            try:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO document
-                        (title, slug, parent, functional_type_ref, workspace_technical_key,
-                         data_block_ref, exposed)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    RETURNING doc_technical_key, title, type, version, parent,
-                              data_block_ref, exposed, slug, created_at, updated_at
-                    """,
-                    data.title,
-                    data.slug,
-                    data.parent_id,
-                    ft_id,
-                    wk,
-                    data.block_id,
-                    parent_exposed,
-                )
-            except asyncpg.UniqueViolationError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"slug '{data.slug}' déjà utilisé dans ce workspace",
-                ) from exc
-            assert row is not None
+            row = await _insert_document(conn, wk, data, ft_id, parent_exposed)
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
                 "VALUES ($1, 1, $2, $3)",
