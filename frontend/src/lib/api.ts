@@ -1006,6 +1006,7 @@ export interface AutomationRunOut {
   request_body: string | null
   response_body: string | null
   event_code: string | null
+  manual: boolean
 }
 
 export const automationsApi = {
@@ -1028,6 +1029,17 @@ export const automationsApi = {
       event_code?: string
       event_seq?: number
     }>(`/workspaces/${ws}/automations/${id}/run-next`, {}),
+  advance: (ws: string, id: string) =>
+    api.post<{
+      status: string
+      http_status?: number | null
+      body?: string | null
+      event_code?: string
+      event_seq?: number
+      advanced?: boolean
+    }>(`/workspaces/${ws}/automations/${id}/advance`, {}),
+  cursorBack: (ws: string, id: string) =>
+    api.post<{ cursor: number }>(`/workspaces/${ws}/automations/${id}/cursor-back`, {}),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

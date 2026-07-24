@@ -264,7 +264,7 @@ async def list_runs(
         rows = await conn.fetch(
             "SELECT id, automation_ref, document_ref, document_version, "
             "change_log_seq, status, executed_at, http_status, url, "
-            "request_body, response_body, event_code "
+            "request_body, response_body, event_code, manual "
             "FROM automation_run WHERE automation_ref=$1 "
             "ORDER BY executed_at DESC LIMIT $2",
             automation_id,
@@ -323,7 +323,7 @@ async def replay_run(
             "url=$3, request_body=$4, response_body=$5 WHERE id=$6 "
             "RETURNING id, automation_ref, document_ref, document_version, "
             "change_log_seq, status, executed_at, http_status, url, "
-            "request_body, response_body, event_code",
+            "request_body, response_body, event_code, manual",
             res.status,
             res.http_status,
             auto_row["url"],
@@ -346,7 +346,7 @@ async def run_next_pending(
     - "no_pending" = aucun event au-delà du curseur ;
     - "no_events" = aucun eventCode déclencheur sélectionné.
     """
-    from docflow.automations.worker import execute
+    from docflow.automations.worker import _prune_runs, execute
 
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
@@ -383,6 +383,34 @@ async def run_next_pending(
             "business": ev["business"],
         }
         res = await execute(conn, auto, event, pool, settings)
+
+        # Historise l'appel unitaire (manuel) SANS avancer le curseur : event_seq
+        # NULL → aucune dédup, l'event reste traité normalement par le worker.
+        version: int | None = None
+        if ev["document_ref"] is not None:
+            version = await conn.fetchval(
+                "SELECT version FROM document WHERE doc_technical_key = $1", ev["document_ref"]
+            )
+        await conn.execute(
+            """
+            INSERT INTO automation_run
+                (automation_ref, document_ref, document_version, change_log_seq, event_seq,
+                 status, http_status, url, request_body, response_body, event_code, manual)
+            VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, true)
+            """,
+            automation_id,
+            ev["document_ref"],
+            version,
+            ev["seq"],
+            res.status,
+            res.http_status,
+            auto["url"],
+            res.request_body,
+            res.body,
+            ev["event_code"],
+        )
+        await _prune_runs(conn, automation_id)
+
     return {
         "status": res.status,
         "http_status": res.http_status,
@@ -390,3 +418,126 @@ async def run_next_pending(
         "event_code": ev["event_code"],
         "event_seq": ev["seq"],
     }
+
+
+async def advance_pending(
+    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, settings: object
+) -> dict[str, object]:
+    """Exécute l'automate sur le prochain event en attente, l'historise (run
+    normal, avec event_seq) ET avance le curseur (pas manuel du worker)."""
+    from docflow.automations.worker import _advance, _prune_runs, execute
+
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        auto = await conn.fetchrow(
+            "SELECT id, workspace_technical_key, event_codes, url, http_method, body_template "
+            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            automation_id,
+            wk,
+        )
+        if auto is None:
+            raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        codes = list(auto["event_codes"] or [])
+        if not codes:
+            return {"status": "no_events"}
+        cursor: int = (
+            await conn.fetchval(
+                "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
+            )
+            or 0
+        )
+        ev = await conn.fetchrow(
+            "SELECT seq, document_ref, event_code, business FROM document_event "
+            "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[]) "
+            "ORDER BY seq ASC LIMIT 1",
+            auto["workspace_technical_key"],
+            cursor,
+            codes,
+        )
+        if ev is None:
+            return {"status": "no_pending"}
+        event = {
+            "event_code": ev["event_code"],
+            "document_ref": ev["document_ref"],
+            "business": ev["business"],
+        }
+        res = await execute(conn, auto, event, pool, settings)
+        version: int | None = None
+        if ev["document_ref"] is not None:
+            version = await conn.fetchval(
+                "SELECT version FROM document WHERE doc_technical_key = $1", ev["document_ref"]
+            )
+        await conn.execute(
+            """
+            INSERT INTO automation_run
+                (automation_ref, document_ref, document_version, change_log_seq, event_seq,
+                 status, http_status, url, request_body, response_body, event_code, manual)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false)
+            ON CONFLICT (automation_ref, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
+            """,
+            automation_id,
+            ev["document_ref"],
+            version,
+            ev["seq"],
+            ev["seq"],
+            res.status,
+            res.http_status,
+            auto["url"],
+            res.request_body,
+            res.body,
+            ev["event_code"],
+        )
+        await _prune_runs(conn, automation_id)
+        await _advance(conn, automation_id, ev["seq"])
+    return {
+        "status": res.status,
+        "http_status": res.http_status,
+        "body": res.body,
+        "event_code": ev["event_code"],
+        "event_seq": ev["seq"],
+        "advanced": True,
+    }
+
+
+async def cursor_back(
+    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
+) -> dict[str, object]:
+    """Recule le curseur d'un event : l'event précédemment traité redevient
+    « en attente » (courant). N'exécute aucun appel."""
+    from docflow.automations.worker import _advance
+
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        auto = await conn.fetchrow(
+            "SELECT workspace_technical_key, event_codes FROM automation "
+            "WHERE id = $1 AND workspace_technical_key = $2",
+            automation_id,
+            wk,
+        )
+        if auto is None:
+            raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        codes = list(auto["event_codes"] or [])
+        if not codes:
+            return {"cursor": 0}
+        cursor: int = (
+            await conn.fetchval(
+                "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
+            )
+            or 0
+        )
+        # P = dernier event traité (max seq ≤ curseur) ; nouveau curseur = max seq < P (ou 0).
+        new_cursor: int = await conn.fetchval(
+            """
+            WITH ev AS (
+                SELECT seq FROM document_event
+                WHERE workspace_technical_key = $1 AND event_code = ANY($2::text[])
+            ),
+            p AS (SELECT max(seq) AS s FROM ev WHERE seq <= $3)
+            SELECT COALESCE((SELECT max(seq) FROM ev WHERE seq < (SELECT s FROM p)), 0)
+            """,
+            auto["workspace_technical_key"],
+            codes,
+            cursor,
+        )
+        await _advance(conn, automation_id, new_cursor)
+    return {"cursor": new_cursor}

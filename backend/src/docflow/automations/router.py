@@ -81,6 +81,24 @@ async def run_next(
     )
 
 
+@router.post(_AUTO + "/advance")
+async def advance(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Joue l'event courant ET avance le curseur (pas manuel)."""
+    return await service.advance_pending(
+        request.app.state.pool, ws_slug, automation_id, request.app.state.settings
+    )
+
+
+@router.post(_AUTO + "/cursor-back")
+async def cursor_back(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Recule le curseur d'un event (l'event précédent redevient courant)."""
+    return await service.cursor_back(request.app.state.pool, ws_slug, automation_id)
+
+
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)
 async def replay_run(
     ws_slug: str,

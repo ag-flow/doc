@@ -67,6 +67,11 @@ export function AutomationRunHistory({ ws, automationId }: Props) {
                   {run.event_code.split('.')[2] ?? run.event_code}
                 </span>
               )}
+              {run.manual && (
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                  manuel
+                </span>
+              )}
               <span className="font-mono text-gray-400 truncate">
                 {run.document_ref ? `${run.document_ref.slice(0, 8)}…` : '—'}
                 {run.document_version != null ? ` v${run.document_version}` : ''}

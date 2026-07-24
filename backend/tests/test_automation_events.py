@@ -232,12 +232,18 @@ async def test_run_next_does_not_advance_cursor(
     assert res["status"] == "ok"
     assert len(_CALLS) == 1  # un seul appel (le 1er event en attente)
 
-    # Curseur NON avancé → toujours 2 en attente, aucun run enregistré.
+    # Curseur NON avancé → toujours 2 en attente.
     autos2 = await auto_svc.list_automations(db_pool, slug)
     assert next(x for x in autos2 if x.id == auto_id).pending_count == 2
-    assert await db_pool.fetchval(
-        "SELECT count(*) FROM automation_run WHERE automation_ref = $1", auto_id
-    ) == 0
+
+    # Mais l'appel unitaire EST historisé (run manuel, event_seq NULL → pas de dédup).
+    run = await db_pool.fetchrow(
+        "SELECT manual, event_seq, status FROM automation_run WHERE automation_ref = $1", auto_id
+    )
+    assert run is not None
+    assert run["manual"] is True
+    assert run["event_seq"] is None
+    assert run["status"] == "ok"
 
 
 async def test_run_records_detail_and_prunes_to_20(
@@ -290,3 +296,53 @@ async def test_run_records_detail_and_prunes_to_20(
     assert r["url"] == "https://rag.example/index"
     assert "Contenu du doc" in r["request_body"]   # {content} résolu
     assert "ok" in r["response_body"]               # corps de réponse (_FakeResp.text)
+
+
+async def test_advance_and_cursor_back(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docflow.automations import service as auto_svc
+
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    seqs: list[int] = []
+    for _ in range(2):
+        s = await db_pool.fetchval(
+            "INSERT INTO document_event "
+            "(workspace_technical_key, document_ref, event_code, business) "
+            "VALUES ($1,$2,$3,$4::jsonb) RETURNING seq",
+            wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+        )
+        seqs.append(s)
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,'RAG',false,$2,0,$3,'POST',null) RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index",
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next(x for x in autos if x.id == auto_id).pending_count
+
+    assert await _pending() == 2
+
+    # Advance : joue le 1er event, l'historise (event_seq, manual=false), avance le curseur.
+    r = await auto_svc.advance_pending(db_pool, slug, auto_id, object())
+    assert r["status"] == "ok" and r["advanced"] is True
+    assert await _pending() == 1
+    run = await db_pool.fetchrow(
+        "SELECT manual, event_seq FROM automation_run WHERE event_seq = $1", seqs[0]
+    )
+    assert run is not None and run["manual"] is False
+
+    # Back : recule le curseur → le 1er event redevient en attente.
+    await auto_svc.cursor_back(db_pool, slug, auto_id)
+    assert await _pending() == 2

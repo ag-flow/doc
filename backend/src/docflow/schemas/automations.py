@@ -105,3 +105,4 @@ class AutomationRunOut(BaseModel):
     request_body: str | None = None    # corps envoyé, variables résolues
     response_body: str | None = None   # corps/message de réponse
     event_code: str | None = None
+    manual: bool = False               # déclenché via « jouer l'event » (test)

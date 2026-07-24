@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
@@ -73,11 +73,44 @@ export function AutomatesPage() {
         }
       }
       setRunMsg((m) => ({ ...m, [id]: entry }))
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
     },
     onError: (e: Error, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
       toast(`« ${label} » — erreur : ${e.message}`, 'error')
       setRunMsg((m) => ({ ...m, [id]: { text: e.message, err: true } }))
+    },
+  })
+
+  function toastRun(label: string, res: { status: string; http_status?: number | null; body?: string | null }, suffix = '') {
+    if (res.status === 'no_pending') { toast(`« ${label} » : aucun event en attente`, 'info'); return }
+    if (res.status === 'no_events') { toast(`« ${label} » : aucun event déclencheur sélectionné`, 'info'); return }
+    const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
+    const body = res.body ? res.body.replace(/\s+/g, ' ').trim() : ''
+    if (res.status === 'failed') toast(`« ${label} » — échec (${http})${suffix}${body ? '\n' + body.slice(0, 400) : ''}`, 'error')
+    else toast(`« ${label} » — appel envoyé (${http})${suffix}`, 'success')
+  }
+
+  const advanceMut = useMutation({
+    mutationFn: (id: string) => automationsApi.advance(ws!, id),
+    onSuccess: (res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toastRun(label, res, ' → event suivant')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+    },
+    onError: (e: Error, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — erreur : ${e.message}`, 'error')
+    },
+  })
+
+  const cursorBackMut = useMutation({
+    mutationFn: (id: string) => automationsApi.cursorBack(ws!, id),
+    onSuccess: (_res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — revenu à l'event précédent`, 'info')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
     },
   })
 
@@ -162,12 +195,26 @@ export function AutomatesPage() {
                         à jour
                       </span>
                     )}
-                    {/* Jouer l'event courant sans avancer le curseur */}
-                    <button type="button" title="Jouer l'event courant (sans avancer le curseur)"
+                    {/* Revenir à l'event précédent (recule le curseur) */}
+                    <button type="button" title="Revenir à l'event précédent"
+                      onClick={() => cursorBackMut.mutate(a.id)} disabled={cursorBackMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                      data-testid={`cursor-back-${a.id}`}>
+                      <SkipBack size={14} />
+                    </button>
+                    {/* Jouer l'event courant SANS avancer le curseur (test) */}
+                    <button type="button" title="Jouer l'event courant (test, sans avancer)"
                       onClick={() => runNextMut.mutate(a.id)} disabled={runNextMut.isPending}
                       className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
                       data-testid={`run-next-${a.id}`}>
                       <Play size={14} />
+                    </button>
+                    {/* Envoyer l'appel ET passer au suivant (avance le curseur) */}
+                    <button type="button" title="Envoyer l'appel et passer au suivant"
+                      onClick={() => advanceMut.mutate(a.id)} disabled={advanceMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                      data-testid={`advance-${a.id}`}>
+                      <SkipForward size={14} />
                     </button>
                     {/* Toggle d'activation */}
                     <button type="button" role="switch" aria-checked={a.active}
