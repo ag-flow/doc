@@ -962,6 +962,7 @@ export interface AutomationOut {
   workspace_technical_key: string
   label: string
   active: boolean
+  pending_count: number
   event_codes: string[]
   on_create: boolean
   on_update: boolean
@@ -1013,6 +1014,10 @@ export const automationsApi = {
     api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
   replay: (ws: string, id: string, runId: string) =>
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
+  runNext: (ws: string, id: string) =>
+    api.post<{ status: string; event_code?: string; event_seq?: number }>(
+      `/workspaces/${ws}/automations/${id}/run-next`, {},
+    ),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

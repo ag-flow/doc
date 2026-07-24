@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
@@ -40,6 +40,27 @@ export function AutomatesPage() {
   const deleteAutoMut = useMutation({
     mutationFn: (id: string) => automationsApi.delete(ws!, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
+  })
+
+  const toggleActiveMut = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      automationsApi.update(ws!, id, { active }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
+  })
+
+  const [runMsg, setRunMsg] = useState<Record<string, string>>({})
+  const runNextMut = useMutation({
+    mutationFn: (id: string) => automationsApi.runNext(ws!, id),
+    onSuccess: (res, id) => {
+      const map: Record<string, string> = {
+        ok: 'Event courant joué — appel envoyé (OK)',
+        failed: "Event courant joué — l'appel a échoué",
+        no_pending: 'Aucun event en attente',
+        no_events: 'Aucun event déclencheur sélectionné',
+      }
+      setRunMsg((m) => ({ ...m, [id]: map[res.status] ?? res.status }))
+    },
+    onError: (e: Error, id) => setRunMsg((m) => ({ ...m, [id]: e.message })),
   })
 
   function saveAuto(data: AutomationCreate) {
@@ -103,14 +124,48 @@ export function AutomatesPage() {
                       {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
-                    {!a.active && <span className="ml-2 text-xs text-amber-600">inactif</span>}
+                    {runMsg[a.id] && <span className="ml-2 text-xs text-indigo-600">{runMsg[a.id]}</span>}
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button type="button" onClick={() => { setDialogAuto(a); setDialogError(null) }}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Events en attente (au-delà du curseur) */}
+                    {a.pending_count > 0 ? (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                        title="Events non encore évalués (au-delà du curseur)"
+                        data-testid={`pending-${a.id}`}>
+                        {a.pending_count} en attente
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                        data-testid={`pending-${a.id}`}>
+                        à jour
+                      </span>
+                    )}
+                    {/* Jouer l'event courant sans avancer le curseur */}
+                    <button type="button" title="Jouer l'event courant (sans avancer le curseur)"
+                      onClick={() => runNextMut.mutate(a.id)} disabled={runNextMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                      data-testid={`run-next-${a.id}`}>
+                      <Play size={14} />
+                    </button>
+                    {/* Toggle d'activation */}
+                    <button type="button" role="switch" aria-checked={a.active}
+                      onClick={() => toggleActiveMut.mutate({ id: a.id, active: !a.active })}
+                      disabled={toggleActiveMut.isPending}
+                      title={a.active ? 'Actif — cliquer pour arrêter' : 'Inactif — cliquer pour activer'}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                        a.active ? 'bg-indigo-600' : 'bg-gray-300'
+                      }`}
+                      data-testid={`toggle-active-${a.id}`}>
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                        a.active ? 'translate-x-[18px]' : 'translate-x-0.5'
+                      }`} />
+                    </button>
+                    <button type="button" title="Modifier"
+                      onClick={() => { setDialogAuto(a); setDialogError(null) }}
                       className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
                       <Pencil size={14} />
                     </button>
-                    <button type="button"
+                    <button type="button" title="Supprimer"
                       onClick={() => { if (confirm(`Supprimer « ${a.label} » ?`)) deleteAutoMut.mutate(a.id) }}
                       className="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50">
                       <Trash2 size={14} />

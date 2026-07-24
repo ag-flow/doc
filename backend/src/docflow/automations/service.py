@@ -33,12 +33,36 @@ async def _fetch_headers(
     return [AutomationHeaderOut(**dict(r)) for r in rows]
 
 
-def _row_to_out(row: asyncpg.Record, headers: list[AutomationHeaderOut]) -> AutomationOut:
+async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
+    """Nombre d'events déclencheurs au-delà du curseur (pas encore évalués)."""
+    codes = list(row["event_codes"] or [])
+    if not codes:
+        return 0
+    cursor: int = (
+        await conn.fetchval(
+            "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", row["id"]
+        )
+        or 0
+    )
+    count: int = await conn.fetchval(
+        "SELECT count(*) FROM document_event "
+        "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[])",
+        row["workspace_technical_key"],
+        cursor,
+        codes,
+    )
+    return count
+
+
+def _row_to_out(
+    row: asyncpg.Record, headers: list[AutomationHeaderOut], pending_count: int = 0
+) -> AutomationOut:
     return AutomationOut(
         id=row["id"],
         workspace_technical_key=row["workspace_technical_key"],
         label=row["label"],
         active=row["active"],
+        pending_count=pending_count,
         event_codes=list(row["event_codes"] or []),
         on_create=row["on_create"],
         on_update=row["on_update"],
@@ -89,7 +113,7 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationO
         result = []
         for row in rows:
             headers = await _fetch_headers(conn, row["id"])
-            result.append(_row_to_out(row, headers))
+            result.append(_row_to_out(row, headers, await _pending_count(conn, row)))
     return result
 
 
@@ -141,7 +165,8 @@ async def get_automation(
         if row is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
         headers = await _fetch_headers(conn, automation_id)
-    return _row_to_out(row, headers)
+        pending = await _pending_count(conn, row)
+    return _row_to_out(row, headers, pending)
 
 
 async def update_automation(
@@ -205,7 +230,8 @@ async def update_automation(
         )
         assert row is not None
         headers = await _fetch_headers(conn, automation_id)
-    return _row_to_out(row, headers)
+        pending = await _pending_count(conn, row)
+    return _row_to_out(row, headers, pending)
 
 
 async def delete_automation(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> None:
@@ -300,3 +326,54 @@ async def replay_run(
         )
     assert updated is not None
     return AutomationRunOut(**dict(updated))
+
+
+async def run_next_pending(
+    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, settings: object
+) -> dict[str, object]:
+    """Exécute l'automate sur le PROCHAIN event en attente, SANS avancer le
+    curseur ni enregistrer de run — test/aperçu de l'event courant.
+
+    Retourne {status, event_code?, event_seq?} :
+    - status "ok"/"failed" = l'appel HTTP a été émis (résultat) ;
+    - "no_pending" = aucun event au-delà du curseur ;
+    - "no_events" = aucun eventCode déclencheur sélectionné.
+    """
+    from docflow.automations.worker import execute
+
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        auto = await conn.fetchrow(
+            "SELECT id, workspace_technical_key, event_codes, url, http_method, body_template "
+            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            automation_id,
+            wk,
+        )
+        if auto is None:
+            raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        codes = list(auto["event_codes"] or [])
+        if not codes:
+            return {"status": "no_events"}
+        cursor: int = (
+            await conn.fetchval(
+                "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
+            )
+            or 0
+        )
+        ev = await conn.fetchrow(
+            "SELECT seq, document_ref, event_code, business FROM document_event "
+            "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[]) "
+            "ORDER BY seq ASC LIMIT 1",
+            auto["workspace_technical_key"],
+            cursor,
+            codes,
+        )
+        if ev is None:
+            return {"status": "no_pending"}
+        event = {
+            "event_code": ev["event_code"],
+            "document_ref": ev["document_ref"],
+            "business": ev["business"],
+        }
+        result = await execute(conn, auto, event, pool, settings)
+    return {"status": result, "event_code": ev["event_code"], "event_seq": ev["seq"]}

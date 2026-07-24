@@ -192,3 +192,48 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     # Dédup : rejouer le tick ne refait pas l'appel.
     await worker.run_tick(db_pool, automation, object())
     assert len(_CALLS) == 1
+
+
+async def test_run_next_does_not_advance_cursor(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docflow.automations import service as auto_svc
+
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    for _ in range(2):
+        await db_pool.execute(
+            "INSERT INTO document_event "
+            "(workspace_technical_key, document_ref, event_code, business) "
+            "VALUES ($1,$2,$3,$4::jsonb)",
+            wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+        )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,'RAG',false,$2,0,$3,'POST',null) RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index",
+    )
+
+    autos = await auto_svc.list_automations(db_pool, slug)
+    a = next(x for x in autos if x.id == auto_id)
+    assert a.pending_count == 2
+    assert a.active is False
+
+    res = await auto_svc.run_next_pending(db_pool, slug, auto_id, object())
+    assert res["status"] == "ok"
+    assert len(_CALLS) == 1  # un seul appel (le 1er event en attente)
+
+    # Curseur NON avancé → toujours 2 en attente, aucun run enregistré.
+    autos2 = await auto_svc.list_automations(db_pool, slug)
+    assert next(x for x in autos2 if x.id == auto_id).pending_count == 2
+    assert await db_pool.fetchval(
+        "SELECT count(*) FROM automation_run WHERE automation_ref = $1", auto_id
+    ) == 0

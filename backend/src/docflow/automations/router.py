@@ -71,6 +71,16 @@ async def list_runs(
     return await service.list_runs(request.app.state.pool, ws_slug, automation_id, limit)
 
 
+@router.post(_AUTO + "/run-next")
+async def run_next(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Joue le prochain event en attente SANS avancer le curseur (test)."""
+    return await service.run_next_pending(
+        request.app.state.pool, ws_slug, automation_id, request.app.state.settings
+    )
+
+
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)
 async def replay_run(
     ws_slug: str,

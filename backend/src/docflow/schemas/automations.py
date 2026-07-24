@@ -75,6 +75,8 @@ class AutomationOut(BaseModel):
     workspace_technical_key: uuid.UUID
     label: str
     active: bool
+    # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
+    pending_count: int = 0
     event_codes: list[str]
     on_create: bool
     on_update: bool

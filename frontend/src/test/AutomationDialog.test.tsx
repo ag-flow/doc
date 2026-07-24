@@ -80,7 +80,7 @@ describe('AutomationDialog — sécurité du contrat', () => {
 
   it('ajoute le header d’auth à l’OUVERTURE d’un automate existant (sans changer d’opération)', async () => {
     const initial: AutomationOut = {
-      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false,
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
       event_codes: ['docflow.document.updated.v1'], on_create: false, on_update: false,
       delay_minutes: 0, contract_ref: 'c1', operation_id: 'index',
       url: 'https://rag.example/api', http_method: 'POST', body_template: '{}',
