@@ -82,6 +82,20 @@ export function ContractsAdmin() {
     mutationFn: (id: string) => contractsApi.refresh(id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
   })
+
+  // Fait tourner la roue pendant le refresh, au moins 1 s (feedback visible).
+  const [refreshingId, setRefreshingId] = useState<string | null>(null)
+  async function handleRefresh(id: string) {
+    setRefreshingId(id)
+    const start = Date.now()
+    try {
+      await refreshMut.mutateAsync(id)
+    } finally {
+      const elapsed = Date.now() - start
+      if (elapsed < 1000) await new Promise((r) => setTimeout(r, 1000 - elapsed))
+      setRefreshingId(null)
+    }
+  }
   const deleteMut = useMutation({
     mutationFn: (id: string) => contractsApi.delete(id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
@@ -120,11 +134,12 @@ export function ContractsAdmin() {
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 {c.source_url && (
-                  <button type="button" onClick={() => refreshMut.mutate(c.id)}
-                    disabled={refreshMut.isPending}
+                  <button type="button" onClick={() => handleRefresh(c.id)}
+                    disabled={refreshingId === c.id}
                     title="Rafraîchir depuis l'URL source"
-                    className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600">
-                    <RefreshCw size={14} />
+                    className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-default"
+                    data-testid={`contract-refresh-${c.id}`}>
+                    <RefreshCw size={14} className={refreshingId === c.id ? 'animate-spin' : ''} />
                   </button>
                 )}
                 <button type="button"
