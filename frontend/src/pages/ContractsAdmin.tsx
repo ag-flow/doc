@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Trash2, Upload } from 'lucide-react'
+import { Eye, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { contractsApi } from '../lib/api'
+
+// Swagger UI est lourd : chargé en lazy, uniquement à l'ouverture de la visu.
+const SwaggerViewer = lazy(() => import('../components/SwaggerViewer'))
 
 // ── Import contrat ────────────────────────────────────────────────────────────
 
@@ -88,6 +91,19 @@ export function ContractsAdmin() {
     },
   })
 
+  // Visualisation Swagger locale du spec.
+  const [viewSpec, setViewSpec] = useState<{ label: string; spec: object } | null>(null)
+  const [viewLoadingId, setViewLoadingId] = useState<string | null>(null)
+  async function openSwagger(id: string, label: string) {
+    setViewLoadingId(id)
+    try {
+      const spec = await contractsApi.spec(id)
+      setViewSpec({ label, spec })
+    } finally {
+      setViewLoadingId(null)
+    }
+  }
+
   // Fait tourner la roue pendant le refresh, au moins 1 s (feedback visible).
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
   async function handleRefresh(id: string) {
@@ -138,6 +154,13 @@ export function ContractsAdmin() {
                 {c.source_url && <span className="ml-2 truncate text-xs text-gray-400">{c.source_url}</span>}
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                <button type="button" onClick={() => openSwagger(c.id, c.label)}
+                  disabled={viewLoadingId === c.id}
+                  title="Visualiser dans Swagger (valider le contrat)"
+                  className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                  data-testid={`contract-view-${c.id}`}>
+                  <Eye size={14} />
+                </button>
                 {c.source_url && (
                   <button type="button" onClick={() => handleRefresh(c.id)}
                     disabled={refreshingId === c.id}
@@ -155,6 +178,26 @@ export function ContractsAdmin() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {viewSpec && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/50 p-4" onClick={() => setViewSpec(null)}>
+          <div className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-3">
+              <h2 className="text-sm font-semibold text-gray-800">Swagger — {viewSpec.label}</h2>
+              <button type="button" onClick={() => setViewSpec(null)} title="Fermer"
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <Suspense fallback={<p className="p-8 text-sm text-gray-400">Chargement de Swagger…</p>}>
+                <SwaggerViewer spec={viewSpec.spec} />
+              </Suspense>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -225,6 +225,18 @@ async def import_contract(pool: asyncpg.Pool, body: ContractImport) -> ContractO
     return _row_to_out(row)
 
 
+async def get_contract_spec(pool: asyncpg.Pool, contract_id: uuid.UUID) -> dict[str, Any]:
+    """Retourne le spec OpenAPI brut (pour un rendu Swagger local)."""
+    async with pool.acquire() as conn:
+        raw = await conn.fetchval(
+            "SELECT raw_spec FROM openapi_contract WHERE id = $1", contract_id
+        )
+    if raw is None:
+        raise HTTPException(404, "Contrat introuvable.")
+    spec: dict[str, Any] = json.loads(raw)
+    return spec
+
+
 async def get_contract_detail(pool: asyncpg.Pool, contract_id: uuid.UUID) -> ContractDetailOut:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

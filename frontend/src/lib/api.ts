@@ -932,6 +932,7 @@ export const contractsApi = {
   import: (body: { label: string; source_url?: string; raw_spec: object }) =>
     api.post<ContractOut>('/admin/contracts', body),
   detail: (id: string) => api.get<ContractDetailOut>(`/admin/contracts/${id}`),
+  spec: (id: string) => api.get<Record<string, unknown>>(`/admin/contracts/${id}/spec`),
   refresh: (id: string) => api.post<ContractOut>(`/admin/contracts/${id}/refresh`, {}),
   delete: (id: string) => api.delete(`/admin/contracts/${id}`),
 }

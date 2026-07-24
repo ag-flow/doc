@@ -108,6 +108,13 @@ def test_server_urls_extracted() -> None:
     assert service._server_urls({}) == []
 
 
+async def test_get_contract_spec_returns_raw(db_pool: asyncpg.Pool) -> None:
+    out = await service.import_contract(db_pool, ContractImport(label="raw", raw_spec=_SPEC))
+    spec = await service.get_contract_spec(db_pool, out.id)
+    assert spec["openapi"] == "3.1.0"
+    assert "/index" in spec["paths"]
+
+
 async def test_contract_detail_exposes_servers(db_pool: asyncpg.Pool) -> None:
     spec = {**_SPEC, "servers": [{"url": "http://rag.example"}]}
     out = await service.import_contract(db_pool, ContractImport(label="srv", raw_spec=spec))

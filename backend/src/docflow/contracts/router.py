@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
@@ -36,6 +37,14 @@ async def get_contract(
     contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> ContractDetailOut:
     return await service.get_contract_detail(request.app.state.pool, contract_id)
+
+
+@router.get("/admin/contracts/{contract_id}/spec")
+async def get_contract_spec(
+    contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, Any]:
+    """Spec OpenAPI brut du contrat (rendu Swagger local)."""
+    return await service.get_contract_spec(request.app.state.pool, contract_id)
 
 
 @router.patch("/admin/contracts/{contract_id}", response_model=ContractOut)
