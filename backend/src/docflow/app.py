@@ -5,6 +5,7 @@ import logging
 import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Any
 
 import asyncpg
 import structlog
@@ -22,6 +23,7 @@ from docflow.automations.worker import worker_loop
 from docflow.backup.router import router as backup_router
 from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
+from docflow.config.base_url import set_derived_base_url
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
 from docflow.datasets.router import router as datasets_router
@@ -116,6 +118,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _capture_base_url(request: Request, call_next: Any) -> Any:
+    """Dérive l'URL de base publique depuis la requête portail si non configurée.
+
+    Respecte X-Forwarded-Proto/Host (derrière un proxy / Cloudflare). Sert de
+    repli au worker d'automation pour construire des liens absolus ({doc_url}).
+    """
+    settings = getattr(request.app.state, "settings", None)
+    if settings is not None and not getattr(settings, "public_base_url", None):
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        if host:
+            proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+            set_derived_base_url(f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}")
+    return await call_next(request)
 
 
 @app.exception_handler(DependentsConflictError)

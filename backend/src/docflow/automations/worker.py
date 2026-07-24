@@ -10,6 +10,7 @@ import httpx
 import structlog
 
 from docflow.automations.substitution import render_and_validate
+from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
 
 log = structlog.get_logger(__name__)
@@ -170,7 +171,7 @@ async def execute(
     business = _parse_business(event["business"])
     doc_id: uuid.UUID | None = event["document_ref"]
     snap = await _doc_snapshot(conn, doc_id) if doc_id is not None else None
-    base_url = getattr(settings, "public_base_url", None)
+    base_url = effective_base_url(settings)
     variables = _variables(event["event_code"], business, doc_id, snap, base_url)
 
     headers: dict[str, str] = {}
