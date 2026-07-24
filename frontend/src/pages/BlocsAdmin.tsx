@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react'
 import {
   api, ApiError, docsApi, referencesApi,
   type BrokenLinkBloc, type BrokenLinkDetail, type DataBlockOut, type FunctionalType,
@@ -13,6 +13,16 @@ import { Input } from '../components/ui/input'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
+
+const MONOGRAM_COLORS = [
+  'bg-indigo-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500',
+  'bg-sky-500', 'bg-violet-500', 'bg-teal-500', 'bg-fuchsia-500',
+]
+function monogramColor(slug: string): string {
+  let h = 0
+  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0
+  return MONOGRAM_COLORS[h % MONOGRAM_COLORS.length]
+}
 
 // ── Badge + détail des liens cassés par bloc ──────────────────────────────────
 
@@ -104,81 +114,76 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
 
   return (
     <>
-    <table className="w-full border-collapse text-sm">
-      <thead>
-        <tr className="border-b text-left text-gray-500">
-          <th className="pb-2 pr-4">{t('ws.slug')}</th>
-          <th className="pb-2 pr-4">{t('ws.label')}</th>
-          <th className="pb-2 pr-4">{t('blocs.rootType')}</th>
-          <th className="pb-2">{t('common.actions')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {blocs.map((bloc) => {
-          const brokenCount = bloc.id ? (brokenByBloc[bloc.id] ?? 0) : 0
-          return (
-          <tr
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {blocs.map((bloc) => {
+        const brokenCount = bloc.id ? (brokenByBloc[bloc.id] ?? 0) : 0
+        return (
+          <div
             key={bloc.slug}
-            className="border-b hover:bg-gray-50"
             data-testid={`bloc-row-${bloc.slug}`}
+            className="flex flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all hover:border-indigo-300 hover:shadow-md"
           >
-            <td className="py-2 pr-4 font-mono text-xs">{bloc.slug}</td>
-            <td className="py-2 pr-4">
-              <div className="flex flex-col gap-1">
-                <span>{bloc.label}</span>
-                {brokenCount > 0 && bloc.id && (
-                  <BrokenLinksBadge wsSlug={wsSlug} blocId={bloc.id} count={brokenCount} />
-                )}
+            <div className="flex items-start gap-3">
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-white ${monogramColor(bloc.slug)}`}>
+                {(bloc.label || bloc.slug).charAt(0).toUpperCase()}
               </div>
-            </td>
-            <td className="py-2 pr-4">
-              <span className="font-mono text-xs text-gray-500">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-gray-900">{bloc.label}</p>
+                <p className="truncate font-mono text-xs text-gray-400">{bloc.slug}</p>
+              </div>
+              <button
+                type="button"
+                title={bloc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
+                onClick={() => exposeMutation.mutate({ slug: bloc.slug, exposed: !bloc.exposed })}
+                disabled={exposeMutation.isPending}
+                className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                  bloc.exposed
+                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+                data-testid={`expose-bloc-${bloc.slug}`}
+              >
+                {bloc.exposed ? <Eye size={11} /> : <EyeOff size={11} />}
+                {bloc.exposed ? 'Public' : 'Privé'}
+              </button>
+            </div>
+
+            <div className="mt-3">
+              <span className="inline-flex items-center rounded bg-gray-50 px-2 py-0.5 font-mono text-[11px] text-gray-500">
                 {bloc.functional_type_slug}
               </span>
-            </td>
-            <td className="py-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  title={bloc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
-                  onClick={() =>
-                    exposeMutation.mutate({ slug: bloc.slug, exposed: !bloc.exposed })
-                  }
-                  disabled={exposeMutation.isPending}
-                  className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium
-                    transition-colors ${bloc.exposed
-                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-                  data-testid={`expose-bloc-${bloc.slug}`}
-                >
-                  {bloc.exposed ? <Eye size={12} /> : <EyeOff size={12} />}
-                  {bloc.exposed ? 'Public' : 'Privé'}
-                </button>
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)
-                  }
-                  data-testid={`open-bloc-${bloc.slug}`}
-                >
-                  {t('blocs.open')}
-                </Button>
-                <button
-                  type="button"
-                  title={t('blocs.delete')}
-                  onClick={() => setBlocToDelete(bloc)}
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium
-                    text-red-600 transition-colors hover:bg-red-50"
-                  data-testid={`delete-bloc-${bloc.slug}`}
-                >
-                  <Trash2 size={12} />
-                </button>
+            </div>
+
+            {brokenCount > 0 && bloc.id && (
+              <div className="mt-2">
+                <BrokenLinksBadge wsSlug={wsSlug} blocId={bloc.id} count={brokenCount} />
               </div>
-            </td>
-          </tr>
-        )})}
-      </tbody>
-    </table>
+            )}
+
+            <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+              <button
+                type="button"
+                onClick={() => void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)}
+                className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:gap-2 transition-all"
+                data-testid={`open-bloc-${bloc.slug}`}
+              >
+                {t('blocs.open')} <ArrowRight size={15} />
+              </button>
+              <button
+                type="button"
+                title={t('blocs.delete')}
+                aria-label={t('blocs.delete')}
+                onClick={() => setBlocToDelete(bloc)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                data-testid={`delete-bloc-${bloc.slug}`}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
     {blocToDelete && (
       <DeleteBlocDialog
         wsSlug={wsSlug}

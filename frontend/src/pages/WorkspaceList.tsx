@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Archive, ArrowRight, Plus, Trash2 } from 'lucide-react'
+import { Archive, ArrowRight, Plus, Search, Trash2 } from 'lucide-react'
 import { api } from '../lib/api'
 import type { WorkspaceOut } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
@@ -47,6 +47,7 @@ export default function WorkspaceList() {
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceOut | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [apiError, setApiError] = useState('')
+  const [filter, setFilter] = useState('')
 
   const { data: workspaces = [], isLoading } = useQuery<WorkspaceOut[]>({
     queryKey: ['workspaces'],
@@ -172,13 +173,37 @@ export default function WorkspaceList() {
         </form>
       )}
 
-      {workspaces.length === 0 ? (
+      {workspaces.length > 0 && (
+        <div className="relative mb-4 max-w-sm">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder={t('ws.filter')}
+            className="pl-9"
+            data-testid="ws-filter"
+          />
+        </div>
+      )}
+
+      {(() => {
+        const q = filter.trim().toLowerCase()
+        const shown = q
+          ? workspaces.filter(ws => `${ws.label} ${ws.slug} ${ws.description ?? ''}`.toLowerCase().includes(q))
+          : workspaces
+        if (workspaces.length === 0) return (
         <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 py-16 text-center text-sm text-gray-500">
           {t('ws.empty')}
         </div>
-      ) : (
+        )
+        if (shown.length === 0) return (
+        <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 py-12 text-center text-sm text-gray-500" data-testid="ws-no-match">
+          {t('ws.noMatch', { q: filter.trim() })}
+        </div>
+        )
+        return (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {workspaces.map(ws => (
+          {shown.map(ws => (
             <div
               key={ws.slug}
               data-testid={`ws-row-${ws.slug}`}
@@ -237,7 +262,8 @@ export default function WorkspaceList() {
             </div>
           ))}
         </div>
-      )}
+        )
+      })()}
 
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" data-testid="delete-modal">
