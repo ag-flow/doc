@@ -21,19 +21,23 @@ _HTTP_TIMEOUT = 15.0
 _EVENT_RETENTION_HOURS = 168  # 7 jours
 # Longueur max de l'extrait du corps de réponse remonté (test « jouer l'event »).
 _BODY_EXCERPT = 500
+# Nombre de runs conservés en base par automate (historique).
+_RUN_HISTORY_KEEP = 20
 
 
 @dataclass
 class ExecResult:
-    """Résultat d'un appel d'automate : statut + détails HTTP (pour l'aperçu).
+    """Résultat d'un appel d'automate : statut + détails (aperçu + historique).
 
     `status` = 'ok'/'failed' (2xx = ok). `http_status`/`body` renseignés quand
-    l'appel HTTP a bien eu lieu ; `body` porte sinon la raison de l'échec amont
-    (secret, corps, URL)."""
+    l'appel HTTP a bien eu lieu ; `body` = corps/message de RÉPONSE (ou raison
+    de l'échec amont : secret, corps, URL). `request_body` = corps ENVOYÉ, avec
+    les variables déjà résolues."""
 
     status: str
     http_status: int | None = None
     body: str | None = None
+    request_body: str | None = None
 
 
 # ── Résolution de secret ──────────────────────────────────────────────────────
@@ -157,6 +161,21 @@ def _variables(
 # ── Curseur ───────────────────────────────────────────────────────────────────
 
 
+async def _prune_runs(conn: asyncpg.Connection, automation_id: uuid.UUID) -> None:
+    """Ne conserve que les N runs les plus récents de l'automate."""
+    await conn.execute(
+        """
+        DELETE FROM automation_run
+        WHERE automation_ref = $1 AND id NOT IN (
+            SELECT id FROM automation_run WHERE automation_ref = $1
+            ORDER BY executed_at DESC, id DESC LIMIT $2
+        )
+        """,
+        automation_id,
+        _RUN_HISTORY_KEEP,
+    )
+
+
 async def _advance(conn: asyncpg.Connection, automation_id: uuid.UUID, seq: int) -> None:
     await conn.execute(
         """
@@ -235,7 +254,7 @@ async def execute(
             automation_id=str(automation["id"]),
             error=str(exc),
         )
-        return ExecResult("failed", body=f"URL refusée : {exc}")
+        return ExecResult("failed", body=f"URL refusée : {exc}", request_body=body)
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -254,7 +273,7 @@ async def execute(
             http_status=resp.status_code,
             status=status,
         )
-        return ExecResult(status, resp.status_code, resp.text[:_BODY_EXCERPT])
+        return ExecResult(status, resp.status_code, resp.text[:_BODY_EXCERPT], request_body=body)
     except Exception as exc:
         log.warning(
             "automation_http_failed",
@@ -262,7 +281,7 @@ async def execute(
             event_code=event["event_code"],
             error=str(exc),
         )
-        return ExecResult("failed", body=str(exc))
+        return ExecResult("failed", body=str(exc), request_body=body)
 
 
 # ── Tick par automate ─────────────────────────────────────────────────────────
@@ -337,7 +356,7 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 "document_ref": doc_ref,
                 "business": row["business"],
             }
-            status = (await execute(conn, automation, event, pool, settings)).status
+            res = await execute(conn, automation, event, pool, settings)
 
             version: int | None = None
             if doc_ref is not None:
@@ -349,8 +368,8 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 """
                 INSERT INTO automation_run
                     (automation_ref, document_ref, document_version, change_log_seq,
-                     event_seq, status)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                     event_seq, status, http_status, url, request_body, response_body, event_code)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (automation_ref, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
                 """,
                 automation["id"],
@@ -358,8 +377,14 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 version,
                 event_seq,
                 event_seq,
-                status,
+                res.status,
+                res.http_status,
+                automation["url"],
+                res.request_body,
+                res.body,
+                row["event_code"],
             )
+            await _prune_runs(conn, automation["id"])
             if not deferred:
                 await _advance(conn, automation["id"], event_seq)
 

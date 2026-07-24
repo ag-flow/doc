@@ -238,3 +238,55 @@ async def test_run_next_does_not_advance_cursor(
     assert await db_pool.fetchval(
         "SELECT count(*) FROM automation_run WHERE automation_ref = $1", auto_id
     ) == 0
+
+
+async def test_run_records_detail_and_prunes_to_20(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    # 25 events 'updated' → 25 runs, purgés à 20.
+    for _ in range(25):
+        await db_pool.execute(
+            "INSERT INTO document_event "
+            "(workspace_technical_key, document_ref, event_code, business) "
+            "VALUES ($1,$2,$3,$4::jsonb)",
+            wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+        )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,'RAG',true,$2,0,$3,'POST',$4) RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index", json.dumps({"doc": "{content}"}),
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, delay_minutes, url, http_method, "
+        "body_template FROM automation WHERE id = $1",
+        auto_id,
+    )
+    await worker.run_tick(db_pool, automation, object())
+
+    # Purge : seuls les 20 plus récents restent.
+    assert await db_pool.fetchval(
+        "SELECT count(*) FROM automation_run WHERE automation_ref = $1", auto_id
+    ) == 20
+
+    # Le dernier run porte le détail : corps envoyé (résolu), réponse, code, event.
+    r = await db_pool.fetchrow(
+        "SELECT status, http_status, request_body, response_body, event_code, url "
+        "FROM automation_run WHERE automation_ref = $1 ORDER BY executed_at DESC LIMIT 1",
+        auto_id,
+    )
+    assert r["status"] == "ok"
+    assert r["http_status"] == 200
+    assert r["event_code"] == _UPDATED
+    assert r["url"] == "https://rag.example/index"
+    assert "Contenu du doc" in r["request_body"]   # {content} résolu
+    assert "ok" in r["response_body"]               # corps de réponse (_FakeResp.text)

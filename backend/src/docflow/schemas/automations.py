@@ -99,3 +99,9 @@ class AutomationRunOut(BaseModel):
     change_log_seq: int
     status: str
     executed_at: datetime
+    # Détails de l'appel (historique enrichi).
+    http_status: int | None = None
+    url: str | None = None
+    request_body: str | None = None    # corps envoyé, variables résolues
+    response_body: str | None = None   # corps/message de réponse
+    event_code: str | None = None

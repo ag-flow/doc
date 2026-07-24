@@ -263,7 +263,8 @@ async def list_runs(
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
         rows = await conn.fetch(
             "SELECT id, automation_ref, document_ref, document_version, "
-            "change_log_seq, status, executed_at "
+            "change_log_seq, status, executed_at, http_status, url, "
+            "request_body, response_body, event_code "
             "FROM automation_run WHERE automation_ref=$1 "
             "ORDER BY executed_at DESC LIMIT $2",
             automation_id,
@@ -315,13 +316,19 @@ async def replay_run(
             "document_ref": ev["document_ref"],
             "business": ev["business"],
         }
-        status = (await execute(conn, auto_row, event, pool, settings)).status
+        res = await execute(conn, auto_row, event, pool, settings)
 
         updated = await conn.fetchrow(
-            "UPDATE automation_run SET status=$1, executed_at=now() WHERE id=$2 "
+            "UPDATE automation_run SET status=$1, executed_at=now(), http_status=$2, "
+            "url=$3, request_body=$4, response_body=$5 WHERE id=$6 "
             "RETURNING id, automation_ref, document_ref, document_version, "
-            "change_log_seq, status, executed_at",
-            status,
+            "change_log_seq, status, executed_at, http_status, url, "
+            "request_body, response_body, event_code",
+            res.status,
+            res.http_status,
+            auto_row["url"],
+            res.request_body,
+            res.body,
             run_id,
         )
     assert updated is not None

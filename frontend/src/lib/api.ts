@@ -1001,6 +1001,11 @@ export interface AutomationRunOut {
   change_log_seq: number
   status: string
   executed_at: string
+  http_status: number | null
+  url: string | null
+  request_body: string | null
+  response_body: string | null
+  event_code: string | null
 }
 
 export const automationsApi = {
