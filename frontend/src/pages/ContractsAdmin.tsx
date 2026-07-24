@@ -80,7 +80,12 @@ export function ContractsAdmin() {
 
   const refreshMut = useMutation({
     mutationFn: (id: string) => contractsApi.refresh(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['contracts'] })
+      // Le dialogue automate lit contract-detail (opérations + servers) : il faut
+      // l'invalider aussi, sinon l'URL construite reste sur l'ancien serveur.
+      void qc.invalidateQueries({ queryKey: ['contract-detail', id] })
+    },
   })
 
   // Fait tourner la roue pendant le refresh, au moins 1 s (feedback visible).
