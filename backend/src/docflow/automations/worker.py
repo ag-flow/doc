@@ -10,6 +10,7 @@ import asyncpg
 import httpx
 import structlog
 
+from docflow.automations import events_query
 from docflow.automations.substitution import render_and_validate
 from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
@@ -301,18 +302,14 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
             or 0
         )
 
-        rows = await conn.fetch(
-            """
-            SELECT seq, document_ref, event_code, business FROM document_event
-            WHERE workspace_technical_key = $1
-              AND seq > $2
-              AND event_code = ANY($3::text[])
-            ORDER BY seq ASC
-            LIMIT 100
-            """,
+        rows = await events_query.matching_batch(
+            conn,
             automation["workspace_technical_key"],
-            cursor,
             codes,
+            list(automation["block_slugs"] or []),
+            list(automation["functional_type_slugs"] or []),
+            cursor,
+            100,
         )
 
         # Le curseur = plus petit seq non traité. On l'avance tant qu'aucun
@@ -412,8 +409,8 @@ async def _purge_events(pool: asyncpg.Pool) -> None:
 async def tick(pool: asyncpg.Pool, settings: object) -> None:
     async with pool.acquire() as conn:
         automations = await conn.fetch(
-            "SELECT id, workspace_technical_key, event_codes, "
-            "delay_minutes, url, http_method, body_template "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, "
+            "functional_type_slugs, delay_minutes, url, http_method, body_template "
             "FROM automation WHERE active = true"
         )
 

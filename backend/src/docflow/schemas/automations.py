@@ -38,9 +38,13 @@ class AutomationCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     label: str
-    active: bool = True
+    # Toujours créé DÉSACTIVÉ (activation via le toggle de la carte).
+    active: bool = False
     # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
     event_codes: list[str] = []
+    # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
+    block_slugs: list[str] = []
+    functional_type_slugs: list[str] = []
     # Rétro-compat : anciennes cases C/U (backfillées vers event_codes en base).
     on_create: bool = False
     on_update: bool = False
@@ -59,6 +63,8 @@ class AutomationUpdate(BaseModel):
     label: str | None = None
     active: bool | None = None
     event_codes: list[str] | None = None
+    block_slugs: list[str] | None = None
+    functional_type_slugs: list[str] | None = None
     on_create: bool | None = None
     on_update: bool | None = None
     delay_minutes: int | None = None
@@ -78,6 +84,8 @@ class AutomationOut(BaseModel):
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
     pending_count: int = 0
     event_codes: list[str]
+    block_slugs: list[str] = []
+    functional_type_slugs: list[str] = []
     on_create: bool
     on_update: bool
     delay_minutes: int

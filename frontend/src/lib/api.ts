@@ -965,6 +965,8 @@ export interface AutomationOut {
   active: boolean
   pending_count: number
   event_codes: string[]
+  block_slugs: string[]
+  functional_type_slugs: string[]
   on_create: boolean
   on_update: boolean
   delay_minutes: number
@@ -982,6 +984,8 @@ export interface AutomationCreate {
   label: string
   active?: boolean
   event_codes?: string[]
+  block_slugs?: string[]
+  functional_type_slugs?: string[]
   on_create?: boolean
   on_update?: boolean
   delay_minutes?: number

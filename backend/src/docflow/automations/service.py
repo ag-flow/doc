@@ -7,6 +7,7 @@ import asyncpg
 import structlog
 from fastapi import HTTPException
 
+from docflow.automations import events_query
 from docflow.db.helpers import require_workspace
 from docflow.schemas.automations import (
     AutomationCreate,
@@ -34,7 +35,7 @@ async def _fetch_headers(
 
 
 async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
-    """Nombre d'events déclencheurs au-delà du curseur (pas encore évalués)."""
+    """Nombre d'events déclencheurs matchés au-delà du curseur (filtres inclus)."""
     codes = list(row["event_codes"] or [])
     if not codes:
         return 0
@@ -44,14 +45,14 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
         )
         or 0
     )
-    count: int = await conn.fetchval(
-        "SELECT count(*) FROM document_event "
-        "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[])",
+    return await events_query.pending_count(
+        conn,
         row["workspace_technical_key"],
-        cursor,
         codes,
+        list(row["block_slugs"] or []),
+        list(row["functional_type_slugs"] or []),
+        cursor,
     )
-    return count
 
 
 def _row_to_out(
@@ -64,6 +65,8 @@ def _row_to_out(
         active=row["active"],
         pending_count=pending_count,
         event_codes=list(row["event_codes"] or []),
+        block_slugs=list(row["block_slugs"] or []),
+        functional_type_slugs=list(row["functional_type_slugs"] or []),
         on_create=row["on_create"],
         on_update=row["on_update"],
         delay_minutes=row["delay_minutes"],
@@ -104,7 +107,8 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationO
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "functional_type_slugs, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE workspace_technical_key = $1 ORDER BY label",
@@ -124,16 +128,19 @@ async def create_automation(
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, event_codes, on_create, on_update, "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            " functional_type_slugs, on_create, on_update, "
             " delay_minutes, contract_ref, operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) "
-            "RETURNING id, workspace_technical_key, label, active, event_codes, on_create, "
-            "on_update, delay_minutes, contract_ref, operation_id, url, http_method, "
-            "body_template, created_at, updated_at",
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
+            "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "functional_type_slugs, on_create, on_update, delay_minutes, contract_ref, "
+            "operation_id, url, http_method, body_template, created_at, updated_at",
             wk,
             body.label,
             body.active,
             body.event_codes,
+            body.block_slugs,
+            body.functional_type_slugs,
             body.on_create,
             body.on_update,
             body.delay_minutes,
@@ -155,7 +162,8 @@ async def get_automation(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "functional_type_slugs, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
@@ -199,6 +207,8 @@ async def update_automation(
                 "label",
                 "active",
                 "event_codes",
+                "block_slugs",
+                "functional_type_slugs",
                 "on_create",
                 "on_update",
                 "delay_minutes",
@@ -222,7 +232,8 @@ async def update_automation(
             await _upsert_headers(conn, automation_id, body.headers or [])
 
         row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, label, active, event_codes, on_create, on_update, "
+            "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "functional_type_slugs, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
             "FROM automation WHERE id = $1",
@@ -351,7 +362,8 @@ async def run_next_pending(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, url, http_method, body_template "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, "
+            "functional_type_slugs, url, http_method, body_template "
             "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
             automation_id,
             wk,
@@ -367,13 +379,13 @@ async def run_next_pending(
             )
             or 0
         )
-        ev = await conn.fetchrow(
-            "SELECT seq, document_ref, event_code, business FROM document_event "
-            "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[]) "
-            "ORDER BY seq ASC LIMIT 1",
+        ev = await events_query.next_matching(
+            conn,
             auto["workspace_technical_key"],
-            cursor,
             codes,
+            list(auto["block_slugs"] or []),
+            list(auto["functional_type_slugs"] or []),
+            cursor,
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -430,7 +442,8 @@ async def advance_pending(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, url, http_method, body_template "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, "
+            "functional_type_slugs, url, http_method, body_template "
             "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
             automation_id,
             wk,
@@ -446,13 +459,13 @@ async def advance_pending(
             )
             or 0
         )
-        ev = await conn.fetchrow(
-            "SELECT seq, document_ref, event_code, business FROM document_event "
-            "WHERE workspace_technical_key = $1 AND seq > $2 AND event_code = ANY($3::text[]) "
-            "ORDER BY seq ASC LIMIT 1",
+        ev = await events_query.next_matching(
+            conn,
             auto["workspace_technical_key"],
-            cursor,
             codes,
+            list(auto["block_slugs"] or []),
+            list(auto["functional_type_slugs"] or []),
+            cursor,
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -509,8 +522,8 @@ async def cursor_back(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT workspace_technical_key, event_codes FROM automation "
-            "WHERE id = $1 AND workspace_technical_key = $2",
+            "SELECT workspace_technical_key, event_codes, block_slugs, functional_type_slugs "
+            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
             automation_id,
             wk,
         )
@@ -525,18 +538,12 @@ async def cursor_back(
             )
             or 0
         )
-        # P = dernier event traité (max seq ≤ curseur) ; nouveau curseur = max seq < P (ou 0).
-        new_cursor: int = await conn.fetchval(
-            """
-            WITH ev AS (
-                SELECT seq FROM document_event
-                WHERE workspace_technical_key = $1 AND event_code = ANY($2::text[])
-            ),
-            p AS (SELECT max(seq) AS s FROM ev WHERE seq <= $3)
-            SELECT COALESCE((SELECT max(seq) FROM ev WHERE seq < (SELECT s FROM p)), 0)
-            """,
+        new_cursor = await events_query.prev_cursor(
+            conn,
             auto["workspace_technical_key"],
             codes,
+            list(auto["block_slugs"] or []),
+            list(auto["functional_type_slugs"] or []),
             cursor,
         )
         await _advance(conn, automation_id, new_cursor)

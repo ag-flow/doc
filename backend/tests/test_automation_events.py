@@ -164,7 +164,8 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     )
 
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, delay_minutes, url, http_method, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
         auto_id,
     )
@@ -273,7 +274,8 @@ async def test_run_records_detail_and_prunes_to_20(
         wk, [_UPDATED], "https://rag.example/index", json.dumps({"doc": "{content}"}),
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, delay_minutes, url, http_method, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
         auto_id,
     )
@@ -346,3 +348,50 @@ async def test_advance_and_cursor_back(
     # Back : recule le curseur → le 1er event redevient en attente.
     await auto_svc.cursor_back(db_pool, slug, auto_id)
     assert await _pending() == 2
+
+
+async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docflow.automations import service as auto_svc
+
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # document dans le bloc 'b', type 't'
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    # Filtre sur un AUTRE bloc → l'event ne matche pas.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, delay_minutes, url, http_method) "
+        "VALUES ($1,'RAG',true,$2,ARRAY['autre-bloc'],0,$3,'POST') RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index",
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next(x for x in autos if x.id == auto_id).pending_count
+
+    assert await _pending() == 0  # bloc 'b' ∉ ['autre-bloc']
+
+    # On filtre sur le BON bloc → matche.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['b'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 1
+
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "delay_minutes, url, http_method, body_template FROM automation WHERE id = $1",
+        auto_id,
+    )
+    await worker.run_tick(db_pool, automation, object())
+    assert len(_CALLS) == 1
