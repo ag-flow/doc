@@ -121,7 +121,11 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
           <div
             key={bloc.slug}
             data-testid={`bloc-row-${bloc.slug}`}
-            className="flex flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all hover:border-indigo-300 hover:shadow-md"
+            role="button"
+            tabIndex={0}
+            onClick={() => void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`) } }}
+            className="group flex cursor-pointer flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-400"
           >
             <div className="flex items-start gap-3">
               <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-white ${monogramColor(bloc.slug)}`}>
@@ -134,7 +138,7 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
               <button
                 type="button"
                 title={bloc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
-                onClick={() => exposeMutation.mutate({ slug: bloc.slug, exposed: !bloc.exposed })}
+                onClick={(e) => { e.stopPropagation(); exposeMutation.mutate({ slug: bloc.slug, exposed: !bloc.exposed }) }}
                 disabled={exposeMutation.isPending}
                 className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
                   bloc.exposed
@@ -155,25 +159,23 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
             </div>
 
             {brokenCount > 0 && bloc.id && (
-              <div className="mt-2">
+              <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                 <BrokenLinksBadge wsSlug={wsSlug} blocId={bloc.id} count={brokenCount} />
               </div>
             )}
 
             <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-              <button
-                type="button"
-                onClick={() => void navigate(`/ws/${wsSlug}/blocs/${bloc.slug}/documents`)}
-                className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:gap-2 transition-all"
+              <span
+                className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 transition-all group-hover:gap-2"
                 data-testid={`open-bloc-${bloc.slug}`}
               >
                 {t('blocs.open')} <ArrowRight size={15} />
-              </button>
+              </span>
               <button
                 type="button"
                 title={t('blocs.delete')}
                 aria-label={t('blocs.delete')}
-                onClick={() => setBlocToDelete(bloc)}
+                onClick={(e) => { e.stopPropagation(); setBlocToDelete(bloc) }}
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
                 data-testid={`delete-bloc-${bloc.slug}`}
               >
