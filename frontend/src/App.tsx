@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './lib/i18n'
 import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
+import { ToastProvider } from './components/Toast'
 import { Sidebar } from './components/Sidebar'
 import { Breadcrumb } from './components/Breadcrumb'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
@@ -150,9 +151,11 @@ const router = createBrowserRouter([
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <WorkspaceProvider>
-        <RouterProvider router={router} />
-      </WorkspaceProvider>
+      <ToastProvider>
+        <WorkspaceProvider>
+          <RouterProvider router={router} />
+        </WorkspaceProvider>
+      </ToastProvider>
     </QueryClientProvider>
   )
 }

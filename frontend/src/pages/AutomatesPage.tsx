@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play } from 
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
+import { useToast } from '../components/Toast'
 import { automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
 
 // ── Page principale ───────────────────────────────────────────────────────────
@@ -12,6 +13,7 @@ import { automationsApi, type AutomationOut, type AutomationCreate } from '../li
 export function AutomatesPage() {
   const { wsSlug: ws } = useParams<{ wsSlug: string }>()
   const qc = useQueryClient()
+  const { toast } = useToast()
 
   const [expandedAuto, setExpandedAuto] = useState<string | null>(null)
   const [dialogAuto, setDialogAuto] = useState<AutomationOut | null | 'new'>()
@@ -52,17 +54,31 @@ export function AutomatesPage() {
   const runNextMut = useMutation({
     mutationFn: (id: string) => automationsApi.runNext(ws!, id),
     onSuccess: (res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
       let entry: { text: string; err: boolean }
-      if (res.status === 'no_pending') entry = { text: 'Aucun event en attente', err: false }
-      else if (res.status === 'no_events') entry = { text: 'Aucun event déclencheur sélectionné', err: true }
-      else {
+      if (res.status === 'no_pending') {
+        entry = { text: 'Aucun event en attente', err: false }
+        toast(`« ${label} » : aucun event en attente`, 'info')
+      } else if (res.status === 'no_events') {
+        entry = { text: 'Aucun event déclencheur', err: true }
+        toast(`« ${label} » : aucun event déclencheur sélectionné`, 'info')
+      } else {
         const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
-        const body = res.body ? ` — ${res.body.replace(/\s+/g, ' ').slice(0, 160)}` : ''
-        entry = { text: `Event joué (${http})${body}`, err: res.status === 'failed' }
+        const body = res.body ? res.body.replace(/\s+/g, ' ').trim() : ''
+        entry = { text: `Event joué (${http})`, err: res.status === 'failed' }
+        if (res.status === 'failed') {
+          toast(`« ${label} » — échec de l'appel (${http})${body ? '\n' + body.slice(0, 400) : ''}`, 'error')
+        } else {
+          toast(`« ${label} » — appel envoyé (${http})`, 'success')
+        }
       }
       setRunMsg((m) => ({ ...m, [id]: entry }))
     },
-    onError: (e: Error, id) => setRunMsg((m) => ({ ...m, [id]: { text: e.message, err: true } })),
+    onError: (e: Error, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — erreur : ${e.message}`, 'error')
+      setRunMsg((m) => ({ ...m, [id]: { text: e.message, err: true } }))
+    },
   })
 
   function saveAuto(data: AutomationCreate) {
