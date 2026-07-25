@@ -332,6 +332,28 @@
     "deleteTitle": "Supprimer le secret HMAC ?",
     "deleteConfirm": "Supprimer « {{name}} » ? Toute connexion qui l'utilise cessera de signer."
   },
+  "blockFrame": {
+    "copy": "Copier la source",
+    "download": "Télécharger"
+  },
+  "records": {
+    "ignoredLines_one": "{{count}} ligne ignorée",
+    "ignoredLines_other": "{{count}} lignes ignorées",
+    "unknownAttrs": "attribut(s) non reconnu(s)"
+  },
+  "timeline": {
+    "slashTitle": "Chronologie (timeline)",
+    "slashHint": "Étapes numérotées avec descriptions",
+    "skeletonTitle": "Plan d'action",
+    "defaultLabel": "Étape"
+  },
+  "chart": {
+    "slashTitle": "Graphique (chart)",
+    "slashHint": "Camembert, barres ou courbe",
+    "skeletonTitle": "Répartition",
+    "unknownType": "type « {{type}} » inconnu — rendu tabulaire",
+    "percentSum": "la répartition ne totalise pas 100 %"
+  },
   "dataset": {
     "loading": "Chargement du tableau…",
     "loadError": "Impossible de charger le tableau.",

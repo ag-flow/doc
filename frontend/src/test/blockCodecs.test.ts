@@ -32,6 +32,14 @@ function makeEditor(document: CodecEditorApi['document'] = []): CodecEditorApi {
 const SAMPLES: Record<string, Record<string, unknown>> = {
   mermaid: { source: 'graph TD\n  A-->B' },
   dataset: { datasetId: UUID },
+  dfTimeline: {
+    attrs: ' title="Plan d\'action"',
+    body: 'Analyse | Récupérer la volumétrie.\nCadrage | Réunion jeudi.',
+  },
+  dfChart: {
+    attrs: ' type="donut" title="Répartition" format="percent"',
+    body: 'Fait | 60\nEn cours | 30\nÀ faire | 10',
+  },
 }
 
 describe('round-trip paramétré sur le registre', () => {

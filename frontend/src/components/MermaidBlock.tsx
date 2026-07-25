@@ -1,6 +1,7 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createReactBlockSpec } from '@blocknote/react'
 import mermaid from 'mermaid'
+import { BlockFrame } from './BlockFrame'
 
 mermaid.initialize({ startOnLoad: false })
 
@@ -75,13 +76,22 @@ export const MermaidBlock = createReactBlockSpec(
     content: 'none',
   },
   {
-    render: (props) => {
-      const source = props.block.props.source
-      return (
-        <div className="my-2 w-full" data-content-type="mermaid">
-          <MermaidRenderer source={source} />
-        </div>
-      )
-    },
+    render: (props) => <MermaidFramed source={props.block.props.source} />,
   },
 )
+
+/** Chrome commun autour du rendu mermaid (copie de la fence, export SVG). */
+function MermaidFramed({ source }: { source: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <BlockFrame
+      typeLabel="mermaid"
+      source={'```mermaid\n' + source + '\n```'}
+      svg={() => ref.current?.querySelector('svg')?.outerHTML ?? null}
+    >
+      <div ref={ref}>
+        <MermaidRenderer source={source} />
+      </div>
+    </BlockFrame>
+  )
+}

@@ -118,6 +118,26 @@ Points importants :
 - Les **commentaires** (avec 👍/👎) sont sous le document.
 - **Supprimer** supprime aussi tous les documents enfants.
 
+### Illustrer : chronologie et graphique
+
+Tapez `/timeline` ou `/graphique` pour insérer un composant d'illustration
+pré-rempli — modifiez simplement les lignes d'exemple. La source reste du
+texte dans le markdown (une ligne = un enregistrement, champs séparés
+par `|`), donc cherchable et éditable par un agent :
+
+````markdown
+```df-chart type="donut" title="Avancement" format="percent"
+Fait | 60
+En cours | 30
+À faire | 10
+```
+````
+
+Chaque bloc (timeline, chart, mermaid, dataset) a un en-tête discret avec
+**copier la source** et **télécharger** (SVG pour les graphiques). En cas de
+ligne mal formée, le composant s'affiche quand même avec un badge de
+diagnostic. Grammaire complète : `docs/composants-affichage.md`.
+
 ### Insérer une image
 
 Copiez-collez une image directement dans l'éditeur (`Ctrl+V`), ou glissez-déposez un

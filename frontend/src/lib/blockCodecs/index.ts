@@ -20,6 +20,8 @@ import type { ReactNode } from 'react'
 import { BlockNoteSchema, defaultBlockSpecs } from '@blocknote/core'
 import { mermaidCodec } from './mermaid'
 import { datasetCodec } from './dataset'
+import { timelineCodec } from './timeline'
+import { chartCodec } from './chart'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,8 @@ export interface BlockCodec<P extends Record<string, unknown> = Record<string, u
 export const registry: BlockCodec[] = [
   mermaidCodec as unknown as BlockCodec,
   datasetCodec as unknown as BlockCodec,
+  timelineCodec as unknown as BlockCodec,
+  chartCodec as unknown as BlockCodec,
 ]
 
 const byType = new Map(registry.map((c) => [c.type, c]))

@@ -1,6 +1,7 @@
 import { createReactBlockSpec } from '@blocknote/react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../contexts/WorkspaceContext'
+import { BlockFrame } from './BlockFrame'
 import { DatasetGrid } from './DatasetGrid'
 
 /** Rend la grille d'un dataset référencé, en résolvant le workspace via le contexte. */
@@ -39,12 +40,12 @@ export const DatasetBlock = createReactBlockSpec(
   },
   {
     render: (props) => (
-      <div className="my-2 w-full" data-content-type="dataset">
+      <BlockFrame typeLabel="dataset" source={`dataset://${props.block.props.datasetId}`}>
         <DatasetBlockView
           datasetId={props.block.props.datasetId}
           editable={props.editor.isEditable}
         />
-      </div>
+      </BlockFrame>
     ),
   },
 )
