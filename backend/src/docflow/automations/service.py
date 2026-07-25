@@ -782,3 +782,20 @@ async def clone_automation(
         headers = await _fetch_headers(conn, new_id)
         slugs = await _workspace_slugs(conn, new_id)
     return _row_to_out(row, headers, 0, slugs)
+
+
+async def clear_runs(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> int:
+    """Vide l'historique d'exécutions de l'automate (le curseur est conservé)."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT a.id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
+            automation_id,
+            wk,
+        )
+        if exists is None:
+            raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        result = await conn.execute(
+            "DELETE FROM automation_run WHERE automation_ref = $1", automation_id
+        )
+    return int(result.split()[-1])

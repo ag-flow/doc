@@ -78,3 +78,24 @@ async def test_update_replaces_headers(db_pool: asyncpg.Pool) -> None:
 
     got = await service.get_automation(db_pool, slug, out.id)
     assert len(got.headers) == 1
+
+
+async def test_clear_runs(db_pool: asyncpg.Pool) -> None:
+    slug = await _ws(db_pool)
+    out = await service.create_automation(
+        db_pool, slug,
+        AutomationCreate(
+            label="X", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
+        ),
+    )
+    for i in range(3):
+        await db_pool.execute(
+            "INSERT INTO automation_run (automation_ref, document_ref, change_log_seq, status) "
+            "VALUES ($1, gen_random_uuid(), $2, 'ok')",
+            out.id, i,
+        )
+    deleted = await service.clear_runs(db_pool, slug, out.id)
+    assert deleted == 3
+    assert await db_pool.fetchval(
+        "SELECT count(*) FROM automation_run WHERE automation_ref = $1", out.id
+    ) == 0

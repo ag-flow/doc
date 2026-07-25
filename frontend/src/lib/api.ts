@@ -1075,6 +1075,9 @@ export const automationsApi = {
   /** Clone (config + portée + headers), créé désactivé. */
   clone: (ws: string, id: string) =>
     api.post<AutomationOut>(`/workspaces/${ws}/automations/${id}/clone`, {}),
+  /** Vide l'historique d'exécutions (le curseur est conservé). */
+  clearRuns: (ws: string, id: string) =>
+    api.delete<{ deleted: number }>(`/workspaces/${ws}/automations/${id}/runs`),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

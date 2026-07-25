@@ -123,6 +123,15 @@ export function AutomatesPage() {
     onError: (e: Error) => toast(`Clonage échoué : ${e.message}`, 'error'),
   })
 
+  const clearRunsMut = useMutation({
+    mutationFn: (id: string) => automationsApi.clearRuns(ws!, id),
+    onSuccess: (res, id) => {
+      toast(`Historique vidé (${res.deleted} exécution${res.deleted > 1 ? 's' : ''})`, 'success')
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+    },
+    onError: (e: Error) => toast(`Échec : ${e.message}`, 'error'),
+  })
+
   // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
   const [dragId, setDragId] = useState<string | null>(null)
   const reorderMut = useMutation({
@@ -305,7 +314,16 @@ export function AutomatesPage() {
                     {a.body_template && (
                       <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto max-h-24 mb-2">{a.body_template}</pre>
                     )}
-                    <p className="text-xs font-semibold text-gray-500 mt-2 mb-1">Historique des exécutions</p>
+                    <div className="mt-2 mb-1 flex items-center justify-between">
+                      <p className="text-xs font-semibold text-gray-500">Historique des exécutions</p>
+                      <button type="button"
+                        onClick={() => { if (confirm('Vider l\'historique de cet automate ?')) clearRunsMut.mutate(a.id) }}
+                        disabled={clearRunsMut.isPending}
+                        className="text-xs text-gray-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                        data-testid={`clear-runs-${a.id}`}>
+                        Vider l'historique
+                      </button>
+                    </div>
                     <AutomationRunHistory ws={ws!} automationId={a.id} />
                   </div>
                 )}

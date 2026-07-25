@@ -116,6 +116,15 @@ async def cursor_back(
     return await service.cursor_back(request.app.state.pool, ws_slug, automation_id)
 
 
+@router.delete(_AUTO + "/runs", status_code=200)
+async def clear_runs(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, int]:
+    """Vide l'historique d'exécutions de l'automate."""
+    deleted = await service.clear_runs(request.app.state.pool, ws_slug, automation_id)
+    return {"deleted": deleted}
+
+
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)
 async def replay_run(
     ws_slug: str,
