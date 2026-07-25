@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Trash2, X } from 'lucide-react'
+import { ChevronRight, Plus, Trash2, X } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
@@ -71,6 +71,24 @@ function WorkspaceBlocksNode({
         </label>
       ))}
     </div>
+  )
+}
+
+/** Section repliable de l'onglet Events (ouverte par défaut). */
+function Section({ title, hint, children }: {
+  title: string
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <details open className="group rounded border border-gray-200">
+      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={14} className="shrink-0 text-gray-400 transition-transform group-open:rotate-90" />
+        {title}
+        {hint && <span className="font-normal text-xs text-gray-400">{hint}</span>}
+      </summary>
+      <div className="border-t border-gray-100 p-2">{children}</div>
+    </details>
   )
 }
 
@@ -263,14 +281,9 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         {/* ── Onglet Events déclencheurs + filtres ── */}
         {tab === 'events' && (
           <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Couverture de déclenchement
-                <span className="ml-1 font-normal text-gray-400">
-                  (workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous)
-                </span>
-              </label>
-              <div className="space-y-1.5 rounded border border-gray-200 p-2">
+            <Section title="Couverture de déclenchement"
+              hint="workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous">
+              <div className="space-y-1.5">
                 {workspaces.map((w) => {
                   const covered = workspaceSlugs.includes(w.slug)
                   return (
@@ -297,11 +310,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   Un automate doit couvrir au moins un workspace.
                 </p>
               )}
-            </div>
+            </Section>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Events déclencheurs</label>
-              <div className="grid grid-cols-2 gap-1.5 rounded border border-gray-200 p-2">
+            <Section title="Events déclencheurs">
+              <div className="grid grid-cols-2 gap-1.5">
                 {eventTypes.map((ev) => (
                   <label key={ev.eventCode} className="flex items-start gap-1.5 text-sm" data-testid={`auto-event-${ev.eventCode}`}>
                     <input type="checkbox" className="mt-0.5"
@@ -313,14 +325,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   </label>
                 ))}
               </div>
-            </div>
+            </Section>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">
-                Filtre type de document
-                <span className="ml-1 font-normal text-gray-400">(combiné en ET — vide = tous)</span>
-              </label>
-              <div className="grid grid-cols-2 gap-1 rounded border border-gray-200 p-2">
+            <Section title="Filtre type de document" hint="combiné en ET — vide = tous">
+              <div className="grid grid-cols-2 gap-1">
                 {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
                 {types.map((t) => (
                   <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
@@ -330,7 +338,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   </label>
                 ))}
               </div>
-            </div>
+            </Section>
 
             <label className="flex items-start gap-2 text-sm text-gray-700" data-testid="auto-stop-chain">
               <input type="checkbox" className="mt-0.5" checked={stopChain}
