@@ -25,6 +25,7 @@ import { UsersAdmin } from './pages/UsersAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
 import { ContractsAdmin } from './pages/ContractsAdmin'
+import { MyProfilePage } from './pages/MyProfilePage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -124,6 +125,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><ApiKeysPage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/me',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><MyProfilePage /></AppLayout>
       </ProtectedRoute>
     ),
   },

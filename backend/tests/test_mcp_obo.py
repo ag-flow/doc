@@ -43,7 +43,7 @@ def test_verify_actor_mauvais_secret() -> None:
     assert verify_actor(_ACTOR, _TS, _SIG, "autre-cle", now=float(_TS)) is False
 
 
-# ── resolve_actor_user (rapprochement app_user par oidc_subject) ────────────────
+# ── resolve_actor_user (rapprochement app_user par identity — contrat v6 GUID-only) ──
 
 
 class _Headers:
@@ -67,8 +67,9 @@ def _signed_headers(actor: str, timestamp: str, signature: str) -> _Headers:
 
 
 async def _insert_user(pool: asyncpg.Pool, *, subject: str, email: str) -> uuid.UUID:
+    # Contrat v6 : l'acteur est mappé sur app_user.identity (GUID-only).
     row = await pool.fetchrow(
-        "INSERT INTO app_user (email, label, validated, oidc_subject) "
+        "INSERT INTO app_user (email, label, validated, identity) "
         "VALUES ($1, $2, true, $3) RETURNING id",
         email,
         "OBO Test",

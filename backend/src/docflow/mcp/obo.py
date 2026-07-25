@@ -25,10 +25,13 @@ _HDR_SIGNATURE = "x-portal-actor-signature"
 # Fenêtre anti-rejeu par défaut (secondes) sur le timestamp signé.
 _DEFAULT_WINDOW = 300
 
-_SELECT_USER_BY_SUBJECT = """
+# Contrat OBO v6 (GUID-only) : l'acteur est le GUID d'identité posé par
+# l'utilisateur dans son profil (app_user.identity) — JAMAIS le sub OIDC,
+# jamais login/email. Modèle uniforme OIDC/local.
+_SELECT_USER_BY_IDENTITY = """
 SELECT id, email, label, is_admin, validated, disabled
 FROM app_user
-WHERE oidc_subject = $1
+WHERE identity = $1
 """
 
 
@@ -93,7 +96,7 @@ async def resolve_actor_user(
             return None
 
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(_SELECT_USER_BY_SUBJECT, actor)
+            row = await conn.fetchrow(_SELECT_USER_BY_IDENTITY, actor)
         if row is None or row["disabled"] or not row["validated"]:
             return None
 

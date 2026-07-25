@@ -766,6 +766,25 @@ export const secretsApi = {
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }
 
+// ── Mon profil ───────────────────────────────────────────────────────────────
+
+export interface MeProfileOut {
+  id: string
+  email: string
+  username: string | null
+  label: string
+  source: string
+  is_admin: boolean
+  /** GUID d'identité OBO (null = appels MCP non attribués). */
+  identity: string | null
+}
+
+export const meApi = {
+  get: () => api.get<MeProfileOut>('/me/profile'),
+  update: (body: { email?: string; identity?: string }) =>
+    api.patch<MeProfileOut>('/me/profile', body),
+}
+
 // ── Secrets HMAC (par utilisateur ; valeur copiable par le propriétaire) ──────
 
 export interface HmacSecretOut {

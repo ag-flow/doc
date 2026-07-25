@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
+from docflow.me.router import router as me_router
 from docflow.apikeys.router import router as apikeys_router
 from docflow.artifacts.router import router as artifacts_router
 from docflow.artifacts.worker import purge_loop as artifact_purge_loop
@@ -150,6 +151,7 @@ app.include_router(setup_router, prefix=_API)
 app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
+app.include_router(me_router, prefix=_API)
 app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
