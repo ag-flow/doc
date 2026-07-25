@@ -7,7 +7,7 @@ import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
 import {
   api, contractsApi, docsApi, eventsProducerApi, secretsApi,
   type AutomationCreate, type AutomationHeaderIn, type AutomationOut,
-  type DataBlockOut, type FunctionalType, type OperationOut,
+  type DataBlockOut, type FunctionalType, type OperationOut, type WorkspaceOut,
 } from '../lib/api'
 
 // Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
@@ -54,6 +54,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   }, [onClose])
 
   const [label, setLabel] = useState(initial?.label ?? '')
+  // Portée : workspaces couverts. Défaut à la création = le workspace courant.
+  const [workspaceSlugs, setWorkspaceSlugs] = useState<string[]>(
+    initial?.workspace_slugs?.length ? initial.workspace_slugs : ws ? [ws] : [],
+  )
   const [eventCodes, setEventCodes] = useState<string[]>(initial?.event_codes ?? [])
   const [blockSlugs, setBlockSlugs] = useState<string[]>(initial?.block_slugs ?? [])
   const [typeSlugs, setTypeSlugs] = useState<string[]>(initial?.functional_type_slugs ?? [])
@@ -89,6 +93,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   const eventTypes = catalog?.events ?? []
   const { data: secrets = [] } = useQuery({
     queryKey: ['user-secrets'], queryFn: () => secretsApi.list(), staleTime: 60_000,
+  })
+  // Tous les workspaces (pour la portée multi-workspaces).
+  const { data: workspaces = [] } = useQuery<WorkspaceOut[]>({
+    queryKey: ['workspaces'], queryFn: () => api.get<WorkspaceOut[]>('/workspaces'), staleTime: 60_000,
   })
   // Blocs + types du workspace (pour les filtres de déclenchement).
   const { data: blocks = [] } = useQuery<DataBlockOut[]>({
@@ -163,6 +171,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     // le toggle de la carte (préservé à l'édition).
     onSave({
       label, event_codes: eventCodes,
+      workspace_slugs: workspaceSlugs,
       block_slugs: blockSlugs, functional_type_slugs: typeSlugs,
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
@@ -223,6 +232,29 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         {/* ── Onglet Events déclencheurs + filtres ── */}
         {tab === 'events' && (
           <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Workspaces couverts
+                <span className="ml-1 font-normal text-gray-400">
+                  (visible et déclenché dans chacun — au moins un)
+                </span>
+              </label>
+              <div className="grid max-h-32 grid-cols-2 gap-1 overflow-auto rounded border border-gray-200 p-2">
+                {workspaces.map((w) => (
+                  <label key={w.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-ws-${w.slug}`}>
+                    <input type="checkbox" checked={workspaceSlugs.includes(w.slug)}
+                      onChange={() => setWorkspaceSlugs((p) => toggle(p, w.slug))} />
+                    <span className="truncate">{w.label}</span>
+                  </label>
+                ))}
+              </div>
+              {workspaceSlugs.length === 0 && (
+                <p className="mt-1 text-xs text-red-600" data-testid="auto-ws-empty">
+                  Un automate doit couvrir au moins un workspace.
+                </p>
+              )}
+            </div>
+
             <div>
               <label className="mb-1 block text-sm font-medium">Events déclencheurs</label>
               <div className="grid grid-cols-2 gap-1.5 rounded border border-gray-200 p-2">
@@ -385,7 +417,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
 
         <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
-          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim()}>
+          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim() || workspaceSlugs.length === 0}>
             {saving ? 'Enregistrement…' : 'Enregistrer'}
           </Button>
         </div>

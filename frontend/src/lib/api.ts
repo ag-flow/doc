@@ -964,6 +964,7 @@ export interface AutomationOut {
   label: string
   active: boolean
   pending_count: number
+  workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]
   functional_type_slugs: string[]
@@ -983,6 +984,7 @@ export interface AutomationOut {
 export interface AutomationCreate {
   label: string
   active?: boolean
+  workspace_slugs?: string[]
   event_codes?: string[]
   block_slugs?: string[]
   functional_type_slugs?: string[]

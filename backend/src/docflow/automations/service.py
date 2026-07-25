@@ -34,8 +34,75 @@ async def _fetch_headers(
     return [AutomationHeaderOut(**dict(r)) for r in rows]
 
 
+# ── Portée multi-workspaces (table automation_workspace) ─────────────────────
+
+
+async def _workspace_keys(conn: asyncpg.Connection, automation_id: uuid.UUID) -> list[uuid.UUID]:
+    rows = await conn.fetch(
+        "SELECT workspace_technical_key FROM automation_workspace "
+        "WHERE automation_ref = $1 ORDER BY workspace_technical_key",
+        automation_id,
+    )
+    return [r["workspace_technical_key"] for r in rows]
+
+
+async def _workspace_slugs(conn: asyncpg.Connection, automation_id: uuid.UUID) -> list[str]:
+    rows = await conn.fetch(
+        "SELECT w.slug FROM automation_workspace aw "
+        "JOIN workspace w ON w.workspace_technical_key = aw.workspace_technical_key "
+        "WHERE aw.automation_ref = $1 ORDER BY w.slug",
+        automation_id,
+    )
+    return [r["slug"] for r in rows]
+
+
+async def _resolve_workspace_keys(
+    conn: asyncpg.Connection, slugs: list[str]
+) -> list[uuid.UUID]:
+    """Résout des slugs de workspaces en clés ; 422 si l'un est inconnu."""
+    keys: list[uuid.UUID] = []
+    for slug in slugs:
+        key = await conn.fetchval(
+            "SELECT workspace_technical_key FROM workspace WHERE slug = $1", slug
+        )
+        if key is None:
+            raise HTTPException(422, f"workspace « {slug} » introuvable")
+        keys.append(key)
+    return keys
+
+
+async def _set_workspaces(
+    conn: asyncpg.Connection, automation_id: uuid.UUID, keys: list[uuid.UUID]
+) -> None:
+    """Remplace la portée. `keys` non vide (invariant : jamais aucun workspace).
+    Synchronise la colonne d'origine (NOT NULL) sur un élément de l'ensemble."""
+    await conn.execute(
+        "DELETE FROM automation_workspace WHERE automation_ref = $1", automation_id
+    )
+    for key in keys:
+        await conn.execute(
+            "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+            "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            automation_id,
+            key,
+        )
+    await conn.execute(
+        "UPDATE automation SET workspace_technical_key = $1 WHERE id = $2",
+        keys[0],
+        automation_id,
+    )
+
+
+# Clause de visibilité : l'automate est accessible depuis tout workspace coché.
+_VISIBLE = (
+    "EXISTS (SELECT 1 FROM automation_workspace aw "
+    "WHERE aw.automation_ref = a.id AND aw.workspace_technical_key = $2)"
+)
+
+
 async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
-    """Nombre d'events déclencheurs matchés au-delà du curseur (filtres inclus)."""
+    """Nombre d'events déclencheurs matchés au-delà du curseur (filtres inclus),
+    sur TOUS les workspaces couverts par l'automate."""
     codes = list(row["event_codes"] or [])
     if not codes:
         return 0
@@ -47,7 +114,7 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
     )
     return await events_query.pending_count(
         conn,
-        row["workspace_technical_key"],
+        await _workspace_keys(conn, row["id"]),
         codes,
         list(row["block_slugs"] or []),
         list(row["functional_type_slugs"] or []),
@@ -56,7 +123,10 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
 
 
 def _row_to_out(
-    row: asyncpg.Record, headers: list[AutomationHeaderOut], pending_count: int = 0
+    row: asyncpg.Record,
+    headers: list[AutomationHeaderOut],
+    pending_count: int = 0,
+    workspace_slugs: list[str] | None = None,
 ) -> AutomationOut:
     return AutomationOut(
         id=row["id"],
@@ -64,6 +134,7 @@ def _row_to_out(
         label=row["label"],
         active=row["active"],
         pending_count=pending_count,
+        workspace_slugs=workspace_slugs or [],
         event_codes=list(row["event_codes"] or []),
         block_slugs=list(row["block_slugs"] or []),
         functional_type_slugs=list(row["functional_type_slugs"] or []),
@@ -106,26 +177,42 @@ async def _upsert_headers(
 async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationOut]:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
+        # Visible dans TOUS les workspaces cochés (table de liaison).
         rows = await conn.fetch(
-            "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
-            "functional_type_slugs, on_create, on_update, "
-            "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
-            "created_at, updated_at "
-            "FROM automation WHERE workspace_technical_key = $1 ORDER BY label",
+            "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
+            "a.block_slugs, a.functional_type_slugs, a.on_create, a.on_update, "
+            "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
+            "a.body_template, a.created_at, a.updated_at "
+            "FROM automation a WHERE EXISTS (SELECT 1 FROM automation_workspace aw "
+            "WHERE aw.automation_ref = a.id AND aw.workspace_technical_key = $1) "
+            "ORDER BY a.label",
             wk,
         )
         result = []
         for row in rows:
             headers = await _fetch_headers(conn, row["id"])
-            result.append(_row_to_out(row, headers, await _pending_count(conn, row)))
+            result.append(
+                _row_to_out(
+                    row,
+                    headers,
+                    await _pending_count(conn, row),
+                    await _workspace_slugs(conn, row["id"]),
+                )
+            )
     return result
 
 
 async def create_automation(
     pool: asyncpg.Pool, ws_slug: str, body: AutomationCreate
 ) -> AutomationOut:
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         wk = await require_workspace(conn, ws_slug)
+        # Portée : les workspaces cochés ; vide → [workspace courant]. Jamais aucun.
+        keys = (
+            await _resolve_workspace_keys(conn, body.workspace_slugs)
+            if body.workspace_slugs
+            else [wk]
+        )
         row = await conn.fetchrow(
             "INSERT INTO automation "
             "(workspace_technical_key, label, active, event_codes, block_slugs, "
@@ -135,7 +222,7 @@ async def create_automation(
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "functional_type_slugs, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
-            wk,
+            keys[0],
             body.label,
             body.active,
             body.event_codes,
@@ -151,9 +238,11 @@ async def create_automation(
             body.body_template,
         )
         assert row is not None
+        await _set_workspaces(conn, row["id"], keys)
         await _upsert_headers(conn, row["id"], body.headers)
         headers = await _fetch_headers(conn, row["id"])
-    return _row_to_out(row, headers)
+        slugs = await _workspace_slugs(conn, row["id"])
+    return _row_to_out(row, headers, 0, slugs)
 
 
 async def get_automation(
@@ -162,11 +251,11 @@ async def get_automation(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
-            "functional_type_slugs, on_create, on_update, "
-            "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
-            "created_at, updated_at "
-            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
+            "a.block_slugs, a.functional_type_slugs, a.on_create, a.on_update, "
+            "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
+            "a.body_template, a.created_at, a.updated_at "
+            "FROM automation a WHERE a.id = $1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -174,7 +263,8 @@ async def get_automation(
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
         headers = await _fetch_headers(conn, automation_id)
         pending = await _pending_count(conn, row)
-    return _row_to_out(row, headers, pending)
+        slugs = await _workspace_slugs(conn, automation_id)
+    return _row_to_out(row, headers, pending, slugs)
 
 
 async def update_automation(
@@ -187,12 +277,23 @@ async def update_automation(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         exists = await conn.fetchval(
-            "SELECT id FROM automation WHERE id=$1 AND workspace_technical_key=$2",
+            "SELECT a.id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+
+        # Portée workspaces : remplacement de l'ensemble — JAMAIS vide.
+        if "workspace_slugs" in raw:
+            new_slugs = raw.pop("workspace_slugs") or []
+            if not new_slugs:
+                raise HTTPException(
+                    422, "un automate doit couvrir au moins un workspace"
+                )
+            await _set_workspaces(
+                conn, automation_id, await _resolve_workspace_keys(conn, new_slugs)
+            )
 
         # Présence de "headers" dans le body : on réécrit depuis les objets
         # pydantic (body.headers), pas depuis le dump (dicts) — _upsert_headers
@@ -242,14 +343,15 @@ async def update_automation(
         assert row is not None
         headers = await _fetch_headers(conn, automation_id)
         pending = await _pending_count(conn, row)
-    return _row_to_out(row, headers, pending)
+        slugs = await _workspace_slugs(conn, automation_id)
+    return _row_to_out(row, headers, pending, slugs)
 
 
 async def delete_automation(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> None:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         result = await conn.execute(
-            "DELETE FROM automation WHERE id=$1 AND workspace_technical_key=$2",
+            "DELETE FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -266,7 +368,7 @@ async def list_runs(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         exists = await conn.fetchval(
-            "SELECT id FROM automation WHERE id=$1 AND workspace_technical_key=$2",
+            "SELECT id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -298,7 +400,7 @@ async def replay_run(
 
         auto_row = await conn.fetchrow(
             "SELECT id, workspace_technical_key, url, http_method, body_template "
-            "FROM automation WHERE id=$1 AND workspace_technical_key=$2",
+            "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -364,7 +466,7 @@ async def run_next_pending(
         auto = await conn.fetchrow(
             "SELECT id, workspace_technical_key, event_codes, block_slugs, "
             "functional_type_slugs, url, http_method, body_template "
-            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -381,7 +483,7 @@ async def run_next_pending(
         )
         ev = await events_query.next_matching(
             conn,
-            auto["workspace_technical_key"],
+            await _workspace_keys(conn, automation_id),
             codes,
             list(auto["block_slugs"] or []),
             list(auto["functional_type_slugs"] or []),
@@ -444,7 +546,7 @@ async def advance_pending(
         auto = await conn.fetchrow(
             "SELECT id, workspace_technical_key, event_codes, block_slugs, "
             "functional_type_slugs, url, http_method, body_template "
-            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -461,7 +563,7 @@ async def advance_pending(
         )
         ev = await events_query.next_matching(
             conn,
-            auto["workspace_technical_key"],
+            await _workspace_keys(conn, automation_id),
             codes,
             list(auto["block_slugs"] or []),
             list(auto["functional_type_slugs"] or []),
@@ -523,7 +625,7 @@ async def cursor_back(
         wk = await require_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
             "SELECT workspace_technical_key, event_codes, block_slugs, functional_type_slugs "
-            "FROM automation WHERE id = $1 AND workspace_technical_key = $2",
+            "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
@@ -540,7 +642,7 @@ async def cursor_back(
         )
         new_cursor = await events_query.prev_cursor(
             conn,
-            auto["workspace_technical_key"],
+            await _workspace_keys(conn, automation_id),
             codes,
             list(auto["block_slugs"] or []),
             list(auto["functional_type_slugs"] or []),

@@ -22,7 +22,7 @@ FROM document_event de
 LEFT JOIN document d ON d.doc_technical_key = de.document_ref
 LEFT JOIN data_block b ON b.id = d.data_block_ref
 LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
-WHERE de.workspace_technical_key = $1
+WHERE de.workspace_technical_key = ANY($1::uuid[])
   AND de.event_code = ANY($2::text[])
   AND (cardinality($3::text[]) = 0 OR b.slug = ANY($3::text[]))
   AND (cardinality($4::text[]) = 0 OR ft.slug = ANY($4::text[]))
@@ -31,7 +31,7 @@ WHERE de.workspace_technical_key = $1
 
 async def matching_batch(
     conn: asyncpg.Connection,
-    wk: uuid.UUID,
+    wks: list[uuid.UUID],
     codes: list[str],
     blocks: list[str],
     types: list[str],
@@ -43,7 +43,7 @@ async def matching_batch(
         "SELECT de.seq, de.document_ref, de.event_code, de.business "
         + _FROM_WHERE
         + " AND de.seq > $5 ORDER BY de.seq ASC LIMIT $6",
-        wk,
+        wks,
         codes,
         blocks,
         types,
@@ -55,7 +55,7 @@ async def matching_batch(
 
 async def next_matching(
     conn: asyncpg.Connection,
-    wk: uuid.UUID,
+    wks: list[uuid.UUID],
     codes: list[str],
     blocks: list[str],
     types: list[str],
@@ -66,7 +66,7 @@ async def next_matching(
         "SELECT de.seq, de.document_ref, de.event_code, de.business "
         + _FROM_WHERE
         + " AND de.seq > $5 ORDER BY de.seq ASC LIMIT 1",
-        wk,
+        wks,
         codes,
         blocks,
         types,
@@ -76,7 +76,7 @@ async def next_matching(
 
 async def pending_count(
     conn: asyncpg.Connection,
-    wk: uuid.UUID,
+    wks: list[uuid.UUID],
     codes: list[str],
     blocks: list[str],
     types: list[str],
@@ -85,7 +85,7 @@ async def pending_count(
     """Nombre d'events matchés au-delà du curseur."""
     n: int = await conn.fetchval(
         "SELECT count(*) " + _FROM_WHERE + " AND de.seq > $5",
-        wk,
+        wks,
         codes,
         blocks,
         types,
@@ -96,7 +96,7 @@ async def pending_count(
 
 async def prev_cursor(
     conn: asyncpg.Connection,
-    wk: uuid.UUID,
+    wks: list[uuid.UUID],
     codes: list[str],
     blocks: list[str],
     types: list[str],
@@ -109,7 +109,7 @@ async def prev_cursor(
         + _FROM_WHERE
         + "), p AS (SELECT max(seq) AS s FROM ev WHERE seq <= $5) "
         "SELECT COALESCE((SELECT max(seq) FROM ev WHERE seq < (SELECT s FROM p)), 0)",
-        wk,
+        wks,
         codes,
         blocks,
         types,

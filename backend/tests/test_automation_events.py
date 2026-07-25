@@ -162,6 +162,11 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
             }
         ),
     )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
 
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
@@ -223,6 +228,11 @@ async def test_run_next_does_not_advance_cursor(
         "VALUES ($1,'RAG',false,$2,0,$3,'POST',null) RETURNING id",
         wk, [_UPDATED], "https://rag.example/index",
     )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
 
     autos = await auto_svc.list_automations(db_pool, slug)
     a = next(x for x in autos if x.id == auto_id)
@@ -272,6 +282,11 @@ async def test_run_records_detail_and_prunes_to_20(
         "delay_minutes, url, http_method, body_template) "
         "VALUES ($1,'RAG',true,$2,0,$3,'POST',$4) RETURNING id",
         wk, [_UPDATED], "https://rag.example/index", json.dumps({"doc": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
     )
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
@@ -329,6 +344,11 @@ async def test_advance_and_cursor_back(
         "VALUES ($1,'RAG',false,$2,0,$3,'POST',null) RETURNING id",
         wk, [_UPDATED], "https://rag.example/index",
     )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
 
     async def _pending() -> int:
         autos = await auto_svc.list_automations(db_pool, slug)
@@ -375,6 +395,11 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
         "VALUES ($1,'RAG',true,$2,ARRAY['autre-bloc'],0,$3,'POST') RETURNING id",
         wk, [_UPDATED], "https://rag.example/index",
     )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
 
     async def _pending() -> int:
         autos = await auto_svc.list_automations(db_pool, slug)
@@ -395,3 +420,53 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
     )
     await worker.run_tick(db_pool, automation, object())
     assert len(_CALLS) == 1
+
+
+async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
+    from fastapi import HTTPException
+
+    from docflow.automations import service as auto_svc
+    from docflow.schemas.automations import AutomationCreate, AutomationUpdate
+
+    wk_a, slug_a, doc_a = await _mk_ws_doc(db_pool)
+    wk_b, slug_b, doc_b = await _mk_ws_doc(db_pool)
+
+    out = await auto_svc.create_automation(
+        db_pool,
+        slug_a,
+        AutomationCreate(
+            label="Multi", event_codes=[_UPDATED],
+            workspace_slugs=[slug_a, slug_b],
+            url="https://rag.example/index", http_method="POST",
+        ),
+    )
+    assert sorted(out.workspace_slugs) == sorted([slug_a, slug_b])
+
+    # Visible dans les DEUX workspaces cochés.
+    assert any(a.id == out.id for a in await auto_svc.list_automations(db_pool, slug_a))
+    assert any(a.id == out.id for a in await auto_svc.list_automations(db_pool, slug_b))
+
+    # Les events des deux workspaces comptent dans le pending.
+    for wk, doc in [(wk_a, doc_a), (wk_b, doc_b)]:
+        await db_pool.execute(
+            "INSERT INTO document_event "
+            "(workspace_technical_key, document_ref, event_code, business) "
+            "VALUES ($1,$2,$3,$4::jsonb)",
+            wk, doc, _UPDATED, json.dumps({"documentId": str(doc)}),
+        )
+    a = next(x for x in await auto_svc.list_automations(db_pool, slug_a) if x.id == out.id)
+    assert a.pending_count == 2
+
+    # Restreindre à B : plus visible dans A, toujours dans B.
+    await auto_svc.update_automation(
+        db_pool, slug_a, out.id, AutomationUpdate(workspace_slugs=[slug_b])
+    )
+    assert not any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_a))
+    assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_b))
+
+    # Jamais aucun workspace → 422.
+    with pytest.raises(HTTPException) as exc:
+        await auto_svc.update_automation(
+            db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
+        )
+    assert exc.value.status_code == 422

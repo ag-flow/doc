@@ -302,9 +302,20 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
             or 0
         )
 
+        # Portée multi-workspaces : les events de TOUS les workspaces couverts.
+        wks: list[uuid.UUID] = [
+            r["workspace_technical_key"]
+            for r in await conn.fetch(
+                "SELECT workspace_technical_key FROM automation_workspace "
+                "WHERE automation_ref = $1",
+                automation["id"],
+            )
+        ]
+        if not wks:
+            return
         rows = await events_query.matching_batch(
             conn,
-            automation["workspace_technical_key"],
+            wks,
             codes,
             list(automation["block_slugs"] or []),
             list(automation["functional_type_slugs"] or []),

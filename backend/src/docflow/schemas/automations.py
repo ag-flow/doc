@@ -40,6 +40,9 @@ class AutomationCreate(BaseModel):
     label: str
     # Toujours créé DÉSACTIVÉ (activation via le toggle de la carte).
     active: bool = False
+    # Workspaces couverts (l'automate est visible et se déclenche dans chacun).
+    # Vide à la création = [workspace courant]. Jamais vide en base.
+    workspace_slugs: list[str] = []
     # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
     event_codes: list[str] = []
     # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
@@ -62,6 +65,7 @@ class AutomationUpdate(BaseModel):
 
     label: str | None = None
     active: bool | None = None
+    workspace_slugs: list[str] | None = None
     event_codes: list[str] | None = None
     block_slugs: list[str] | None = None
     functional_type_slugs: list[str] | None = None
@@ -83,6 +87,7 @@ class AutomationOut(BaseModel):
     active: bool
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
     pending_count: int = 0
+    workspace_slugs: list[str] = []
     event_codes: list[str]
     block_slugs: list[str] = []
     functional_type_slugs: list[str] = []
