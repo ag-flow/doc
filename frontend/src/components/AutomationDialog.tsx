@@ -183,7 +183,9 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
       onClick={onClose}>
-      <div className="my-4 w-full max-w-2xl space-y-4 rounded-lg bg-white p-6 shadow-xl"
+      {/* Taille FIXE (celle du plus grand onglet, « Appel ») : changer d'onglet
+          ne fait pas sauter la fenêtre ; le contenu scrolle à l'intérieur. */}
+      <div className="my-4 flex h-[min(88vh,760px)] w-full max-w-2xl flex-col gap-4 rounded-lg bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold">{initial ? 'Modifier' : 'Nouvel automate'}</h2>
@@ -200,6 +202,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <TabBtn id="call">Appel</TabBtn>
         </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {/* ── Onglet Libellé ── */}
         {tab === 'label' && (
           <div className="space-y-4">
@@ -371,6 +374,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
             </div>
           </div>
         )}
+        </div>
 
         {error && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
