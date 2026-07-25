@@ -159,6 +159,7 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
                 "ws": "{event.workspaceSlug}",
                 "v": "{event.version}",
                 "url": "{doc_url}",
+                "dtype": "{doc_type}",
             }
         ),
     )
@@ -188,6 +189,7 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     assert body["v"] == "3"                       # {event.version} substitué (str)
     # {doc_url} = URL de consultation absolue (public_base_url + chemin app).
     assert body["url"] == f"https://doc.example/ws/{slug}/blocs/b/documents/{doc_id}"
+    assert body["dtype"] == "md"                  # {doc_type} substitué (défaut md)
 
     # Un run enregistré, statut ok.
     runs = await db_pool.fetch(

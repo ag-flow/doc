@@ -348,7 +348,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-sm font-medium">Corps (JSON)</label>
                 <div className="flex flex-wrap justify-end gap-1">
-                  {['id_document', 'title', 'content', 'doc_url', ...EVENT_VARS].map((v) => (
+                  {['id_document', 'title', 'content', 'doc_type', 'doc_url', ...EVENT_VARS].map((v) => (
                     <button key={v} type="button" onClick={() => copyVariable(v)}
                       title="Copier dans le presse-papier"
                       className={`rounded px-2 py-0.5 font-mono text-xs transition-colors ${

@@ -64,26 +64,33 @@ async def resolve_secret(secret_ref: str, *, pool: asyncpg.Pool, settings: objec
 
 
 class _Snapshot:
-    __slots__ = ("title", "content", "ws_slug", "block_slug")
+    __slots__ = ("title", "content", "ws_slug", "block_slug", "doc_type")
 
     def __init__(
-        self, title: str | None, content: str | None, ws_slug: str | None, block_slug: str | None
+        self,
+        title: str | None,
+        content: str | None,
+        ws_slug: str | None,
+        block_slug: str | None,
+        doc_type: str | None,
     ) -> None:
         self.title = title
         self.content = content
         self.ws_slug = ws_slug
         self.block_slug = block_slug
+        self.doc_type = doc_type
 
 
 async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapshot | None:
     """Snapshot courant du document (None s'il n'existe plus).
 
     Contenu = document_version à la version courante ; ws_slug/block_slug servent
-    à construire l'URL de consultation.
+    à construire l'URL de consultation ; doc_type = type technique (md | csv).
     """
     row = await conn.fetchrow(
         """
-        SELECT d.title, dv.content, w.slug AS ws_slug, b.slug AS block_slug
+        SELECT d.title, d.type AS doc_type, dv.content,
+               w.slug AS ws_slug, b.slug AS block_slug
         FROM document d
         JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
         LEFT JOIN data_block b ON b.id = d.data_block_ref
@@ -95,7 +102,9 @@ async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapsho
     )
     if row is None:
         return None
-    return _Snapshot(row["title"], row["content"], row["ws_slug"], row["block_slug"])
+    return _Snapshot(
+        row["title"], row["content"], row["ws_slug"], row["block_slug"], row["doc_type"]
+    )
 
 
 def _doc_url(
@@ -136,6 +145,7 @@ def _variables(
     """Variables du body_template : contenu doc + URL + propriétés de l'event.
 
     - `{id_document}`, `{title}`, `{content}` : snapshot courant du document.
+    - `{doc_type}` : type technique du document (`md` ou `csv`).
     - `{doc_url}` : URL de consultation du document dans docflow.
     - `{event.code}` : l'eventCode déclencheur.
     - `{event.<prop>}` : chaque propriété métier de l'event (documentId,
@@ -146,6 +156,7 @@ def _variables(
         "id_document": doc_ref,
         "title": snap.title or "" if snap else "",
         "content": snap.content or "" if snap else "",
+        "doc_type": snap.doc_type or "" if snap else "",
         "doc_url": _doc_url(
             base_url,
             doc_id,
