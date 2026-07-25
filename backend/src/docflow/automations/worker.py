@@ -330,6 +330,7 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
             codes,
             list(automation["block_slugs"] or []),
             list(automation["functional_type_slugs"] or []),
+            automation["id"],
             cursor,
             100,
         )
@@ -376,6 +377,12 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
                 "business": row["business"],
             }
             res = await execute(conn, automation, event, pool, settings)
+
+            # Chaîne de responsabilité : match + appel RÉUSSI d'un automate
+            # stop_chain → l'event est consommé, les priorités inférieures
+            # ne le traiteront pas.
+            if automation["stop_chain"] and res.status == "ok":
+                await events_query.consume(conn, event_seq, automation["id"])
 
             version: int | None = None
             if doc_ref is not None:
@@ -435,7 +442,7 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
         # tick (curseur unique) — sa priorité effective est la plus haute
         # (min des positions) parmi ses workspaces.
         automations = await conn.fetch(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
             "functional_type_slugs, delay_minutes, url, http_method, body_template, "
             "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
             " WHERE aw.automation_ref = automation.id) AS prio "

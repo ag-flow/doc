@@ -171,6 +171,7 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
 
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
         auto_id,
@@ -292,6 +293,7 @@ async def test_run_records_detail_and_prunes_to_20(
     )
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
         auto_id,
@@ -417,6 +419,7 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
 
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, "
         "delay_minutes, url, http_method, body_template FROM automation WHERE id = $1",
         auto_id,
     )
@@ -563,3 +566,54 @@ async def test_clone_automation(db_pool: asyncpg.Pool) -> None:
     assert await db_pool.fetchval(
         "SELECT count(*) FROM automation_run WHERE automation_ref = $1", clone.id
     ) == 0
+
+
+async def test_stop_chain_blocks_lower_priority(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docflow.automations import service as auto_svc
+    from docflow.schemas.automations import AutomationCreate
+
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    # A (priorité 1, stop_chain) et B (priorité 2) sur le même event.
+    a = await auto_svc.create_automation(
+        db_pool, slug,
+        AutomationCreate(label="A", event_codes=[_UPDATED], stop_chain=True,
+                         url="https://a.example/hook", http_method="POST"),
+    )
+    b = await auto_svc.create_automation(
+        db_pool, slug,
+        AutomationCreate(label="B", event_codes=[_UPDATED],
+                         url="https://b.example/hook", http_method="POST"),
+    )
+    await db_pool.execute("UPDATE automation SET active = true WHERE id = ANY($1)", [a.id, b.id])
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id)}),
+    )
+
+    await worker.tick(db_pool, object())
+
+    # A (stop_chain, appel OK) consomme l'event → B ne le traite PAS.
+    urls = [c["url"] for c in _CALLS]
+    assert "https://a.example/hook" in urls
+    assert "https://b.example/hook" not in urls
+    # B est « à jour » : l'event consommé n'apparaît plus dans son pending.
+    listed = await auto_svc.list_automations(db_pool, slug)
+    assert next(x for x in listed if x.id == b.id).pending_count == 0
+    # A garde la main : consumed_by = A.
+    consumed = await db_pool.fetchval(
+        "SELECT consumed_by FROM document_event WHERE workspace_technical_key = $1 "
+        "ORDER BY seq DESC LIMIT 1", wk,
+    )
+    assert consumed == a.id

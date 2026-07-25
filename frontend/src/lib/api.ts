@@ -969,6 +969,7 @@ export interface AutomationOut {
   workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]
+  stop_chain: boolean
   functional_type_slugs: string[]
   on_create: boolean
   on_update: boolean
@@ -989,6 +990,7 @@ export interface AutomationCreate {
   workspace_slugs?: string[]
   event_codes?: string[]
   block_slugs?: string[]
+  stop_chain?: boolean
   functional_type_slugs?: string[]
   on_create?: boolean
   on_update?: boolean

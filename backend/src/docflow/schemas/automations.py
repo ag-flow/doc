@@ -48,6 +48,9 @@ class AutomationCreate(BaseModel):
     # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
     block_slugs: list[str] = []
     functional_type_slugs: list[str] = []
+    # Chaîne de responsabilité : si cet automate matche ET que l'appel réussit,
+    # les automates de priorité inférieure ne traitent pas l'event.
+    stop_chain: bool = False
     # Rétro-compat : anciennes cases C/U (backfillées vers event_codes en base).
     on_create: bool = False
     on_update: bool = False
@@ -68,6 +71,7 @@ class AutomationUpdate(BaseModel):
     workspace_slugs: list[str] | None = None
     event_codes: list[str] | None = None
     block_slugs: list[str] | None = None
+    stop_chain: bool | None = None
     functional_type_slugs: list[str] | None = None
     on_create: bool | None = None
     on_update: bool | None = None
@@ -93,6 +97,7 @@ class AutomationOut(BaseModel):
     event_codes: list[str]
     block_slugs: list[str] = []
     functional_type_slugs: list[str] = []
+    stop_chain: bool = False
     on_create: bool
     on_update: bool
     delay_minutes: int

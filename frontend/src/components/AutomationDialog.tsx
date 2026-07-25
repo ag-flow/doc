@@ -59,6 +59,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     initial?.workspace_slugs?.length ? initial.workspace_slugs : ws ? [ws] : [],
   )
   const [eventCodes, setEventCodes] = useState<string[]>(initial?.event_codes ?? [])
+  const [stopChain, setStopChain] = useState(initial?.stop_chain ?? false)
   const [blockSlugs, setBlockSlugs] = useState<string[]>(initial?.block_slugs ?? [])
   const [typeSlugs, setTypeSlugs] = useState<string[]>(initial?.functional_type_slugs ?? [])
   const [delay, setDelay] = useState(String(initial?.delay_minutes ?? 0))
@@ -173,6 +174,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       label, event_codes: eventCodes,
       workspace_slugs: workspaceSlugs,
       block_slugs: blockSlugs, functional_type_slugs: typeSlugs,
+      stop_chain: stopChain,
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
       operation_id: operationId || null,
@@ -302,6 +304,18 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </div>
               </div>
             </div>
+
+            <label className="flex items-start gap-2 text-sm text-gray-700" data-testid="auto-stop-chain">
+              <input type="checkbox" className="mt-0.5" checked={stopChain}
+                onChange={(e) => setStopChain(e.target.checked)} />
+              <span>
+                Stopper la chaîne si déclenché
+                <span className="block text-xs text-gray-500">
+                  Si cet automate matche l'event ET que l'appel réussit, les automates de
+                  priorité inférieure ne traitent pas cet event.
+                </span>
+              </span>
+            </label>
           </div>
         )}
 
