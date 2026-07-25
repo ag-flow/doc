@@ -225,7 +225,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       onClick={onClose}>
       {/* Taille FIXE (celle du plus grand onglet, « Appel ») : changer d'onglet
           ne fait pas sauter la fenêtre ; le contenu scrolle à l'intérieur. */}
-      <div className="my-4 flex h-[min(88vh,760px)] w-full max-w-2xl flex-col gap-4 rounded-lg bg-white p-6 shadow-xl"
+      <div className="my-4 flex h-[min(94vh,980px)] w-full max-w-2xl flex-col gap-4 rounded-lg bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold">{initial ? 'Modifier' : 'Nouvel automate'}</h2>
