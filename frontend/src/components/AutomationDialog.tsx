@@ -43,6 +43,37 @@ function newRow(): HeaderRow {
   return { id: crypto.randomUUID(), name: '', value: '', secretRef: '', valuePrefix: '', isSecret: false, required: false, enabled: true }
 }
 
+/** Blocs d'un workspace couvert (arbre de couverture) : cases de filtre + type. */
+function WorkspaceBlocksNode({
+  wsSlug, blockSlugs, onToggleBlock,
+}: {
+  wsSlug: string
+  blockSlugs: string[]
+  onToggleBlock: (slug: string) => void
+}) {
+  const { data: blocks = [], isLoading } = useQuery<DataBlockOut[]>({
+    queryKey: ['blocs', wsSlug],
+    queryFn: () => docsApi.getBlocks(wsSlug),
+    staleTime: 60_000,
+  })
+  if (isLoading) return <p className="ml-6 text-xs text-gray-400">Chargement des blocs…</p>
+  if (blocks.length === 0) return <p className="ml-6 text-xs text-gray-400">Aucun bloc</p>
+  return (
+    <div className="ml-6 space-y-0.5 border-l border-gray-100 pl-3">
+      {blocks.map((b) => (
+        <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
+          <input type="checkbox" checked={blockSlugs.includes(b.slug)}
+            onChange={() => onToggleBlock(b.slug)} />
+          <span className="truncate">{b.label}</span>
+          <span className="ml-auto shrink-0 rounded bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">
+            {b.functional_type_slug}
+          </span>
+        </label>
+      ))}
+    </div>
+  )
+}
+
 export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }: Props) {
   const jsonRef = useRef<JsonEditorHandle>(null)
   const [tab, setTab] = useState<Tab>('label')
@@ -99,10 +130,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   const { data: workspaces = [] } = useQuery<WorkspaceOut[]>({
     queryKey: ['workspaces'], queryFn: () => api.get<WorkspaceOut[]>('/workspaces'), staleTime: 60_000,
   })
-  // Blocs + types du workspace (pour les filtres de déclenchement).
-  const { data: blocks = [] } = useQuery<DataBlockOut[]>({
-    queryKey: ['blocs', ws], queryFn: () => docsApi.getBlocks(ws!), enabled: !!ws, staleTime: 60_000,
-  })
+  // Types du workspace (filtre type de document). Les blocs sont chargés par
+  // workspace couvert, dans l'arbre de couverture (WorkspaceBlocksNode).
   const { data: types = [] } = useQuery<FunctionalType[]>({
     queryKey: ['types', ws], queryFn: () => api.get<FunctionalType[]>(`/workspaces/${ws}/types`),
     enabled: !!ws, staleTime: 60_000,
@@ -236,19 +265,32 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium">
-                Workspaces couverts
+                Couverture de déclenchement
                 <span className="ml-1 font-normal text-gray-400">
-                  (visible et déclenché dans chacun — au moins un)
+                  (workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous)
                 </span>
               </label>
-              <div className="grid max-h-32 grid-cols-2 gap-1 overflow-auto rounded border border-gray-200 p-2">
-                {workspaces.map((w) => (
-                  <label key={w.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-ws-${w.slug}`}>
-                    <input type="checkbox" checked={workspaceSlugs.includes(w.slug)}
-                      onChange={() => setWorkspaceSlugs((p) => toggle(p, w.slug))} />
-                    <span className="truncate">{w.label}</span>
-                  </label>
-                ))}
+              <div className="max-h-64 space-y-1.5 overflow-auto rounded border border-gray-200 p-2">
+                {workspaces.map((w) => {
+                  const covered = workspaceSlugs.includes(w.slug)
+                  return (
+                    <div key={w.slug}>
+                      <label className="flex items-center gap-1.5 text-sm font-medium" data-testid={`auto-ws-${w.slug}`}>
+                        <input type="checkbox" checked={covered}
+                          onChange={() => setWorkspaceSlugs((p) => toggle(p, w.slug))} />
+                        <span className="truncate">{w.label}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-gray-400">{w.slug}</span>
+                      </label>
+                      {covered && (
+                        <WorkspaceBlocksNode
+                          wsSlug={w.slug}
+                          blockSlugs={blockSlugs}
+                          onToggleBlock={(slug) => setBlockSlugs((p) => toggle(p, slug))}
+                        />
+                      )}
+                    </div>
+                  )
+                })}
               </div>
               {workspaceSlugs.length === 0 && (
                 <p className="mt-1 text-xs text-red-600" data-testid="auto-ws-empty">
@@ -274,34 +316,19 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium">Filtres (combinés en ET)</label>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="mb-1 text-xs font-medium text-gray-600">Blocs <span className="text-gray-400">(vide = tous)</span></p>
-                  <div className="max-h-40 space-y-1 overflow-auto rounded border border-gray-200 p-2">
-                    {blocks.length === 0 && <p className="text-xs text-gray-400">Aucun bloc</p>}
-                    {blocks.map((b) => (
-                      <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${b.slug}`}>
-                        <input type="checkbox" checked={blockSlugs.includes(b.slug)}
-                          onChange={() => setBlockSlugs((p) => toggle(p, b.slug))} />
-                        <span className="truncate">{b.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1 text-xs font-medium text-gray-600">Types de document <span className="text-gray-400">(vide = tous)</span></p>
-                  <div className="max-h-40 space-y-1 overflow-auto rounded border border-gray-200 p-2">
-                    {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
-                    {types.map((t) => (
-                      <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
-                        <input type="checkbox" checked={typeSlugs.includes(t.slug)}
-                          onChange={() => setTypeSlugs((p) => toggle(p, t.slug))} />
-                        <span className="truncate">{t.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
+              <label className="mb-1 block text-sm font-medium">
+                Filtre type de document
+                <span className="ml-1 font-normal text-gray-400">(combiné en ET — vide = tous)</span>
+              </label>
+              <div className="grid max-h-40 grid-cols-2 gap-1 overflow-auto rounded border border-gray-200 p-2">
+                {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
+                {types.map((t) => (
+                  <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
+                    <input type="checkbox" checked={typeSlugs.includes(t.slug)}
+                      onChange={() => setTypeSlugs((p) => toggle(p, t.slug))} />
+                    <span className="truncate">{t.label}</span>
+                  </label>
+                ))}
               </div>
             </div>
 
