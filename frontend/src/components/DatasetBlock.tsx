@@ -26,8 +26,8 @@ function DatasetBlockView({ datasetId, editable }: { datasetId: string; editable
  * Bloc BlockNote custom `dataset`.
  *
  * Stocke la référence dans la prop `datasetId`. La (dé)sérialisation markdown
- * (jeton `dataset://<uuid>`) est gérée par `datasetMarkdown.ts` au niveau du
- * wrapper éditeur — même approche que le bloc mermaid.
+ * (jeton `dataset://<uuid>`) est portée par le codec `lib/blockCodecs/dataset`
+ * — même approche que le bloc mermaid.
  */
 export const DatasetBlock = createReactBlockSpec(
   {
