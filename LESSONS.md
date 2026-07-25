@@ -56,3 +56,9 @@ Le tsconfig racine est de type « solution » (uniquement des references) : `tsc
 
 ## [automations] Le contenu document vit dans document_version, pas document
 `document` n'a PAS de colonne `content` : le contenu courant = `document_version.content` à `version_number = document.version` (JOIN). L'ancien worker lisait `SELECT content FROM document` (cassé, jamais testé → silencieux). Toute lecture du contenu passe par le JOIN document_version.
+
+## [git] git add multi-chemins : un pathspec invalide annule TOUT le add
+`git add a b c` échoue en fatal si UN chemin est invalide (ex. fichier déjà
+supprimé via git rm) → rien n'est ajouté, mais un `git commit` enchaîné commit
+le staging PARTIEL précédent (commit cassé poussé). Après un commit chaîné à un
+add : toujours vérifier `git status --short` avant push, ou utiliser `git add -A`.
