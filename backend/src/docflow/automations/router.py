@@ -80,6 +80,14 @@ async def list_runs(
     return await service.list_runs(request.app.state.pool, ws_slug, automation_id, limit)
 
 
+@router.post(_AUTO + "/clone", response_model=AutomationOut, status_code=201)
+async def clone_automation(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> AutomationOut:
+    """Clone l'automate (config + portée + headers), créé désactivé."""
+    return await service.clone_automation(request.app.state.pool, ws_slug, automation_id)
+
+
 @router.post(_AUTO + "/run-next")
 async def run_next(
     ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth

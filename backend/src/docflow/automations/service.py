@@ -698,3 +698,75 @@ async def cursor_back(
         )
         await _advance(conn, automation_id, new_cursor)
     return {"cursor": new_cursor}
+
+
+async def clone_automation(
+    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
+) -> AutomationOut:
+    """Clone un automate : configuration complète (events, filtres, portée
+    workspaces, appel, headers) — créé DÉSACTIVÉ, libellé suffixé « (copie) ».
+
+    Le curseur est ALIGNÉ sur celui de la source : le clone ne rejoue pas tout
+    l'historique d'events. L'historique d'exécutions n'est pas copié.
+    """
+    async with pool.acquire() as conn, conn.transaction():
+        wk = await require_workspace(conn, ws_slug)
+        src = await conn.fetchrow(
+            "SELECT a.* FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
+            automation_id,
+            wk,
+        )
+        if src is None:
+            raise HTTPException(404, f"Automate {automation_id} introuvable.")
+
+        row = await conn.fetchrow(
+            "INSERT INTO automation "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            " functional_type_slugs, on_create, on_update, delay_minutes, contract_ref, "
+            " operation_id, url, http_method, body_template) "
+            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) "
+            "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "functional_type_slugs, on_create, on_update, delay_minutes, contract_ref, "
+            "operation_id, url, http_method, body_template, created_at, updated_at",
+            src["workspace_technical_key"],
+            f"{src['label']} (copie)",
+            src["event_codes"],
+            src["block_slugs"],
+            src["functional_type_slugs"],
+            src["on_create"],
+            src["on_update"],
+            src["delay_minutes"],
+            src["contract_ref"],
+            src["operation_id"],
+            src["url"],
+            src["http_method"],
+            src["body_template"],
+        )
+        assert row is not None
+        new_id: uuid.UUID = row["id"]
+
+        # Même portée que la source (le clone se place en fin d'ordre partout).
+        await _set_workspaces(conn, new_id, await _workspace_keys(conn, automation_id))
+
+        # Headers copiés tels quels (y compris références de secrets).
+        await conn.execute(
+            "INSERT INTO automation_header "
+            "(automation_ref, name, value, secret_ref, value_prefix, required, enabled) "
+            "SELECT $1, name, value, secret_ref, value_prefix, required, enabled "
+            "FROM automation_header WHERE automation_ref = $2",
+            new_id,
+            automation_id,
+        )
+
+        # Curseur aligné sur la source : pas de rejeu de l'historique.
+        await conn.execute(
+            "INSERT INTO automation_cursor (automation_ref, last_seq, updated_at) "
+            "SELECT $1, last_seq, now() FROM automation_cursor WHERE automation_ref = $2 "
+            "ON CONFLICT (automation_ref) DO NOTHING",
+            new_id,
+            automation_id,
+        )
+
+        headers = await _fetch_headers(conn, new_id)
+        slugs = await _workspace_slugs(conn, new_id)
+    return _row_to_out(row, headers, 0, slugs)

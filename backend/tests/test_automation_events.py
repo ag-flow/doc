@@ -514,3 +514,52 @@ async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
     with pytest.raises(HTTPException) as exc:
         await auto_svc.reorder_automations(db_pool, slug_a, [ids[0]])
     assert exc.value.status_code == 422
+
+
+async def test_clone_automation(db_pool: asyncpg.Pool) -> None:
+    from docflow.automations import service as auto_svc
+    from docflow.schemas.automations import AutomationCreate, AutomationHeaderIn
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    src = await auto_svc.create_automation(
+        db_pool,
+        slug,
+        AutomationCreate(
+            label="Rag", event_codes=[_UPDATED], block_slugs=["b"],
+            url="https://rag.example/index", http_method="POST",
+            body_template='{"doc": "{content}"}',
+            headers=[AutomationHeaderIn(name="Authorization", value_prefix="Bearer ",
+                                        secret_ref=f"${{secret://{uuid.uuid4()}}}")],
+        ),
+    )
+    # Curseur avancé sur la source ; un event antérieur ne doit PAS être rejoué par le clone.
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id)}),
+    )
+    seq = await db_pool.fetchval("SELECT max(seq) FROM document_event")
+    await db_pool.execute(
+        "INSERT INTO automation_cursor (automation_ref, last_seq) VALUES ($1, $2)",
+        src.id, seq,
+    )
+
+    clone = await auto_svc.clone_automation(db_pool, slug, src.id)
+    assert clone.id != src.id
+    assert clone.label == "Rag (copie)"
+    assert clone.active is False                      # toujours créé désactivé
+    assert clone.event_codes == [_UPDATED]
+    assert clone.block_slugs == ["b"]
+    assert clone.workspace_slugs == src.workspace_slugs
+    assert len(clone.headers) == 1                    # headers copiés (réf secret incluse)
+    assert clone.headers[0].value_prefix == "Bearer "
+
+    # Curseur aligné → pas de rejeu : 0 en attente pour le clone.
+    listed = await auto_svc.list_automations(db_pool, slug)
+    got = next(a for a in listed if a.id == clone.id)
+    assert got.pending_count == 0
+    # Aucun run copié.
+    assert await db_pool.fetchval(
+        "SELECT count(*) FROM automation_run WHERE automation_ref = $1", clone.id
+    ) == 0

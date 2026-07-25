@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical, Copy } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
@@ -112,6 +112,15 @@ export function AutomatesPage() {
       toast(`« ${label} » — revenu à l'event précédent`, 'info')
       void qc.invalidateQueries({ queryKey: ['automations', ws] })
     },
+  })
+
+  const cloneMut = useMutation({
+    mutationFn: (id: string) => automationsApi.clone(ws!, id),
+    onSuccess: (created) => {
+      toast(`« ${created.label} » créé (désactivé)`, 'success')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+    onError: (e: Error) => toast(`Clonage échoué : ${e.message}`, 'error'),
   })
 
   // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
@@ -271,6 +280,12 @@ export function AutomatesPage() {
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
                         a.active ? 'translate-x-[18px]' : 'translate-x-0.5'
                       }`} />
+                    </button>
+                    <button type="button" title="Cloner (créé désactivé)"
+                      onClick={() => cloneMut.mutate(a.id)} disabled={cloneMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+                      data-testid={`clone-${a.id}`}>
+                      <Copy size={14} />
                     </button>
                     <button type="button" title="Modifier"
                       onClick={() => { setDialogAuto(a); setDialogError(null) }}

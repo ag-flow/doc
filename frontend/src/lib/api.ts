@@ -1051,6 +1051,9 @@ export const automationsApi = {
   /** Ordre d'évaluation dans le workspace (drag & drop) — ids dans le nouvel ordre. */
   reorder: (ws: string, ids: string[]) =>
     api.put<AutomationOut[]>(`/workspaces/${ws}/automations/order`, { ids }),
+  /** Clone (config + portée + headers), créé désactivé. */
+  clone: (ws: string, id: string) =>
+    api.post<AutomationOut>(`/workspaces/${ws}/automations/${id}/clone`, {}),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
