@@ -242,7 +242,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <TabBtn id="call">Appel</TabBtn>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="dialog-scroll min-h-0 flex-1 overflow-y-auto pr-2">
         {/* ── Onglet Libellé ── */}
         {tab === 'label' && (
           <div className="space-y-4">
@@ -270,7 +270,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   (workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous)
                 </span>
               </label>
-              <div className="max-h-64 space-y-1.5 overflow-auto rounded border border-gray-200 p-2">
+              <div className="space-y-1.5 rounded border border-gray-200 p-2">
                 {workspaces.map((w) => {
                   const covered = workspaceSlugs.includes(w.slug)
                   return (
@@ -320,7 +320,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 Filtre type de document
                 <span className="ml-1 font-normal text-gray-400">(combiné en ET — vide = tous)</span>
               </label>
-              <div className="grid max-h-40 grid-cols-2 gap-1 overflow-auto rounded border border-gray-200 p-2">
+              <div className="grid grid-cols-2 gap-1 rounded border border-gray-200 p-2">
                 {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
                 {types.map((t) => (
                   <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
