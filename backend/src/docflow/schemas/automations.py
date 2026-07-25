@@ -87,6 +87,8 @@ class AutomationOut(BaseModel):
     active: bool
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
     pending_count: int = 0
+    # Position d'évaluation DANS LE WORKSPACE demandé (1..n).
+    position: int = 0
     workspace_slugs: list[str] = []
     event_codes: list[str]
     block_slugs: list[str] = []
@@ -119,3 +121,12 @@ class AutomationRunOut(BaseModel):
     response_body: str | None = None   # corps/message de réponse
     event_code: str | None = None
     manual: bool = False               # déclenché via « jouer l'event » (test)
+
+
+class AutomationOrderIn(BaseModel):
+    """Réordonnancement des automates d'un workspace (drag & drop)."""
+
+    model_config = {"extra": "forbid"}
+
+    # Ids dans le nouvel ordre — doit couvrir EXACTEMENT les automates du workspace.
+    ids: list[uuid.UUID]

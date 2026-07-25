@@ -470,3 +470,45 @@ async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
             db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
         )
     assert exc.value.status_code == 422
+
+
+async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
+    from fastapi import HTTPException
+
+    from docflow.automations import service as auto_svc
+    from docflow.schemas.automations import AutomationCreate
+
+    _wk_a, slug_a, _ = await _mk_ws_doc(db_pool)
+    _wk_b, slug_b, _ = await _mk_ws_doc(db_pool)
+
+    ids = []
+    for name in ("Alpha", "Beta"):
+        out = await auto_svc.create_automation(
+            db_pool,
+            slug_a,
+            AutomationCreate(
+                label=name, event_codes=[_UPDATED],
+                workspace_slugs=[slug_a, slug_b],
+                url="https://x/api", http_method="POST",
+            ),
+        )
+        ids.append(out.id)
+
+    # Ordre initial identique (création) dans les deux workspaces.
+    order_a = [a.id for a in await auto_svc.list_automations(db_pool, slug_a)]
+    assert order_a == ids
+
+    # Inverser DANS A seulement.
+    await auto_svc.reorder_automations(db_pool, slug_a, [ids[1], ids[0]])
+    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_a)] == [ids[1], ids[0]]
+    # B garde SON ordre (indépendance par workspace).
+    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_b)] == ids
+
+    # Positions exposées dans le contexte du workspace demandé.
+    a_list = await auto_svc.list_automations(db_pool, slug_a)
+    assert [a.position for a in a_list] == [1, 2]
+
+    # Couverture inexacte → 422.
+    with pytest.raises(HTTPException) as exc:
+        await auto_svc.reorder_automations(db_pool, slug_a, [ids[0]])
+    assert exc.value.status_code == 422

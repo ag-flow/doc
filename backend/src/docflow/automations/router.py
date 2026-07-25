@@ -9,6 +9,7 @@ from docflow.automations import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.automations import (
     AutomationCreate,
+    AutomationOrderIn,
     AutomationOut,
     AutomationRunOut,
     AutomationUpdate,
@@ -26,6 +27,14 @@ async def list_automations(
     ws_slug: str, request: Request, _: AuthUser = _Auth
 ) -> list[AutomationOut]:
     return await service.list_automations(request.app.state.pool, ws_slug)
+
+
+@router.put(_WS + "/automations/order", response_model=list[AutomationOut])
+async def reorder_automations(
+    ws_slug: str, body: AutomationOrderIn, request: Request, _: AuthUser = _Auth
+) -> list[AutomationOut]:
+    """Ordre d'évaluation des automates du workspace (drag & drop)."""
+    return await service.reorder_automations(request.app.state.pool, ws_slug, body.ids)
 
 
 @router.post(_WS + "/automations", response_model=AutomationOut, status_code=201)

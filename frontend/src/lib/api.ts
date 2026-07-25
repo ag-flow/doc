@@ -964,6 +964,8 @@ export interface AutomationOut {
   label: string
   active: boolean
   pending_count: number
+  /** Position d'évaluation dans le workspace demandé (1..n). */
+  position: number
   workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]
@@ -1046,6 +1048,9 @@ export const automationsApi = {
     }>(`/workspaces/${ws}/automations/${id}/advance`, {}),
   cursorBack: (ws: string, id: string) =>
     api.post<{ cursor: number }>(`/workspaces/${ws}/automations/${id}/cursor-back`, {}),
+  /** Ordre d'évaluation dans le workspace (drag & drop) — ids dans le nouvel ordre. */
+  reorder: (ws: string, ids: string[]) =>
+    api.put<AutomationOut[]>(`/workspaces/${ws}/automations/order`, { ids }),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

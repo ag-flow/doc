@@ -419,10 +419,17 @@ async def _purge_events(pool: asyncpg.Pool) -> None:
 
 async def tick(pool: asyncpg.Pool, settings: object) -> None:
     async with pool.acquire() as conn:
+        # Ordre d'évaluation : la priorité par workspace (position de la table
+        # de liaison). Un automate multi-workspaces est évalué UNE fois par
+        # tick (curseur unique) — sa priorité effective est la plus haute
+        # (min des positions) parmi ses workspaces.
         automations = await conn.fetch(
             "SELECT id, workspace_technical_key, event_codes, block_slugs, "
-            "functional_type_slugs, delay_minutes, url, http_method, body_template "
-            "FROM automation WHERE active = true"
+            "functional_type_slugs, delay_minutes, url, http_method, body_template, "
+            "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
+            " WHERE aw.automation_ref = automation.id) AS prio "
+            "FROM automation WHERE active = true "
+            "ORDER BY prio, created_at, id"
         )
 
     for automation in automations:

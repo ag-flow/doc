@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
@@ -114,6 +114,30 @@ export function AutomatesPage() {
     },
   })
 
+  // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
+  const [dragId, setDragId] = useState<string | null>(null)
+  const reorderMut = useMutation({
+    mutationFn: (ids: string[]) => automationsApi.reorder(ws!, ids),
+    onSuccess: (list) => qc.setQueryData(['automations', ws], list),
+    onError: (e: Error) => {
+      toast(`Réordonnancement échoué : ${e.message}`, 'error')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+  })
+
+  function handleDrop(targetId: string) {
+    if (!dragId || dragId === targetId) { setDragId(null); return }
+    const ids = automations.map((a) => a.id)
+    const from = ids.indexOf(dragId)
+    const to = ids.indexOf(targetId)
+    if (from < 0 || to < 0) { setDragId(null); return }
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    setDragId(null)
+    // Optimiste : réordonner localement en attendant la réponse.
+    qc.setQueryData(['automations', ws], ids.map((id) => automations.find((a) => a.id === id)!))
+    reorderMut.mutate(ids)
+  }
+
   function saveAuto(data: AutomationCreate) {
     setDialogError(null)
     if (dialogAuto === 'new') {
@@ -163,8 +187,27 @@ export function AutomatesPage() {
         ) : (
           <div className="space-y-2">
             {automations.map((a) => (
-              <div key={a.id} className="rounded-md border border-gray-200 bg-white overflow-hidden">
+              <div
+                key={a.id}
+                draggable
+                onDragStart={() => setDragId(a.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => handleDrop(a.id)}
+                data-testid={`auto-card-${a.id}`}
+                className={`rounded-md border bg-white overflow-hidden transition-colors ${
+                  dragId === a.id ? 'border-indigo-400 opacity-60' : 'border-gray-200'
+                }`}
+              >
                 <div className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="flex shrink-0 cursor-grab items-center text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+                    title="Glisser pour changer l'ordre d'évaluation (propre à ce workspace)">
+                    <GripVertical size={14} />
+                  </span>
+                  <span className="w-5 shrink-0 text-right font-mono text-[11px] text-gray-400"
+                    title="Position d'évaluation dans ce workspace">
+                    {a.position}
+                  </span>
                   <button type="button" onClick={() => setExpandedAuto(expandedAuto === a.id ? null : a.id)}
                     className="text-gray-400 hover:text-gray-700 shrink-0">
                     {expandedAuto === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
