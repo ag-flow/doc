@@ -8,8 +8,9 @@ from docflow.auth.deps import require_authenticated
 from docflow.references import service
 from docflow.references.service import BacklinkOut, BrokenLinkBloc, BrokenLinkDetail
 from docflow.schemas.auth import AuthUser
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["references"])
+router = APIRouter(tags=["references"], dependencies=[Depends(require_ws_access)])
 
 _Auth = Depends(require_authenticated)
 

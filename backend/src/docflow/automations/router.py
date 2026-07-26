@@ -15,8 +15,9 @@ from docflow.schemas.automations import (
     AutomationRunOut,
     AutomationUpdate,
 )
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["automations"])
+router = APIRouter(tags=["automations"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"

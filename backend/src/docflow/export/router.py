@@ -6,8 +6,9 @@ from fastapi.responses import Response
 from docflow.auth.deps import require_authenticated
 from docflow.export import service
 from docflow.schemas.auth import AuthUser
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["export"])
+router = APIRouter(tags=["export"], dependencies=[Depends(require_ws_access)])
 
 _Auth = Depends(require_authenticated)
 

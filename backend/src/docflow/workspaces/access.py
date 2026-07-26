@@ -3,7 +3,9 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
+from fastapi import Depends, HTTPException, Request
 
+from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 
 
@@ -58,3 +60,34 @@ async def accessible_workspace_slugs(pool: asyncpg.Pool, user: AuthUser) -> set[
         user.id,
     )
     return {r["slug"] for r in rows}
+
+
+async def require_ws_access(
+    request: Request, user: AuthUser = Depends(require_authenticated)
+) -> None:
+    """Dépendance REST : n'autorise l'accès aux routes `/workspaces/{ws_slug}/…`
+    qu'aux utilisateurs ayant accès au workspace (owner / membre / superadmin).
+
+    - Route sans `ws_slug` dans le chemin → no-op (la dépendance peut être posée
+      au niveau du router, même mixte).
+    - Requête par clé API → no-op : les scopes de la clé gouvernent
+      (`check_api_key_scope`), inchangé.
+    - Workspace inconnu → no-op : les services rendent leur 404 habituel.
+    - Sans accès → **404** (fail closed : ne pas révéler l'existence).
+    """
+    ws_slug = request.path_params.get("ws_slug")
+    if not ws_slug:
+        return
+    if getattr(request.state, "api_key_scopes", None) is not None:
+        return
+    if user.is_admin:
+        return
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        key = await conn.fetchval(
+            "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+        )
+        if key is None:
+            return
+        if not await user_can_access_workspace(conn, key, user):
+            raise HTTPException(status_code=404, detail=f"workspace '{ws_slug}' introuvable")

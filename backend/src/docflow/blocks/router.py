@@ -22,8 +22,9 @@ from docflow.schemas.introspection import BlockObjectsPage, BlockPropertiesOut
 from docflow.schemas.query import BlockQueryBody, QuerySpec
 from docflow.schemas.tree import BlockTreePage
 from docflow.webhooks import service as wh_service
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["blocks"])
+router = APIRouter(tags=["blocks"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _BLOCK = _WS + "/blocks/{block_slug}"

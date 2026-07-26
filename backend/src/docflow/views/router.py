@@ -6,8 +6,9 @@ from docflow.auth.deps import get_current_user
 from docflow.schemas.auth import AuthUser
 from docflow.views import service
 from docflow.views.service import ViewCreate, ViewOut, ViewResults, ViewUpdate
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["views"])
+router = APIRouter(tags=["views"], dependencies=[Depends(require_ws_access)])
 
 _Auth = Depends(get_current_user)
 

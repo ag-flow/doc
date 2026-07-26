@@ -15,6 +15,7 @@ from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_ga
 from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import Template
+from docflow.workspaces.access import require_ws_access
 
 log = structlog.get_logger(__name__)
 
@@ -329,6 +330,7 @@ async def delete_template(
 
 @router.post(
     "/workspaces/{ws_slug}/templates/import",
+    dependencies=[Depends(require_ws_access)],
     response_model=ImportResultOut,
 )
 async def import_template(

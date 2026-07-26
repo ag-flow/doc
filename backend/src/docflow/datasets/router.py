@@ -42,8 +42,9 @@ from docflow.schemas.dataset import (
     RowUpdate,
     RowUpdatedOut,
 )
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["datasets"])
+router = APIRouter(tags=["datasets"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}/datasets"
 _DS = _WS + "/{dataset_id}"

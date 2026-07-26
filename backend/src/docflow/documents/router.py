@@ -15,8 +15,9 @@ from docflow.schemas.auth import AuthUser
 from docflow.schemas.document import DocumentCreate, DocumentOut, DocumentUpdate
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
 from docflow.webhooks import service as wh_service
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["documents"])
+router = APIRouter(tags=["documents"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"
