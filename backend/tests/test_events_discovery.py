@@ -32,7 +32,7 @@ def test_schemas_is_public(
     with _client(monkeypatch, test_schema_url) as client:
         r = client.get("/api/schemas")
     assert r.status_code == 200
-    assert len(r.json()["events"]) == 6
+    assert len(r.json()["events"]) == 7
 
 
 def test_schema_catalog_and_versions(
@@ -47,7 +47,7 @@ def test_schema_catalog_and_versions(
         assert body["specVersion"]
         assert body["revision"].startswith("sha256:")
         codes = {e["eventCode"] for e in body["events"]}
-        assert len(codes) == 6
+        assert len(codes) == 7
         assert "docflow.document.created.v1" in codes
 
         r = client.get("/api/schemas/docflow.document.created.v1/versions", headers=hdrs)

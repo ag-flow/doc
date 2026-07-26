@@ -804,8 +804,12 @@ async def clear_runs(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID)
 async def push_update_events(
     pool: asyncpg.Pool, selections: list[dict[str, Any]]
 ) -> dict[str, int]:
-    """Émet un event `docflow.document.updated.v1` SYNTHÉTIQUE pour chaque
-    document des workspaces/blocs sélectionnés (re-déclenchement d'automates).
+    """Émet un event `docflow.document.refreshed.v1` pour chaque document des
+    workspaces/blocs sélectionnés.
+
+    Event REFRESH dédié (distinct de updated) : seuls les automates abonnés à
+    « Document rafraîchi » se re-déclenchent — les abonnés à updated ne
+    réagissent pas à un push manuel.
 
     Écrit UNIQUEMENT dans le journal document_event (consommé par les
     automates) — jamais dans l'outbox producteur : on ne re-streame pas toute
@@ -822,7 +826,7 @@ async def push_update_events(
                 INSERT INTO document_event
                     (workspace_technical_key, document_ref, event_code, business)
                 SELECT d.workspace_technical_key, d.doc_technical_key,
-                       'docflow.document.updated.v1',
+                       'docflow.document.refreshed.v1',
                        jsonb_build_object(
                            'documentId', d.doc_technical_key::text,
                            'workspaceSlug', w.slug,

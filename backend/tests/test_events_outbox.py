@@ -37,7 +37,7 @@ async def _events(pool: asyncpg.Pool) -> list[tuple[str, dict]]:
 
 
 def test_catalog_shape() -> None:
-    assert len(catalog.CATALOG) == 6
+    assert len(catalog.CATALOG) == 7
     assert catalog.catalog_revision().startswith("sha256:")
     codes = {e["eventCode"] for e in catalog.catalog_summary()}
     assert "docflow.document.created.v1" in codes

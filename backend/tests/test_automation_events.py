@@ -619,6 +619,9 @@ async def test_stop_chain_blocks_lower_priority(
     assert consumed == a.id
 
 
+_REFRESHED = "docflow.document.refreshed.v1"
+
+
 async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     from docflow.automations import service as auto_svc
     from docflow.schemas.automations import AutomationCreate
@@ -639,10 +642,17 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
         wk, b2, ft,
     )
 
+    # L'automate abonné à REFRESHED reçoit les push ; un abonné updated non.
     auto = await auto_svc.create_automation(
         db_pool, slug,
         AutomationCreate(
-            label="Rag", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
+            label="Rag", event_codes=[_REFRESHED], url="https://x/api", http_method="POST"
+        ),
+    )
+    upd_only = await auto_svc.create_automation(
+        db_pool, slug,
+        AutomationCreate(
+            label="UpdOnly", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
         ),
     )
 
@@ -659,6 +669,8 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     # Les events sont bien visibles par l'automate (pending) et portent le contrat.
     listed = await auto_svc.list_automations(db_pool, slug)
     assert next(a for a in listed if a.id == auto.id).pending_count == 3
+    # L'abonné updated N'EST PAS re-déclenché par un push manuel.
+    assert next(a for a in listed if a.id == upd_only.id).pending_count == 0
     biz = await db_pool.fetchval(
         "SELECT business FROM document_event WHERE workspace_technical_key = $1 "
         "ORDER BY seq DESC LIMIT 1", wk,

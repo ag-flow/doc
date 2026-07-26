@@ -14,7 +14,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
-from docflow.me.router import router as me_router
 from docflow.apikeys.router import router as apikeys_router
 from docflow.artifacts.router import router as artifacts_router
 from docflow.artifacts.worker import purge_loop as artifact_purge_loop
@@ -40,6 +39,7 @@ from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
+from docflow.me.router import router as me_router
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router

@@ -102,9 +102,10 @@ export function PushEventsDialog({ onConfirm, onClose, pending }: Props) {
         </div>
 
         <p className="text-sm text-gray-500">
-          Émet un event <span className="font-mono text-xs">document.updated</span> pour{' '}
-          <strong>chaque document</strong> des workspaces/blocs cochés — les automates qui
-          matchent se (re)déclencheront. Aucun bloc coché = tous les blocs du workspace.
+          Émet un event <span className="font-mono text-xs">document.refreshed</span> pour{' '}
+          <strong>chaque document</strong> des workspaces/blocs cochés. Seuls les automates
+          abonnés à <strong>« Document rafraîchi »</strong> se re-déclencheront — les abonnés
+          aux modifications normales ne réagissent pas. Aucun bloc coché = tous les blocs.
         </p>
 
         <div className="dialog-scroll min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded border border-gray-200 p-2">
