@@ -352,7 +352,10 @@
     "slashHint": "Camembert, barres ou courbe",
     "skeletonTitle": "Répartition",
     "unknownType": "type « {{type}} » inconnu — rendu tabulaire",
-    "percentSum": "la répartition ne totalise pas 100 %"
+    "percentSum": "la répartition ne totalise pas 100 %",
+    "datasetOffline": "données du dataset non disponibles hors session",
+    "datasetMissing": "dataset introuvable ou supprimé",
+    "datasetNoNumeric": "aucune colonne numérique dans le dataset — rendu tabulaire"
   },
   "dataset": {
     "loading": "Chargement du tableau…",

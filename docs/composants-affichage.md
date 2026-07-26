@@ -79,7 +79,14 @@ Février | 8 | 7
     100 ± 0,5 affiche un badge (le rendu normalise par la somme : sans badge,
     l'erreur serait invisible) ;
   - `title`, `header` ;
-  - `source` : **réservé** (branchement futur sur un dataset), non implémenté.
+  - `source="dataset://<uuid>"` : le chart se branche sur un **dataset vivant**
+    du workspace courant — le corps records est alors ignoré (il sert de repli
+    hors session). Forme `dataset:<uuid>` tolérée ; la forme canonique
+    `dataset://<uuid>` est **recommandée** car elle est comptée par le refcount
+    de contenu (le dataset référencé n'est pas purgeable). Mapping : 1ʳᵉ colonne
+    (par position) = libellés ; colonnes `int`/`float` = séries (nommées par
+    leur libellé de colonne). Dataset introuvable → badge + repli sur le corps ;
+    aucune colonne numérique → badge + rendu tabulaire.
 - Valeur non numérique → ligne ignorée + badge. Virgule décimale acceptée.
 - Rendu : SVG natif docflow (aucune dépendance), export SVG via l'en-tête du bloc.
 

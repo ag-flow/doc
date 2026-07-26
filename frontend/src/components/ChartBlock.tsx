@@ -1,8 +1,11 @@
 import { useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { createReactBlockSpec } from '@blocknote/react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 import { parseAttrs, parseRecords } from '../lib/blockCodecs/records'
+import { datasetsApi, type DatasetDetailOut } from '../lib/datasetsApi'
+import { useWorkspaceSlugOrNull } from '../contexts/WorkspaceContext'
 import { BlockFrame } from './BlockFrame'
 import { DiagnosticBadge } from './TimelineBlock'
 
@@ -17,7 +20,7 @@ const attrsSchema = z.object({
   type: z.string().optional(),
   format: z.string().optional(),
   header: z.string().optional(),
-  // Réservé (spec 40) — accepté mais non implémenté dans ce lot.
+  // `dataset://<uuid>` : chart branché sur un dataset vivant (corps ignoré).
   source: z.string().optional(),
 })
 
@@ -221,6 +224,131 @@ function TableFallback({ data }: { data: ChartData }) {
 
 // ── Vue principale ────────────────────────────────────────────────────────────
 
+/** Rendu d'un jeu de données selon le type demandé (partagé records/dataset). */
+function ChartBody({ data, type, typeOk, format, body, svgRef }: {
+  data: ChartData
+  type: ChartType
+  typeOk: boolean
+  format: string
+  body: string
+  svgRef: React.RefObject<SVGSVGElement | null>
+}) {
+  if (data.labels.length === 0) {
+    return <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body}</pre>
+  }
+  if (!typeOk) return <TableFallback data={data} />
+  if (type === 'pie' || type === 'donut') {
+    return <PieDonut data={data} donut={type === 'donut'} format={format} svgRef={svgRef} />
+  }
+  if (type === 'bar') return <Bars data={data} svgRef={svgRef} />
+  return <Lines data={data} svgRef={svgRef} />
+}
+
+// `source="dataset://<uuid>"` (recommandé — compté par le refcount de contenu)
+// ou `dataset:<uuid>` (forme spec 40, tolérée).
+const DATASET_SOURCE_RE = /^dataset:(?:\/\/)?([0-9a-fA-F-]{36})$/
+
+/** Construit les données chart depuis un dataset : 1ʳᵉ colonne = libellés,
+ *  colonnes numériques (int/float) = séries. */
+function buildDatasetData(detail: DatasetDetailOut): { data: ChartData; noNumeric: boolean } {
+  const cols = [...detail.columns].sort((a, b) => a.position - b.position)
+  const labelCol = cols[0]
+  const numCols = cols.filter((c) => c !== labelCol && (c.type === 'int' || c.type === 'float'))
+  const labels: string[] = []
+  const values: number[][] = []
+  let ignored = 0
+  for (const row of detail.rows) {
+    const label = (labelCol && row.cells[labelCol.slug]) || ''
+    if (!label) {
+      ignored++
+      continue
+    }
+    const nums = numCols.map((c) => {
+      const raw = row.cells[c.slug]
+      return raw == null || raw === '' ? 0 : toNumber(raw)
+    })
+    if (nums.some((n) => Number.isNaN(n))) {
+      ignored++
+      continue
+    }
+    labels.push(label)
+    values.push(nums)
+  }
+  return {
+    data: {
+      labels,
+      values,
+      series: numCols.map((c, i) => ({ name: c.label, color: PALETTE[i % PALETTE.length] })),
+      ignored,
+    },
+    noNumeric: numCols.length === 0,
+  }
+}
+
+/** Chart branché sur un dataset vivant (attribut source). */
+function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, extraBadges }: {
+  datasetId: string
+  conf: { title?: string }
+  type: ChartType
+  typeOk: boolean
+  format: string
+  body: string
+  source: string
+  extraBadges: string[]
+}) {
+  const { t } = useTranslation()
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const currentSlug = useWorkspaceSlugOrNull()
+  const { data: detail, isLoading, isError } = useQuery<DatasetDetailOut>({
+    queryKey: ['dataset', currentSlug, datasetId],
+    queryFn: () => datasetsApi.getDataset(currentSlug!, datasetId),
+    enabled: !!currentSlug,
+    retry: false,
+  })
+
+  const badges = [...extraBadges]
+  let content: React.ReactNode
+  if (!currentSlug) {
+    // Lecture publique / hors session : AUCUN appel réseau authentifié (spec 40).
+    badges.push(t('chart.datasetOffline'))
+    content = <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body || datasetId}</pre>
+  } else if (isLoading) {
+    content = <p className="text-xs text-gray-400">{t('dataset.loading')}</p>
+  } else if (isError || !detail) {
+    badges.push(t('chart.datasetMissing'))
+    content = <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body || datasetId}</pre>
+  } else {
+    const built = buildDatasetData(detail)
+    if (built.noNumeric) badges.push(t('chart.datasetNoNumeric'))
+    if (built.data.ignored > 0) {
+      badges.push(t('records.ignoredLines', { count: built.data.ignored }))
+    }
+    if (format === 'percent' && built.data.values.length > 0) {
+      const sum = built.data.values.map((v) => v[0] ?? 0).reduce((a, b) => a + b, 0)
+      if (Math.abs(sum - 100) > 0.5) badges.push(t('chart.percentSum'))
+    }
+    content = built.noNumeric ? (
+      <TableFallback data={built.data} />
+    ) : (
+      <ChartBody data={built.data} type={type} typeOk={typeOk} format={format} body={body} svgRef={svgRef} />
+    )
+  }
+
+  return (
+    <BlockFrame
+      title={conf.title ?? null}
+      typeLabel="chart"
+      source={source}
+      svg={() => svgRef.current?.outerHTML ?? null}
+    >
+      {content}
+      {badges.map((b) => (
+        <DiagnosticBadge key={b}>{b}</DiagnosticBadge>
+      ))}
+    </BlockFrame>
+  )
+}
+
 /** Vue chart (exportée pour les tests). */
 export function ChartView({ attrs, body, source }: { attrs: string; body: string; source: string }) {
   const { t } = useTranslation()
@@ -233,18 +361,35 @@ export function ChartView({ attrs, body, source }: { attrs: string; body: string
   const typeOk = (CHART_TYPES as readonly string[]).includes(requestedType)
   const type: ChartType = typeOk ? (requestedType as ChartType) : 'bar'
   const format = conf.format === 'percent' ? 'percent' : 'count'
-  const data = buildData(body, conf.header === 'true')
 
-  const badges: string[] = []
+  const commonBadges: string[] = []
+  if (!typeOk) commonBadges.push(t('chart.unknownType', { type: requestedType }))
+  if (unknown.length > 0) commonBadges.push(t('records.unknownAttrs'))
+
+  // Branché sur un dataset vivant : le corps records est ignoré (repli hors session).
+  const dsMatch = conf.source ? DATASET_SOURCE_RE.exec(conf.source.trim()) : null
+  if (dsMatch) {
+    return (
+      <DatasetChart
+        datasetId={dsMatch[1].toLowerCase()}
+        conf={conf}
+        type={type}
+        typeOk={typeOk}
+        format={format}
+        body={body}
+        source={source}
+        extraBadges={commonBadges}
+      />
+    )
+  }
+
+  const data = buildData(body, conf.header === 'true')
+  const badges = [...commonBadges]
   if (data.ignored > 0) badges.push(t('records.ignoredLines', { count: data.ignored }))
-  if (!typeOk) badges.push(t('chart.unknownType', { type: requestedType }))
-  if (unknown.length > 0) badges.push(t('records.unknownAttrs'))
   if (format === 'percent' && data.values.length > 0) {
     const sum = data.values.map((v) => v[0]).reduce((a, b) => a + b, 0)
     if (Math.abs(sum - 100) > 0.5) badges.push(t('chart.percentSum'))
   }
-
-  const empty = data.labels.length === 0
 
   return (
     <BlockFrame
@@ -253,17 +398,7 @@ export function ChartView({ attrs, body, source }: { attrs: string; body: string
       source={source}
       svg={() => svgRef.current?.outerHTML ?? null}
     >
-      {empty ? (
-        <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body}</pre>
-      ) : !typeOk ? (
-        <TableFallback data={data} />
-      ) : type === 'pie' || type === 'donut' ? (
-        <PieDonut data={data} donut={type === 'donut'} format={format} svgRef={svgRef} />
-      ) : type === 'bar' ? (
-        <Bars data={data} svgRef={svgRef} />
-      ) : (
-        <Lines data={data} svgRef={svgRef} />
-      )}
+      <ChartBody data={data} type={type} typeOk={typeOk} format={format} body={body} svgRef={svgRef} />
       {badges.map((b) => (
         <DiagnosticBadge key={b}>{b}</DiagnosticBadge>
       ))}
