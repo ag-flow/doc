@@ -617,3 +617,58 @@ async def test_stop_chain_blocks_lower_priority(
         "ORDER BY seq DESC LIMIT 1", wk,
     )
     assert consumed == a.id
+
+
+async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
+    from docflow.automations import service as auto_svc
+    from docflow.schemas.automations import AutomationCreate
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # 1 doc dans le bloc 'b'
+    # Deuxième bloc + document, pour vérifier le filtre par bloc.
+    ft = await db_pool.fetchval(
+        "SELECT functional_type_ref FROM document WHERE doc_technical_key = $1", doc_id
+    )
+    b2 = await db_pool.fetchval(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ('b2','B2',$1,$2) RETURNING id",
+        ft, wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO document (workspace_technical_key, data_block_ref, functional_type_ref, "
+        "title, version) VALUES ($1,$2,$3,'Doc2',1)",
+        wk, b2, ft,
+    )
+
+    auto = await auto_svc.create_automation(
+        db_pool, slug,
+        AutomationCreate(
+            label="Rag", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
+        ),
+    )
+
+    # Sélection filtrée sur le bloc 'b' → 1 event (pas le doc de b2).
+    r = await auto_svc.push_update_events(
+        db_pool, [{"workspace_slug": slug, "block_slugs": ["b"]}]
+    )
+    assert r["events"] == 1
+
+    # Sélection workspace entier (blocs vides = tous) → 2 events de plus.
+    r = await auto_svc.push_update_events(db_pool, [{"workspace_slug": slug}])
+    assert r["events"] == 2
+
+    # Les events sont bien visibles par l'automate (pending) et portent le contrat.
+    listed = await auto_svc.list_automations(db_pool, slug)
+    assert next(a for a in listed if a.id == auto.id).pending_count == 3
+    biz = await db_pool.fetchval(
+        "SELECT business FROM document_event WHERE workspace_technical_key = $1 "
+        "ORDER BY seq DESC LIMIT 1", wk,
+    )
+    parsed = json.loads(biz) if isinstance(biz, str) else biz
+    assert parsed["workspaceSlug"] == slug
+    assert parsed["title"] in ("Titre doc", "Doc2")
+    assert parsed["version"] == 1
+
+    # AUCUNE écriture dans l'outbox producteur (pas de re-stream externe).
+    assert await db_pool.fetchval(
+        "SELECT count(*) FROM event_outbox WHERE workspace_technical_key = $1", wk
+    ) == 0

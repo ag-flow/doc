@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical, Copy } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical, Copy, Send } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
+import { PushEventsDialog, type PushSelection } from '../components/PushEventsDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
 import { useToast } from '../components/Toast'
 import { automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
@@ -132,6 +133,18 @@ export function AutomatesPage() {
     onError: (e: Error) => toast(`Échec : ${e.message}`, 'error'),
   })
 
+  const [pushOpen, setPushOpen] = useState(false)
+  const pushEventsMut = useMutation({
+    mutationFn: (selections: PushSelection[]) => automationsApi.pushEvents(selections),
+    onSuccess: (res) => {
+      setPushOpen(false)
+      toast(`${res.events} event${res.events > 1 ? 's' : ''} de modification émis`, 'success')
+      // Les compteurs « en attente » bougent immédiatement.
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+    onError: (e: Error) => toast(`Push events échoué : ${e.message}`, 'error'),
+  })
+
   // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
   const [dragId, setDragId] = useState<string | null>(null)
   const reorderMut = useMutation({
@@ -193,10 +206,17 @@ export function AutomatesPage() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold">Automates</h2>
-          <Button size="sm" onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
-            <Plus size={13} className="mr-1.5" />
-            Nouvel automate
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setPushOpen(true)}
+              data-testid="push-events-btn">
+              <Send size={13} className="mr-1.5" />
+              Push events
+            </Button>
+            <Button size="sm" onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
+              <Plus size={13} className="mr-1.5" />
+              Nouvel automate
+            </Button>
+          </div>
         </div>
         {aLoading ? (
           <p className="text-sm text-gray-400">Chargement…</p>
@@ -332,6 +352,14 @@ export function AutomatesPage() {
           </div>
         )}
       </section>
+
+      {pushOpen && (
+        <PushEventsDialog
+          onConfirm={(sel) => pushEventsMut.mutate(sel)}
+          onClose={() => setPushOpen(false)}
+          pending={pushEventsMut.isPending}
+        />
+      )}
 
       {dialogAuto !== undefined && (
         <AutomationDialog

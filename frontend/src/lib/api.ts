@@ -1078,6 +1078,9 @@ export const automationsApi = {
   /** Vide l'historique d'exécutions (le curseur est conservé). */
   clearRuns: (ws: string, id: string) =>
     api.delete<{ deleted: number }>(`/workspaces/${ws}/automations/${id}/runs`),
+  /** Émet des events de modification synthétiques (re-déclenchement d'automates). */
+  pushEvents: (selections: { workspace_slug: string; block_slugs?: string[] }[]) =>
+    api.post<{ events: number }>('/automations/push-events', { selections }),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

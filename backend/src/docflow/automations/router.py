@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from docflow.auth.deps import require_authenticated
 from docflow.automations import service
@@ -20,6 +21,32 @@ router = APIRouter(tags=["automations"])
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"
 _Auth = Depends(require_authenticated)
+
+
+class PushEventsSelection(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    workspace_slug: str
+    # Vide = tous les blocs du workspace.
+    block_slugs: list[str] = []
+
+
+class PushEventsIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    selections: list[PushEventsSelection]
+
+
+@router.post("/automations/push-events")
+async def push_events(
+    body: PushEventsIn, request: Request, _: AuthUser = _Auth
+) -> dict[str, int]:
+    """Émet des events de modification synthétiques sur les documents des
+    workspaces/blocs sélectionnés (re-déclenchement des automates)."""
+    return await service.push_update_events(
+        request.app.state.pool,
+        [s.model_dump() for s in body.selections],
+    )
 
 
 @router.get(_WS + "/automations", response_model=list[AutomationOut])

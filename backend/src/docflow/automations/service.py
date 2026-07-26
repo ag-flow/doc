@@ -799,3 +799,44 @@ async def clear_runs(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID)
             "DELETE FROM automation_run WHERE automation_ref = $1", automation_id
         )
     return int(result.split()[-1])
+
+
+async def push_update_events(
+    pool: asyncpg.Pool, selections: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Émet un event `docflow.document.updated.v1` SYNTHÉTIQUE pour chaque
+    document des workspaces/blocs sélectionnés (re-déclenchement d'automates).
+
+    Écrit UNIQUEMENT dans le journal document_event (consommé par les
+    automates) — jamais dans l'outbox producteur : on ne re-streame pas toute
+    la base vers le workflow externe. `block_slugs` vide = tous les blocs.
+    """
+    total = 0
+    async with pool.acquire() as conn, conn.transaction():
+        for sel in selections:
+            ws_slug = str(sel.get("workspace_slug", ""))
+            blocks = [str(b) for b in (sel.get("block_slugs") or [])]
+            await require_workspace(conn, ws_slug)
+            result = await conn.execute(
+                """
+                INSERT INTO document_event
+                    (workspace_technical_key, document_ref, event_code, business)
+                SELECT d.workspace_technical_key, d.doc_technical_key,
+                       'docflow.document.updated.v1',
+                       jsonb_build_object(
+                           'documentId', d.doc_technical_key::text,
+                           'workspaceSlug', w.slug,
+                           'version', d.version,
+                           'title', d.title)
+                FROM document d
+                JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+                JOIN data_block b ON b.id = d.data_block_ref
+                WHERE w.slug = $1
+                  AND (cardinality($2::text[]) = 0 OR b.slug = ANY($2::text[]))
+                """,
+                ws_slug,
+                blocks,
+            )
+            total += int(result.split()[-1])
+    log.info("automation_events_pushed", count=total)
+    return {"events": total}
