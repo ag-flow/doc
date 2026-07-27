@@ -20,11 +20,13 @@ vi.mock('../lib/api', async () => {
       putDocumentValue: vi.fn(),
     },
     viewsApi: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
+    prefsApi: { get: vi.fn(), set: vi.fn() },
   }
 })
 
 import {
   docsApi,
+  prefsApi,
   viewsApi,
   type BlockTreeNode,
   type BlockTreePage,
@@ -109,6 +111,8 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.getTypesRich).mockResolvedValue(emptyTypesRich)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(emptyTreePage)
     vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
   })
 
   // DoD 26.1 — état vide : une phrase et l'action de création, pas une table blanche.
@@ -874,6 +878,8 @@ describe('BlockDocumentList — tri, filtres et URL', () => {
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
     vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       objects: [], block_slug: 'b1', page: 1, page_size: 100, total: 0, has_next: false,
     })
@@ -963,5 +969,66 @@ describe('BlockDocumentList — tri, filtres et URL', () => {
         filter: [{ prop: 'statut', op: 'in', values: ['fait'] }],
       })),
     )
+  })
+})
+
+describe('BlockDocumentList — colonnes mémorisées par utilisateur et par bloc', () => {
+  const docs = [makeDoc({ doc_technical_key: 'd1', title: 'Alpha' })]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue(TYPES_WITH_STATUS)
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
+  })
+
+  it('masquer une colonne enregistre la préférence, clé user × bloc', async () => {
+    renderList()
+    fireEvent.click(await screen.findByTestId('columns-btn'))
+    fireEvent.click(await screen.findByTestId('col-toggle-prop_statut'))
+    await waitFor(() =>
+      expect(prefsApi.set).toHaveBeenCalledWith('doc-columns:ws:b1',
+        expect.objectContaining({ prop_statut: false })),
+    )
+  })
+
+  it('la préférence enregistrée est appliquée à l’ouverture du bloc', async () => {
+    vi.mocked(prefsApi.get).mockResolvedValue({
+      key: 'doc-columns:ws:b1', value: { prop_statut: false },
+    })
+    renderList()
+    await screen.findByText('Alpha')
+    await waitFor(() =>
+      expect(prefsApi.get).toHaveBeenCalledWith('doc-columns:ws:b1'),
+    )
+    // La colonne Statut est masquée dans la table…
+    expect(screen.queryByRole('columnheader', { name: /Statut/ })).not.toBeInTheDocument()
+    // …et son entrée du menu est décochée.
+    fireEvent.click(screen.getByTestId('columns-btn'))
+    expect(await screen.findByTestId('col-toggle-prop_statut')).not.toBeChecked()
+  })
+
+  it('tout réafficher efface la préférence (retour au défaut, pas un objet fantôme)', async () => {
+    vi.mocked(prefsApi.get).mockResolvedValue({
+      key: 'doc-columns:ws:b1', value: { prop_statut: false },
+    })
+    renderList()
+    fireEvent.click(await screen.findByTestId('columns-btn'))
+    fireEvent.click(await screen.findByTestId('col-toggle-prop_statut'))
+    await waitFor(() =>
+      expect(prefsApi.set).toHaveBeenCalledWith('doc-columns:ws:b1', null),
+    )
+  })
+
+  it('l’état initial vide n’écrase JAMAIS la préférence avant hydratation', async () => {
+    let resolveGet: (v: { key: string; value: null }) => void
+    vi.mocked(prefsApi.get).mockReturnValue(new Promise((r) => { resolveGet = r }))
+    renderList()
+    await screen.findByText('Alpha')
+    expect(prefsApi.set).not.toHaveBeenCalled()
+    resolveGet!({ key: 'k', value: null })
   })
 })

@@ -373,6 +373,14 @@ export interface ViewCreateBody {
   shared?: boolean
 }
 
+/** Préférences d'interface par utilisateur (suivent le compte, pas le navigateur). */
+export const prefsApi = {
+  get: <T>(key: string) =>
+    api.get<{ key: string; value: T | null }>(`/me/preferences/${encodeURIComponent(key)}`),
+  set: <T>(key: string, value: T | null) =>
+    api.put<{ key: string; value: T | null }>(`/me/preferences/${encodeURIComponent(key)}`, { value }),
+}
+
 /** Vues enregistrées : un jeu tri + filtres + colonnes, rappelable. */
 export const viewsApi = {
   list: (ws: string) => api.get<ViewOut[]>(`/workspaces/${ws}/views`),

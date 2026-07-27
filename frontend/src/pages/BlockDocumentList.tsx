@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table'
 import {
   docsApi,
+  prefsApi,
   viewsApi,
   type AllowedTypeOut,
   type BlockObjectsPage,
@@ -172,6 +173,38 @@ export function BlockDocumentList() {
   // Vide au départ ; peuplé par `computeDefaultExpanded` dès que l'arbre charge.
   const [expanded, setExpanded] = useState<ExpandedState>({})
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
+
+  // ── Sélection de colonnes : mémorisée PAR UTILISATEUR et PAR BLOC ────────
+  // Préférence serveur (elle suit le compte d'un poste à l'autre), hydratée à
+  // l'entrée du bloc ; chaque changement est poussé. On n'écrit pas avant
+  // l'hydratation, sinon l'état initial vide écraserait la préférence.
+  const colsPrefKey = `doc-columns:${ws}:${block}`
+  const colsHydrated = useRef(false)
+  useEffect(() => {
+    colsHydrated.current = false
+    setColumnVisibility({})
+    let cancelled = false
+    prefsApi.get<VisibilityState>(colsPrefKey)
+      .then((res) => {
+        if (cancelled) return
+        if (res.value) setColumnVisibility(res.value)
+        colsHydrated.current = true
+      })
+      .catch(() => { if (!cancelled) colsHydrated.current = true })
+    return () => { cancelled = true }
+  }, [colsPrefKey])
+
+  function handleColumnVisibilityChange(updater: React.SetStateAction<VisibilityState>) {
+    setColumnVisibility((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      if (colsHydrated.current) {
+        // Toutes visibles = retour au défaut : la préférence s'efface.
+        const anyHidden = Object.values(next).some((v) => v === false)
+        void prefsApi.set(colsPrefKey, anyHidden ? next : null).catch(() => {})
+      }
+      return next
+    })
+  }
   const [showColMenu, setShowColMenu] = useState(false)
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
   // Drag & drop de re-parentage : doc glissé + destination (null = racine)
@@ -575,7 +608,7 @@ export function BlockDocumentList() {
     columns,
     state: { expanded, columnVisibility },
     onExpandedChange: setExpanded,
-    onColumnVisibilityChange: setColumnVisibility,
+    onColumnVisibilityChange: handleColumnVisibilityChange,
     getSubRows: (row) => row.subRows,
     // Clé de ligne = id du document → l'état d'expansion (computeDefaultExpanded)
     // référence des ids stables plutôt que des chemins d'index TanStack.

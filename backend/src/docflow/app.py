@@ -39,6 +39,7 @@ from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
+from docflow.me.preferences import router as me_prefs_router
 from docflow.me.router import router as me_router
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
@@ -152,6 +153,7 @@ app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
 app.include_router(me_router, prefix=_API)
+app.include_router(me_prefs_router, prefix=_API)
 app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
