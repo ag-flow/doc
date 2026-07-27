@@ -49,12 +49,19 @@
 .doc-sheet p { margin: 0 0 var(--space-3); }
 .doc-sheet em { font-style: italic; }
 
-/* Citation : filet cyan, jamais un encadré. */
+/* Citation : filet cyan 4px, jamais un encadré. */
 .doc-sheet blockquote {
-  border-left: 2px solid var(--color-accent);
+  border-left: 4px solid var(--color-accent);
   padding-left: 18px;
   margin: 26px 0;
   font-size: 16px;
+  color: color-mix(in srgb, var(--color-ink) 72%, transparent);
+}
+/* Le bloc « citation » de BlockNote porte son propre filet gris 2px
+   ([data-content-type=quote] blockquote) — même filet cyan 4px partout
+   (lecture, éditeur, rendu public). */
+.bn-container [data-content-type='quote'] blockquote {
+  border-left: 4px solid var(--color-accent);
   color: color-mix(in srgb, var(--color-ink) 72%, transparent);
 }
 
