@@ -43,14 +43,25 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
     },
   })
 
-  const hasContent = Boolean(doc.content && doc.content.trim())
+  // Beaucoup de documents commencent par « # <titre> » (modèles de contenu) :
+  // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
+  // (le contenu en base n'est jamais modifié ; l'édition montre tout).
+  const displayContent = (() => {
+    const raw = doc.content ?? ''
+    const m = /^\s*#\s+(.+?)\s*\n/.exec(raw)
+    if (m && m[1].trim() === doc.title.trim()) {
+      return raw.slice(m.index + m[0].length).replace(/^\s*\n/, '')
+    }
+    return raw
+  })()
+  const hasContent = Boolean(displayContent.trim())
 
   return (
     <div data-testid="document-reader">
       <DocumentShell
         kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
         title={
-          <h1 className="m-0 max-w-[20ch] text-[42px] tracking-[-0.03em]">{doc.title}</h1>
+          <h1 className="m-0 text-[42px] leading-[1.08] tracking-[-0.03em]">{doc.title}</h1>
         }
         meta={
           <>
@@ -91,7 +102,6 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
         aside={
           <>
-            <div className="doc-aside-kicker">{t('editor.properties')}</div>
             <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </>
@@ -117,7 +127,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
       >
         {hasContent ? (
-          <MarkdownViewer content={doc.content ?? ''} bare />
+          <MarkdownViewer content={displayContent} bare />
         ) : (
           <p className="text-muted italic">{t('editor.readEmpty')}</p>
         )}

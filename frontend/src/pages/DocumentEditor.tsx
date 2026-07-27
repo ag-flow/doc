@@ -429,7 +429,7 @@ export function DocumentEditor() {
           <Input
             value={title}
             onChange={(e) => { setTitle(e.target.value); markDirty() }}
-            className="max-w-[20ch] border-0 bg-transparent px-0 text-[42px] leading-[1.1]
+            className="w-full border-0 bg-transparent px-0 text-[42px] leading-[1.1]
               tracking-[-0.03em] [font-family:var(--font-heading)] [font-weight:var(--font-heading-weight)]"
             data-testid="document-title-input"
           />
@@ -488,7 +488,6 @@ export function DocumentEditor() {
         actions={actions}
         aside={
           <>
-            <div className="doc-aside-kicker">{t('editor.properties')}</div>
             <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </>

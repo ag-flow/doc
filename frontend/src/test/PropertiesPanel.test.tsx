@@ -96,9 +96,11 @@ describe('PropertiesPanel', () => {
     renderPanel()
     await waitFor(() => expect(screen.getByTestId('property-status')).toBeInTheDocument())
     expect(screen.getByTestId('property-input-status')).toBeInTheDocument()
-    // Pastille couleur visible car todo est sélectionné
-    await waitFor(() => expect(screen.getByTestId('property-pill-status')).toBeInTheDocument())
-    expect(screen.getByTestId('property-pill-status').textContent).toBe('À faire')
+    // La couleur de la valeur choisie = un point discret à côté du select —
+    // pas une pastille qui répéterait le libellé (doublon d'affichage).
+    await waitFor(() => expect(screen.getByTestId('property-color-status')).toBeInTheDocument())
+    expect(screen.getByTestId('property-color-status')).toHaveAttribute('title', 'À faire')
+    expect(screen.queryByTestId('property-pill-status')).not.toBeInTheDocument()
   })
 
   // DoD 25.3 — budget_jours = -1 → 422 → message erreur

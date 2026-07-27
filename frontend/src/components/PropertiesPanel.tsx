@@ -61,7 +61,7 @@ export function PropertiesPanel({ ws, docId, functionalTypeSlug }: PropertiesPan
 
   return (
     <aside className="w-full" data-testid="properties-panel">
-      <h2 className="mb-4 text-sm font-semibold tracking-wide text-gray-500 uppercase">
+      <h2 className="doc-aside-kicker">
         {t('properties.title')}
       </h2>
       {isLoading ? (

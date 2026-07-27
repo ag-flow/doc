@@ -71,10 +71,12 @@ export function PropertyField({ ws, docId, prop, allowedValues, compact = false,
       )}
 
       {prop.type === 'restricted_list' ? (
-        <div className="flex flex-col gap-1">
+        /* Le select porte la valeur ; la couleur de la valeur choisie s'affiche
+           en point discret À CÔTÉ — pas en pastille qui répéterait le libellé. */
+        <div className="flex items-center gap-2">
           <select
             id={fieldId}
-            className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            className="input"
             value={state.value ?? ''}
             disabled={saving}
             onChange={(e) => {
@@ -94,21 +96,16 @@ export function PropertyField({ ws, docId, prop, allowedValues, compact = false,
               </option>
             ))}
           </select>
-          {state.value && (() => {
-            const av = allowedValues.find((a) => a.slug === state.value)
-            if (!av) return null
+          {(() => {
+            const av = state.value ? allowedValues.find((a) => a.slug === state.value) : null
+            if (!av?.color) return null
             return (
               <span
-                className="inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                style={
-                  av.color
-                    ? { backgroundColor: av.color, color: '#fff' }
-                    : { backgroundColor: '#e5e7eb', color: '#374151' }
-                }
-                data-testid={`property-pill-${prop.prop_slug}`}
-              >
-                {av.label}
-              </span>
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: av.color }}
+                title={av.label}
+                data-testid={`property-color-${prop.prop_slug}`}
+              />
             )
           })()}
         </div>

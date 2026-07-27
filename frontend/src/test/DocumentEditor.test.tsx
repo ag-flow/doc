@@ -274,3 +274,29 @@ describe('feuille document — aucun débordement horizontal possible', () => {
     expect(css).toMatch(/\.doc-sheet img\s*\{[^}]*max-width:\s*100%/)
   })
 })
+
+describe('lecture — pas de titre en double', () => {
+  it('un corps commençant par « # <titre> » ne répète pas le titre du shell', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      title: 'Mon document',
+      content: '# Mon document\n\nLe vrai contenu.',
+    })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    const body = screen.getByTestId('markdown-viewer-mock')
+    expect(body.textContent).not.toContain('# Mon document')
+    expect(body.textContent).toContain('Le vrai contenu.')
+  })
+
+  it('un H1 différent du titre reste affiché (on ne retire que le doublon exact)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      title: 'Mon document',
+      content: '# Autre chapeau\n\nContenu.',
+    })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getByTestId('markdown-viewer-mock').textContent).toContain('# Autre chapeau')
+  })
+})

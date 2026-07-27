@@ -24,7 +24,7 @@ export function BacklinksPanel({ ws, docId, blocSlug }: BacklinksPanelProps) {
   if (backlinks.length === 0) {
     return (
       <aside className="mt-6 w-full" data-testid="backlinks-panel">
-        <h2 className="mb-2 text-sm font-semibold tracking-wide text-gray-500 uppercase">
+        <h2 className="doc-aside-kicker">
           {t('backlinks.title', 'Référencé par')}
         </h2>
         <p className="text-sm text-gray-400">
@@ -36,7 +36,7 @@ export function BacklinksPanel({ ws, docId, blocSlug }: BacklinksPanelProps) {
 
   return (
     <aside className="mt-6 w-full" data-testid="backlinks-panel">
-      <h2 className="mb-2 text-sm font-semibold tracking-wide text-gray-500 uppercase">
+      <h2 className="doc-aside-kicker">
         {t('backlinks.title', 'Référencé par')} ({backlinks.length})
       </h2>
       <ul className="space-y-2">
