@@ -847,8 +847,19 @@ export function isSuperAdmin(): boolean {
   }
 }
 
+export interface InviteCreated {
+  user_id: string
+  email: string
+  /** Chemin à copier — le jeton n'apparaît qu'ici, une seule fois. */
+  invite_path: string
+  expires_at: string
+}
+
 export const usersApi = {
   list: () => api.get<AppUserOut[]>('/admin/users'),
+  /** Invitation par lien à usage unique (docflow n'envoie pas d'e-mail). */
+  invite: (body: { email: string; label: string; is_admin?: boolean }) =>
+    api.post<InviteCreated>('/admin/users/invite', body),
   validate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/validate`, {}),
   unvalidate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/unvalidate`, {}),
   /** Rôle et état — le garde anti-lock-out du backend refuse de démonter le
@@ -875,12 +886,23 @@ export interface VaultSecretOut {
   updated_at: string
   /** Automates dont un header référence ce secret. */
   used_by_automations: number
+  /** Webhooks dont un header référence ce secret. */
+  used_by_webhooks: number
+}
+
+export interface WalletCheckOut {
+  ok: boolean
+  error: string | null
+  expires_at: string | null
 }
 
 export const vaultApi = {
   listWallets: () => api.get<VaultWalletOut[]>('/admin/vault/wallets'),
   createWallet: (body: { name: string; api_key: string }) =>
     api.post<VaultWalletOut>('/admin/vault/wallets', body),
+  /** Teste la clé auprès de Harpocrate — l'état du jeton, jamais la clé. */
+  checkWallet: (id: string) =>
+    api.post<WalletCheckOut>(`/admin/vault/wallets/${id}/check`, {}),
   deleteWallet: (id: string) => api.delete(`/admin/vault/wallets/${id}`),
 }
 
@@ -1471,6 +1493,14 @@ export interface InitAdminRequest {
   username: string
   email: string
   password: string
+}
+
+/** Flux public d'invitation (sans authentification). */
+export const inviteApi = {
+  info: (token: string) =>
+    api.get<{ email: string; label: string }>(`/invite/${encodeURIComponent(token)}`),
+  accept: (token: string, password: string) =>
+    api.post<void>(`/invite/${encodeURIComponent(token)}`, { password }),
 }
 
 export const setupApi = {

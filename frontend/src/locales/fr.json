@@ -371,7 +371,9 @@
     "unused": "—",
     "copyRef": "Copier la référence",
     "refCopied": "Référence copiée.",
-    "deleteSecretUsedTitle": "Secret utilisé"
+    "deleteSecretUsedTitle": "Secret utilisé",
+    "usedByWebhooks_one": "{{count}} webhook",
+    "usedByWebhooks_other": "{{count}} webhooks"
   },
   "oidc": {
     "title": "Configuration OIDC",

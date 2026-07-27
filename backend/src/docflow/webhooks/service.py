@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -214,6 +215,9 @@ async def test_webhook(
 ) -> tuple[int | None, str | None, int]:
     """Envoie un payload synthétique : (status_code, error, durée en ms)."""
     wh = await get_webhook(pool, ws_slug, webhook_id, encryption_key=encryption_key)
+    resolved_headers = await _resolve_headers(
+        wh.headers, pool=pool, encryption_key=encryption_key, harpocrate_url=None
+    )
     payload = {
         "event": "document.created",
         "occurred_at": datetime.now(UTC).isoformat(),
@@ -230,10 +234,48 @@ async def test_webhook(
     try:
         await validate_public_url(url)
         async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
-            resp = await client.post(url, json=payload, headers=wh.headers)
+            resp = await client.post(url, json=payload, headers=resolved_headers)
         return resp.status_code, None, int((time.monotonic() - started) * 1000)
     except Exception as exc:
         return None, str(exc), int((time.monotonic() - started) * 1000)
+
+
+_REF_RE = re.compile(r"^\$\{(?:vault|secret|hmac)://.+\}$")
+
+
+async def _resolve_headers(
+    headers: dict[str, str],
+    *,
+    pool: asyncpg.Pool,
+    encryption_key: str | None,
+    harpocrate_url: str | None,
+) -> dict[str, str]:
+    """Résout les références `${vault://…}` / `${secret://…}` / `${hmac://…}`
+    des valeurs de header AU MOMENT de l'envoi — parité avec les automates.
+
+    Une référence irrésolvable vaut chaîne vide et se journalise : on n'envoie
+    JAMAIS la référence littérale à la cible (ce serait révéler sa forme sans
+    authentifier la requête, et un secret supprimé doit se voir en logs).
+    """
+    from docflow.secrets.resolver import resolve
+    from docflow.secrets.secret import Secret
+
+    out: dict[str, str] = {}
+    for name, value in headers.items():
+        if not _REF_RE.match(value):
+            out[name] = value
+            continue
+        try:
+            out[name] = await resolve(
+                Secret(value),
+                harpocrate_url=harpocrate_url,
+                pool=pool,
+                enc_key=encryption_key,
+            )
+        except Exception as exc:
+            log.warning("webhook_header_unresolved", header=name, error=str(exc))
+            out[name] = ""
+    return out
 
 
 async def _record_delivery(
@@ -276,6 +318,7 @@ async def emit_event(
     doc_snapshot: dict[str, Any],
     *,
     encryption_key: str | None,
+    harpocrate_url: str | None = None,
 ) -> None:
     """Fire-and-forget : à lancer via asyncio.create_task() après commit.
 
@@ -307,7 +350,12 @@ async def emit_event(
             for row in rows:
                 doc_id = str(doc_snapshot.get("id", ""))
                 url = row["url"].replace("{id_document}", doc_id)
-                headers = _decrypt_safe(encryption_key, row["headers_encrypted"])
+                headers = await _resolve_headers(
+                    _decrypt_safe(encryption_key, row["headers_encrypted"]),
+                    pool=pool,
+                    encryption_key=encryption_key,
+                    harpocrate_url=harpocrate_url,
+                )
                 started = time.monotonic()
                 status_code: int | None = None
                 error: str | None = None

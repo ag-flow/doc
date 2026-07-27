@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { usersApi, type AppUserOut } from '../lib/api'
+import { usersApi, type AppUserOut, type InviteCreated } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { SectionHead } from '../components/SectionHead'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
 import { relativeDate } from '../lib/relativeDate'
+import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
 
 function StatusTag({ user }: { user: AppUserOut }) {
   if (user.disabled) return <span className="tag tag-accent-2">désactivé</span>
@@ -34,6 +36,13 @@ export function UsersAdmin() {
   const qc = useQueryClient()
   const [deleteTarget, setDeleteTarget] = useState<AppUserOut | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [showInvite, setShowInvite] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteLabel, setInviteLabel] = useState('')
+  const [inviteAdmin, setInviteAdmin] = useState(false)
+  const [invited, setInvited] = useState<InviteCreated | null>(null)
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   const { data: users = [], isLoading } = useQuery<AppUserOut[]>({
     queryKey: ['admin-users'],
@@ -66,6 +75,23 @@ export function UsersAdmin() {
     onSuccess: () => { setDeleteTarget(null); invalidate() },
     onError,
   })
+
+  const inviteMut = useMutation({
+    mutationFn: () =>
+      usersApi.invite({ email: inviteEmail.trim(), label: inviteLabel.trim(), is_admin: inviteAdmin }),
+    onSuccess: (res) => { setInvited(res); setInviteError(null); invalidate() },
+    onError: (e: Error) => setInviteError(e.message),
+  })
+
+  function closeInvite() {
+    setShowInvite(false)
+    setInvited(null)
+    setInviteEmail('')
+    setInviteLabel('')
+    setInviteAdmin(false)
+    setInviteError(null)
+    setLinkCopied(false)
+  }
 
   const pending = users.filter((u) => !u.validated && !u.disabled)
   const rest = users.filter((u) => u.validated || u.disabled)
@@ -148,7 +174,11 @@ export function UsersAdmin() {
 
   return (
     <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
-      <SectionHead kicker="Administration" title="Utilisateurs" />
+      <SectionHead kicker="Administration" title="Utilisateurs">
+        <Button onClick={() => setShowInvite(true)} data-testid="invite-btn">
+          Inviter
+        </Button>
+      </SectionHead>
       <p className="mb-8 max-w-[64ch] text-[16px] leading-[1.6] text-ink/[0.68]">
         Les utilisateurs qui se connectent via Keycloak arrivent en attente de validation :
         validez-les pour leur donner accès. L'accès aux contenus se donne workspace par
@@ -198,6 +228,79 @@ export function UsersAdmin() {
             </div>
           </section>
         </>
+      )}
+
+      {showInvite && (
+        <div className="dialog-backdrop z-50" data-testid="invite-dialog">
+          <div className="dialog" role="dialog" aria-modal="true">
+            {invited === null ? (
+              <form
+                className="contents"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (inviteEmail.trim() && inviteLabel.trim()) inviteMut.mutate()
+                }}
+              >
+                <h4 className="dialog-title">Inviter une personne</h4>
+                <p className="dialog-body m-0">
+                  docflow n'envoie pas d'e-mail : vous obtiendrez un lien à usage
+                  unique (valable 7 jours) à transmettre vous-même.
+                </p>
+                <Field label="E-mail" htmlFor="invite-email">
+                  <Input id="invite-email" type="email" value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)} autoFocus required
+                    data-testid="invite-email" />
+                </Field>
+                <Field label="Nom affiché" htmlFor="invite-label">
+                  <Input id="invite-label" value={inviteLabel}
+                    onChange={(e) => setInviteLabel(e.target.value)} required
+                    data-testid="invite-label" />
+                </Field>
+                <label className="flex items-center gap-2 text-[14px]">
+                  <input type="checkbox" checked={inviteAdmin}
+                    onChange={(e) => setInviteAdmin(e.target.checked)}
+                    data-testid="invite-admin" />
+                  Administrateur
+                </label>
+                <div aria-live="polite" className="empty:hidden">
+                  {inviteError && <p className="field-error m-0">{inviteError}</p>}
+                </div>
+                <div className="dialog-actions">
+                  <Button type="button" variant="secondary" onClick={closeInvite}>Annuler</Button>
+                  <Button type="submit" disabled={inviteMut.isPending} data-testid="invite-submit">
+                    Créer l'invitation
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <h4 className="dialog-title">Invitation créée</h4>
+                <p className="dialog-body m-0">
+                  Transmettez ce lien à <strong>{invited.email}</strong> — il n'est
+                  affiché qu'une seule fois et expire {relativeDate(invited.expires_at)}.
+                </p>
+                <p className="m-0 break-all rounded-md bg-neutral-100 p-3 text-[12px] [font-family:var(--font-mono)]"
+                  data-testid="invite-link">
+                  {`${window.location.origin}${invited.invite_path}`}
+                </p>
+                <div className="dialog-actions">
+                  <Button variant="secondary" onClick={closeInvite}>Fermer</Button>
+                  <Button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(
+                        `${window.location.origin}${invited.invite_path}`,
+                      )
+                      setLinkCopied(true)
+                    }}
+                    data-testid="invite-copy"
+                  >
+                    {linkCopied ? '✓ Copié' : 'Copier le lien'}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {deleteTarget && (

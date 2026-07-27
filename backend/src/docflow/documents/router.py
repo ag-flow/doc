@@ -49,6 +49,7 @@ def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) 
             event,
             snapshot,
             encryption_key=_enc_key(request),
+            harpocrate_url=getattr(request.app.state.settings, "harpocrate_url", None),
         )
     )
     _background_tasks.add(task)

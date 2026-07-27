@@ -158,3 +158,37 @@ async def test_resolver_vault_ref_passes_correct_path() -> None:
 
     assert result == "db_secret"
     mock_secrets.get.assert_called_once_with("/infra/db/postgres_password")
+
+
+async def test_check_wallet_reports_token_state(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Écart n°6 : l'état du jeton d'un wallet est testable sans exposer la clé."""
+    from docflow.schemas.vault import VaultWalletCreate
+    from docflow.vault import service as vault_svc
+
+    enc_key = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value=None)):
+        wallet = await vault_svc.create_wallet(
+            db_pool, VaultWalletCreate(name="w-check", api_key="hrpv_1_abc"), enc_key=enc_key
+        )
+
+    # Sans HARPOCRATE_URL : refus propre, pas d'appel réseau.
+    out = await vault_svc.check_wallet(db_pool, wallet.id, enc_key, None)
+    assert out.ok is False
+    assert "HARPOCRATE_URL" in (out.error or "")
+
+    # SDK en échec (clé révoquée…) : ok=False avec le message, jamais la clé.
+    class _BoomClient:
+        def __init__(self, *a: object, **k: object) -> None:
+            raise RuntimeError("401 api key révoquée")
+
+    import harpocrate
+
+    monkeypatch.setattr(harpocrate, "VaultClient", _BoomClient)
+    out = await vault_svc.check_wallet(db_pool, wallet.id, enc_key, "http://harpo.example")
+    assert out.ok is False
+    assert "révoquée" in (out.error or "")
+    assert "hrpv_1_abc" not in (out.error or "")
+
+    await db_pool.execute("DELETE FROM vault_wallet WHERE id = $1", wallet.id)

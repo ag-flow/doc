@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Plus } from '@phosphor-icons/react'
-import { vaultApi, type VaultWalletOut } from '../lib/api'
+import { vaultApi, type VaultWalletOut, type WalletCheckOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
@@ -26,6 +26,15 @@ export function VaultWalletsTab() {
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VaultWalletOut | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // Résultat du test de jeton, par wallet — affiché en ligne.
+  const [checks, setChecks] = useState<Record<string, WalletCheckOut>>({})
+
+  const checkMutation = useMutation({
+    mutationFn: (id: string) => vaultApi.checkWallet(id),
+    onSuccess: (res, id) => setChecks((c) => ({ ...c, [id]: res })),
+    onError: (e: Error, id) =>
+      setChecks((c) => ({ ...c, [id]: { ok: false, error: e.message, expires_at: null } })),
+  })
 
   const createMutation = useMutation({
     mutationFn: () => vaultApi.createWallet({ name, api_key: apiKey }),
@@ -70,6 +79,7 @@ export function VaultWalletsTab() {
               <tr>
                 <th>{t('vault.colWallet')}</th>
                 <th>{t('vault.colRef')}</th>
+                <th>{t('vault.colToken', 'Jeton')}</th>
                 <th>{t('blocs.colLastWrite', 'Dernière écriture')}</th>
                 <th />
               </tr>
@@ -83,8 +93,35 @@ export function VaultWalletsTab() {
                   <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
                     {`\${vault://${w.name}:/…}`}
                   </td>
+                  <td data-testid={`wallet-check-${w.name}`}>
+                    {checks[w.id] ? (
+                      checks[w.id].ok ? (
+                        <span className="text-[13px] text-accent-700">
+                          ✓ {t('vault.tokenOpen', 'ouvert')}
+                          {checks[w.id].expires_at && (
+                            <span className="text-ink/[0.45]">
+                              {' '}· expire {relativeDate(checks[w.id].expires_at!)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-[13px] text-accent-2-700"
+                          title={checks[w.id].error ?? undefined}>
+                          ✗ {t('vault.tokenBad', 'jeton invalide')}
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-ink/[0.4]">—</span>
+                    )}
+                  </td>
                   <td className="text-ink/[0.55]">{relativeDate(w.updated_at)}</td>
                   <td className="text-right">
+                    <Button variant="ghost" size="sm"
+                      onClick={() => checkMutation.mutate(w.id)}
+                      disabled={checkMutation.isPending}
+                      data-testid={`wallet-test-${w.name}`}>
+                      {t('vault.testToken', 'Tester')}
+                    </Button>
                     <Button variant="ghost" size="sm" className="text-accent-2-700"
                       onClick={() => { setDeleteTarget(w); setDeleteError(null) }}
                       title={t('vault.delete')}

@@ -118,8 +118,15 @@ export function VaultSecretsTab() {
                     {`\${secret://${s.id.slice(0, 8)}…}`}
                   </td>
                   <td className="text-ink/[0.55]" data-testid={`secret-usage-${s.slug}`}>
-                    {s.used_by_automations > 0
-                      ? t('vault.usedByAutomations', { count: s.used_by_automations })
+                    {s.used_by_automations + s.used_by_webhooks > 0
+                      ? [
+                          s.used_by_automations > 0
+                            ? t('vault.usedByAutomations', { count: s.used_by_automations })
+                            : null,
+                          s.used_by_webhooks > 0
+                            ? t('vault.usedByWebhooks', { count: s.used_by_webhooks })
+                            : null,
+                        ].filter(Boolean).join(' · ')
                       : t('vault.unused')}
                   </td>
                   <td className="whitespace-nowrap text-right">
@@ -212,8 +219,15 @@ export function VaultSecretsTab() {
           title={t('vault.secrets.deleteTitle')}
           message={t('vault.secrets.deleteConfirm', { name: deleteTarget.label })}
           impactMessage={
-            deleteTarget.used_by_automations > 0
-              ? t('vault.usedByAutomations', { count: deleteTarget.used_by_automations })
+            deleteTarget.used_by_automations + deleteTarget.used_by_webhooks > 0
+              ? [
+                  deleteTarget.used_by_automations > 0
+                    ? t('vault.usedByAutomations', { count: deleteTarget.used_by_automations })
+                    : null,
+                  deleteTarget.used_by_webhooks > 0
+                    ? t('vault.usedByWebhooks', { count: deleteTarget.used_by_webhooks })
+                    : null,
+                ].filter(Boolean).join(' · ')
               : undefined
           }
           confirmLabel={t('common.delete')}

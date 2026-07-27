@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets as _secrets
 import uuid
+from datetime import UTC, datetime
 
 import asyncpg
 import structlog
@@ -17,6 +19,7 @@ from docflow.schemas.vault import (
     VaultSecretOut,
     VaultWalletCreate,
     VaultWalletOut,
+    WalletCheckOut,
 )
 
 # Longueur (octets) d'un secret HMAC généré → token_urlsafe.
@@ -77,7 +80,9 @@ async def get_api_key(pool: asyncpg.Pool, name: str, enc_key: str) -> str | None
 # ── Secrets utilisateur ───────────────────────────────────────────────────────
 
 
-async def list_secrets(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[VaultSecretOut]:
+async def list_secrets(
+    pool: asyncpg.Pool, user_id: uuid.UUID, enc_key: str | None = None
+) -> list[VaultSecretOut]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -90,7 +95,13 @@ async def list_secrets(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[VaultSecr
             """,
             user_id,
         )
-    return [VaultSecretOut(**dict(row)) for row in rows]
+    out = [VaultSecretOut(**dict(row)) for row in rows]
+    # Usage côté webhooks : headers chiffrés, scannés côté serveur.
+    for secret in out:
+        secret.used_by_webhooks = len(
+            await _webhooks_referencing_secret(pool, secret.id, enc_key)
+        )
+    return out
 
 
 async def create_secret(
@@ -119,10 +130,42 @@ async def create_secret(
     return VaultSecretOut(**dict(row))
 
 
+async def _webhooks_referencing_secret(
+    pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str | None
+) -> list[str]:
+    """Webhooks (tous workspaces) dont un header référence ${secret://<id>}.
+
+    Les headers sont chiffrés : on les déchiffre côté serveur pour le comptage.
+    Sans clé de chiffrement, aucun comptage possible → liste vide (les refs ne
+    seraient de toute façon pas résolues à l'envoi non plus).
+    """
+    if not enc_key:
+        return []
+    from docflow.crypto import decrypt_headers
+
+    needle = f"${{secret://{secret_id}}}"
+    rows = await pool.fetch(
+        "SELECT w.label, w.headers_encrypted, ws.slug AS ws_slug "
+        "FROM webhook_subscription w "
+        "JOIN workspace ws ON ws.workspace_technical_key = w.workspace_technical_key "
+        "WHERE w.headers_encrypted IS NOT NULL ORDER BY ws.slug, w.label"
+    )
+    hits: list[str] = []
+    for r in rows:
+        try:
+            headers = decrypt_headers(enc_key, r["headers_encrypted"])
+        except Exception:
+            continue
+        if any(v == needle for v in headers.values()):
+            hits.append(f"{r['ws_slug']} / {r['label']}")
+    return hits
+
+
 async def delete_secret(
     pool: asyncpg.Pool,
     user_id: uuid.UUID,
     secret_id: uuid.UUID,
+    enc_key: str | None = None,
 ) -> None:
     async with pool.acquire() as conn:
         # Refus motivé : un secret référencé par des automates ne se supprime
@@ -133,13 +176,20 @@ async def delete_secret(
             "WHERE h.secret_ref = '${secret://' || $1::uuid || '}' ORDER BY a.label",
             secret_id,
         )
-        if rows:
+        webhooks = await _webhooks_referencing_secret(pool, secret_id, enc_key)
+        if rows or webhooks:
             labels = [r["label"] for r in rows]
+            parts = []
+            if labels:
+                parts.append(f"{len(labels)} automate(s)")
+            if webhooks:
+                parts.append(f"{len(webhooks)} webhook(s)")
             raise HTTPException(
                 409,
                 {
-                    "message": f"secret utilisé par {len(labels)} automate(s)",
+                    "message": "secret utilisé par " + " et ".join(parts),
                     "automations": labels,
+                    "webhooks": webhooks,
                 },
             )
         result = await conn.execute(
@@ -257,3 +307,45 @@ async def resolve_hmac_value(
     if row is None:
         return None
     return decrypt_str(enc_key, row["value_enc"])
+
+
+async def check_wallet(
+    pool: asyncpg.Pool,
+    wallet_id: uuid.UUID,
+    enc_key: str,
+    harpocrate_url: str | None,
+) -> WalletCheckOut:
+    """Teste la clé du wallet auprès de Harpocrate : jeton valide, expiration.
+
+    N'expose jamais la clé — seulement l'état et l'échéance du jeton.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT name, api_key_enc FROM vault_wallet WHERE id = $1", wallet_id
+        )
+    if row is None:
+        raise HTTPException(404, "Wallet introuvable.")
+    if not harpocrate_url:
+        return WalletCheckOut(ok=False, error="HARPOCRATE_URL non configurée sur l'instance.")
+
+    api_key = decrypt_str(enc_key, row["api_key_enc"])
+
+    def _probe() -> WalletCheckOut:
+        from harpocrate import VaultClient
+
+        client = VaultClient(token=api_key, base_url=harpocrate_url)
+        info = client.whoami()
+        expires = getattr(info, "expires_at", None)
+        return WalletCheckOut(
+            ok=True,
+            expires_at=(
+                datetime.fromtimestamp(expires, tz=UTC)
+                if isinstance(expires, (int, float))
+                else expires
+            ),
+        )
+
+    try:
+        return await asyncio.to_thread(_probe)
+    except Exception as exc:
+        return WalletCheckOut(ok=False, error=str(exc))

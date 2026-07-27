@@ -49,7 +49,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
     vi.mocked(contractsApi.detail).mockResolvedValue({ contract, operations: [opBearer], servers: ['http://rag.example'] })
     vi.mocked(eventsProducerApi.catalog).mockResolvedValue({ revision: 'r', specVersion: '1.0', events: [] })
     vi.mocked(secretsApi.list).mockResolvedValue([
-      { id: 's1', slug: 'rag', label: 'RAG key', created_at: '', updated_at: '', used_by_automations: 0 },
+      { id: 's1', slug: 'rag', label: 'RAG key', created_at: '', updated_at: '', used_by_automations: 0, used_by_webhooks: 0 },
     ])
     vi.mocked(docsApi.getBlocks).mockResolvedValue([])
     vi.mocked(api.get).mockResolvedValue([])

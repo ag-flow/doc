@@ -27,6 +27,7 @@ import { RemotePage } from './pages/RemotePage'
 import { ContractsAdmin } from './pages/ContractsAdmin'
 import { MyProfilePage } from './pages/MyProfilePage'
 import { DesignSystemPage } from './pages/DesignSystemPage'
+import { InvitePage } from './pages/InvitePage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -168,6 +169,8 @@ const router = createBrowserRouter([
     ),
   },
   { path: '/pub/:docId', element: <PublicDocumentViewer /> },
+  // Invitation : page publique (l'invité n'a pas encore de compte utilisable).
+  { path: '/invite/:token', element: <InvitePage /> },
   { path: '/', element: <Navigate to="/workspaces" replace /> },
   { path: '*', element: <Navigate to="/workspaces" replace /> },
 ])

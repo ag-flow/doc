@@ -20,6 +20,14 @@ class VaultWalletOut(BaseModel):
     updated_at: datetime
 
 
+class WalletCheckOut(BaseModel):
+    """État du jeton d'un wallet, testé auprès de Harpocrate."""
+
+    ok: bool
+    error: str | None = None
+    expires_at: datetime | None = None
+
+
 class VaultSecretCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -34,8 +42,10 @@ class VaultSecretOut(BaseModel):
     label: str
     created_at: datetime
     updated_at: datetime
-    # Automates dont un header référence ${secret://<id>} (renseigné au listing).
+    # Usage (renseigné au listing) : headers d'automates et de webhooks
+    # référençant ${secret://<id>}.
     used_by_automations: int = 0
+    used_by_webhooks: int = 0
 
 
 # ── Secrets HMAC (partagés, copiables par leur propriétaire) ──────────────────

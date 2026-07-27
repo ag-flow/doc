@@ -15,6 +15,7 @@ from docflow.schemas.vault import (
     VaultSecretOut,
     VaultWalletCreate,
     VaultWalletOut,
+    WalletCheckOut,
 )
 from docflow.vault import service
 
@@ -54,9 +55,22 @@ async def delete_wallet(wallet_id: uuid.UUID, request: Request, _: AuthUser = _S
 # ── Secrets utilisateur (tout admin, scoped owner) ────────────────────────────
 
 
+@router.post("/admin/vault/wallets/{wallet_id}/check", response_model=WalletCheckOut)
+async def check_wallet(
+    wallet_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
+) -> WalletCheckOut:
+    """Teste la clé du wallet auprès de Harpocrate (jamais la clé en clair)."""
+    return await service.check_wallet(
+        request.app.state.pool,
+        wallet_id,
+        _key(request),
+        getattr(request.app.state.settings, "harpocrate_url", None),
+    )
+
+
 @router.get("/admin/secrets", response_model=list[VaultSecretOut])
 async def list_secrets(request: Request, user: AuthUser = _Auth) -> list[VaultSecretOut]:
-    return await service.list_secrets(request.app.state.pool, user.id)
+    return await service.list_secrets(request.app.state.pool, user.id, _key(request))
 
 
 @router.post("/admin/secrets", response_model=VaultSecretOut, status_code=201)
@@ -68,7 +82,7 @@ async def create_secret(
 
 @router.delete("/admin/secrets/{secret_id}", status_code=204)
 async def delete_secret(secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
-    await service.delete_secret(request.app.state.pool, user.id, secret_id)
+    await service.delete_secret(request.app.state.pool, user.id, secret_id, _key(request))
 
 
 # ── Secrets HMAC (par utilisateur ; valeur copiable par le propriétaire) ──────
@@ -100,4 +114,4 @@ async def reveal_hmac_secret(
 async def delete_hmac_secret(
     secret_id: uuid.UUID, request: Request, user: AuthUser = _Auth
 ) -> None:
-    await service.delete_secret(request.app.state.pool, user.id, secret_id)
+    await service.delete_secret(request.app.state.pool, user.id, secret_id, _key(request))
