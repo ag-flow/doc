@@ -251,6 +251,9 @@ export interface DataBlockOut {
   exposed: boolean
   created_at: string
   updated_at: string
+  /** Renseignés par le listing (`GET /blocks`) ; 0/null sur une lecture unitaire. */
+  documents_count: number
+  last_write_at: string | null
 }
 
 export interface PropertyValueOut {
@@ -482,6 +485,10 @@ export const docsApi = {
 
   setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+
+  /** Renommage / rattachement d'un bloc (label, parent). */
+  updateBlock: (ws: string, blockSlug: string, patch: { label?: string; parent_slug?: string | null }) =>
+    api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}`, patch),
 
   /** Supprime un bloc. Sans `confirm`, l'API refuse (409) si le bloc a des
    *  dépendants — le message d'erreur porte le décompte à afficher avant de

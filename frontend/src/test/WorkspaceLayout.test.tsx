@@ -27,6 +27,8 @@ const existingBloc: DataBlockOut = {
   exposed: false,
   created_at: '',
   updated_at: '',
+  documents_count: 0,
+  last_write_at: null,
 }
 
 const activeWs: WorkspaceOut = {

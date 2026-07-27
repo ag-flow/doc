@@ -205,7 +205,8 @@ export function BlockDocumentList() {
     queryFn: () => docsApi.getBlocks(ws!),
     enabled: Boolean(ws),
   })
-  const blocLabel = blocs.find((b) => b.slug === block)?.label ?? block ?? ''
+  const currentBloc = blocs.find((b) => b.slug === block) ?? null
+  const blocLabel = currentBloc?.label ?? block ?? ''
 
   function handleBlocDeleted() {
     setShowDeleteBloc(false)
@@ -744,6 +745,7 @@ export function BlockDocumentList() {
           wsSlug={ws}
           blockSlug={block}
           blockLabel={blocLabel}
+          documentsCount={currentBloc?.documents_count ?? 0}
           onClose={() => setShowDeleteBloc(false)}
           onDeleted={handleBlocDeleted}
         />

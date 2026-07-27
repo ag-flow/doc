@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle } from 'lucide-react'
+import { Warning } from '@phosphor-icons/react'
 import { ApiError, docsApi } from '../lib/api'
 import { Button } from './ui/button'
 
@@ -9,18 +9,22 @@ interface DeleteBlocDialogProps {
   wsSlug: string
   blockSlug: string
   blockLabel: string
+  /** Volumétrie annoncée d'entrée : on ne demande pas de confirmer à l'aveugle. */
+  documentsCount: number
   onClose: () => void
   onDeleted: () => void
 }
 
 /** Confirmation de suppression d'un bloc en deux temps :
  *  1er « Supprimer » → tentative sans confirm ; si le bloc a des dépendants
- *  l'API répond 409 avec le décompte, qu'on affiche avant de reconfirmer la
- *  cascade. Bloc vide → suppression directe après la 1ʳᵉ confirmation. */
+ *  l'API répond 409 avec le décompte complet (documents ET blocs enfants),
+ *  qu'on affiche avant de reconfirmer la cascade. Bloc vide → suppression
+ *  directe après la 1ʳᵉ confirmation. */
 export function DeleteBlocDialog({
   wsSlug,
   blockSlug,
   blockLabel,
+  documentsCount,
   onClose,
   onDeleted,
 }: DeleteBlocDialogProps) {
@@ -42,46 +46,45 @@ export function DeleteBlocDialog({
   })
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      data-testid="delete-bloc-dialog"
-    >
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">{t('blocs.deleteTitle')}</h2>
+    <div className="dialog-backdrop z-50" data-testid="delete-bloc-dialog">
+      <div className="dialog">
+        <h4 className="dialog-title">{t('blocs.deleteTitle')}</h4>
 
         {cascadeMsg ? (
-          <div
-            className="mb-4 flex gap-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
-            data-testid="delete-bloc-cascade"
-          >
-            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <div className="dialog-body flex gap-2 text-accent-2-700" data-testid="delete-bloc-cascade">
+            <Warning size={16} weight="duotone" className="mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium">{t('blocs.deleteWarnTitle')}</p>
-              <p className="mt-1">{cascadeMsg}</p>
+              <p className="m-0 [font-family:var(--font-heading)] font-[600]">
+                {t('blocs.deleteWarnTitle')}
+              </p>
+              <p className="m-0 mt-1">{cascadeMsg}</p>
             </div>
           </div>
         ) : (
-          <p className="mb-4 text-sm text-gray-600">
-            {t('blocs.deleteConfirm', { label: blockLabel })}
-          </p>
+          <div className="dialog-body">
+            <p className="m-0">{t('blocs.deleteConfirm', { label: blockLabel })}</p>
+            <p className="m-0 mt-2" data-testid="delete-bloc-count">
+              {documentsCount === 0
+                ? t('blocs.deleteEmptyHint')
+                : t('blocs.deleteDocsCount', { count: documentsCount })}
+            </p>
+          </div>
         )}
 
-        {error && (
-          <p className="mb-3 text-sm text-red-600" data-testid="delete-bloc-error">
-            {error}
-          </p>
-        )}
+        <div aria-live="polite">
+          {error && (
+            <p className="field-error" data-testid="delete-bloc-error">{error}</p>
+          )}
+        </div>
 
-        <div className="flex justify-end gap-2">
+        <div className="dialog-actions">
           <Button variant="secondary" onClick={onClose} disabled={deleteMutation.isPending}>
             {t('common.cancel')}
           </Button>
-          <button
-            type="button"
+          <Button
+            variant="danger"
             onClick={() => deleteMutation.mutate(cascadeMsg !== null)}
             disabled={deleteMutation.isPending}
-            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white
-                       transition-colors hover:bg-red-700 disabled:opacity-50"
             data-testid="delete-bloc-confirm"
           >
             {deleteMutation.isPending
@@ -89,7 +92,7 @@ export function DeleteBlocDialog({
               : cascadeMsg
                 ? t('blocs.deleteConfirmCascade')
                 : t('blocs.delete')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

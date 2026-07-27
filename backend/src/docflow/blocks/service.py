@@ -22,11 +22,15 @@ LEFT JOIN data_block p ON p.id = b.parent
 WHERE b.workspace_technical_key = $1 AND b.slug = $2
 """
 
+# Listing : volumétrie et dernière écriture par bloc, en sous-requêtes scalaires.
+# Une lecture unitaire ne les paie pas — l'information n'a de sens qu'en liste.
 _SELECT_ALL = """
 SELECT b.id, b.slug, b.label, b.created_at, b.updated_at, b.exposed,
        ft.slug  AS functional_type_slug,
        p.slug   AS parent_slug,
-       w.slug   AS workspace_slug
+       w.slug   AS workspace_slug,
+       (SELECT count(*) FROM document d WHERE d.data_block_ref = b.id) AS documents_count,
+       (SELECT max(d.updated_at) FROM document d WHERE d.data_block_ref = b.id) AS last_write_at
 FROM data_block b
 JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
 JOIN functional_type ft ON ft.id = b.functional_type_ref
@@ -47,6 +51,8 @@ def _row(row: asyncpg.Record) -> DataBlockOut:
         exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        documents_count=row["documents_count"] if "documents_count" in row.keys() else 0,
+        last_write_at=row["last_write_at"] if "last_write_at" in row.keys() else None,
     )
 
 

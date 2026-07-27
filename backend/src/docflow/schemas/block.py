@@ -39,3 +39,6 @@ class DataBlockOut(BaseModel):
     exposed: bool
     created_at: datetime
     updated_at: datetime
+    # Volumétrie : renseignée par le listing, 0/None sur une lecture unitaire.
+    documents_count: int = 0
+    last_write_at: datetime | None = None

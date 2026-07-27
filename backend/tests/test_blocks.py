@@ -264,3 +264,23 @@ async def test_dod5_create_block_duplicate_slug_409(
         )
     assert exc.value.status_code == 409
     assert "dup-agile" in exc.value.detail
+
+
+async def test_list_blocks_carries_volume(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Le listing porte la volumétrie ; la lecture unitaire ne la paie pas."""
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
+    await doc_svc.create_document(
+        db_pool, "test-ws", DocumentCreate(title="Un doc", block_id=test_block["id"])
+    )
+
+    blocks = await block_svc.list_blocks(db_pool, "test-ws")
+    listed = next(b for b in blocks if b.slug == "test-block")
+    assert listed.documents_count == 1
+    assert listed.last_write_at is not None
+
+    single = await block_svc.get_block(db_pool, "test-ws", "test-block")
+    assert (single.documents_count, single.last_write_at) == (0, None)
