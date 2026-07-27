@@ -205,7 +205,11 @@ select.input { cursor: pointer; }
   background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
 }
 .dialog {
-  width: min(440px, 100%);
+  /* Équivaut à min(440px, 100%), mais permet aux modales larges de s'élargir
+     via !max-w-* : nos styles non-layered battent @layer utilities, une
+     largeur figée ici serait imbattable. */
+  width: 100%;
+  max-width: 440px;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
