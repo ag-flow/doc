@@ -202,6 +202,17 @@ export interface TemplateInfo {
   path: string
   concrete_types: number
   type_slugs: string[]
+  /** Blocs utilisateurs (tous workspaces) portés par les types de ce template. */
+  blocks_count: number
+}
+
+export interface GalleryPullDiff {
+  template: string
+  installed_version: number | null
+  remote_version: number
+  new_types: string[]
+  /** Propriétés ajoutées aux types déjà installés : « type.prop ». */
+  new_properties: string[]
 }
 
 export interface RemoteTemplateInfo {
@@ -621,6 +632,9 @@ export const galleryApi = {
     api.get<RemoteTemplateInfo[]>(`/templates/gallery?source_url=${encodeURIComponent(source_url)}`),
   pull: (source_url: string, template_slug: string) =>
     api.post<TemplateInfo>('/templates/gallery/pull', { source_url, template_slug }),
+  /** Ce que la mise à jour changerait — avant confirmation, aucune écriture. */
+  pullDiff: (source_url: string, template_slug: string) =>
+    api.post<GalleryPullDiff>('/templates/gallery/pull/diff', { source_url, template_slug }),
 }
 
 // ── Types réactions / commentaires ───────────────────────────────────────────

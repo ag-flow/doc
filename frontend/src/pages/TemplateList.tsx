@@ -1,15 +1,38 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { ArrowClockwise, Plus, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { api, galleryApi, templatesApi } from '../lib/api'
-import type { GallerySourceOut, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
+import type { GalleryPullDiff, GallerySourceOut, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { SectionHead } from '../components/SectionHead'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
 import { YamlEditor, type YamlEditorHandle } from '../components/YamlEditor'
 
-// ── Onglet Bibliothèque locale ───────────────────────────────────────────────
+/** Titre de section interne : surtitre + filet fin (pas de carte). */
+function SubSection({ title, children, actions }: {
+  title: string
+  actions?: React.ReactNode
+  children?: React.ReactNode
+}) {
+  return (
+    <section className="mt-12 first:mt-0">
+      <div className="flex items-end gap-4">
+        <h3 className="m-0">{title}</h3>
+        <span className="flex-1" />
+        {actions}
+      </div>
+      <div className="mt-2 mb-5 h-px bg-[var(--color-divider)]" />
+      {children}
+    </section>
+  )
+}
 
-function LocalLibrary() {
+// ── Installés ────────────────────────────────────────────────────────────────
+
+function InstalledSection() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const editorRef = useRef<YamlEditorHandle>(null)
@@ -79,101 +102,111 @@ function LocalLibrary() {
       void qc.invalidateQueries({ queryKey: ['templates'] })
       setDeleteTarget(null)
     } catch (e) {
+      // 409 : template utilisé — le détail liste les blocs concernés.
       setDeleteError((e as Error).message)
     } finally {
       setDeleting(false)
     }
   }
 
-  if (isLoading) {
-    return <div className="p-6 text-sm text-gray-500" data-testid="loading">{t('common.loading')}</div>
-  }
-  if (isError) {
-    return <div className="p-6 text-sm text-red-600" data-testid="error">{t('error.generic')}</div>
-  }
-  if (!data?.length) {
-    return (
-      <div className="py-12 text-center text-gray-400" data-testid="empty">
-        <p className="text-lg font-medium mb-2">{t('tpl.emptyTitle')}</p>
-        <p className="text-sm">{t('tpl.emptyHint')}</p>
-      </div>
-    )
-  }
-
   return (
-    <>
-      <div className="grid gap-4" data-testid="template-list">
-        {data.map(tpl => (
-          <div
-            key={tpl.template}
-            className="border rounded-lg p-4 bg-white shadow-sm"
-            data-testid={`tpl-card-${tpl.template}`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="font-mono text-sm font-semibold text-indigo-700">{tpl.template}</span>
-                  <span className="font-mono text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded">
-                    v{tpl.version}
+    <SubSection title={t('tpl.installedTitle')}>
+      {isLoading ? (
+        <TableSkeleton rows={3} columns={4} testId="loading" />
+      ) : isError ? (
+        <ErrorLine message={t('error.generic')} testId="error" />
+      ) : !data?.length ? (
+        <EmptyState testId="empty" message={`${t('tpl.emptyTitle')} ${t('tpl.emptyHint')}`} />
+      ) : (
+        <table className="table" data-testid="template-list">
+          <thead>
+            <tr>
+              <th>{t('tpl.colTemplate')}</th>
+              <th>{t('tpl.colVersion')}</th>
+              <th>{t('tpl.colTypes')}</th>
+              <th>{t('tpl.colBlocks')}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((tpl) => (
+              <tr key={tpl.template} data-testid={`tpl-card-${tpl.template}`}>
+                <td>
+                  <span className="text-[16px] font-[600] [font-family:var(--font-heading)]">
+                    {tpl.label}
                   </span>
-                  <span className="text-gray-700 font-medium">{tpl.label}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {tpl.type_slugs.map(slug => (
-                    <span key={slug} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">
-                      {slug}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <Button size="sm" variant="secondary" onClick={() => void openEdit(tpl)} data-testid={`edit-btn-${tpl.template}`}>
-                  {t('common.edit')}
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => { setDeleteTarget(tpl); setDeleteError(null) }} data-testid={`delete-btn-${tpl.template}`}>
-                  {t('common.delete')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+                  <span className="ml-2 text-[12px] text-accent-700 [font-family:var(--font-mono)]">
+                    {tpl.template}
+                  </span>
+                </td>
+                <td className="[font-family:var(--font-mono)] text-[13px]">v{tpl.version}</td>
+                <td className="max-w-[300px]">
+                  <span className="flex flex-wrap gap-1.5">
+                    {tpl.type_slugs.map((slug) => (
+                      <span key={slug} className="tag tag-neutral text-[10px]">{slug}</span>
+                    ))}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap text-ink/[0.55]" data-testid={`tpl-blocks-${tpl.template}`}>
+                  {t('tpl.blocksCount', { count: tpl.blocks_count ?? 0 })}
+                </td>
+                <td className="whitespace-nowrap text-right">
+                  <Button variant="icon" size="sm" title={t('common.edit')}
+                    aria-label={`${t('common.edit')} ${tpl.template}`}
+                    onClick={() => void openEdit(tpl)} data-testid={`edit-btn-${tpl.template}`}>
+                    <PencilSimple size={14} weight="duotone" />
+                  </Button>
+                  <Button variant="icon" size="sm" title={t('common.delete')}
+                    aria-label={`${t('common.delete')} ${tpl.template}`}
+                    className="text-accent-2-700"
+                    onClick={() => { setDeleteTarget(tpl); setDeleteError(null) }}
+                    data-testid={`delete-btn-${tpl.template}`}>
+                    <Trash size={14} weight="duotone" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       {/* ── Modale édition YAML ── */}
       {editTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="edit-modal">
-          <div className="flex flex-col w-full max-w-4xl bg-white rounded-lg shadow-xl overflow-hidden" style={{ maxHeight: '90vh' }}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-bold">
+        <div className="dialog-backdrop z-50" data-testid="edit-modal">
+          <div className="dialog w-full !max-w-4xl" style={{ maxHeight: '90vh' }}
+            role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between">
+              <h4 className="dialog-title m-0">
                 {t('tpl.editTitle', { template: editTarget.template })}
-              </h2>
-              <button className="text-gray-400 hover:text-gray-700 text-sm" onClick={closeEdit}>✕</button>
+              </h4>
+              <button type="button" onClick={closeEdit} aria-label={t('common.close', 'Fermer')}
+                className="border-0 bg-transparent p-1 text-ink/[0.4] hover:text-ink">
+                <X size={16} weight="bold" />
+              </button>
             </div>
-            <div className="p-4">
-              {yamlLoadError && (
-                <p className="text-sm text-red-600 mb-2">{yamlLoadError}</p>
-              )}
+            <div className="min-h-0 flex-1">
+              {yamlLoadError && <p className="field-error m-0 mb-2">{yamlLoadError}</p>}
               {yamlContent === null && !yamlLoadError && (
-                <p className="text-sm text-gray-400">{t('common.loading')}</p>
+                <p className="text-muted text-[13px]">{t('common.loading')}</p>
               )}
               {yamlContent !== null && (
-                <div className="border border-gray-200 rounded overflow-hidden" style={{ height: '60vh' }}>
+                <div className="overflow-hidden rounded-md border border-[var(--color-divider)]"
+                  style={{ height: '60vh' }}>
                   <YamlEditor ref={editorRef} initialValue={yamlContent} />
                 </div>
               )}
             </div>
-            {editSaveError && (
-              <p className="px-6 pb-2 text-sm text-red-600" data-testid="edit-error">{editSaveError}</p>
-            )}
-            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-200">
+            <div aria-live="polite" className="empty:hidden">
+              {editSaveError && (
+                <p className="field-error m-0" data-testid="edit-error">{editSaveError}</p>
+              )}
+            </div>
+            <div className="dialog-actions m-0 border-t border-[var(--color-divider)] pt-3">
               <Button variant="secondary" onClick={closeEdit} disabled={editSaving}>
                 {t('common.cancel')}
               </Button>
-              <Button
-                onClick={() => void saveEdit()}
-                disabled={editSaving || yamlContent === null}
-                data-testid="edit-save-btn"
-              >
+              <Button onClick={() => void saveEdit()} disabled={editSaving || yamlContent === null}
+                data-testid="edit-save-btn">
                 {editSaving ? t('common.loading') : t('common.save')}
               </Button>
             </div>
@@ -181,36 +214,31 @@ function LocalLibrary() {
         </div>
       )}
 
-      {/* ── Modale confirmation suppression ── */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="delete-modal">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-600">{t('tpl.deleteTitle')}</h2>
-            <p className="text-sm text-gray-600">
-              {t('tpl.deleteConfirm', { template: deleteTarget.template })}
-            </p>
-            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-                {t('common.cancel')}
-              </Button>
-              <Button variant="danger" onClick={() => void confirmDelete()} disabled={deleting} data-testid="delete-confirm-btn">
-                {deleting ? t('common.loading') : t('common.delete')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          testId="delete-modal"
+          title={t('tpl.deleteTitle')}
+          message={t('tpl.deleteConfirm', { template: deleteTarget.template })}
+          impactMessage={
+            deleteTarget.blocks_count > 0
+              ? t('tpl.blocksCount', { count: deleteTarget.blocks_count })
+              : undefined
+          }
+          confirmLabel={t('common.delete')}
+          confirmTestId="delete-confirm-btn"
+          pending={deleting}
+          error={deleteError}
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
-    </>
+    </SubSection>
   )
 }
 
-// ── Onglet Galerie en ligne ──────────────────────────────────────────────────
+// ── Galerie ──────────────────────────────────────────────────────────────────
 
-function GalleryTemplates({
-  sourceUrl,
-  onInstalled,
-}: {
+function GalleryTemplates({ sourceUrl, onInstalled }: {
   sourceUrl: string
   onInstalled: () => void
 }) {
@@ -222,6 +250,8 @@ function GalleryTemplates({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pulling, setPulling] = useState<string | null>(null)
   const [pullMsg, setPullMsg] = useState<{ msg: string; ok: boolean } | null>(null)
+  // Mise à jour : le diff (types/propriétés ajoutés) s'affiche AVANT confirmation.
+  const [updateDiff, setUpdateDiff] = useState<GalleryPullDiff | null>(null)
 
   async function load() {
     setLoading(true)
@@ -240,22 +270,22 @@ function GalleryTemplates({
 
   useEffect(() => { void load() }, [sourceUrl]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function pullTemplate(tpl: RemoteTemplateInfo) {
-    setPulling(tpl.template)
+  async function doPull(templateSlug: string) {
+    setPulling(templateSlug)
     setPullMsg(null)
     try {
-      const result = await galleryApi.pull(sourceUrl, tpl.template)
+      const result = await galleryApi.pull(sourceUrl, templateSlug)
       setPullMsg({
         msg: t('tpl.gallery.pullSuccess', { template: result.template, version: result.version }),
         ok: true,
       })
       void qc.invalidateQueries({ queryKey: ['templates'] })
-      setItems(prev =>
-        prev.map(item =>
-          item.template === tpl.template
+      setItems((prev) =>
+        prev.map((item) =>
+          item.template === templateSlug
             ? { ...item, installed: true, update_available: false }
-            : item
-        )
+            : item,
+        ),
       )
       onInstalled()
     } catch (e) {
@@ -265,70 +295,135 @@ function GalleryTemplates({
     }
   }
 
+  /** Installer = direct ; mettre à jour = diff d'abord, confirmation ensuite. */
+  async function pullTemplate(tpl: RemoteTemplateInfo) {
+    if (!tpl.update_available) {
+      await doPull(tpl.template)
+      return
+    }
+    setPulling(tpl.template)
+    setPullMsg(null)
+    try {
+      setUpdateDiff(await galleryApi.pullDiff(sourceUrl, tpl.template))
+    } catch (e) {
+      setPullMsg({ msg: (e as Error).message, ok: false })
+    } finally {
+      setPulling(null)
+    }
+  }
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-xs text-gray-400 font-mono truncate max-w-xs">{sourceUrl}</span>
-        <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading} data-testid="gallery-refresh-btn">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="max-w-md truncate text-[12px] text-ink/[0.45] [font-family:var(--font-mono)]">
+          {sourceUrl}
+        </span>
+        <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading}
+          data-testid="gallery-refresh-btn">
+          <ArrowClockwise size={13} weight="duotone" />
           {loading ? t('tpl.gallery.loading') : t('tpl.gallery.refresh')}
         </Button>
       </div>
 
-      {loadError && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {loadError}
-        </div>
-      )}
-
-      {pullMsg && (
-        <div className={`mb-4 rounded border px-4 py-2 text-sm ${pullMsg.ok ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
-          {pullMsg.msg}
-        </div>
-      )}
+      <ErrorLine message={loadError} testId="gallery-load-error" />
+      <div aria-live="polite" className="empty:hidden">
+        {pullMsg && (
+          <p className={`mb-4 text-[13px] ${pullMsg.ok ? 'text-accent-700' : 'text-accent-2-700'}`}>
+            {pullMsg.msg}
+          </p>
+        )}
+      </div>
 
       {!loading && items.length === 0 && !loadError && (
-        <p className="text-sm text-gray-400">{t('tpl.gallery.empty')}</p>
+        <p className="text-muted text-[13px]">{t('tpl.gallery.empty')}</p>
       )}
 
-      <div className="grid gap-3">
-        {items.map(tpl => {
+      <ul className="m-0 list-none p-0">
+        {items.map((tpl) => {
           const isPulling = pulling === tpl.template
-          const canInstall = !tpl.installed || tpl.update_available
           return (
-            <div key={tpl.template} className="border rounded-lg p-4 bg-white shadow-sm" data-testid={`gallery-card-${tpl.template}`}>
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="font-mono text-sm font-semibold text-indigo-700">{tpl.template}</span>
-                    <span className="font-mono text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded">v{tpl.version}</span>
-                    <span className="text-gray-700 font-medium">{tpl.label}</span>
-                    {tpl.installed && !tpl.update_available && (
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">✓ {t('tpl.gallery.upToDate')}</span>
-                    )}
-                    {tpl.update_available && (
-                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">↑ màj disponible</span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {tpl.type_slugs.map(slug => (
-                      <span key={slug} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">{slug}</span>
-                    ))}
-                  </div>
-                </div>
-                <div className="shrink-0">
-                  {canInstall ? (
-                    <Button size="sm" onClick={() => void pullTemplate(tpl)} disabled={isPulling || pulling !== null} data-testid={`gallery-install-${tpl.template}`}>
-                      {isPulling ? t('tpl.gallery.pulling') : tpl.update_available ? t('tpl.gallery.update') : t('tpl.gallery.install')}
-                    </Button>
-                  ) : (
-                    <span className="text-xs text-gray-400 font-medium px-2">{t('tpl.gallery.installed')}</span>
-                  )}
-                </div>
+            <li key={tpl.template}
+              className="flex items-center gap-3 border-b border-[var(--color-divider)] py-3"
+              data-testid={`gallery-card-${tpl.template}`}>
+              <div className="min-w-0 flex-1">
+                <span className="text-[15px] font-[600] [font-family:var(--font-heading)]">
+                  {tpl.label}
+                </span>
+                <span className="ml-2 text-[12px] text-accent-700 [font-family:var(--font-mono)]">
+                  {tpl.template} · v{tpl.version}
+                </span>
+                <span className="mt-1 flex flex-wrap gap-1.5">
+                  {tpl.type_slugs.map((slug) => (
+                    <span key={slug} className="tag tag-neutral text-[10px]">{slug}</span>
+                  ))}
+                </span>
               </div>
-            </div>
+              <div className="shrink-0">
+                {tpl.installed && !tpl.update_available ? (
+                  <span className="text-[12px] font-[600] text-accent-700">
+                    ✓ {t('tpl.gallery.upToDate')}
+                  </span>
+                ) : (
+                  <Button size="sm" variant={tpl.update_available ? 'secondary' : 'primary'}
+                    onClick={() => void pullTemplate(tpl)}
+                    disabled={isPulling || pulling !== null}
+                    data-testid={`gallery-install-${tpl.template}`}>
+                    {isPulling
+                      ? t('tpl.gallery.pulling')
+                      : tpl.update_available
+                        ? t('tpl.gallery.update')
+                        : t('tpl.gallery.install')}
+                  </Button>
+                )}
+              </div>
+            </li>
           )
         })}
-      </div>
+      </ul>
+
+      {updateDiff && (
+        <ConfirmDialog
+          testId="update-diff-dialog"
+          title={t('tpl.updateTitle', { template: updateDiff.template })}
+          destructive={false}
+          message={
+            <>
+              <p className="m-0">
+                {t('tpl.updateVersion', {
+                  from: updateDiff.installed_version ?? '—',
+                  to: updateDiff.remote_version,
+                })}
+              </p>
+              {updateDiff.new_types.length > 0 && (
+                <p className="m-0 mt-2">
+                  {t('tpl.updateNewTypes')}{' '}
+                  <span className="[font-family:var(--font-mono)] text-[12px]">
+                    {updateDiff.new_types.join(', ')}
+                  </span>
+                </p>
+              )}
+              {updateDiff.new_properties.length > 0 && (
+                <p className="m-0 mt-2">
+                  {t('tpl.updateNewProps')}{' '}
+                  <span className="[font-family:var(--font-mono)] text-[12px]">
+                    {updateDiff.new_properties.join(', ')}
+                  </span>
+                </p>
+              )}
+              {updateDiff.new_types.length === 0 && updateDiff.new_properties.length === 0 && (
+                <p className="m-0 mt-2 text-ink/[0.6]">{t('tpl.updateNoChange')}</p>
+              )}
+            </>
+          }
+          confirmLabel={t('tpl.updateConfirm')}
+          onConfirm={() => {
+            const slug = updateDiff.template
+            setUpdateDiff(null)
+            void doPull(slug)
+          }}
+          onCancel={() => setUpdateDiff(null)}
+        />
+      )}
     </div>
   )
 }
@@ -345,7 +440,7 @@ export function normalizeSourceUrl(url: string): string {
   return cleaned
 }
 
-function GalleryTab() {
+function GallerySection() {
   const { t } = useTranslation()
   const qc = useQueryClient()
 
@@ -362,10 +457,15 @@ function GalleryTab() {
     queryFn: () => galleryApi.listSources(),
   })
 
+  // Première source sélectionnée d'office : la galerie s'affiche sans clic.
+  useEffect(() => {
+    if (activeSource === null && sources.length > 0) setActiveSource(sources[0])
+  }, [sources, activeSource])
+
   async function addSource() {
     if (!newLabel.trim() || !newUrl.trim()) return
     const trimmedUrl = normalizeSourceUrl(newUrl)
-    if (sources.some(s => s.url === trimmedUrl)) {
+    if (sources.some((s) => s.url === trimmedUrl)) {
       setAddError('Cette source est déjà dans la liste')
       return
     }
@@ -407,132 +507,98 @@ function GalleryTab() {
   }
 
   return (
-    <div className="flex gap-6">
-      {/* ── Panneau sources ── */}
-      <div className="w-56 shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('tpl.gallery.sources')}</span>
-          <button
-            className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
-            onClick={() => { setShowAddForm(v => !v); setAddError(null) }}
-            data-testid="gallery-add-source-btn"
-          >
-            {showAddForm ? '✕' : '+ ' + t('tpl.gallery.addSource')}
-          </button>
-        </div>
-
-        {/* Formulaire ajout */}
-        {showAddForm && (
-          <div className="mb-3 rounded border border-indigo-100 bg-indigo-50 p-3 space-y-2">
-            <Input
-              placeholder={t('tpl.gallery.sourceLabelPlaceholder')}
-              value={newLabel}
-              onChange={e => setNewLabel(e.target.value)}
-              className="text-sm h-8"
-              data-testid="gallery-new-label"
-            />
-            <Input
-              placeholder={t('tpl.gallery.sourceUrlPlaceholder')}
-              value={newUrl}
-              onChange={e => setNewUrl(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') void addSource() }}
-              className="text-sm h-8"
-              data-testid="gallery-new-url"
-            />
-            <p className="text-xs text-gray-500" data-testid="gallery-url-hint">
-              {t('tpl.gallery.sourceUrlHint')}
-            </p>
-            {addError && <p className="text-xs text-red-600">{addError}</p>}
-            <Button size="sm" className="w-full" onClick={() => void addSource()} disabled={adding || !newLabel.trim() || !newUrl.trim()} data-testid="gallery-add-confirm">
-              {adding ? t('common.loading') : t('tpl.gallery.add')}
-            </Button>
-          </div>
-        )}
-
-        {/* Liste des sources */}
+    <SubSection
+      title={t('tpl.galleryTitle')}
+      actions={
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => { setShowAddForm((v) => !v); setAddError(null) }}
+          data-testid="gallery-add-source-btn"
+        >
+          {showAddForm ? t('common.cancel') : <><Plus size={12} weight="duotone" /> {t('tpl.gallery.addSource')}</>}
+        </button>
+      }
+    >
+      {/* Sources rappelées sous le titre de section. */}
+      <div className="mb-5 flex flex-wrap items-center gap-2" data-testid="gallery-sources">
         {sources.length === 0 && !showAddForm && (
-          <p className="text-xs text-gray-400">{t('tpl.gallery.noSources')}</p>
+          <p className="text-muted m-0 text-[13px]">{t('tpl.gallery.noSources')}</p>
         )}
-        <ul className="space-y-1">
-          {sources.map(src => (
-            <li key={src.id ?? 'builtin'}>
-              <div
-                className={`group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer text-sm transition-colors ${
-                  activeSource?.url === src.url
-                    ? 'bg-indigo-100 text-indigo-800 font-medium'
-                    : 'hover:bg-gray-100 text-gray-700'
-                }`}
-                onClick={() => setActiveSource(src)}
-                data-testid={`gallery-source-${src.id ?? 'builtin'}`}
-              >
-                <span className="flex-1 truncate" title={src.url}>{src.label}</span>
-                {src.builtin && (
-                  <span className="text-xs text-gray-400 shrink-0">{t('tpl.gallery.builtin')}</span>
-                )}
-                {!src.builtin && src.id && (
-                  <button
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 text-gray-400 hover:text-red-500 transition-opacity shrink-0"
-                    onClick={e => { e.stopPropagation(); void deleteSource(src) }}
-                    disabled={deletingId === src.id}
-                    data-testid={`gallery-delete-source-${src.id}`}
-                    title={t('tpl.gallery.deleteSourceConfirm')}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* ── Panneau templates ── */}
-      <div className="flex-1 min-w-0">
-        {activeSource ? (
-          <GalleryTemplates
-            key={activeSource.url}
-            sourceUrl={activeSource.url}
-            onInstalled={() => void refetchSources()}
-          />
-        ) : (
-          <p className="text-sm text-gray-400 mt-2">{t('tpl.gallery.selectSource')}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Page principale avec onglets ─────────────────────────────────────────────
-
-type Tab = 'local' | 'gallery'
-
-export default function TemplateList() {
-  const { t } = useTranslation()
-  const [activeTab, setActiveTab] = useState<Tab>('local')
-
-  return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">{t('tpl.title')}</h1>
-
-      {/* Onglets */}
-      <div className="flex gap-0 border-b border-gray-200 mb-6">
-        {(['local', 'gallery'] as const).map(tab => (
-          <button
-            key={tab}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab
-                ? 'border-indigo-600 text-indigo-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-            onClick={() => setActiveTab(tab)}
-            data-testid={`tab-${tab}`}
-          >
-            {tab === 'local' ? t('tpl.tabLocal') : t('tpl.tabGallery')}
-          </button>
+        {sources.map((src) => (
+          <span key={src.id ?? 'builtin'}
+            className={`tag gap-1.5 ${activeSource?.url === src.url ? 'tag-accent' : 'tag-outline'}`}
+            data-testid={`gallery-source-${src.id ?? 'builtin'}`}>
+            <button type="button" title={src.url}
+              className="border-0 bg-transparent p-0 text-inherit"
+              onClick={() => setActiveSource(src)}>
+              {src.label}
+            </button>
+            {src.builtin && <span className="opacity-60">{t('tpl.gallery.builtin')}</span>}
+            {!src.builtin && src.id && (
+              <button type="button"
+                className="border-0 bg-transparent p-0 text-inherit opacity-70 hover:opacity-100"
+                onClick={() => void deleteSource(src)}
+                disabled={deletingId === src.id}
+                data-testid={`gallery-delete-source-${src.id}`}
+                aria-label={`${t('tpl.gallery.deleteSourceConfirm')} ${src.label}`}
+                title={t('tpl.gallery.deleteSourceConfirm')}>
+                <X size={11} weight="bold" />
+              </button>
+            )}
+          </span>
         ))}
       </div>
 
-      {activeTab === 'local' ? <LocalLibrary /> : <GalleryTab />}
+      {showAddForm && (
+        <div className="mb-5 flex max-w-xl flex-col gap-2">
+          <Input
+            placeholder={t('tpl.gallery.sourceLabelPlaceholder')}
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            data-testid="gallery-new-label"
+          />
+          <Input
+            placeholder={t('tpl.gallery.sourceUrlPlaceholder')}
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addSource() }}
+            data-testid="gallery-new-url"
+          />
+          <p className="text-muted m-0 text-[12px]" data-testid="gallery-url-hint">
+            {t('tpl.gallery.sourceUrlHint')}
+          </p>
+          {addError && <p className="field-error m-0">{addError}</p>}
+          <Button size="sm" onClick={() => void addSource()}
+            disabled={adding || !newLabel.trim() || !newUrl.trim()}
+            data-testid="gallery-add-confirm">
+            {adding ? t('common.loading') : t('tpl.gallery.add')}
+          </Button>
+        </div>
+      )}
+
+      {activeSource ? (
+        <GalleryTemplates
+          key={activeSource.url}
+          sourceUrl={activeSource.url}
+          onInstalled={() => void refetchSources()}
+        />
+      ) : (
+        <p className="text-muted text-[13px]">{t('tpl.gallery.selectSource')}</p>
+      )}
+    </SubSection>
+  )
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
+export default function TemplateList() {
+  const { t } = useTranslation()
+  return (
+    <div className="mx-auto max-w-[1000px] px-6 pt-11 pb-24">
+      <SectionHead kicker={t('tpl.kicker')} title={t('tpl.title')} />
+      <InstalledSection />
+      <GallerySection />
     </div>
   )
 }

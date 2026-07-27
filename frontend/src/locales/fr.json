@@ -121,7 +121,23 @@
       "pullSuccess": "Template « {{template}} » installé (v{{version}}).",
       "deleteSourceConfirm": "Supprimer cette source ?",
       "builtin": "défaut env"
-    }
+    },
+    "kicker": "Administration",
+    "installedTitle": "Installés",
+    "colTemplate": "Template",
+    "colVersion": "Version",
+    "colTypes": "Types fournis",
+    "colBlocks": "Blocs utilisateurs",
+    "blocksCount_one": "{{count}} bloc",
+    "blocksCount_other": "{{count}} blocs",
+    "galleryTitle": "Galerie",
+    "deleteUsedTitle": "Template utilisé",
+    "updateTitle": "Mettre à jour « {{template}} »",
+    "updateVersion": "Version {{from}} → {{to}}.",
+    "updateNewTypes": "Types ajoutés :",
+    "updateNewProps": "Propriétés ajoutées :",
+    "updateNoChange": "Aucun changement de structure (contenu ou libellés seulement).",
+    "updateConfirm": "Mettre à jour le template"
   },
   "ws": {
     "title": "Workspaces",

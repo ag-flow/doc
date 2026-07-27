@@ -11,7 +11,13 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, HttpUrl, field_validator
 
 from docflow.auth.deps import require_api_key_admin_write, require_authenticated
-from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
+from docflow.templates.gallery import (
+    GalleryError,
+    RemoteTemplateData,
+    fetch_gallery,
+    fetch_template,
+    pull_template,
+)
 from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import Template
@@ -36,6 +42,8 @@ class TemplateInfo(BaseModel):
     path: str
     concrete_types: int
     type_slugs: list[str]
+    # Blocs utilisateurs (tous workspaces) portés par les types de ce template.
+    blocks_count: int = 0
 
 
 class TemplateYamlBody(BaseModel):
@@ -138,9 +146,28 @@ def _find_template_file(template_slug: str) -> pathlib.Path:
     raise HTTPException(status_code=404, detail=f"template '{template_slug}' introuvable")
 
 
+# Blocs (tous workspaces) portés par un type issu de chaque template — le
+# listing annonce l'usage réel, la suppression s'appuie sur la même requête.
+_BLOCKS_BY_TEMPLATE = """
+SELECT ft.source_template, w.slug AS ws_slug, b.label
+FROM data_block b
+JOIN functional_type ft ON ft.id = b.functional_type_ref
+JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
+WHERE ft.source_template IS NOT NULL
+ORDER BY w.slug, b.label
+"""
+
+
 @router.get("/templates", response_model=list[TemplateInfo])
-async def list_templates() -> list[TemplateInfo]:
-    return load_templates(_TEMPLATES_DIR)
+async def list_templates(request: Request) -> list[TemplateInfo]:
+    templates = load_templates(_TEMPLATES_DIR)
+    rows = await request.app.state.pool.fetch(_BLOCKS_BY_TEMPLATE)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["source_template"]] = counts.get(r["source_template"], 0) + 1
+    for tpl in templates:
+        tpl.blocks_count = counts.get(tpl.template, 0)
+    return templates
 
 
 # ── Galerie distante ────────────────────────────────────────────────────────
@@ -249,6 +276,57 @@ async def list_gallery(
     return result
 
 
+class GalleryPullDiffOut(BaseModel):
+    template: str
+    installed_version: int | None
+    remote_version: int
+    new_types: list[str]
+    # Propriétés ajoutées aux types déjà installés : « type.prop ».
+    new_properties: list[str]
+
+
+@router.post("/templates/gallery/pull/diff", response_model=GalleryPullDiffOut)
+async def diff_gallery_pull(
+    body: GalleryPullIn,
+    _: None = _Auth,
+) -> GalleryPullDiffOut:
+    """Ce que la mise à jour changerait — AVANT de confirmer (aucune écriture)."""
+    try:
+        remote_tpl = await fetch_template(body.source_url, body.template_slug)
+    except GalleryError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Template invalide : {e}") from e
+
+    remote_types = {r.slug: r for r in resolve(remote_tpl)}
+    local = {t.template: t for t in load_templates(_TEMPLATES_DIR)}.get(body.template_slug)
+    local_types: dict[str, set[str]] = {}
+    installed_version: int | None = None
+    if local is not None:
+        installed_version = local.version
+        yaml_file = _find_template_file(body.template_slug)
+        with yaml_file.open() as f:
+            local_tpl = Template.model_validate(yaml.safe_load(f))
+        for r in resolve(local_tpl):
+            local_types[r.slug] = {p.slug for p in r.properties}
+
+    new_types = sorted(slug for slug in remote_types if slug not in local_types)
+    new_properties = sorted(
+        f"{slug}.{p.slug}"
+        for slug, r in remote_types.items()
+        if slug in local_types
+        for p in r.properties
+        if p.slug not in local_types[slug]
+    )
+    return GalleryPullDiffOut(
+        template=body.template_slug,
+        installed_version=installed_version,
+        remote_version=remote_tpl.version,
+        new_types=new_types,
+        new_properties=new_properties,
+    )
+
+
 @router.post("/templates/gallery/pull", response_model=TemplateInfo)
 async def pull_from_gallery(
     body: GalleryPullIn,
@@ -321,9 +399,28 @@ async def update_template_yaml(
 @router.delete("/templates/{template_slug}", status_code=204)
 async def delete_template(
     template_slug: str,
+    request: Request,
     _: None = _Auth,
 ) -> None:
     yaml_file = _find_template_file(template_slug)
+    # Refus motivé : des blocs (dans n'importe quel workspace) reposent sur les
+    # types de ce template — la liste est retournée, pas seulement un compte.
+    rows = await request.app.state.pool.fetch(
+        "SELECT w.slug AS ws_slug, b.label FROM data_block b "
+        "JOIN functional_type ft ON ft.id = b.functional_type_ref "
+        "JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key "
+        "WHERE ft.source_template = $1 ORDER BY w.slug, b.label",
+        template_slug,
+    )
+    if rows:
+        blocks = [f"{r['ws_slug']} / {r['label']}" for r in rows]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"template utilisé par {len(blocks)} bloc(s)",
+                "blocks": blocks,
+            },
+        )
     yaml_file.unlink()
     log.info("template_deleted", template=template_slug)
 

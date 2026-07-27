@@ -86,6 +86,23 @@ async def fetch_gallery(source_url: str) -> list[RemoteTemplateData]:
     return [r for r in results if r is not None]
 
 
+async def fetch_template(source_url: str, template_slug: str) -> Template:
+    """Télécharge et valide un template YAML SANS l'écrire (dry-run / diff)."""
+    if not _SLUG_RE.match(template_slug):
+        raise ValueError(f"template_slug invalide : {template_slug!r}")
+    base = source_url.rstrip("/")
+    async with httpx.AsyncClient() as client:
+        yaml_text = await _fetch(client, f"{base}/{template_slug}.yaml")
+    raw = yaml.safe_load(yaml_text)
+    tpl = Template.model_validate(raw)
+    if tpl.template != template_slug:
+        raise ValueError(
+            f"le slug du YAML téléchargé ({tpl.template!r}) ne correspond pas "
+            f"au slug demandé ({template_slug!r})"
+        )
+    return tpl
+
+
 async def pull_template(
     source_url: str, template_slug: str, templates_dir: pathlib.Path
 ) -> Template:
