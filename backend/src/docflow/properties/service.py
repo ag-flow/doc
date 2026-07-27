@@ -364,6 +364,23 @@ async def delete_allowed_value(
             val_id = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
+            # Le 409 porte le NOMBRE de documents concernés : l'utilisateur ne
+            # confirme pas à l'aveugle. Le FK restrict reste le garde-fou.
+            # Valeurs versionnées (0005) : seule la version COURANTE compte —
+            # une valeur abandonnée dans l'historique ne bloque pas la suppression
+            # applicative (le FK restrict de l'historique, lui, la bloquera).
+            used = await conn.fetchval(
+                "SELECT count(*) FROM properties_values pv "
+                "JOIN properties_value_version v ON v.property_value_ref = pv.id "
+                " AND v.version_number = pv.version "
+                "WHERE v.allowed_value_ref = $1",
+                val_id,
+            )
+            if used:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"valeur utilisée par {used} document(s) existant(s)",
+                )
             try:
                 await conn.execute("DELETE FROM properties_allowed_values WHERE id = $1", val_id)
             except asyncpg.ForeignKeyViolationError as exc:

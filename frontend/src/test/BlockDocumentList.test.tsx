@@ -161,6 +161,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'budget_jours',
@@ -183,6 +184,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [],
       },
     ])
@@ -221,6 +223,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'budget_jours',
@@ -251,9 +254,9 @@ describe('BlockDocumentList', () => {
     // types-rich doit exposer feature comme enfant d'epic pour que le bouton apparaisse
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([
       { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', content_template: null,
-        source_template: null, created_at: '', updated_at: '', properties: [] },
+        source_template: null, created_at: '', updated_at: '', documents_count: 0, properties: [] },
       { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', content_template: null,
-        source_template: null, created_at: '', updated_at: '', properties: [] },
+        source_template: null, created_at: '', updated_at: '', documents_count: 0, properties: [] },
     ])
     vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([
       { slug: 'feature', label: 'Feature' },
@@ -290,6 +293,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -558,6 +562,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -631,6 +636,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -759,6 +765,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [
         {
           slug: 'statut',
@@ -856,6 +863,7 @@ const TYPES_WITH_STATUS: FunctionalTypeRich[] = [
   {
     id: 't-epic', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws',
     source_template: null, content_template: null, created_at: '', updated_at: '',
+    documents_count: 0,
     properties: [
       {
         slug: 'statut', label: 'Statut', type: 'restricted_list', required: false,

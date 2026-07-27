@@ -83,6 +83,7 @@ describe('flattenTypeTree', () => {
       source_template: null,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [],
     }) as FunctionalTypeRich
 
@@ -121,6 +122,7 @@ describe('groupTypeTree', () => {
       source_template: tpl,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [],
     }) as FunctionalTypeRich
 
@@ -143,5 +145,105 @@ describe('groupTypeTree', () => {
     ])
     expect(groups).toHaveLength(1)
     expect(groups[0].nodes.map((n) => n.type.slug)).toEqual(['epic', 'custom'])
+  })
+})
+
+// ── Écran Types Broadsheet : édition en place, DoD ──────────────────────────
+
+const RICH_TYPE = {
+  id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws',
+  content_template: null, source_template: null, created_at: '', updated_at: '',
+  documents_count: 5,
+  properties: [
+    {
+      slug: 'statut', label: 'Statut', type: 'restricted_list', required: false,
+      behavior: null, default_value: null,
+      allowed_values: [{ slug: 'fait', label: 'Fait', color: null, position: 0 }],
+    },
+  ],
+}
+
+describe('TypesAdmin — édition en place (Broadsheet)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.get).mockResolvedValue([RICH_TYPE])
+  })
+
+  it('la ligne porte le résumé des propriétés et le nombre de documents', async () => {
+    renderWithProviders()
+    expect(await screen.findByTestId('props-summary-epic')).toHaveTextContent('Statut')
+    expect(screen.getByTestId('docs-count-epic')).toHaveTextContent('5 docs')
+  })
+
+  it('clic sur la ligne → panneau sous la ligne ; reclic, Échap et bouton ferment', async () => {
+    renderWithProviders()
+    const row = await screen.findByTestId('type-row-epic')
+    fireEvent.click(row)
+    expect(await screen.findByTestId('close-panel-epic')).toBeInTheDocument()
+    // Reclic de la ligne → fermé.
+    fireEvent.click(row)
+    expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument()
+    // Échap → fermé.
+    fireEvent.click(row)
+    expect(await screen.findByTestId('close-panel-epic')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument(),
+    )
+    // Bouton fermer → fermé.
+    fireEvent.click(row)
+    fireEvent.click(await screen.findByTestId('close-panel-epic'))
+    expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument()
+  })
+
+  it('supprimer une valeur utilisée : confirmation puis 409 avec le décompte', async () => {
+    vi.mocked(api.delete).mockRejectedValue(new Error('valeur utilisée par 3 document(s) existant(s)'))
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('delete-val-statut-fait'))
+    // Confirmation d'abord (verbe explicite), pas de suppression muette.
+    const dialog = await screen.findByTestId('delete-val-dialog')
+    expect(dialog).toHaveTextContent('Fait')
+    fireEvent.click(screen.getByTestId('delete-val-dialog-confirm'))
+    // Le refus de l'API (valeur utilisée) est affiché AVEC le nombre concerné.
+    await waitFor(() =>
+      expect(screen.getByTestId('delete-val-dialog-error')).toHaveTextContent('3 document(s)'),
+    )
+  })
+
+  it('ajouter une propriété obligatoire signale les documents qui deviennent incomplets', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-prop-epic'))
+    // Sans « obligatoire » : aucun avertissement.
+    expect(screen.queryByTestId('required-warn-epic')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('prop-required-epic'))
+    expect(await screen.findByTestId('required-warn-epic'))
+      .toHaveTextContent('5 documents de ce type deviendront incomplets')
+  })
+
+  it('l’ajout de propriété envoie libellé, type scalaire et obligatoire', async () => {
+    vi.mocked(api.post).mockResolvedValue({})
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-prop-epic'))
+    fireEvent.change(screen.getByLabelText('Libellé'), { target: { value: 'Deadline' } })
+    fireEvent.change(screen.getByTestId('prop-type-select-epic'), { target: { value: 'date' } })
+    fireEvent.click(screen.getByTestId('prop-required-epic'))
+    fireEvent.click(screen.getByTestId('confirm-add-prop-epic'))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/workspaces/my-ws/types/epic/properties', {
+        slug: 'deadline', label: 'Deadline', type: 'date', required: true,
+      }),
+    )
+  })
+
+  it('le nuancier de couleurs est celui du système (pas de pipette libre)', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-val-statut'))
+    const swatches = screen.getByTestId('new-val-color')
+    expect(swatches.querySelectorAll('[role="radio"]')).toHaveLength(5)
+    expect(document.querySelector('input[type="color"]')).toBeNull()
   })
 })

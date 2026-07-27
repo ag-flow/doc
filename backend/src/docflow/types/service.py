@@ -112,6 +112,9 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                 source_template=tr["source_template"],
                 created_at=tr["created_at"],
                 updated_at=tr["updated_at"],
+                documents_count=await conn.fetchval(
+                    "SELECT count(*) FROM document WHERE functional_type_ref = $1", tr["id"]
+                ),
             )
             defs = await conn.fetch(
                 "SELECT id, slug, label, type, default_value, required, behavior "

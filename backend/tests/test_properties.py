@@ -158,3 +158,81 @@ async def test_delete_allowed_value(db_pool: asyncpg.Pool, test_workspace: dict)
     await prop_svc.delete_allowed_value(db_pool, _WS, "epic", "status", "todo")
     values = await prop_svc.list_allowed_values(db_pool, _WS, "epic", "status")
     assert not any(v.slug == "todo" for v in values)
+
+
+async def test_delete_allowed_value_used_reports_count(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """DoD écran Types : le 409 annonce le nombre de documents concernés."""
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "status", "restricted_list")
+    av = await prop_svc.create_allowed_value(
+        db_pool, _WS, "epic", "status", AllowedValueCreate(slug="fait", label="Fait")
+    )
+
+    wk = test_workspace["workspace_technical_key"]
+    async with db_pool.acquire() as conn:
+        type_id = await conn.fetchval(
+            "SELECT id FROM functional_type WHERE workspace_technical_key=$1 AND slug='epic'", wk
+        )
+        prop_id = await conn.fetchval(
+            "SELECT id FROM properties_defs WHERE functional_type_ref=$1 AND slug='status'",
+            type_id,
+        )
+        block_id = await conn.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, "
+            "workspace_technical_key) VALUES ('blk-409', 'B', $1, $2) RETURNING id",
+            type_id,
+            wk,
+        )
+        doc_id = await conn.fetchval(
+            "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+            "workspace_technical_key) VALUES ('Doc', $1, $2, $3) RETURNING doc_technical_key",
+            type_id,
+            block_id,
+            wk,
+        )
+        pv_id = await conn.fetchval(
+            "INSERT INTO properties_values (document_ref, property_def_ref, "
+            "workspace_technical_key, version) VALUES ($1, $2, $3, 1) RETURNING id",
+            doc_id,
+            prop_id,
+            wk,
+        )
+        await conn.execute(
+            "INSERT INTO properties_value_version (property_value_ref, version_number, "
+            "allowed_value_ref) VALUES ($1, 1, $2)",
+            pv_id,
+            av.id,
+        )
+
+    with pytest.raises(HTTPException) as exc:
+        await prop_svc.delete_allowed_value(db_pool, _WS, "epic", "status", "fait")
+    assert exc.value.status_code == 409
+    assert "1 document" in str(exc.value.detail)
+
+
+async def test_types_rich_carries_documents_count(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _make_type(db_pool, "story")
+    wk = test_workspace["workspace_technical_key"]
+    async with db_pool.acquire() as conn:
+        type_id = await conn.fetchval(
+            "SELECT id FROM functional_type WHERE workspace_technical_key=$1 AND slug='story'", wk
+        )
+        block_id = await conn.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, "
+            "workspace_technical_key) VALUES ('blk-count', 'B', $1, $2) RETURNING id",
+            type_id,
+            wk,
+        )
+        await conn.execute(
+            "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+            "workspace_technical_key) VALUES ('A', $1, $2, $3), ('B', $1, $2, $3)",
+            type_id,
+            block_id,
+            wk,
+        )
+    rich = await type_svc.list_types_rich(db_pool, _WS)
+    assert next(ty for ty in rich if ty.slug == "story").documents_count == 2

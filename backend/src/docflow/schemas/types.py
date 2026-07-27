@@ -65,3 +65,5 @@ class FunctionalTypeRich(FunctionalTypeOut):
     """Type fonctionnel enrichi de ses définitions de propriété + allowed_values."""
 
     properties: list[PropertyDefRich] = []
+    # Nombre de documents portant ce type (renseigné par /types/rich).
+    documents_count: int = 0

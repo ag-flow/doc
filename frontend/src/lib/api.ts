@@ -313,6 +313,8 @@ export interface PropertyDefRich {
 /** Type fonctionnel enrichi de ses propriétés + allowed_values (endpoint /types/rich). */
 export interface FunctionalTypeRich extends FunctionalType {
   properties: PropertyDefRich[]
+  /** Nombre de documents portant ce type (renseigné par /types/rich). */
+  documents_count: number
 }
 
 // ── Moteur de requête (QuerySpec) ───────────────────────────────────────────

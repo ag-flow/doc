@@ -1,12 +1,16 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { CaretDown, CaretRight, Package, Plus, Trash } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 import type { FunctionalTypeRich, TemplateInfo } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { SectionHead } from '../components/SectionHead'
+import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
 import { TypePropertiesPanel } from '../components/TypePropertiesPanel'
 
 interface TypeNode {
@@ -94,6 +98,14 @@ export function TypesAdmin() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  // Fermeture du panneau d'édition en place par Échap (en plus du bouton et du reclic).
+  useEffect(() => {
+    if (expandedType === null) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpandedType(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expandedType])
+
   const { data: types = [], isLoading } = useQuery<FunctionalTypeRich[]>({
     queryKey: ['types-rich', ws],
     queryFn: () => api.get(`/workspaces/${ws}/types/rich`),
@@ -166,29 +178,32 @@ export function TypesAdmin() {
     setImportError(null)
   }
 
-  if (isLoading) return <div className="p-8">{t('common.loading')}…</div>
+  const nodes = groupTypeTree(types)
 
   return (
-    <div className="p-8">
-      <div className="mb-6 flex items-center gap-3">
-        <h1 className="text-2xl font-semibold text-gray-900 mr-auto">{t('types.title')}</h1>
+    <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+      <SectionHead kicker={ws ?? ''} title={t('types.title')}>
         <Button variant="secondary" onClick={openImportModal} data-testid="import-template-btn">
           {t('tpl.importFromTemplate')}
         </Button>
         <Button onClick={() => setCreating((v) => !v)} data-testid="create-type-btn">
-          {t('types.create')}
+          <Plus size={15} weight="duotone" /> {t('types.create')}
         </Button>
-      </div>
+      </SectionHead>
+
+      <p className="mb-8 max-w-[56ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        {t('types.chapo')}
+      </p>
 
       {creating && (
         <form
-          className="mb-6 rounded border border-gray-200 bg-gray-50 p-4"
+          className="card elev-sm mb-8"
           onSubmit={(e) => { e.preventDefault(); handleCreate() }}
         >
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium">{t('types.label')}</label>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label={t('types.label')} htmlFor="type-label">
               <Input
+                id="type-label"
                 value={newLabel}
                 onChange={(e) => {
                   setNewLabel(e.target.value)
@@ -197,20 +212,20 @@ export function TypesAdmin() {
                 placeholder="Mon type"
                 data-testid="label-input"
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">{t('types.slug')}</label>
+            </Field>
+            <Field label={t('types.slug')} htmlFor="type-slug">
               <Input
+                id="type-slug"
                 value={newSlug}
                 onChange={(e) => { setSlugTouched(true); setNewSlug(e.target.value) }}
                 placeholder="mon-type"
                 data-testid="slug-input"
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">{t('types.parent')}</label>
+            </Field>
+            <Field label={t('types.parent')} htmlFor="type-parent">
               <select
-                className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                id="type-parent"
+                className="input"
                 value={newParent}
                 onChange={(e) => setNewParent(e.target.value)}
                 data-testid="parent-select"
@@ -222,10 +237,10 @@ export function TypesAdmin() {
                   </option>
                 ))}
               </select>
-            </div>
+            </Field>
           </div>
-          {formError && <p className="mt-2 text-sm text-red-600">{formError}</p>}
-          <div className="mt-3 flex gap-2">
+          <ErrorLine message={formError} testId="type-form-error" />
+          <div className="flex gap-2">
             <Button type="submit" disabled={createMutation.isPending}>
               {t('types.save')}
             </Button>
@@ -236,82 +251,119 @@ export function TypesAdmin() {
         </form>
       )}
 
-      <table className="w-full border-collapse" data-testid="types-table">
+      {isLoading ? (
+        <TableSkeleton rows={5} columns={5} testId="types-skeleton" />
+      ) : types.length === 0 ? (
+        <EmptyState
+          testId="types-empty"
+          message={t('types.empty', 'Aucun type fonctionnel — créez-en un ou importez un template.')}
+          action={
+            <Button onClick={() => setCreating(true)}>
+              <Plus size={15} weight="duotone" /> {t('types.create')}
+            </Button>
+          }
+        />
+      ) : (
+      <table className="table" data-testid="types-table">
         <thead>
-          <tr className="border-b text-left text-sm font-medium text-gray-500">
-            <th className="pb-2 pr-4">{t('types.slug')}</th>
-            <th className="pb-2 pr-4">{t('types.label')}</th>
-            <th className="pb-2 pr-4">{t('types.parent')}</th>
-            <th className="pb-2" />
+          <tr>
+            <th>{t('types.label')}</th>
+            <th>{t('types.slug')}</th>
+            <th>{t('types.parent')}</th>
+            <th>{t('types.colProps')}</th>
+            <th>{t('types.colDocs')}</th>
+            <th />
           </tr>
         </thead>
         <tbody>
-          {groupTypeTree(types).map((group) => (
+          {nodes.map((group) => (
             <Fragment key={group.template ?? '__manual__'}>
               <tr data-testid={`type-group-${group.template ?? 'manual'}`}>
-                <td colSpan={4} className="pt-5 pb-1">
-                  <span className="text-xs font-semibold tracking-wide text-gray-500">
+                <td colSpan={6} className="border-b-0 pt-5 pb-1">
+                  <h6 className="m-0 flex items-center gap-1.5 text-ink/[0.5]">
                     {group.template !== null ? (
                       <>
-                        <span className="mr-1.5">📦</span>
+                        <Package size={13} weight="duotone" className="text-accent-700" />
                         {t('types.templateGroup', { template: group.template })}
                       </>
                     ) : (
                       t('types.manualGroup')
                     )}
-                  </span>
+                  </h6>
                 </td>
               </tr>
               {group.nodes.map(({ type, depth }) => (
-            <Fragment key={type.slug}>
-              <tr
-                className="border-b hover:bg-gray-50 cursor-pointer"
-                onClick={() => setExpandedType((v) => (v === type.slug ? null : type.slug))}
-                data-testid={`type-row-${type.slug}`}
-              >
-                <td className="py-2 pr-4 font-mono text-sm">
-                  <span style={{ paddingLeft: depth * 20 }}>
-                    <span className="mr-1 text-gray-400 text-xs">
-                      {expandedType === type.slug ? '▾' : '▸'}
-                    </span>
-                    {depth > 0 && <span className="mr-1 text-gray-300">↳</span>}
-                    {type.slug}
-                  </span>
-                </td>
-                <td className="py-2 pr-4 text-sm">{type.label}</td>
-                <td className="py-2 pr-4 text-sm text-gray-500">
-                  {type.parent_slug === null ? (
-                    <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-medium">
-                      {t('types.baseType')}
-                    </span>
-                  ) : (
-                    type.parent_slug
-                  )}
-                </td>
-                <td className="py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => { setDeleteTarget(type.slug); setDeleteError(null) }}
-                    data-testid={`delete-${type.slug}`}
+                <Fragment key={type.slug}>
+                  {/* Clic sur la ligne = édition en place juste dessous ; reclic = fermer. */}
+                  <tr
+                    className="cursor-pointer"
+                    onClick={() => setExpandedType((v) => (v === type.slug ? null : type.slug))}
+                    data-testid={`type-row-${type.slug}`}
+                    aria-expanded={expandedType === type.slug}
                   >
-                    {t('types.delete')}
-                  </Button>
-                </td>
-              </tr>
-              {expandedType === type.slug && (
-                <tr>
-                  <td colSpan={4} className="p-0">
-                    <TypePropertiesPanel ws={ws!} type={type} />
-                  </td>
-                </tr>
-              )}
-            </Fragment>
+                    <td
+                      className="text-[16px] font-[600] [font-family:var(--font-heading)]"
+                      style={{ paddingLeft: `calc(var(--space-2) + ${depth} * var(--space-4))` }}
+                    >
+                      <span className="mr-1.5 inline-flex align-middle text-ink/[0.4]">
+                        {expandedType === type.slug
+                          ? <CaretDown size={13} weight="duotone" />
+                          : <CaretRight size={13} weight="duotone" />}
+                      </span>
+                      {type.label}
+                    </td>
+                    <td className="text-accent-700 [font-family:var(--font-mono)] text-[13px]">
+                      {type.slug}
+                    </td>
+                    <td>
+                      {type.parent_slug === null ? (
+                        <span className="tag tag-accent">{t('types.baseType')}</span>
+                      ) : (
+                        <span className="text-ink/[0.6]">{type.parent_slug}</span>
+                      )}
+                    </td>
+                    <td className="max-w-[260px] truncate text-[13px] text-ink/[0.6]"
+                      data-testid={`props-summary-${type.slug}`}>
+                      {(type.properties ?? []).length > 0
+                        ? (type.properties ?? []).map((p) => p.label).join(' · ')
+                        : t('types.noProps')}
+                    </td>
+                    <td className="whitespace-nowrap text-ink/[0.55]"
+                      data-testid={`docs-count-${type.slug}`}>
+                      {t('types.docsCount', { count: type.documents_count ?? 0 })}
+                    </td>
+                    <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="icon"
+                        size="sm"
+                        className="text-accent-2-700"
+                        title={t('types.delete')}
+                        aria-label={`${t('types.delete')} ${type.label}`}
+                        onClick={() => { setDeleteTarget(type.slug); setDeleteError(null) }}
+                        data-testid={`delete-${type.slug}`}
+                      >
+                        <Trash size={14} weight="duotone" />
+                      </Button>
+                    </td>
+                  </tr>
+                  {expandedType === type.slug && (
+                    <tr>
+                      <td colSpan={6} className="border-b-0 p-0">
+                        <TypePropertiesPanel
+                          ws={ws!}
+                          type={type}
+                          onClose={() => setExpandedType(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </Fragment>
           ))}
         </tbody>
       </table>
+      )}
 
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
