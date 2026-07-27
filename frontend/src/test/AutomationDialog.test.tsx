@@ -84,6 +84,28 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
     )
   })
 
+  it('préserve body_template quand on enregistre SANS visiter l’onglet Appel', async () => {
+    const initial: AutomationOut = {
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+      event_codes: ['docflow.document.updated.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
+      block_slugs: [], functional_type_slugs: [],
+      on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
+      url: 'https://rag.example/api', http_method: 'POST', body_template: '{"doc": "{title}"}',
+      headers: [], created_at: '', updated_at: '',
+    }
+    const onSave = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AutomationDialog ws="ws1" initial={initial} onSave={onSave} onClose={vi.fn()} saving={false} error={null} />
+      </QueryClientProvider>,
+    )
+    // On reste sur l'onglet Libellé (l'éditeur JSON n'est jamais monté) et on enregistre.
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][0].body_template).toBe('{"doc": "{title}"}')
+  })
+
   it('ajoute le header d’auth à l’OUVERTURE d’un automate existant', async () => {
     const initial: AutomationOut = {
       id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,

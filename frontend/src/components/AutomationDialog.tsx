@@ -116,6 +116,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   const [method, setMethod] = useState(initial?.http_method ?? 'POST')
   const [contractId, setContractId] = useState(initial?.contract_ref ?? '')
   const [operationId, setOperationId] = useState(initial?.operation_id ?? '')
+  // Le template vit dans du state (pas seulement dans CodeMirror) : l'onglet
+  // Appel est démonté quand un autre onglet est actif, et un submit depuis un
+  // autre onglet effacerait sinon le template en base (body_template: null).
+  const [bodyTemplate, setBodyTemplate] = useState(initial?.body_template ?? '')
   const [headers, setHeaders] = useState<HeaderRow[]>(
     initial?.headers.map((h) => ({
       id: h.id,
@@ -204,7 +208,9 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   }
 
   function submit() {
-    const bodyTemplate = jsonRef.current?.getValue()?.trim() || null
+    // L'éditeur monté fait foi (édition en cours) ; sinon le state suffit.
+    const raw = jsonRef.current?.getValue() ?? bodyTemplate
+    const body = raw.trim() || null
     const hdrs: AutomationHeaderIn[] = headers
       .filter((h) => h.name.trim())
       .map((h) => ({
@@ -225,7 +231,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
       operation_id: operationId || null,
-      url, http_method: method, body_template: bodyTemplate, headers: hdrs,
+      url, http_method: method, body_template: body, headers: hdrs,
     })
   }
 
@@ -408,7 +414,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   ))}
                 </div>
               </div>
-              <JsonEditor ref={jsonRef} initialValue={initial?.body_template ?? ''} />
+              <JsonEditor ref={jsonRef} initialValue={bodyTemplate} onChange={setBodyTemplate} />
             </div>
 
             <div>
