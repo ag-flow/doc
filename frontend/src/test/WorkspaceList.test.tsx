@@ -24,6 +24,9 @@ const mockWorkspaces = [
     archived_at: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
+    blocks_count: 2,
+    documents_count: 7,
+    last_activity_at: '2026-01-01T00:00:00Z',
   },
 ]
 
@@ -85,5 +88,36 @@ describe('WorkspaceList', () => {
     await waitFor(() =>
       expect(screen.getByTestId('confirm-delete-btn')).not.toBeDisabled()
     )
+  })
+})
+
+describe('index éditorial (Broadsheet)', () => {
+  it('la ligne entière est un bouton focusable, et porte compteurs + activité', async () => {
+    render(wrapper(<WorkspaceList />))
+    const row = await screen.findByTestId('ws-row-mon-ws')
+    expect(row.tagName).toBe('BUTTON')
+    // Un <button> est focusable sans tabIndex : le clavier atteint la ligne.
+    row.focus()
+    expect(row).toHaveFocus()
+    expect(row).toHaveTextContent('2 blocs')
+    expect(row).toHaveTextContent('7 docs')
+    // Numérotation d'index sur deux chiffres.
+    expect(row).toHaveTextContent('01')
+  })
+
+  it('les actions de fin de ligne restent hors du bouton d’ouverture', async () => {
+    render(wrapper(<WorkspaceList />))
+    const row = await screen.findByTestId('ws-row-mon-ws')
+    const del = screen.getByTestId('delete-ws-mon-ws')
+    expect(row).not.toContainElement(del)
+    expect(del).toHaveAccessibleName(/Mon Workspace/)
+  })
+
+  it('état vide : une phrase et le bouton de création', async () => {
+    vi.mocked(api.get).mockResolvedValue([])
+    render(wrapper(<WorkspaceList />))
+    const empty = await screen.findByTestId('ws-empty')
+    expect(empty).toHaveTextContent('Aucun workspace')
+    expect(empty.querySelector('button')).not.toBeNull()
   })
 })

@@ -93,6 +93,25 @@ en `title`, donc en infobulle.
 notifications (aucun backend). Le slot de droite reste vide plutôt que de
 porter des boutons morts.
 
+## Tête de section
+
+`components/SectionHead.tsx` — surtitre cyan en petites capitales, filet court
+cyan (2px × 44px) prolongé par un filet fin, puis le titre (46px) et ses actions
+sur la même ligne de base. C'est le **seul cadre admis en tête d'écran** : pas
+de bandeau, pas de carte de titre. Un filtre en tête de section se pose en
+simple soulignement (`border-0 border-b`), pas en champ encadré.
+
+## Listing éditorial
+
+Un index se lit comme une page, pas comme une grille de cartes : une ligne par
+objet, filet fin entre les lignes, numérotation à deux chiffres à gauche, label
+en sérif 22px, slug en cyan discret, description tronquée, compteurs et
+dernière activité à droite (`lib/relativeDate.ts`). Survol = encre à 4 % sur
+toute la ligne, **aucune bordure**. La ligne entière est un `<button>` — donc
+focusable au clavier sans `tabIndex`. Les actions de fin de ligne vivent **hors**
+de ce bouton et apparaissent au survol *ou au focus* (`focus-within`), sinon
+elles deviennent inatteignables au clavier.
+
 ## Conventions
 
 - `.card` est réservée aux **items discrets d'un listing**, jamais à la mise

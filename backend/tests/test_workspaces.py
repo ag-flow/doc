@@ -103,3 +103,33 @@ async def test_delete_workspace_not_found(db_pool: asyncpg.Pool) -> None:
 async def test_slug_immutable_via_update() -> None:
     with pytest.raises(ValidationError):
         WorkspaceUpdate.model_validate({"slug": "new-slug"})
+
+
+async def test_list_workspaces_carries_counts_and_last_activity(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """L'index porte les compteurs ; une lecture unitaire ne les paie pas."""
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
+    doc = await doc_svc.create_document(
+        db_pool, "test-ws", DocumentCreate(title="Compté", block_id=test_block["id"])
+    )
+
+    ws = next(w for w in await ws_svc.list_workspaces(db_pool) if w.slug == "test-ws")
+    assert ws.blocks_count == 1
+    assert ws.documents_count == 1
+    assert ws.last_activity_at is not None
+
+    # Un workspace sans contenu compte zéro, sans dernière activité.
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="empty-ws", label="Vide"), None)
+    empty = next(w for w in await ws_svc.list_workspaces(db_pool) if w.slug == "empty-ws")
+    assert (empty.blocks_count, empty.documents_count) == (0, 0)
+    assert empty.last_activity_at is None
+
+    # Lecture unitaire : valeurs neutres, aucun COUNT exécuté.
+    single = await ws_svc.get_workspace(db_pool, "test-ws")
+    assert (single.blocks_count, single.documents_count, single.last_activity_at) == (0, 0, None)
+
+    await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "empty-ws")
+    assert doc.version == 1

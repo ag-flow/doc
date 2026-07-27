@@ -189,6 +189,10 @@ export interface WorkspaceOut {
   archived_at: string | null
   created_at: string
   updated_at: string
+  /** Renseignés par l'index (`GET /workspaces`) ; 0/null sur une lecture unitaire. */
+  blocks_count: number
+  documents_count: number
+  last_activity_at: string | null
 }
 
 export interface TemplateInfo {

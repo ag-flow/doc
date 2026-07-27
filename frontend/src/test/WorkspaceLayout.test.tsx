@@ -37,6 +37,9 @@ const activeWs: WorkspaceOut = {
   archived_at: null,
   created_at: '',
   updated_at: '',
+  blocks_count: 0,
+  documents_count: 0,
+  last_activity_at: null,
 }
 
 const archivedWs: WorkspaceOut = {

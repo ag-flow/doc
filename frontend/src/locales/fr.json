@@ -120,7 +120,14 @@
     "deleteConfirmMsg": "Cette action est irréversible et détruira tout le contenu. Saisissez « {{slug}} » pour confirmer.",
     "deleteConfirm": "Supprimer définitivement",
     "notFound": "Le workspace « {{slug}} » est introuvable ou vous n'y avez pas accès.",
-    "archived": "Le workspace « {{slug}} » est archivé."
+    "archived": "Le workspace « {{slug}} » est archivé.",
+    "kicker": "Espaces de travail",
+    "chapo": "Chaque workspace porte ses propres types, ses blocs et ses droits. Rien n'est partagé entre eux sauf ce que vous exposez.",
+    "noActivity": "aucune activité",
+    "blocksCount_one": "{{count}} bloc",
+    "blocksCount_other": "{{count}} blocs",
+    "docsCount_one": "{{count}} doc",
+    "docsCount_other": "{{count}} docs"
   },
   "types": {
     "title": "Types fonctionnels",
