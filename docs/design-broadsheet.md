@@ -66,6 +66,33 @@ statique de Tailwind — passer par `style={{ background: 'var(--color-accent-60
 
 Désactivé : opacité 45 %. Sélection de texte : cyan à 30 %.
 
+## Chrome applicatif
+
+`styles/chrome.css` + `components/AppRail.tsx` · `AppHeader.tsx` · `Breadcrumb.tsx`.
+
+**Rail** — 56px, encre pleine, icônes **Phosphor duotone** (`@phosphor-icons/react`,
+`weight="duotone"`) de 20px dans une cible de clic de 40px (`--rail-target`).
+Groupe du haut = workspace courant (workspaces, types, blocs, documents,
+webhooks, automates), groupe du bas = compte et administration, séparés par un
+filet. Aucun libellé permanent : infobulle au survol. L'actif porte la pastille
+cyan via `aria-current="page"` — c'est un état du DOM, donc il reste juste sur
+navigation directe par URL.
+
+**En-tête** — tête de journal : filet **gras** (2px encre) au-dessus, filet
+**fin** (divider) en dessous. À gauche : icône maison (arbre workspaces → blocs),
+marque `docflow`, puis le fil d'Ariane. L'en-tête **remplace le titre de page** :
+un écran ne réaffiche pas son nom.
+
+**Fil d'Ariane** — `workspace / bloc / document…`, segments cliquables sauf le
+dernier (encre pleine). Les écrans hors workspace ont un segment unique (leur
+nom, table `STATIC_LABELS`). Un titre long est tronqué **au milieu**
+(`lib/truncateMiddle.ts`) et jamais renvoyé à la ligne ; le titre complet reste
+en `title`, donc en infobulle.
+
+**Non câblé volontairement** : la recherche globale (fiche dédiée) et les
+notifications (aucun backend). Le slot de droite reste vide plutôt que de
+porter des boutons morts.
+
 ## Conventions
 
 - `.card` est réservée aux **items discrets d'un listing**, jamais à la mise

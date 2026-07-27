@@ -82,6 +82,19 @@
   --color-bg: var(--color-paper);
   --color-text: var(--color-ink);
 
+  /* ── Chrome ─────────────────────────────────────────────────────────────
+     Le rail est en encre pleine : ses valeurs ne dérivent pas du papier, elles
+     lui répondent. Le gris chaud d'inactivité est mesuré sur l'encre (4.6:1) —
+     un cran de la rampe neutre y serait soit criard, soit illisible. */
+  --color-rail-bg: var(--color-ink);
+  --color-rail-idle: #8d8887;
+  --color-rail-active: var(--color-accent-400);
+  --color-rail-active-bg: color-mix(in srgb, var(--color-accent-400) 14%, transparent);
+  --color-rail-rule: color-mix(in srgb, var(--color-paper) 18%, transparent);
+  --rail-width: 56px;
+  /* Cible de clic du rail : 40px minimum (DoD du chrome). */
+  --rail-target: 40px;
+
   /* Échelle d'espacement nommée, pour le CSS de composant hors Tailwind. */
   --space-1: 5px;
   --space-2: 10px;

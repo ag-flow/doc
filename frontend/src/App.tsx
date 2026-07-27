@@ -4,8 +4,8 @@ import './lib/i18n'
 import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { ToastProvider } from './components/Toast'
-import { Sidebar } from './components/Sidebar'
-import { Breadcrumb } from './components/Breadcrumb'
+import { AppRail } from './components/AppRail'
+import { AppHeader } from './components/AppHeader'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
 import { OidcCallback } from './pages/OidcCallback'
@@ -37,13 +37,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-/** Layout principal : sidebar fixe à gauche + contenu scrollable. */
+/** Layout principal : rail fixe à gauche, en-tête collé, contenu scrollable.
+ *  La marge gauche suit `--rail-width` — pas une classe d'espacement, qui
+ *  dériverait de la largeur du rail au premier changement de densité. */
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      <div className="ml-14 flex flex-1 flex-col overflow-hidden">
-        <Breadcrumb />
+    <div className="flex h-screen bg-paper">
+      <AppRail />
+      <div
+        className="flex flex-1 flex-col overflow-hidden"
+        style={{ marginLeft: 'var(--rail-width)' }}
+      >
+        <AppHeader />
         <main className="flex-1 overflow-y-auto">
           {children}
         </main>
