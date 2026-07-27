@@ -204,7 +204,7 @@ export function AutomatesPage() {
         </Button>
       </SectionHead>
 
-      <p className="mb-4 max-w-[70ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+      <p className="mb-4 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
         Les automates déclenchent des appels vers des API externes quand un document change
         dans ce workspace. Contrairement aux webhooks qui envoient un payload JSON brut, un
         automate suit un <strong>contrat OpenAPI</strong> importé : vous sélectionnez

@@ -133,7 +133,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   let lastGroup = ''
 
   return (
-    <div className="dialog-backdrop z-[90] !place-items-start !pt-[12vh]" onClick={onClose}>
+    // !items-start : ancrée en haut mais centrée horizontalement —
+    // place-items-start la collait à gauche.
+    <div className="dialog-backdrop z-[90] !items-start !pt-[12vh]" onClick={onClose}>
       <div
         className="dialog w-full !max-w-xl !gap-0 !p-0"
         role="dialog"
