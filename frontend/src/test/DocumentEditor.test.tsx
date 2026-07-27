@@ -1,5 +1,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -201,5 +203,73 @@ describe('DocumentEditor', () => {
     await waitFor(() =>
       expect(screen.getByText('Conflit de version')).toBeInTheDocument(),
     )
+  })
+})
+
+// ── Écran document Broadsheet : feuille partagée, Cmd+S, pas de débordement ──
+
+describe('DocumentEditor — ossature Broadsheet', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lecture et édition rendent la MÊME feuille (aucun décalage du texte)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const { container } = renderEditor()
+
+    const readSheet = await waitFor(() => {
+      const el = container.querySelector('.doc-sheet')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    const readShell = readSheet.parentElement?.parentElement?.className
+    const readClasses = readSheet.className
+
+    await enterEditMode()
+    const editSheet = container.querySelector('.doc-sheet')!
+    // Même classe de feuille et même conteneur de grille : les métriques (mesure,
+    // interlignage, marges) viennent d'une seule source, donc rien ne bouge.
+    expect(editSheet.className).toBe(readClasses)
+    expect(editSheet.parentElement?.parentElement?.className).toBe(readShell)
+  })
+
+  it('Cmd/Ctrl+S enregistre et affiche un accusé discret (pas de toast)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
+    renderEditor()
+    await enterEditMode()
+
+    // Rendre le document « sale » pour que la sauvegarde ait lieu.
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    expect(screen.getByTestId('document-dirty')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    })
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(1))
+
+    // Accusé en place de « non enregistré », dans le flux — aucun dialogue.
+    const ack = await screen.findByTestId('document-saved')
+    expect(ack).toHaveTextContent('Enregistré')
+    expect(screen.queryByTestId('document-dirty')).not.toBeInTheDocument()
+    expect(document.querySelector('.dialog-backdrop')).toBeNull()
+  })
+})
+
+describe('feuille document — aucun débordement horizontal possible', () => {
+  // jsdom ne calcule pas de layout : on verrouille les règles CSS qui empêchent
+  // le débordement, seul garde-fou automatisable.
+  const css = readFileSync(join(process.cwd(), 'src/styles/document.css'), 'utf-8')
+
+  it('la colonne de texte a un minimum à 0 (sinon un tableau large pousse la page)', () => {
+    expect(css).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+    expect(css).toMatch(/\.doc-grid-aside\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/)
+  })
+
+  it('tableaux, blocs de code et images sont contenus dans la feuille', () => {
+    expect(css).toMatch(/\.doc-sheet table\s*\{[^}]*overflow-x:\s*auto/)
+    expect(css).toMatch(/\.doc-sheet table\s*\{[^}]*max-width:\s*100%/)
+    expect(css).toMatch(/\.doc-sheet pre\s*\{[^}]*overflow-x:\s*auto/)
+    expect(css).toMatch(/\.doc-sheet img\s*\{[^}]*max-width:\s*100%/)
   })
 })

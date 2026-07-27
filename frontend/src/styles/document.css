@@ -1,0 +1,104 @@
+/* Broadsheet — écran document : la colonne de texte est une page imprimée.
+   Lecture et édition partagent EXACTEMENT ces métriques : basculer de l'une à
+   l'autre ne doit pas déplacer le texte d'un pixel. */
+
+.doc-grid {
+  display: grid;
+  /* `minmax(0, 1fr)` et non `1fr` : sans le minimum à 0, un tableau large ou un
+     bloc de code long pousse la colonne et fait déborder toute la page. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 44px;
+}
+@media (min-width: 1100px) {
+  .doc-grid-aside { grid-template-columns: minmax(0, 1fr) 300px; }
+}
+
+/* La feuille : encre sur papier légèrement teinté, mesure limitée à ~72
+   caractères, interlignage de lecture. */
+.doc-sheet {
+  min-width: 0;
+  background: var(--color-neutral-100);
+  padding: 44px 52px;
+  border-left: 5px solid var(--color-neutral-200);
+  border-right: 5px solid var(--color-neutral-200);
+  font-size: 18px;
+  line-height: 1.8;
+}
+.doc-sheet > * { max-width: 72ch; }
+
+.doc-sheet h1 { font-size: 32px; margin: 40px 0 12px; }
+.doc-sheet h2 { font-size: 26px; margin: 34px 0 10px; }
+.doc-sheet h3 { font-size: 21px; margin: 28px 0 8px; }
+.doc-sheet p { margin: 0 0 var(--space-3); }
+.doc-sheet em { font-style: italic; }
+
+/* Citation : filet cyan, jamais un encadré. */
+.doc-sheet blockquote {
+  border-left: 2px solid var(--color-accent);
+  padding-left: 18px;
+  margin: 26px 0;
+  font-size: 16px;
+  color: color-mix(in srgb, var(--color-ink) 72%, transparent);
+}
+
+.doc-sheet code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+.doc-sheet pre {
+  /* Un bloc de code long défile DANS la feuille : il ne l'élargit pas. */
+  max-width: 100%;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+.doc-sheet pre code { background: transparent; padding: 0; }
+
+/* Tableau de données dans le corps : défilement horizontal contenu dans la
+   largeur de la feuille — il ne passe jamais sous le panneau propriétés. */
+.doc-sheet table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+.doc-sheet img { max-width: 100%; height: auto; }
+
+/* Panneau propriétés : une colonne, séparée par un filet, jamais une carte. */
+.doc-aside {
+  min-width: 0;
+  padding-left: 30px;
+  border-left: 1px solid var(--color-divider);
+}
+.doc-aside-kicker {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+  margin-bottom: 14px;
+}
+.doc-prop-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 45%, transparent);
+  margin-bottom: 2px;
+}
+
+/* Ligne méta sous le titre : slug, version, statut. */
+.doc-meta {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: 14px;
+  margin-bottom: 28px;
+}

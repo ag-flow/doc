@@ -128,6 +128,27 @@ Un filtre sans résultat rend un **état vide qui se nomme** (« aucun document 
 correspond aux filtres actifs ») avec l'action pour les relâcher — jamais une
 table blanche.
 
+## Écran document : une feuille, deux modes
+
+`components/DocumentShell.tsx` + `styles/document.css`. La colonne de texte est
+traitée comme une page imprimée : fond papier teinté (`--color-neutral-100`),
+mesure limitée à **72 caractères**, corps 18px, interlignage 1.8. Citations en
+filet cyan, code en monospace sur encre à 6 %.
+
+**Lecture et édition partagent la même ossature** — c'est ce qui garantit que
+basculer de l'une à l'autre ne déplace pas le texte d'un pixel. Corollaire : le
+panneau propriétés est présent **dans les deux modes**, sinon la colonne de
+texte n'a pas la même largeur et le texte saute.
+
+**Aucun débordement horizontal**, quel que soit le contenu : la grille utilise
+`minmax(0, 1fr)` (avec `1fr` seul, un tableau large pousse la colonne et fait
+déborder la page entière), et tableaux, blocs de code et images défilent ou se
+contraignent **dans** la feuille — ils ne passent jamais sous le panneau.
+
+**Sauvegarde** : Cmd/Ctrl+S enregistre et affiche un accusé dans le flux
+(« Enregistré », qui retombe seul après deux secondes) à la place de l'indicateur
+« non enregistré » — jamais un toast bloquant.
+
 ## Conventions
 
 - `.card` est réservée aux **items discrets d'un listing**, jamais à la mise

@@ -221,7 +221,9 @@
     },
     "clearAll": "Tout effacer",
     "emptyFiltered": "Aucun document ne correspond aux filtres actifs.",
-    "emptyBloc": "Ce bloc ne contient encore aucun document."
+    "emptyBloc": "Ce bloc ne contient encore aucun document.",
+    "public": "Public",
+    "private": "Privé"
   },
   "editor": {
     "save": "Enregistrer",
@@ -245,7 +247,17 @@
       "mine": "Mon brouillon",
       "keepServer": "Garder le serveur",
       "keepMine": "Garder le mien"
-    }
+    },
+    "modifiedAt": "modifié {{when}}",
+    "copyPublicLink": "Copier le lien public",
+    "savedAck": "Enregistré",
+    "focusEnter": "Mode rédaction plein écran",
+    "focusExit": "Quitter le mode rédaction (Échap)",
+    "move": "Déplacer",
+    "slugSet": "Définir le slug pour la synchro git",
+    "slugAdd": "ajouter un slug",
+    "slugInvalid": "Minuscules, chiffres, tirets — 2 à 80 caractères",
+    "properties": "Propriétés"
   },
   "properties": {
     "title": "Propriétés",
