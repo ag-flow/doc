@@ -71,7 +71,7 @@ async def delete_webhook(
 async def test_webhook(
     ws_slug: str, webhook_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> WebhookTestOut:
-    status_code, error = await service.test_webhook(
+    status_code, error, duration_ms = await service.test_webhook(
         request.app.state.pool, ws_slug, webhook_id, encryption_key=_key(request)
     )
-    return WebhookTestOut(status_code=status_code, error=error)
+    return WebhookTestOut(status_code=status_code, error=error, duration_ms=duration_ms)

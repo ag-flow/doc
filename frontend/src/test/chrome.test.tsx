@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
@@ -13,6 +13,7 @@ vi.mock('../lib/api', async () => {
     ...actual,
     api: { get: vi.fn() },
     docsApi: { getBlocks: vi.fn(), getDocument: vi.fn() },
+    referencesApi: { searchDocuments: vi.fn() },
     isSuperAdmin: () => true,
     clearToken: vi.fn(),
   }
@@ -124,5 +125,20 @@ describe('troncature au milieu', () => {
     const el = await screen.findByTitle(long)
     expect(el.textContent).toContain('…')
     expect(el.textContent!.length).toBeLessThan(long.length)
+  })
+})
+
+describe('recherche globale (en-tête)', () => {
+  it('Cmd/Ctrl+K ouvre la palette ; Échap la ferme et rend le focus au déclencheur', async () => {
+    renderAt('/templates', <AppHeader />)
+    const trigger = screen.getByTestId('open-search-btn')
+    trigger.focus()
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    expect(await screen.findByTestId('command-palette')).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('palette-input'), { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('command-palette')).not.toBeInTheDocument(),
+    )
+    expect(trigger).toHaveFocus()
   })
 })

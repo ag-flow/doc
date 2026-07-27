@@ -1,16 +1,46 @@
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { HomeNavPopover } from './HomeNavPopover'
 import { Breadcrumb } from './Breadcrumb'
+import { CommandPalette } from './CommandPalette'
 
 /**
  * En-tête : tête de journal (filet gras puis filet fin), fil d'Ariane à
- * gauche. Il remplace tout titre de page — un écran ne réaffiche pas son nom.
+ * gauche, recherche globale à droite (loupe ou Cmd/Ctrl+K).
  *
- * Le groupe d'actions de droite de la maquette (recherche globale,
- * notifications) n'est PAS câblé ici : la recherche globale relève de sa
- * propre fiche et les notifications n'ont pas de backend. Aucun bouton mort.
+ * Les notifications de la maquette ne sont PAS câblées : aucun backend —
+ * pas de bouton mort.
  */
 export function AppHeader() {
+  const [searchOpen, setSearchOpen] = useState(false)
+  // Le focus revient à l'élément qui a ouvert la palette (DoD) : loupe ou
+  // élément actif au moment du raccourci clavier.
+  const openerRef = useRef<HTMLElement | null>(null)
+
+  function openSearch() {
+    openerRef.current = document.activeElement as HTMLElement | null
+    setSearchOpen(true)
+  }
+
+  function closeSearch() {
+    setSearchOpen(false)
+    openerRef.current?.focus()
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        if (searchOpen) closeSearch()
+        else openSearch()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOpen])
+
   return (
     <header className="app-header" data-testid="app-header">
       <div className="header-rule-thick" />
@@ -20,8 +50,21 @@ export function AppHeader() {
         <Link to="/workspaces" className="header-brand">docflow</Link>
         <span className="crumb-sep">/</span>
         <Breadcrumb />
+        <span className="flex-1" />
+        <button
+          type="button"
+          className="header-icon flex items-center gap-1.5 text-[13px]"
+          onClick={openSearch}
+          title="Rechercher (Ctrl+K)"
+          data-testid="open-search-btn"
+        >
+          <MagnifyingGlass size={16} weight="duotone" />
+          Rechercher
+        </button>
       </div>
       <div className="header-rule-thin" />
+
+      {searchOpen && <CommandPalette onClose={closeSearch} />}
     </header>
   )
 }

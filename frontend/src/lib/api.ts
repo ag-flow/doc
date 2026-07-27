@@ -752,6 +752,8 @@ export interface WebhookOut {
 export interface WebhookTestOut {
   status_code: number | null
   error: string | null
+  /** Temps de réponse de la cible, en ms. */
+  duration_ms: number
 }
 
 export const ALL_EVENTS = ['document.created', 'document.updated', 'document.deleted'] as const
@@ -780,6 +782,10 @@ export interface AppUserOut {
   has_local_password: boolean
   created_at: string
   updated_at: string
+  /** Dernière connexion réussie (local ou OIDC) ; null = jamais. */
+  last_login_at: string | null
+  /** Workspaces accessibles (membre ou owner). */
+  workspaces_count: number
 }
 
 /** Décode le payload JWT localement (sans vérification — le serveur valide). */
@@ -801,6 +807,10 @@ export const usersApi = {
   list: () => api.get<AppUserOut[]>('/admin/users'),
   validate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/validate`, {}),
   unvalidate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/unvalidate`, {}),
+  /** Rôle et état — le garde anti-lock-out du backend refuse de démonter le
+   *  dernier admin local connectable. */
+  update: (id: string, body: { is_admin?: boolean; disabled?: boolean }) =>
+    api.patch<AppUserOut>(`/admin/users/${id}`, body),
   delete: (id: string) => api.delete(`/admin/users/${id}`),
 }
 

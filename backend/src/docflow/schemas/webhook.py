@@ -77,3 +77,5 @@ class WebhookOut(BaseModel):
 class WebhookTestOut(BaseModel):
     status_code: int | None
     error: str | None
+    # Temps de réponse de la cible, en millisecondes.
+    duration_ms: int = 0

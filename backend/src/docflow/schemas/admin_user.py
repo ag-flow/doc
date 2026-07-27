@@ -43,3 +43,7 @@ class AdminUserOut(BaseModel):
     has_local_password: bool
     created_at: datetime
     updated_at: datetime
+    # Dernière connexion réussie (login local ou OIDC) ; null = jamais.
+    last_login_at: datetime | None = None
+    # Workspaces accessibles (membre ou owner) — l'admin voit tout de toute façon.
+    workspaces_count: int = 0

@@ -86,6 +86,7 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         validated=row["validated"],
         disabled=row["disabled"],
     )
+    await pool.execute("UPDATE app_user SET last_login_at = now() WHERE id = $1", user.id)
     return TokenResponse(access_token=create_token(user, secret))
 
 

@@ -111,7 +111,7 @@ describe('WebhooksAdmin', () => {
   // DoD 29 — action Test
   it('shows test result after clicking test button', async () => {
     vi.mocked(webhooksApi.list).mockResolvedValue([wh1])
-    vi.mocked(webhooksApi.test).mockResolvedValue({ status_code: 200, error: null })
+    vi.mocked(webhooksApi.test).mockResolvedValue({ status_code: 200, error: null, duration_ms: 123 })
     renderPage()
     await waitFor(() => expect(screen.getByTestId(`test-webhook-${wh1.id}`)).toBeInTheDocument())
 
@@ -130,6 +130,8 @@ describe('WebhooksAdmin', () => {
     await waitFor(() => expect(screen.getByTestId(`delete-webhook-${wh1.id}`)).toBeInTheDocument())
 
     fireEvent.click(screen.getByTestId(`delete-webhook-${wh1.id}`))
+    // La suppression passe désormais par une confirmation à verbe explicite.
+    fireEvent.click(await screen.findByTestId('wh-delete-dialog-confirm'))
     await waitFor(() =>
       expect(vi.mocked(webhooksApi.delete)).toHaveBeenCalledWith('devpod-ui', wh1.id),
     )

@@ -12,7 +12,12 @@ from docflow.schemas.admin_user import AdminUserCreate, AdminUserOut, AdminUserU
 _COLS = """
     id, email, label, username, source, is_admin, validated, disabled,
     (password_hash IS NOT NULL) AS has_local_password,
-    created_at, updated_at
+    created_at, updated_at, last_login_at,
+    ((SELECT count(*) FROM workspace_member m WHERE m.user_id = app_user.id)
+     + (SELECT count(*) FROM workspace w WHERE w.owner_id = app_user.id
+         AND NOT EXISTS (SELECT 1 FROM workspace_member m2
+                          WHERE m2.workspace_technical_key = w.workspace_technical_key
+                            AND m2.user_id = app_user.id))) AS workspaces_count
 """
 
 _SELECT_ALL = f"SELECT {_COLS} FROM app_user ORDER BY created_at"
@@ -42,6 +47,8 @@ def _row_to_out(row: asyncpg.Record) -> AdminUserOut:
         has_local_password=row["has_local_password"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_login_at=row["last_login_at"] if "last_login_at" in row.keys() else None,
+        workspaces_count=row["workspaces_count"] if "workspaces_count" in row.keys() else 0,
     )
 
 

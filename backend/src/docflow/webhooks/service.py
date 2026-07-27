@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -188,8 +189,8 @@ async def test_webhook(
     webhook_id: uuid.UUID,
     *,
     encryption_key: str | None,
-) -> tuple[int | None, str | None]:
-    """Envoie un payload synthétique et retourne (status_code, error)."""
+) -> tuple[int | None, str | None, int]:
+    """Envoie un payload synthétique : (status_code, error, durée en ms)."""
     wh = await get_webhook(pool, ws_slug, webhook_id, encryption_key=encryption_key)
     payload = {
         "event": "document.created",
@@ -203,13 +204,14 @@ async def test_webhook(
         },
     }
     url = wh.url.replace("{id_document}", "00000000-0000-0000-0000-000000000000")
+    started = time.monotonic()
     try:
         await validate_public_url(url)
         async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
             resp = await client.post(url, json=payload, headers=wh.headers)
-        return resp.status_code, None
+        return resp.status_code, None, int((time.monotonic() - started) * 1000)
     except Exception as exc:
-        return None, str(exc)
+        return None, str(exc), int((time.monotonic() - started) * 1000)
 
 
 async def emit_event(

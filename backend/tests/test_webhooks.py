@@ -243,7 +243,10 @@ async def test_test_webhook_returns_status_code(db_pool: asyncpg.Pool, ws: dict[
         instance.post = AsyncMock(return_value=mock_resp)
         MockClient.return_value = instance
 
-        status, error = await svc.test_webhook(db_pool, "hook-ws", wh.id, encryption_key=key)
+        status, error, duration_ms = await svc.test_webhook(
+            db_pool, "hook-ws", wh.id, encryption_key=key
+        )
 
     assert status == 204
     assert error is None
+    assert duration_ms >= 0

@@ -248,6 +248,7 @@ async def issue_token_for_verified_claims(
         validated=user_row["validated"],
         disabled=user_row["disabled"],
     )
+    await pool.execute("UPDATE app_user SET last_login_at = now() WHERE id = $1", user.id)
     return create_token(user, jwt_secret)
 
 
