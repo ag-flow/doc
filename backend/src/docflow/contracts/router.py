@@ -12,6 +12,7 @@ from docflow.schemas.contracts import (
     ContractDetailOut,
     ContractImport,
     ContractOut,
+    ContractRefreshOut,
     ContractUpdate,
 )
 
@@ -54,10 +55,10 @@ async def update_contract(
     return await service.update_contract(request.app.state.pool, contract_id, body)
 
 
-@router.post("/admin/contracts/{contract_id}/refresh", response_model=ContractOut)
+@router.post("/admin/contracts/{contract_id}/refresh", response_model=ContractRefreshOut)
 async def refresh_contract(
     contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth
-) -> ContractOut:
+) -> ContractRefreshOut:
     return await service.refresh_contract(request.app.state.pool, contract_id)
 
 

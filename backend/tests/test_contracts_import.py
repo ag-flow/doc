@@ -137,3 +137,57 @@ def test_operation_auth_headers_from_security() -> None:
 
     # Opération sans security (et pas de security racine) → aucun header d'auth.
     assert ops["o"].auth_headers == []
+
+
+async def test_refresh_signals_orphaned_operations_used_by_automations(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch, test_workspace: dict
+) -> None:
+    """DoD écran Contrats : une opération disparue du contrat rafraîchi mais
+    encore référencée par un automate est signalée (avec les automates)."""
+    monkeypatch.setattr(service, "validate_public_url", _noop)
+    monkeypatch.setattr(service.httpx, "AsyncClient", _Client)
+
+    two_ops = {
+        **_SPEC,
+        "paths": {
+            "/index": {"post": {"operationId": "index"}},
+            "/purge": {"post": {"operationId": "purge"}},
+        },
+    }
+    out = await service.import_contract(
+        db_pool, ContractImport(label="rag", source_url="http://spec.example", raw_spec=two_ops)
+    )
+    # Corriger le spec stocké : l'import par URL a téléchargé _SPEC (une seule
+    # opération) via le mock ; on veut partir de DEUX opérations.
+    import json as _json
+
+    await db_pool.execute(
+        "UPDATE openapi_contract SET raw_spec=$1::jsonb WHERE id=$2",
+        _json.dumps(two_ops),
+        out.id,
+    )
+
+    wk = test_workspace["workspace_technical_key"]
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, event_codes, url, "
+        "http_method, contract_ref, operation_id) "
+        "VALUES ($1, 'Purge auto', ARRAY['docflow.document.updated.v1'], "
+        "'http://x', 'POST', $2, 'purge') RETURNING id",
+        wk,
+        out.id,
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key, position) "
+        "VALUES ($1, $2, 1)",
+        auto_id,
+        wk,
+    )
+
+    # Le refresh re-télécharge _SPEC (opération `index` seule) : `purge` disparaît.
+    result = await service.refresh_contract(db_pool, out.id)
+    assert [o.operation_id for o in result.orphaned_operations] == ["purge"]
+    assert result.orphaned_operations[0].automations == ["Purge auto"]
+
+    # Aucun faux positif : les opérations toujours présentes ne remontent pas.
+    result2 = await service.refresh_contract(db_pool, out.id)
+    assert result2.orphaned_operations == []

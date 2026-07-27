@@ -15,8 +15,10 @@ from docflow.schemas.contracts import (
     ContractDetailOut,
     ContractImport,
     ContractOut,
+    ContractRefreshOut,
     ContractUpdate,
     OperationOut,
+    OrphanedOperation,
 )
 
 log = structlog.get_logger(__name__)
@@ -277,10 +279,10 @@ async def update_contract(
     return _row_to_out(row)
 
 
-async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> ContractOut:
+async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> ContractRefreshOut:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT source_url FROM openapi_contract WHERE id = $1", contract_id
+            "SELECT source_url, raw_spec FROM openapi_contract WHERE id = $1", contract_id
         )
     if row is None:
         raise HTTPException(404, "Contrat introuvable.")
@@ -290,6 +292,33 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
     raw_spec = await _fetch_spec(row["source_url"])
     version = _extract_version(raw_spec)
     raw_json = json.dumps(raw_spec)
+
+    # Opérations disparues encore référencées par un automate : signalées, la
+    # mise à jour n'est pas bloquée (l'automate garde son URL figée) — mais
+    # l'utilisateur doit savoir que le sélecteur ne les proposera plus.
+    old_ops = {
+        op.operation_id for op in list_operations(json.loads(row["raw_spec"])) if op.operation_id
+    }
+    new_ops = {op.operation_id for op in list_operations(raw_spec) if op.operation_id}
+    removed = old_ops - new_ops
+    orphaned: list[OrphanedOperation] = []
+    if removed:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT operation_id, label FROM automation "
+                "WHERE contract_ref = $1 AND operation_id = ANY($2::text[]) "
+                "ORDER BY operation_id, label",
+                contract_id,
+                list(removed),
+            )
+        by_op: dict[str, list[str]] = {}
+        for r in rows:
+            by_op.setdefault(r["operation_id"], []).append(r["label"])
+        orphaned = [
+            OrphanedOperation(operation_id=op, automations=labels)
+            for op, labels in sorted(by_op.items())
+        ]
+
     async with pool.acquire() as conn:
         updated = await conn.fetchrow(
             "UPDATE openapi_contract SET raw_spec=$1::jsonb, version=$2, updated_at=now() "
@@ -300,8 +329,13 @@ async def refresh_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> Contra
             contract_id,
         )
     assert updated is not None
-    log.info("contract_refreshed", contract_id=str(contract_id), version=version)
-    return _row_to_out(updated)
+    log.info(
+        "contract_refreshed",
+        contract_id=str(contract_id),
+        version=version,
+        orphaned_operations=len(orphaned),
+    )
+    return ContractRefreshOut(contract=_row_to_out(updated), orphaned_operations=orphaned)
 
 
 async def delete_contract(pool: asyncpg.Pool, contract_id: uuid.UUID) -> None:

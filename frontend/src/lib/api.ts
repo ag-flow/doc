@@ -1015,13 +1015,24 @@ export interface ContractDetailOut {
   servers: string[]
 }
 
+export interface OrphanedOperation {
+  operation_id: string
+  automations: string[]
+}
+
+export interface ContractRefreshOut {
+  contract: ContractOut
+  /** Opérations disparues du contrat rafraîchi mais encore utilisées. */
+  orphaned_operations: OrphanedOperation[]
+}
+
 export const contractsApi = {
   list: () => api.get<ContractOut[]>('/admin/contracts'),
   import: (body: { label: string; source_url?: string; raw_spec: object }) =>
     api.post<ContractOut>('/admin/contracts', body),
   detail: (id: string) => api.get<ContractDetailOut>(`/admin/contracts/${id}`),
   spec: (id: string) => api.get<Record<string, unknown>>(`/admin/contracts/${id}/spec`),
-  refresh: (id: string) => api.post<ContractOut>(`/admin/contracts/${id}/refresh`, {}),
+  refresh: (id: string) => api.post<ContractRefreshOut>(`/admin/contracts/${id}/refresh`, {}),
   delete: (id: string) => api.delete(`/admin/contracts/${id}`),
 }
 
