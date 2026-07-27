@@ -1,14 +1,19 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { LockKeyhole, Trash2, Plus } from 'lucide-react'
+import { Check, Copy, Plus } from '@phosphor-icons/react'
 import { secretsApi, type VaultSecretOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EmptyState, TableSkeleton } from '../components/ui/states'
+import { useToast } from '../components/Toast'
 
 export function VaultSecretsTab() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   const { data: secrets = [], isLoading } = useQuery<VaultSecretOut[]>({
     queryKey: ['user-secrets'],
@@ -22,16 +27,13 @@ export function VaultSecretsTab() {
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VaultSecretOut | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const createMutation = useMutation({
     mutationFn: () => secretsApi.create({ label, slug, value }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['user-secrets'] })
-      setShowForm(false)
-      setLabel('')
-      setSlug('')
-      setValue('')
-      setFormError(null)
+      resetForm()
     },
     onError: (err: Error) => setFormError(err.message),
   })
@@ -43,6 +45,7 @@ export function VaultSecretsTab() {
       setDeleteTarget(null)
       setDeleteError(null)
     },
+    // 409 : le message porte la liste des automates concernés.
     onError: (err: Error) => setDeleteError(err.message),
   })
 
@@ -65,118 +68,161 @@ export function VaultSecretsTab() {
     setFormError(null)
   }
 
+  /** Copie la référence `${secret://…}` — JAMAIS la valeur (jamais relue). */
+  function copyRef(s: VaultSecretOut) {
+    void navigator.clipboard.writeText(secretsApi.refOf(s.id))
+    setCopiedId(s.id)
+    setTimeout(() => setCopiedId(null), 1500)
+    toast(t('vault.refCopied'), 'success')
+  }
+
   const canSubmit = label.trim() && /^[a-z0-9][a-z0-9_-]*$/.test(slug) && value.trim()
 
-  if (isLoading) return <div className="py-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
+  if (isLoading) return <TableSkeleton rows={3} columns={4} />
 
   return (
     <>
-      <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
-        {secrets.length === 0 && !showForm && (
-          <p className="px-6 py-8 text-center text-sm text-gray-400">{t('vault.secrets.empty')}</p>
-        )}
+      {secrets.length === 0 && !showForm ? (
+        <EmptyState
+          testId="secrets-empty"
+          message={t('vault.secrets.empty')}
+          action={
+            <Button onClick={() => setShowForm(true)} data-testid="secret-add-btn">
+              <Plus size={15} weight="duotone" /> {t('vault.secrets.addBtn')}
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t('vault.secrets.label')}</th>
+                <th>{t('vault.colRef')}</th>
+                <th>{t('vault.colUsedBy')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {secrets.map((s) => (
+                <tr key={s.id} data-testid={`secret-row-${s.slug}`}>
+                  <td>
+                    <span className="text-[15px] font-[600] [font-family:var(--font-heading)]">
+                      {s.label}
+                    </span>
+                    <span className="ml-2 text-[12px] text-ink/[0.45] [font-family:var(--font-mono)]">
+                      {s.slug}
+                    </span>
+                  </td>
+                  <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
+                    {`\${secret://${s.id.slice(0, 8)}…}`}
+                  </td>
+                  <td className="text-ink/[0.55]" data-testid={`secret-usage-${s.slug}`}>
+                    {s.used_by_automations > 0
+                      ? t('vault.usedByAutomations', { count: s.used_by_automations })
+                      : t('vault.unused')}
+                  </td>
+                  <td className="whitespace-nowrap text-right">
+                    <Button variant="icon" size="sm" title={t('vault.copyRef')}
+                      aria-label={`${t('vault.copyRef')} ${s.label}`}
+                      onClick={() => copyRef(s)}
+                      data-testid={`secret-copy-${s.slug}`}>
+                      {copiedId === s.id
+                        ? <Check size={14} weight="bold" />
+                        : <Copy size={14} weight="duotone" />}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-accent-2-700"
+                      onClick={() => { setDeleteTarget(s); setDeleteError(null) }}
+                      aria-label={`${t('common.delete')} ${s.label}`}
+                      data-testid={`secret-delete-${s.slug}`}>
+                      {t('common.delete')}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-        {secrets.map((s) => (
-          <div key={s.id} className="flex items-center gap-3 px-5 py-4">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-50 text-amber-600 shrink-0">
-              <LockKeyhole size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-800">{s.label}</p>
-              <p className="text-xs text-gray-400 font-mono">{s.slug}</p>
-            </div>
-            <button
-              onClick={() => { setDeleteTarget(s); setDeleteError(null) }}
-              className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-              title={t('vault.delete')}
-            >
-              <Trash2 size={15} />
-            </button>
-          </div>
-        ))}
+          {!showForm && (
+            <Button variant="ghost" size="sm" className="mt-3"
+              onClick={() => setShowForm(true)} data-testid="secret-add-btn">
+              <Plus size={13} weight="duotone" /> {t('vault.secrets.addBtn')}
+            </Button>
+          )}
+        </>
+      )}
 
-        {showForm ? (
-          <div className="px-5 py-4 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">{t('vault.secrets.label')}</label>
-                <Input
-                  value={label}
-                  onChange={(e) => handleLabelChange(e.target.value)}
-                  placeholder="Ma clé API"
-                  data-testid="secret-label-input"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">{t('vault.secrets.slug')}</label>
-                <Input
-                  value={slug}
-                  onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); setFormError(null) }}
-                  placeholder="ma-cle-api"
-                  data-testid="secret-slug-input"
-                />
-                <p className="mt-1 text-xs text-gray-400">{t('vault.secrets.slugHint')}</p>
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">{t('vault.secrets.value')}</label>
+      {showForm && (
+        <form
+          className="mt-5 flex max-w-xl flex-col gap-3"
+          onSubmit={(e) => { e.preventDefault(); if (canSubmit) createMutation.mutate() }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('vault.secrets.label')} htmlFor="secret-label">
               <Input
-                type="password"
-                value={value}
-                onChange={(e) => { setValue(e.target.value); setFormError(null) }}
-                placeholder="••••••••••••"
-                data-testid="secret-value-input"
+                id="secret-label"
+                value={label}
+                onChange={(e) => handleLabelChange(e.target.value)}
+                placeholder="Ma clé API"
+                autoFocus
+                data-testid="secret-label-input"
               />
-            </div>
-            {formError && <p className="text-xs text-red-600" data-testid="secret-form-error">{formError}</p>}
-            <div className="flex gap-2">
-              <Button
-                onClick={() => createMutation.mutate()}
-                disabled={!canSubmit || createMutation.isPending}
-                data-testid="secret-create-btn"
-              >
-                {createMutation.isPending ? t('common.loading') : t('vault.secrets.add')}
-              </Button>
-              <Button variant="secondary" onClick={resetForm}>
-                {t('common.cancel')}
-              </Button>
-            </div>
+            </Field>
+            <Field label={t('vault.secrets.slug')} htmlFor="secret-slug"
+              hint={t('vault.secrets.slugHint')}>
+              <Input
+                id="secret-slug"
+                value={slug}
+                onChange={(e) => { setSlug(e.target.value); setSlugTouched(true); setFormError(null) }}
+                placeholder="ma-cle-api"
+                data-testid="secret-slug-input"
+              />
+            </Field>
           </div>
-        ) : (
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex w-full items-center gap-2 px-5 py-3 text-sm text-amber-600 hover:bg-amber-50 transition-colors rounded-b-lg"
-            data-testid="secret-add-btn"
-          >
-            <Plus size={15} />
-            {t('vault.secrets.addBtn')}
-          </button>
-        )}
-      </div>
+          {/* DoD : valeur masquée, écrite une fois, jamais relue depuis l'API. */}
+          <Field label={t('vault.secrets.value')} htmlFor="secret-value">
+            <Input
+              id="secret-value"
+              type="password"
+              autoComplete="new-password"
+              value={value}
+              onChange={(e) => { setValue(e.target.value); setFormError(null) }}
+              placeholder="••••••••••••"
+              data-testid="secret-value-input"
+            />
+          </Field>
+          <div aria-live="polite" className="empty:hidden">
+            {formError && <p className="field-error m-0" data-testid="secret-form-error">{formError}</p>}
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={!canSubmit || createMutation.isPending}
+              data-testid="secret-create-btn">
+              {createMutation.isPending ? t('common.loading') : t('vault.secrets.add')}
+            </Button>
+            <Button type="button" variant="secondary" onClick={resetForm}>
+              {t('common.cancel')}
+            </Button>
+          </div>
+        </form>
+      )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-600">{t('vault.secrets.deleteTitle')}</h2>
-            <p className="text-sm text-gray-600">
-              {t('vault.secrets.deleteConfirm', { name: deleteTarget.label })}
-            </p>
-            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => { setDeleteTarget(null); setDeleteError(null) }} disabled={deleteMutation.isPending}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={deleteMutation.isPending}
-                data-testid="secret-delete-confirm-btn"
-              >
-                {deleteMutation.isPending ? t('common.loading') : t('common.delete')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          testId="secret-delete-dialog"
+          title={t('vault.secrets.deleteTitle')}
+          message={t('vault.secrets.deleteConfirm', { name: deleteTarget.label })}
+          impactMessage={
+            deleteTarget.used_by_automations > 0
+              ? t('vault.usedByAutomations', { count: deleteTarget.used_by_automations })
+              : undefined
+          }
+          confirmLabel={t('common.delete')}
+          confirmTestId="secret-delete-confirm-btn"
+          pending={deleteMutation.isPending}
+          error={deleteError}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(null) }}
+        />
       )}
     </>
   )

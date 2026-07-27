@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isSuperAdmin } from '../lib/api'
+import { SectionHead } from '../components/SectionHead'
 import { VaultWalletsTab } from './VaultWalletsTab'
 import { VaultSecretsTab } from './VaultSecretsTab'
 
@@ -11,40 +12,33 @@ export function VaultAdmin() {
   const superAdmin = isSuperAdmin()
   const [tab, setTab] = useState<Tab>(superAdmin ? 'wallets' : 'secrets')
 
-  return (
-    <div className="p-8 max-w-2xl">
-      <h1 className="mb-6 text-2xl font-semibold text-gray-900">{t('vault.title')}</h1>
+  const TabBtn = ({ id, children }: { id: Tab; children: React.ReactNode }) => (
+    <button
+      type="button"
+      onClick={() => setTab(id)}
+      className={`border-0 border-b-2 bg-transparent px-4 py-2 text-[14px] font-[600]
+        [font-family:var(--font-heading)] [border-bottom-style:solid] transition-colors ${
+          tab === id
+            ? 'border-b-accent text-accent-700'
+            : 'border-b-transparent text-ink/[0.55] hover:text-ink'
+        }`}
+      data-testid={`tab-${id}`}
+    >
+      {children}
+    </button>
+  )
 
-      {/* Onglets */}
-      <div className="mb-6 flex gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1">
-        {superAdmin && (
-          <button
-            type="button"
-            onClick={() => setTab('wallets')}
-            className={[
-              'flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors',
-              tab === 'wallets'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700',
-            ].join(' ')}
-            data-testid="tab-wallets"
-          >
-            {t('vault.tabWallets')}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setTab('secrets')}
-          className={[
-            'flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors',
-            tab === 'secrets'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700',
-          ].join(' ')}
-          data-testid="tab-secrets"
-        >
-          {t('vault.tabSecrets')}
-        </button>
+  return (
+    <div className="mx-auto max-w-[900px] px-6 pt-11 pb-24">
+      <SectionHead kicker={t('vault.kicker')} title={t('vault.title')} />
+      <p className="mb-6 max-w-[64ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        {t('vault.chapo')}
+      </p>
+
+      {/* Onglets à filet cyan */}
+      <div className="mb-6 flex gap-1 border-b border-[var(--color-divider)]">
+        {superAdmin && <TabBtn id="wallets">{t('vault.tabWallets')}</TabBtn>}
+        <TabBtn id="secrets">{t('vault.tabSecrets')}</TabBtn>
       </div>
 
       {tab === 'wallets' && superAdmin && <VaultWalletsTab />}

@@ -81,10 +81,12 @@ async def list_secrets(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[VaultSecr
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, slug, label, created_at, updated_at
-            FROM user_secret
-            WHERE owner_ref = $1 AND kind = 'generic'
-            ORDER BY label
+            SELECT s.id, s.slug, s.label, s.created_at, s.updated_at,
+                   (SELECT count(*) FROM automation_header h
+                     WHERE h.secret_ref = '${secret://' || s.id || '}') AS used_by_automations
+            FROM user_secret s
+            WHERE s.owner_ref = $1 AND s.kind = 'generic'
+            ORDER BY s.label
             """,
             user_id,
         )
@@ -123,6 +125,23 @@ async def delete_secret(
     secret_id: uuid.UUID,
 ) -> None:
     async with pool.acquire() as conn:
+        # Refus motivé : un secret référencé par des automates ne se supprime
+        # pas — l'appel échouerait à la résolution. La liste est retournée.
+        rows = await conn.fetch(
+            "SELECT DISTINCT a.label FROM automation_header h "
+            "JOIN automation a ON a.id = h.automation_ref "
+            "WHERE h.secret_ref = '${secret://' || $1::uuid || '}' ORDER BY a.label",
+            secret_id,
+        )
+        if rows:
+            labels = [r["label"] for r in rows]
+            raise HTTPException(
+                409,
+                {
+                    "message": f"secret utilisé par {len(labels)} automate(s)",
+                    "automations": labels,
+                },
+            )
         result = await conn.execute(
             "DELETE FROM user_secret WHERE id = $1 AND owner_ref = $2",
             secret_id,

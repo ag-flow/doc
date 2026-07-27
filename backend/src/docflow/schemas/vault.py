@@ -34,6 +34,8 @@ class VaultSecretOut(BaseModel):
     label: str
     created_at: datetime
     updated_at: datetime
+    # Automates dont un header référence ${secret://<id>} (renseigné au listing).
+    used_by_automations: int = 0
 
 
 # ── Secrets HMAC (partagés, copiables par leur propriétaire) ──────────────────

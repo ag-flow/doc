@@ -819,6 +819,8 @@ export interface VaultSecretOut {
   label: string
   created_at: string
   updated_at: string
+  /** Automates dont un header référence ce secret. */
+  used_by_automations: number
 }
 
 export const vaultApi = {
@@ -830,6 +832,8 @@ export const vaultApi = {
 
 export const secretsApi = {
   list: () => api.get<VaultSecretOut[]>('/admin/secrets'),
+  /** Référence à coller dans un header d'automate — jamais la valeur. */
+  refOf: (id: string) => `\${secret://${id}}`,
   create: (body: { label: string; slug: string; value: string }) =>
     api.post<VaultSecretOut>('/admin/secrets', body),
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),

@@ -359,7 +359,19 @@
       "deleteTitle": "Supprimer le secret ?",
       "deleteConfirm": "Supprimer « {{name}} » ? Cette action est irréversible.",
       "slugConflict": "Un secret avec ce slug existe déjà."
-    }
+    },
+    "kicker": "Administration",
+    "chapo": "Un wallet Harpocrate donne accès à un jeu de secrets ; automates et webhooks les référencent par ${vault://…} ou ${secret://…} — rien ne transite ni ne s'affiche en clair.",
+    "colWallet": "Wallet",
+    "colRef": "Référence",
+    "colSecrets": "Secrets",
+    "colUsedBy": "Utilisé par",
+    "usedByAutomations_one": "{{count}} automate",
+    "usedByAutomations_other": "{{count}} automates",
+    "unused": "—",
+    "copyRef": "Copier la référence",
+    "refCopied": "Référence copiée.",
+    "deleteSecretUsedTitle": "Secret utilisé"
   },
   "oidc": {
     "title": "Configuration OIDC",

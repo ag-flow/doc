@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { KeyRound, Trash2, Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 import { vaultApi, type VaultWalletOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EmptyState, TableSkeleton } from '../components/ui/states'
+import { relativeDate } from '../lib/relativeDate'
 
 export function VaultWalletsTab() {
   const { t } = useTranslation()
@@ -45,107 +49,118 @@ export function VaultWalletsTab() {
     onError: (err: Error) => setDeleteError(err.message),
   })
 
-  if (isLoading) return <div className="py-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
+  if (isLoading) return <TableSkeleton rows={3} columns={3} />
 
   return (
     <>
-      <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
-        {wallets.length === 0 && !showForm && (
-          <p className="px-6 py-8 text-center text-sm text-gray-400">{t('vault.empty')}</p>
-        )}
+      {wallets.length === 0 && !showForm ? (
+        <EmptyState
+          testId="vault-empty"
+          message={t('vault.empty')}
+          action={
+            <Button onClick={() => setShowForm(true)} data-testid="vault-add-btn">
+              <Plus size={15} weight="duotone" /> {t('vault.addWallet')}
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t('vault.colWallet')}</th>
+                <th>{t('vault.colRef')}</th>
+                <th>{t('blocs.colLastWrite', 'Dernière écriture')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {wallets.map((w) => (
+                <tr key={w.id} data-testid={`wallet-row-${w.name}`}>
+                  <td className="text-[15px] font-[600] [font-family:var(--font-heading)]">
+                    {w.name}
+                  </td>
+                  <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
+                    {`\${vault://${w.name}:/…}`}
+                  </td>
+                  <td className="text-ink/[0.55]">{relativeDate(w.updated_at)}</td>
+                  <td className="text-right">
+                    <Button variant="ghost" size="sm" className="text-accent-2-700"
+                      onClick={() => { setDeleteTarget(w); setDeleteError(null) }}
+                      title={t('vault.delete')}
+                      aria-label={`${t('vault.delete')} ${w.name}`}>
+                      {t('common.delete')}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-        {wallets.map((w) => (
-          <div key={w.id} className="flex items-center gap-3 px-5 py-4">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-50 text-indigo-600 shrink-0">
-              <KeyRound size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-800">{w.name}</p>
-              <p className="text-xs text-gray-400 font-mono">{`\${vault://${w.name}:/…}`}</p>
-            </div>
-            <button
-              onClick={() => { setDeleteTarget(w); setDeleteError(null) }}
-              className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-              title={t('vault.delete')}
-            >
-              <Trash2 size={15} />
-            </button>
-          </div>
-        ))}
+          {!showForm && (
+            <Button variant="ghost" size="sm" className="mt-3"
+              onClick={() => setShowForm(true)} data-testid="vault-add-btn">
+              <Plus size={13} weight="duotone" /> {t('vault.addWallet')}
+            </Button>
+          )}
+        </>
+      )}
 
-        {showForm ? (
-          <div className="px-5 py-4 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">{t('vault.walletName')}</label>
-                <Input
-                  value={name}
-                  onChange={(e) => { setName(e.target.value); setFormError(null) }}
-                  placeholder="mon-wallet"
-                  data-testid="vault-name-input"
-                />
-                <p className="mt-1 text-xs text-gray-400">{t('vault.walletNameHint')}</p>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">{t('vault.apiKey')}</label>
-                <Input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => { setApiKey(e.target.value); setFormError(null) }}
-                  placeholder="••••••••••••"
-                  data-testid="vault-apikey-input"
-                />
-              </div>
-            </div>
-            {formError && <p className="text-xs text-red-600" data-testid="vault-form-error">{formError}</p>}
-            <div className="flex gap-2">
-              <Button
-                onClick={() => createMutation.mutate()}
-                disabled={!name.trim() || !apiKey.trim() || createMutation.isPending}
-                data-testid="vault-create-btn"
-              >
-                {createMutation.isPending ? t('common.loading') : t('vault.add')}
-              </Button>
-              <Button variant="secondary" onClick={() => { setShowForm(false); setFormError(null) }}>
-                {t('common.cancel')}
-              </Button>
-            </div>
+      {showForm && (
+        <form
+          className="mt-5 flex max-w-xl flex-col gap-3"
+          onSubmit={(e) => { e.preventDefault(); if (name.trim() && apiKey.trim()) createMutation.mutate() }}
+        >
+          <Field label={t('vault.walletName')} htmlFor="wallet-name" hint={t('vault.walletNameHint')}>
+            <Input
+              id="wallet-name"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setFormError(null) }}
+              placeholder="mon-wallet"
+              autoFocus
+              data-testid="vault-name-input"
+            />
+          </Field>
+          <Field label={t('vault.apiKey')} htmlFor="wallet-key">
+            <Input
+              id="wallet-key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => { setApiKey(e.target.value); setFormError(null) }}
+              placeholder="••••••••••••"
+              data-testid="vault-apikey-input"
+            />
+          </Field>
+          <div aria-live="polite" className="empty:hidden">
+            {formError && <p className="field-error m-0" data-testid="vault-form-error">{formError}</p>}
           </div>
-        ) : (
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex w-full items-center gap-2 px-5 py-3 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors rounded-b-lg"
-            data-testid="vault-add-btn"
-          >
-            <Plus size={15} />
-            {t('vault.addWallet')}
-          </button>
-        )}
-      </div>
+          <div className="flex gap-2">
+            <Button type="submit"
+              disabled={!name.trim() || !apiKey.trim() || createMutation.isPending}
+              data-testid="vault-create-btn">
+              {createMutation.isPending ? t('common.loading') : t('vault.add')}
+            </Button>
+            <Button type="button" variant="secondary"
+              onClick={() => { setShowForm(false); setFormError(null) }}>
+              {t('common.cancel')}
+            </Button>
+          </div>
+        </form>
+      )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-600">{t('vault.deleteTitle')}</h2>
-            <p className="text-sm text-gray-600">
-              {t('vault.deleteConfirm', { name: deleteTarget.name })}
-            </p>
-            {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => { setDeleteTarget(null); setDeleteError(null) }} disabled={deleteMutation.isPending}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={deleteMutation.isPending}
-                data-testid="vault-delete-confirm-btn"
-              >
-                {deleteMutation.isPending ? t('common.loading') : t('common.delete')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          testId="vault-delete-dialog"
+          title={t('vault.deleteTitle')}
+          message={t('vault.deleteConfirm', { name: deleteTarget.name })}
+          confirmLabel={t('common.delete')}
+          confirmTestId="vault-delete-confirm-btn"
+          pending={deleteMutation.isPending}
+          error={deleteError}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(null) }}
+        />
       )}
     </>
   )
