@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react'
+import { HeaderActions } from './HeaderSlot'
 
 interface Props {
   /** Surtitre cyan : type fonctionnel · bloc. */
@@ -7,7 +8,7 @@ interface Props {
   title: ReactNode
   /** Ligne méta sous le titre (slug, version, statut). */
   meta?: ReactNode
-  /** Barre d'actions, alignée en haut à droite du contenu. */
+  /** Barre d'actions — montée dans l'EN-TÊTE, sur la ligne du fil d'Ariane. */
   actions?: ReactNode
   /** Colonne de droite (propriétés, backlinks). Absente = colonne unique. */
   aside?: ReactNode
@@ -26,14 +27,12 @@ interface Props {
 export function DocumentShell({ kicker, title, meta, actions, aside, children, footer }: Props) {
   return (
     <div className="mx-auto max-w-[1440px] px-[30px] pt-12 pb-24">
-      <div className="mb-1.5 flex items-start gap-5">
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-[600] uppercase tracking-[0.09em] text-accent-700">
-            {kicker}
-          </div>
-          <div className="mt-3">{title}</div>
+      {actions && <HeaderActions>{actions}</HeaderActions>}
+      <div className="mb-1.5">
+        <div className="text-[11px] font-[600] uppercase tracking-[0.09em] text-accent-700">
+          {kicker}
         </div>
-        {actions && <div className="flex shrink-0 items-center gap-1.5 pt-2">{actions}</div>}
+        <div className="mt-3">{title}</div>
       </div>
 
       {meta && <div className="doc-meta">{meta}</div>}

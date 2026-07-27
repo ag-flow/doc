@@ -6,6 +6,7 @@ import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { ToastProvider } from './components/Toast'
 import { AppRail } from './components/AppRail'
 import { AppHeader } from './components/AppHeader'
+import { HeaderSlotProvider } from './components/HeaderSlot'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
 import { OidcCallback } from './pages/OidcCallback'
@@ -43,18 +44,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
  *  dériverait de la largeur du rail au premier changement de densité. */
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen bg-paper">
-      <AppRail />
-      <div
-        className="flex flex-1 flex-col overflow-hidden"
-        style={{ marginLeft: 'var(--rail-width)' }}
-      >
-        <AppHeader />
-        <main className="flex-1 overflow-y-auto">
-          {children}
-        </main>
+    <HeaderSlotProvider>
+      <div className="flex h-screen bg-paper">
+        <AppRail />
+        <div
+          className="flex flex-1 flex-col overflow-hidden"
+          style={{ marginLeft: 'var(--rail-width)' }}
+        >
+          <AppHeader />
+          <main className="flex-1 overflow-y-auto">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </HeaderSlotProvider>
   )
 }
 

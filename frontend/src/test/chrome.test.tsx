@@ -142,3 +142,30 @@ describe('recherche globale (en-tête)', () => {
     expect(trigger).toHaveFocus()
   })
 })
+
+describe('slot d’actions de l’en-tête', () => {
+  it('les actions d’une page montent sur la ligne du fil d’Ariane et remplacent la loupe', async () => {
+    const { HeaderSlotProvider, HeaderActions } = await import('../components/HeaderSlot')
+    renderAt(
+      '/templates',
+      <HeaderSlotProvider>
+        <AppHeader />
+        <HeaderActions>
+          <button type="button" data-testid="ctx-action">Enregistrer</button>
+        </HeaderActions>
+      </HeaderSlotProvider>,
+    )
+    const slot = await screen.findByTestId('header-actions-slot')
+    const action = screen.getByTestId('ctx-action')
+    // L'action vit DANS l'en-tête (portal), pas dans le corps de page.
+    expect(slot).toContainElement(action)
+    // Une seule rangée d'actions : la loupe s'efface (Cmd+K reste actif).
+    expect(screen.queryByTestId('open-search-btn')).not.toBeInTheDocument()
+  })
+
+  it('hors layout (page isolée), les actions se rendent sur place — rien ne disparaît', async () => {
+    const { HeaderActions } = await import('../components/HeaderSlot')
+    renderAt('/x', <HeaderActions><button type="button" data-testid="ctx-action">Ok</button></HeaderActions>)
+    expect(screen.getByTestId('ctx-action')).toBeInTheDocument()
+  })
+})

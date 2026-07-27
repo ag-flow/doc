@@ -149,10 +149,13 @@ export function Login() {
         </div>
       </section>
 
-      {/* ── Colonne formulaire ── */}
-      <section className="flex items-center justify-center bg-surface px-[52px] pt-11 pb-8">
+      {/* ── Colonne formulaire : un filet la relie à l'identité de la marque,
+          au lieu de flotter seule dans le gris. ── */}
+      <section className="flex items-center justify-center border-t border-[var(--color-divider)] bg-surface px-[52px] pt-11 pb-8 lg:border-t-0 lg:border-l">
         <div className="w-full max-w-[340px]">
-          <h3 className="mb-1">{t('login.formTitle')}</h3>
+          <Kicker>{t('login.kicker')}</Kicker>
+          <div className="mt-2.5 h-[3px] bg-ink" />
+          <h3 className="mt-4 mb-1">{t('login.formTitle')}</h3>
           <p className="mb-6 text-[13px] text-ink/[0.6]">{t('login.formHint')}</p>
 
           {!localEnabled && (
@@ -211,7 +214,7 @@ export function Login() {
             <div className="mt-6">
               <Button
                 type="button"
-                variant="secondary"
+                variant={localEnabled ? 'secondary' : 'primary'}
                 block
                 disabled={oidcLoading}
                 onClick={handleOidcLogin}
