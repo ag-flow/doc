@@ -12,6 +12,8 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
 import { SectionHead } from '../components/SectionHead'
+import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
 
@@ -114,16 +116,8 @@ export default function WorkspaceList() {
         {t('ws.chapo')}
       </p>
 
-      <div aria-live="polite">
-        {redirectMsg && (
-          <p className="mb-5 text-[14px] text-accent-2-700" data-testid="redirect-msg">
-            {redirectMsg}
-          </p>
-        )}
-        {apiError && (
-          <p className="mb-5 text-[14px] text-accent-2-700" data-testid="api-error">{apiError}</p>
-        )}
-      </div>
+      <ErrorLine message={redirectMsg} testId="redirect-msg" />
+      <ErrorLine message={apiError} testId="api-error" />
 
       {showCreate && (
         <form
@@ -173,19 +167,19 @@ export default function WorkspaceList() {
       )}
 
       {isLoading ? (
-        <p className="text-muted">{t('common.loading')}</p>
+        <TableSkeleton rows={5} columns={4} />
       ) : workspaces.length === 0 ? (
-        /* État vide : une phrase et le bouton, centrés dans le blanc. */
-        <div className="py-24 text-center" data-testid="ws-empty">
-          <p className="mb-5 text-[16px] text-ink/[0.6]">{t('ws.empty')}</p>
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus size={16} weight="duotone" /> {t('ws.create')}
-          </Button>
-        </div>
+        <EmptyState
+          testId="ws-empty"
+          message={t('ws.empty')}
+          action={
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus size={16} weight="duotone" /> {t('ws.create')}
+            </Button>
+          }
+        />
       ) : shown.length === 0 ? (
-        <p className="py-16 text-center text-[16px] text-ink/[0.6]" data-testid="ws-no-match">
-          {t('ws.noMatch', { q: filter.trim() })}
-        </p>
+        <EmptyState testId="ws-no-match" message={t('ws.noMatch', { q: filter.trim() })} />
       ) : (
         <ul className="m-0 list-none p-0">
           {shown.map((ws, i) => (
@@ -203,32 +197,35 @@ export default function WorkspaceList() {
       )}
 
       {deleteTarget && (
-        <div className="dialog-backdrop z-50" data-testid="delete-modal">
-          <div className="dialog">
-            <h4 className="dialog-title">{t('ws.deleteConfirmTitle')}</h4>
-            <p className="dialog-body">{t('ws.deleteConfirmMsg', { slug: deleteTarget.slug })}</p>
-            <Input
-              data-testid="delete-confirm-input"
-              value={deleteConfirm}
-              onChange={(e) => setDeleteConfirm(e.target.value)}
-              placeholder={deleteTarget.slug}
-              autoFocus
-            />
-            <div className="dialog-actions">
-              <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                variant="danger"
-                data-testid="confirm-delete-btn"
-                disabled={deleteConfirm !== deleteTarget.slug || deleteMutation.isPending}
-                onClick={() => deleteMutation.mutate(deleteTarget.slug)}
-              >
-                {t('ws.deleteConfirm')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          testId="delete-modal"
+          title={t('ws.deleteConfirmTitle')}
+          message={
+            <>
+              <p className="m-0">{t('ws.deleteConfirmMsg', { slug: deleteTarget.slug })}</p>
+              <Input
+                data-testid="delete-confirm-input"
+                className="mt-3"
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                placeholder={deleteTarget.slug}
+                autoFocus
+              />
+            </>
+          }
+          impactMessage={t('ws.deleteImpact', {
+            docs: deleteTarget.documents_count,
+            blocks: deleteTarget.blocks_count,
+          })}
+          confirmLabel={t('ws.deleteConfirm')}
+          confirmTestId="confirm-delete-btn"
+          pending={deleteMutation.isPending}
+          // Garde de saisie : le bouton reste verrouillé tant que le slug exact
+          // n'est pas retapé — on ne détruit pas un workspace par inadvertance.
+          confirmDisabled={deleteConfirm !== deleteTarget.slug}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.slug)}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   )

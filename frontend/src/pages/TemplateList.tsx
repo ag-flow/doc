@@ -471,7 +471,7 @@ function GalleryTab() {
                 )}
                 {!src.builtin && src.id && (
                   <button
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity shrink-0"
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 text-gray-400 hover:text-red-500 transition-opacity shrink-0"
                     onClick={e => { e.stopPropagation(); void deleteSource(src) }}
                     disabled={deletingId === src.id}
                     data-testid={`gallery-delete-source-${src.id}`}

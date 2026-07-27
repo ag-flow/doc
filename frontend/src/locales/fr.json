@@ -148,7 +148,8 @@
     "blocksCount_one": "{{count}} bloc",
     "blocksCount_other": "{{count}} blocs",
     "docsCount_one": "{{count}} doc",
-    "docsCount_other": "{{count}} docs"
+    "docsCount_other": "{{count}} docs",
+    "deleteImpact": "{{blocks}} bloc(s) et {{docs}} document(s) seront détruits."
   },
   "types": {
     "title": "Types fonctionnels",

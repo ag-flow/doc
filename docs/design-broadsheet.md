@@ -149,6 +149,33 @@ contraignent **dans** la feuille — ils ne passent jamais sous le panneau.
 (« Enregistré », qui retombe seul après deux secondes) à la place de l'indicateur
 « non enregistré » — jamais un toast bloquant.
 
+## États transverses
+
+`components/ui/states.tsx` (`EmptyState`, `Skeleton`, `TableSkeleton`,
+`SheetSkeleton`, `ErrorLine`) + `components/ConfirmDialog.tsx` + `Toast`.
+Ces primitives sont **obligatoires** : un écran qui réinvente son état vide ou
+son squelette recrée l'incohérence que la refonte supprime.
+
+- **Vide** : une phrase en sérif, une action, du blanc. Pas d'illustration, pas
+  d'encadré.
+- **Chargement** : squelettes aux dimensions réelles du contenu attendu
+  (`role="status"`, `aria-busy`) — jamais de spinner plein écran.
+- **Erreur** : au plus près de la cause (`Field error` pour un champ) ;
+  `ErrorLine` pour l'erreur de page, sous le titre. La région `aria-live`
+  préexiste au message, sinon son apparition n'est pas annoncée.
+- **Accusé** : `useToast`, en bas **à gauche** (le coin droit porte les actions
+  de page), disparition automatique, jamais de modale de succès.
+- **Confirmation destructive** : `ConfirmDialog` — verbe explicite dans le
+  bouton (« Supprimer le bloc », jamais « OK »), impact annoncé, focus initial
+  sur **Annuler** (la touche Entrée réflexe ne doit pas détruire), Tab piégé
+  dans le dialogue, Échap annule.
+
+**Audit clavier** (`test/states.test.tsx`) : trois gardes automatisés — aucune
+action révélée au survol seul sans `focus-within` (sinon elle est inatteignable
+au clavier), `outline: none` admis uniquement sur `:focus`, et les dialogues
+piègent le focus. Le premier a immédiatement débusqué une action souris-only
+dans `TemplateList`.
+
 ## Conventions
 
 - `.card` est réservée aux **items discrets d'un listing**, jamais à la mise

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
-import { X, AlertCircle, CheckCircle2, Info } from 'lucide-react'
+import { X, Warning, CheckCircle, Info } from '@phosphor-icons/react'
 
 type Tone = 'error' | 'success' | 'info'
 interface ToastItem { id: number; message: string; tone: Tone }
@@ -14,12 +14,13 @@ export function useToast(): ToastCtxValue {
 
 let _seq = 0
 
+/** Accusés discrets : encre sur surface, magenta pour l'échec seulement. */
 const TONE_STYLES: Record<Tone, string> = {
-  error: 'border-red-200 bg-red-50 text-red-800',
-  success: 'border-green-200 bg-green-50 text-green-800',
-  info: 'border-gray-200 bg-white text-gray-800',
+  error: 'text-accent-2-700',
+  success: 'text-accent-700',
+  info: 'text-ink/[0.75]',
 }
-const TONE_ICON = { error: AlertCircle, success: CheckCircle2, info: Info }
+const TONE_ICON = { error: Warning, success: CheckCircle, info: Info }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([])
@@ -41,25 +42,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-full max-w-md flex-col gap-2">
+      {/* En bas à GAUCHE : le coin droit porte les actions de page, et un accusé
+          n'a pas à recouvrir un bouton. Disparition automatique, jamais de modale. */}
+      <div className="pointer-events-none fixed bottom-4 left-4 z-[100] flex w-full max-w-md flex-col gap-2">
         {items.map((t) => {
           const Icon = TONE_ICON[t.tone]
           return (
             <div
               key={t.id}
-              role="alert"
+              role="status"
               data-testid="toast"
-              className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg ${TONE_STYLES[t.tone]}`}
+              className={`card elev-md pointer-events-auto flex-row items-start gap-2 py-2.5 text-[13px] ${TONE_STYLES[t.tone]}`}
             >
-              <Icon size={16} className="mt-0.5 shrink-0" />
+              <Icon size={15} weight="duotone" className="mt-0.5 shrink-0" />
               <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{t.message}</span>
               <button
                 type="button"
                 onClick={() => remove(t.id)}
                 aria-label="Fermer"
-                className="shrink-0 opacity-60 transition-opacity hover:opacity-100"
+                className="shrink-0 border-0 bg-transparent p-0 text-inherit opacity-60 transition-opacity hover:opacity-100"
               >
-                <X size={15} />
+                <X size={14} weight="bold" />
               </button>
             </div>
           )

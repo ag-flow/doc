@@ -33,6 +33,7 @@ import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
 import { SectionHead } from '../components/SectionHead'
 import { ActiveFilterBar } from '../components/ActiveFilterBar'
+import { EmptyState, TableSkeleton } from '../components/ui/states'
 import { ReparentDialog } from '../components/ReparentDialog'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
@@ -590,7 +591,13 @@ export function BlockDocumentList() {
     void navigate(`/ws/${ws}/blocs/${block}/documents/${docId}`)
   }
 
-  if (isLoading) return <div className="px-6 pt-11 text-muted">{t('common.loading')}</div>
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-[1200px] px-6 pt-11">
+        <TableSkeleton rows={8} columns={4} />
+      </div>
+    )
+  }
 
   const isEmpty =
     mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : (treePage?.roots.length ?? 0) === 0
@@ -765,20 +772,21 @@ export function BlockDocumentList() {
       {isEmpty ? (
         /* État vide explicite : un filtre trop restrictif ne rend pas une table
            blanche, il dit pourquoi et propose de relâcher les filtres. */
-        <div className="py-24 text-center" data-testid="documents-empty">
-          <p className="mb-5 text-[16px] text-ink/[0.6]">
-            {mode === 'query' ? t('documents.emptyFiltered') : t('documents.emptyBloc')}
-          </p>
-          {mode === 'query' ? (
-            <Button variant="secondary" onClick={reset} data-testid="empty-clear-filters">
-              {t('documents.clearAll')}
-            </Button>
-          ) : (
-            <Button onClick={() => setDialogParent(null)}>
-              <Plus size={16} weight="duotone" /> {t('documents.add')}
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          testId="documents-empty"
+          message={mode === 'query' ? t('documents.emptyFiltered') : t('documents.emptyBloc')}
+          action={
+            mode === 'query' ? (
+              <Button variant="secondary" onClick={reset} data-testid="empty-clear-filters">
+                {t('documents.clearAll')}
+              </Button>
+            ) : (
+              <Button onClick={() => setDialogParent(null)}>
+                <Plus size={16} weight="duotone" /> {t('documents.add')}
+              </Button>
+            )
+          }
+        />
       ) : (
         <table className="table" data-testid="documents-table">
           <thead>

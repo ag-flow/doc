@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
 import { SectionHead } from '../components/SectionHead'
+import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
@@ -371,11 +372,7 @@ export function BlocsAdmin() {
         />
       </p>
 
-      <div aria-live="polite">
-        {apiError && (
-          <p className="mb-5 text-[14px] text-accent-2-700" data-testid="api-error">{apiError}</p>
-        )}
-      </div>
+      <ErrorLine message={apiError} testId="api-error" />
 
       {showCreate && (
         <form
@@ -464,14 +461,17 @@ export function BlocsAdmin() {
       )}
 
       {isLoading ? (
-        <p className="text-muted">{t('common.loading')}</p>
+        <TableSkeleton rows={4} columns={5} />
       ) : blocs.length === 0 ? (
-        <div className="py-24 text-center" data-testid="no-blocs">
-          <p className="mb-5 text-[16px] text-ink/[0.6]">{t('blocs.empty')}</p>
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus size={16} weight="duotone" /> {t('blocs.create')}
-          </Button>
-        </div>
+        <EmptyState
+          testId="no-blocs"
+          message={t('blocs.empty')}
+          action={
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus size={16} weight="duotone" /> {t('blocs.create')}
+            </Button>
+          }
+        />
       ) : (
         <BlocsTable blocs={blocs} wsSlug={wsSlug!} />
       )}
