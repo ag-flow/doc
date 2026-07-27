@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, setToken, setupApi } from '../lib/api'
+import { beginOidcLogin } from '../lib/oidcClient'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { SetupForm } from '../components/SetupForm'
@@ -15,10 +16,32 @@ export function Login() {
   const [pendingValidation, setPendingValidation] = useState(false)
   const [loading, setLoading] = useState(false)
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
+  const [oidcAvailable, setOidcAvailable] = useState(false)
+  const [localEnabled, setLocalEnabled] = useState(true)
+  const [oidcLoading, setOidcLoading] = useState(false)
 
   useEffect(() => {
-    setupApi.methods().then((m) => setNeedsSetup(m.needs_setup)).catch(() => setNeedsSetup(false))
+    setupApi
+      .methods()
+      .then((m) => {
+        setOidcAvailable(m.oidc)
+        setLocalEnabled(m.local)
+        setNeedsSetup(m.needs_setup)
+      })
+      .catch(() => setNeedsSetup(false))
   }, [])
+
+  async function handleOidcLogin() {
+    setError(null)
+    setPendingValidation(false)
+    setOidcLoading(true)
+    try {
+      await beginOidcLogin() // redirige vers l'issuer — pas de retour en cas de succès
+    } catch {
+      setError(t('login.oidcError'))
+      setOidcLoading(false)
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -50,6 +73,12 @@ export function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
         <h1 className="mb-6 text-2xl font-semibold text-gray-900">{t('login.title')}</h1>
+        {!localEnabled && (
+          <p className="mb-4 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600" data-testid="local-disabled-notice">
+            {t('login.localDisabled')}
+          </p>
+        )}
+        {localEnabled && (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -80,13 +109,33 @@ export function Login() {
           {error && <p className="text-sm text-red-600">{error}</p>}
           {pendingValidation && (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Votre compte est en attente de validation par un administrateur.
+              {t('login.pendingValidation')}
             </div>
           )}
           <Button type="submit" className="w-full" disabled={loading} data-testid="submit-button">
             {t('login.submit')}
           </Button>
         </form>
+        )}
+        {oidcAvailable && (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span className="text-xs uppercase text-gray-400">{t('login.or')}</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={oidcLoading}
+              onClick={handleOidcLogin}
+              data-testid="oidc-button"
+            >
+              {oidcLoading ? t('login.oidcLoading') : t('login.oidc')}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   )

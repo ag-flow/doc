@@ -538,6 +538,28 @@ DELETE /api/admin/users/{id}
 
 ---
 
+## Annexe — Composants d'affichage (df-timeline, df-chart)
+
+Composants d'illustration rendus nativement dans l'éditeur et en lecture
+(publique comprise), insérables via le menu `/` ou émis par un agent. La
+source reste **en clair dans le markdown** (fence ```` ```df-<type> ````,
+attributs `clé="valeur"`, corps « records » : une ligne = un enregistrement,
+champs séparés par `|`).
+
+- `df-timeline` : chronologie d'étapes (`titre | description`), numérotation
+  positionnelle, attributs `title` et `label`.
+- `df-chart` : graphique SVG natif (`pie` | `donut` | `bar` | `line`),
+  `format="percent"` avec contrôle de somme, multi-séries via `header="true"`.
+  Attribut `source` réservé (branchement dataset futur).
+- Validation zod + dégradation : ligne malformée → badge « n ligne(s)
+  ignorée(s) », type inconnu → rendu tabulaire ; jamais d'échec silencieux.
+- Chrome commun à tous les blocs custom (mermaid et dataset inclus) : titre,
+  copier la source, télécharger (SVG ou `.md`).
+
+Grammaire complète : [`composants-affichage.md`](composants-affichage.md).
+
+---
+
 ## Annexe — Contrats OpenAPI
 
 Les contrats OpenAPI permettent de décrire des APIs externes et de les référencer dans les automates.

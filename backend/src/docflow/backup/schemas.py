@@ -32,6 +32,12 @@ class BackupJobCreate(BaseModel):
 
     # Paramètre git_sync
     git_base_path: str | None = None
+    # Dump uniquement : dépose aussi docflow_restore.env (clé de chiffrement,
+    # JWT_SECRET, DATABASE_URL) dans le répertoire de destination.
+    include_restore_env: bool = False
+    # Dump uniquement : nombre d'archives à conserver sur le remote
+    # (les plus anciennes au-delà sont purgées, .key compris). None = tout garder.
+    retention_count: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate(self) -> BackupJobCreate:
@@ -57,6 +63,8 @@ class BackupJobUpdate(BaseModel):
     schedule_cron: str | None = None
     schedule_every_seconds: int | None = Field(default=None, gt=0)
     git_base_path: str | None = None
+    include_restore_env: bool = False
+    retention_count: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate(self) -> BackupJobUpdate:
@@ -81,6 +89,8 @@ class BackupJobOut(BaseModel):
     schedule_cron: str | None
     schedule_every_seconds: int | None
     git_base_path: str | None
+    include_restore_env: bool = False
+    retention_count: int | None = None
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None
@@ -108,3 +118,24 @@ class BackupJobRunOut(BaseModel):
     files_written: int | None
     files_deleted: int | None
     commit_sha: str | None
+
+
+class RestoreGitIn(BaseModel):
+    """Corps de POST /admin/backup/restore-git — réalimentation depuis le miroir."""
+
+    model_config = {"extra": "forbid"}
+
+    remote_point_slug: str
+    # Sous-répertoire du repo où vit l'export (le git_base_path du job d'origine).
+    git_base_path: str | None = None
+    # Restreindre à un seul workspace (slug) ; None = tous.
+    workspace: str | None = None
+
+
+class RestoreGitReport(BaseModel):
+    workspaces_created: int
+    blocks_created: int
+    types_imported: int
+    docs_created: int
+    docs_updated: int
+    errors: list[str]

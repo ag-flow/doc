@@ -14,8 +14,9 @@ from docflow.schemas.properties import (
     PropertiesDefOut,
     PropertiesDefUpdate,
 )
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["properties"])
+router = APIRouter(tags=["properties"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _TYPE = _WS + "/types/{type_slug}"

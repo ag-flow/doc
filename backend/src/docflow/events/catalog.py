@@ -131,6 +131,24 @@ CATALOG: dict[str, EventDef] = {
             ["documentId", "workspaceSlug"],
         ),
     ),
+    "docflow.document.refreshed.v1": EventDef(
+        title="Document rafraîchi",
+        description=(
+            "Demande de retraitement d'un document, émise à la main via "
+            "« Push events » (le contenu n'a PAS changé). Distinct de updated : "
+            "les automates choisissent explicitement de se re-déclencher "
+            "(ex. réindexation RAG) sans réagir aux éditions normales."
+        ),
+        data_schema=_schema(
+            {
+                "documentId": _UUID,
+                "workspaceSlug": _STR,
+                "version": {"type": "integer"},
+                "title": _STR,
+            },
+            ["documentId", "workspaceSlug", "version", "title"],
+        ),
+    ),
 }
 
 

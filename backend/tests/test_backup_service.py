@@ -388,3 +388,73 @@ def test_job_rejects_both_schedules() -> None:
             schedule_cron="0 * * * *",
             schedule_every_seconds=3600,
         )
+
+
+async def test_include_restore_env_roundtrip(db_pool, test_workspace):  # type: ignore[no-untyped-def]
+    """Le flag include_restore_env se persiste à la création et à l'update."""
+    from docflow.backup import service as backup_svc
+    from docflow.backup.schemas import BackupJobCreate, BackupJobUpdate
+    from docflow.remote import service as remote_svc
+    from docflow.remote.schemas import RemoteCertificateCreate, RemotePointCreate
+
+    await remote_svc.create_certificate(
+        db_pool,
+        RemoteCertificateCreate(
+            slug="cert-ire", label="C", cert_type="ssh_key", public_part="pub", private_key="priv"
+        ),
+        "x" * 43 + "=",
+    )
+    await remote_svc.create_point(
+        db_pool,
+        RemotePointCreate(
+            slug="pt-ire",
+            label="P",
+            point_type="sftp",
+            host="h",
+            username="u",
+            auth_type="certificate",
+            certificate_slug="cert-ire",
+        ),
+        None,
+    )
+    try:
+        job = await backup_svc.create_job(
+            db_pool,
+            BackupJobCreate(
+                slug="job-ire",
+                label="J",
+                strategy="db_dump",
+                remote_point_slug="pt-ire",
+                schedule_every_seconds=3600,
+                include_restore_env=True,
+            ),
+        )
+        assert job.include_restore_env is True
+        updated = await backup_svc.update_job(
+            db_pool,
+            "job-ire",
+            BackupJobUpdate(
+                label="J",
+                enabled=True,
+                remote_point_slug="pt-ire",
+                schedule_every_seconds=3600,
+                include_restore_env=False,
+            ),
+        )
+        assert updated.include_restore_env is False
+    finally:
+        await db_pool.execute("DELETE FROM backup_job WHERE slug='job-ire'")
+        await db_pool.execute("DELETE FROM remote_point WHERE slug='pt-ire'")
+        await db_pool.execute("DELETE FROM remote_certificate WHERE slug='cert-ire'")
+
+
+def test_build_restore_env_content() -> None:
+    from docflow.backup.db_dump import build_restore_env
+
+    content = build_restore_env(
+        database_url="postgresql://u:p@h/db", jwt_secret="jwt", encryption_key="fernet"
+    )
+    assert "DATABASE_URL=postgresql://u:p@h/db\n" in content
+    assert "JWT_SECRET=jwt\n" in content
+    assert "ENCRYPTION_KEY=fernet\n" in content
+    assert content.startswith("#")

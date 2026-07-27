@@ -11,8 +11,9 @@ from docflow.schemas.types import (
     FunctionalTypeUpdate,
 )
 from docflow.types import service
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["types"])
+router = APIRouter(tags=["types"], dependencies=[Depends(require_ws_access)])
 
 
 @router.get("/workspaces/{ws_slug}/types/rich", response_model=list[FunctionalTypeRich])

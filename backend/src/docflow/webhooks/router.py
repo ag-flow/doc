@@ -8,8 +8,9 @@ from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.webhook import WebhookCreate, WebhookOut, WebhookTestOut, WebhookUpdate
 from docflow.webhooks import service
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["webhooks"])
+router = APIRouter(tags=["webhooks"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _WH = _WS + "/webhooks/{webhook_id}"

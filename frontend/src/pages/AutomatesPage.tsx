@@ -1,106 +1,30 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, RefreshCw, Trash2, Pencil, Plus, Upload } from 'lucide-react'
+import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical, Copy, Send } from 'lucide-react'
 import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
 import { AutomationDialog } from '../components/AutomationDialog'
+import { PushEventsDialog, type PushSelection } from '../components/PushEventsDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
-import { contractsApi, automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
-
-// ── Import contrat ────────────────────────────────────────────────────────────
-
-function ContractImportForm({ onDone }: { onDone: () => void }) {
-  const qc = useQueryClient()
-  const [label, setLabel] = useState('')
-  const [url, setUrl] = useState('')
-  const [jsonText, setJsonText] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const importMut = useMutation({
-    mutationFn: (body: Parameters<typeof contractsApi.import>[0]) => contractsApi.import(body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['contracts'] }); onDone() },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  function submit() {
-    setError(null)
-    if (!label.trim()) return setError('Libellé requis')
-    if (url.trim()) {
-      importMut.mutate({ label: label.trim(), source_url: url.trim(), raw_spec: {} })
-    } else {
-      try {
-        const raw_spec = JSON.parse(jsonText) as object
-        importMut.mutate({ label: label.trim(), raw_spec })
-      } catch {
-        setError('JSON invalide')
-      }
-    }
-  }
-
-  return (
-    <div className="mt-3 space-y-2 rounded-md border border-gray-200 bg-gray-50 p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium mb-1">Libellé</label>
-          <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ag-flow.rag" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">URL source (ou coller le JSON ci-dessous)</label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/openapi.json" />
-        </div>
-      </div>
-      {!url.trim() && (
-        <textarea
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          className="w-full rounded border border-gray-300 p-2 text-xs font-mono h-28 resize-y"
-          placeholder="Coller ici le contrat OpenAPI en JSON…"
-        />
-      )}
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      <div className="flex gap-2">
-        <Button size="sm" onClick={submit} disabled={importMut.isPending}>
-          {importMut.isPending ? 'Import…' : 'Importer'}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onDone}>Annuler</Button>
-      </div>
-    </div>
-  )
-}
+import { useToast } from '../components/Toast'
+import { automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
 
 // ── Page principale ───────────────────────────────────────────────────────────
 
 export function AutomatesPage() {
   const { wsSlug: ws } = useParams<{ wsSlug: string }>()
   const qc = useQueryClient()
+  const { toast } = useToast()
 
-  const [showImport, setShowImport] = useState(false)
   const [expandedAuto, setExpandedAuto] = useState<string | null>(null)
   const [dialogAuto, setDialogAuto] = useState<AutomationOut | null | 'new'>()
   const [dialogError, setDialogError] = useState<string | null>(null)
-
-  const { data: contracts = [], isLoading: cLoading } = useQuery({
-    queryKey: ['contracts'],
-    queryFn: () => contractsApi.list(),
-    staleTime: 30_000,
-  })
 
   const { data: automations = [], isLoading: aLoading } = useQuery({
     queryKey: ['automations', ws],
     queryFn: () => automationsApi.list(ws!),
     enabled: !!ws,
     staleTime: 15_000,
-  })
-
-  const refreshMut = useMutation({
-    mutationFn: (id: string) => contractsApi.refresh(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
-  })
-
-  const deleteContractMut = useMutation({
-    mutationFn: (id: string) => contractsApi.delete(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['contracts'] }),
   })
 
   const createMut = useMutation({
@@ -120,6 +44,130 @@ export function AutomatesPage() {
     mutationFn: (id: string) => automationsApi.delete(ws!, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
   })
+
+  const toggleActiveMut = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      automationsApi.update(ws!, id, { active }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
+  })
+
+  const [runMsg, setRunMsg] = useState<Record<string, { text: string; err: boolean }>>({})
+  const runNextMut = useMutation({
+    mutationFn: (id: string) => automationsApi.runNext(ws!, id),
+    onSuccess: (res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      let entry: { text: string; err: boolean }
+      if (res.status === 'no_pending') {
+        entry = { text: 'Aucun event en attente', err: false }
+        toast(`« ${label} » : aucun event en attente`, 'info')
+      } else if (res.status === 'no_events') {
+        entry = { text: 'Aucun event déclencheur', err: true }
+        toast(`« ${label} » : aucun event déclencheur sélectionné`, 'info')
+      } else {
+        const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
+        const body = res.body ? res.body.replace(/\s+/g, ' ').trim() : ''
+        entry = { text: `Event joué (${http})`, err: res.status === 'failed' }
+        if (res.status === 'failed') {
+          toast(`« ${label} » — échec de l'appel (${http})${body ? '\n' + body.slice(0, 400) : ''}`, 'error')
+        } else {
+          toast(`« ${label} » — appel envoyé (${http})`, 'success')
+        }
+      }
+      setRunMsg((m) => ({ ...m, [id]: entry }))
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+    },
+    onError: (e: Error, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — erreur : ${e.message}`, 'error')
+      setRunMsg((m) => ({ ...m, [id]: { text: e.message, err: true } }))
+    },
+  })
+
+  function toastRun(label: string, res: { status: string; http_status?: number | null; body?: string | null }, suffix = '') {
+    if (res.status === 'no_pending') { toast(`« ${label} » : aucun event en attente`, 'info'); return }
+    if (res.status === 'no_events') { toast(`« ${label} » : aucun event déclencheur sélectionné`, 'info'); return }
+    const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
+    const body = res.body ? res.body.replace(/\s+/g, ' ').trim() : ''
+    if (res.status === 'failed') toast(`« ${label} » — échec (${http})${suffix}${body ? '\n' + body.slice(0, 400) : ''}`, 'error')
+    else toast(`« ${label} » — appel envoyé (${http})${suffix}`, 'success')
+  }
+
+  const advanceMut = useMutation({
+    mutationFn: (id: string) => automationsApi.advance(ws!, id),
+    onSuccess: (res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toastRun(label, res, ' → event suivant')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+    },
+    onError: (e: Error, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — erreur : ${e.message}`, 'error')
+    },
+  })
+
+  const cursorBackMut = useMutation({
+    mutationFn: (id: string) => automationsApi.cursorBack(ws!, id),
+    onSuccess: (_res, id) => {
+      const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
+      toast(`« ${label} » — revenu à l'event précédent`, 'info')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+  })
+
+  const cloneMut = useMutation({
+    mutationFn: (id: string) => automationsApi.clone(ws!, id),
+    onSuccess: (created) => {
+      toast(`« ${created.label} » créé (désactivé)`, 'success')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+    onError: (e: Error) => toast(`Clonage échoué : ${e.message}`, 'error'),
+  })
+
+  const clearRunsMut = useMutation({
+    mutationFn: (id: string) => automationsApi.clearRuns(ws!, id),
+    onSuccess: (res, id) => {
+      toast(`Historique vidé (${res.deleted} exécution${res.deleted > 1 ? 's' : ''})`, 'success')
+      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+    },
+    onError: (e: Error) => toast(`Échec : ${e.message}`, 'error'),
+  })
+
+  const [pushOpen, setPushOpen] = useState(false)
+  const pushEventsMut = useMutation({
+    mutationFn: (selections: PushSelection[]) => automationsApi.pushEvents(selections),
+    onSuccess: (res) => {
+      setPushOpen(false)
+      toast(`${res.events} event${res.events > 1 ? 's' : ''} de modification émis`, 'success')
+      // Les compteurs « en attente » bougent immédiatement.
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+    onError: (e: Error) => toast(`Push events échoué : ${e.message}`, 'error'),
+  })
+
+  // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
+  const [dragId, setDragId] = useState<string | null>(null)
+  const reorderMut = useMutation({
+    mutationFn: (ids: string[]) => automationsApi.reorder(ws!, ids),
+    onSuccess: (list) => qc.setQueryData(['automations', ws], list),
+    onError: (e: Error) => {
+      toast(`Réordonnancement échoué : ${e.message}`, 'error')
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
+  })
+
+  function handleDrop(targetId: string) {
+    if (!dragId || dragId === targetId) { setDragId(null); return }
+    const ids = automations.map((a) => a.id)
+    const from = ids.indexOf(dragId)
+    const to = ids.indexOf(targetId)
+    if (from < 0 || to < 0) { setDragId(null); return }
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    setDragId(null)
+    // Optimiste : réordonner localement en attendant la réponse.
+    qc.setQueryData(['automations', ws], ids.map((id) => automations.find((a) => a.id === id)!))
+    reorderMut.mutate(ids)
+  }
 
   function saveAuto(data: AutomationCreate) {
     setDialogError(null)
@@ -146,59 +194,29 @@ export function AutomatesPage() {
         traitement sans écrire de code d'intégration.
       </p>
 
-      {/* ── Contrats ── */}
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold">Contrats OpenAPI</h2>
-          <Button size="sm" onClick={() => setShowImport((v) => !v)}>
-            <Upload size={13} className="mr-1.5" />
-            {showImport ? 'Annuler' : 'Importer'}
-          </Button>
-        </div>
-        {showImport && <ContractImportForm onDone={() => setShowImport(false)} />}
-        {cLoading ? (
-          <p className="text-sm text-gray-400">Chargement…</p>
-        ) : contracts.length === 0 ? (
-          <p className="text-sm text-gray-500">Aucun contrat importé.</p>
-        ) : (
-          <div className="space-y-2">
-            {contracts.map((c) => (
-              <div key={c.id} className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-4 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <span className="font-medium text-sm">{c.label}</span>
-                  {c.version && <span className="ml-2 text-xs text-gray-400">v{c.version}</span>}
-                  {c.source_url && (
-                    <span className="ml-2 text-xs text-gray-400 truncate">{c.source_url}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {c.source_url && (
-                    <button type="button" onClick={() => refreshMut.mutate(c.id)}
-                      disabled={refreshMut.isPending}
-                      title="Rafraîchir depuis l'URL source"
-                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
-                      <RefreshCw size={14} />
-                    </button>
-                  )}
-                  <button type="button" onClick={() => { if (confirm(`Supprimer « ${c.label} » ?`)) deleteContractMut.mutate(c.id) }}
-                    className="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <p className="mb-6 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600">
+        <FileJson size={15} className="shrink-0 text-gray-400" />
+        Les <strong>contrats OpenAPI</strong> sont partagés entre workspaces.
+        <Link to="/contracts" className="font-medium text-indigo-600 hover:underline">
+          Gérer les contrats →
+        </Link>
+      </p>
 
       {/* ── Automates ── */}
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold">Automates</h2>
-          <Button size="sm" onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
-            <Plus size={13} className="mr-1.5" />
-            Nouvel automate
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setPushOpen(true)}
+              data-testid="push-events-btn">
+              <Send size={13} className="mr-1.5" />
+              Push events
+            </Button>
+            <Button size="sm" onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
+              <Plus size={13} className="mr-1.5" />
+              Nouvel automate
+            </Button>
+          </div>
         </div>
         {aLoading ? (
           <p className="text-sm text-gray-400">Chargement…</p>
@@ -207,8 +225,27 @@ export function AutomatesPage() {
         ) : (
           <div className="space-y-2">
             {automations.map((a) => (
-              <div key={a.id} className="rounded-md border border-gray-200 bg-white overflow-hidden">
+              <div
+                key={a.id}
+                draggable
+                onDragStart={() => setDragId(a.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => handleDrop(a.id)}
+                data-testid={`auto-card-${a.id}`}
+                className={`rounded-md border bg-white overflow-hidden transition-colors ${
+                  dragId === a.id ? 'border-indigo-400 opacity-60' : 'border-gray-200'
+                }`}
+              >
                 <div className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="flex shrink-0 cursor-grab items-center text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+                    title="Glisser pour changer l'ordre d'évaluation (propre à ce workspace)">
+                    <GripVertical size={14} />
+                  </span>
+                  <span className="w-5 shrink-0 text-right font-mono text-[11px] text-gray-400"
+                    title="Position d'évaluation dans ce workspace">
+                    {a.position}
+                  </span>
                   <button type="button" onClick={() => setExpandedAuto(expandedAuto === a.id ? null : a.id)}
                     className="text-gray-400 hover:text-gray-700 shrink-0">
                     {expandedAuto === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -216,17 +253,75 @@ export function AutomatesPage() {
                   <div className="flex-1 min-w-0">
                     <span className={`font-medium text-sm ${!a.active ? 'text-gray-400' : ''}`}>{a.label}</span>
                     <span className="ml-2 text-xs text-gray-400">
-                      {[a.on_create && 'C', a.on_update && 'U'].filter(Boolean).join('/')} · {a.http_method}
+                      {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
-                    {!a.active && <span className="ml-2 text-xs text-amber-600">inactif</span>}
+                    {runMsg[a.id] && (
+                      <span className={`ml-2 text-xs ${runMsg[a.id].err ? 'text-red-600' : 'text-indigo-600'}`}>
+                        {runMsg[a.id].text}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button type="button" onClick={() => { setDialogAuto(a); setDialogError(null) }}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Events en attente (au-delà du curseur) */}
+                    {a.pending_count > 0 ? (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                        title="Events non encore évalués (au-delà du curseur)"
+                        data-testid={`pending-${a.id}`}>
+                        {a.pending_count} en attente
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                        data-testid={`pending-${a.id}`}>
+                        à jour
+                      </span>
+                    )}
+                    {/* Revenir à l'event précédent (recule le curseur) */}
+                    <button type="button" title="Revenir à l'event précédent"
+                      onClick={() => cursorBackMut.mutate(a.id)} disabled={cursorBackMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                      data-testid={`cursor-back-${a.id}`}>
+                      <SkipBack size={14} />
+                    </button>
+                    {/* Jouer l'event courant SANS avancer le curseur (test) */}
+                    <button type="button" title="Jouer l'event courant (test, sans avancer)"
+                      onClick={() => runNextMut.mutate(a.id)} disabled={runNextMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                      data-testid={`run-next-${a.id}`}>
+                      <Play size={14} />
+                    </button>
+                    {/* Envoyer l'appel ET passer au suivant (avance le curseur) */}
+                    <button type="button" title="Envoyer l'appel et passer au suivant"
+                      onClick={() => advanceMut.mutate(a.id)} disabled={advanceMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                      data-testid={`advance-${a.id}`}>
+                      <SkipForward size={14} />
+                    </button>
+                    {/* Toggle d'activation */}
+                    <button type="button" role="switch" aria-checked={a.active}
+                      onClick={() => toggleActiveMut.mutate({ id: a.id, active: !a.active })}
+                      disabled={toggleActiveMut.isPending}
+                      title={a.active ? 'Actif — cliquer pour arrêter' : 'Inactif — cliquer pour activer'}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                        a.active ? 'bg-indigo-600' : 'bg-gray-300'
+                      }`}
+                      data-testid={`toggle-active-${a.id}`}>
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                        a.active ? 'translate-x-[18px]' : 'translate-x-0.5'
+                      }`} />
+                    </button>
+                    <button type="button" title="Cloner (créé désactivé)"
+                      onClick={() => cloneMut.mutate(a.id)} disabled={cloneMut.isPending}
+                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+                      data-testid={`clone-${a.id}`}>
+                      <Copy size={14} />
+                    </button>
+                    <button type="button" title="Modifier"
+                      onClick={() => { setDialogAuto(a); setDialogError(null) }}
                       className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
                       <Pencil size={14} />
                     </button>
-                    <button type="button"
+                    <button type="button" title="Supprimer"
                       onClick={() => { if (confirm(`Supprimer « ${a.label} » ?`)) deleteAutoMut.mutate(a.id) }}
                       className="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50">
                       <Trash2 size={14} />
@@ -239,7 +334,16 @@ export function AutomatesPage() {
                     {a.body_template && (
                       <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto max-h-24 mb-2">{a.body_template}</pre>
                     )}
-                    <p className="text-xs font-semibold text-gray-500 mt-2 mb-1">Historique des exécutions</p>
+                    <div className="mt-2 mb-1 flex items-center justify-between">
+                      <p className="text-xs font-semibold text-gray-500">Historique des exécutions</p>
+                      <button type="button"
+                        onClick={() => { if (confirm('Vider l\'historique de cet automate ?')) clearRunsMut.mutate(a.id) }}
+                        disabled={clearRunsMut.isPending}
+                        className="text-xs text-gray-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                        data-testid={`clear-runs-${a.id}`}>
+                        Vider l'historique
+                      </button>
+                    </div>
                     <AutomationRunHistory ws={ws!} automationId={a.id} />
                   </div>
                 )}
@@ -248,6 +352,14 @@ export function AutomatesPage() {
           </div>
         )}
       </section>
+
+      {pushOpen && (
+        <PushEventsDialog
+          onConfirm={(sel) => pushEventsMut.mutate(sel)}
+          onClose={() => setPushOpen(false)}
+          pending={pushEventsMut.isPending}
+        />
+      )}
 
       {dialogAuto !== undefined && (
         <AutomationDialog

@@ -106,6 +106,7 @@ async def pull_template(
             f"au slug demandé ({template_slug!r})"
         )
 
+    templates_dir.mkdir(parents=True, exist_ok=True)
     dest = templates_dir / f"{template_slug}.yaml"
     dest.write_text(yaml_text, encoding="utf-8")
     log.info("gallery_template_pulled", template=template_slug, version=tpl.version)

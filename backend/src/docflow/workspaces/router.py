@@ -11,8 +11,9 @@ from docflow.auth.deps import (
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
 from docflow.workspaces import service
+from docflow.workspaces.access import accessible_workspace_slugs, require_ws_access
 
-router = APIRouter(tags=["workspaces"])
+router = APIRouter(tags=["workspaces"], dependencies=[Depends(require_ws_access)])
 
 _Auth = Depends(require_authenticated)
 
@@ -21,12 +22,18 @@ _Auth = Depends(require_authenticated)
 async def list_workspaces(
     request: Request,
     include_archived: bool = Query(False),
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> list[WorkspaceOut]:
     result = await service.list_workspaces(
         request.app.state.pool, include_archived=include_archived
     )
-    return filter_workspaces_by_scope(request, result)
+    result = filter_workspaces_by_scope(request, result)
+    # Utilisateur (JWT) non-admin : ne lister que ses workspaces (owner/membre).
+    if getattr(request.state, "api_key_scopes", None) is None and not user.is_admin:
+        allowed = await accessible_workspace_slugs(request.app.state.pool, user)
+        if allowed is not None:
+            result = [w for w in result if w.slug in allowed]
+    return result
 
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201)

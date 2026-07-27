@@ -8,6 +8,7 @@ import json
 import uuid
 
 import asyncpg
+import httpx
 from fastapi import HTTPException
 from mcp.types import TextContent, Tool
 
@@ -15,16 +16,64 @@ from docflow.artifacts import service
 from docflow.artifacts.links import build_download_query
 from docflow.config.settings import Settings
 from docflow.mcp.session import require_identity
+from docflow.net.ssrf import SSRFError, validate_public_url
+
+# Téléchargement d'un artefact depuis une URL (voie source_url). Le serveur va
+# chercher le binaire lui-même : les octets ne transitent jamais par la sortie
+# du modèle (contrairement à data_base64, borné par le budget de tokens de
+# l'appelant). Sans redirection (parade SSRF, cf. net/ssrf.py).
+_DOWNLOAD_TIMEOUT = 30.0
+
+
+class _DownloadError(Exception):
+    """Échec du téléchargement d'un artefact via source_url (message présentable)."""
+
+
+async def _download_artifact_bytes(url: str, max_bytes: int) -> bytes:
+    """Télécharge le binaire d'une URL publique, plafonné à ``max_bytes`` octets.
+
+    Applique la garde SSRF avant la requête et coupe le flux dès que la taille
+    dépasse la limite (pas de body arbitrairement gros en mémoire).
+    """
+    try:
+        await validate_public_url(url)
+    except SSRFError as exc:
+        raise _DownloadError(f"source_url refusée : {exc}") from exc
+
+    buffer = bytearray()
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "GET", url, timeout=_DOWNLOAD_TIMEOUT, follow_redirects=False
+            ) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        raise _DownloadError(
+                            f"source_url trop volumineuse (dépasse {max_bytes} octets)"
+                        )
+    except httpx.HTTPStatusError as exc:
+        raise _DownloadError(f"HTTP {exc.response.status_code} sur source_url") from exc
+    except httpx.RequestError as exc:
+        raise _DownloadError(f"téléchargement source_url impossible : {exc}") from exc
+    return bytes(buffer)
+
 
 ARTIFACT_TOOLS: list[Tool] = [
     Tool(
         name="create_artifact",
         description=(
-            "Pousse une image (binaire encodé base64) dans un workspace. "
+            "Pousse une image dans un workspace. Fournir le binaire par EXACTEMENT "
+            "l'une de ces deux voies : `data_base64` (contenu encodé base64, inline) "
+            "OU `source_url` (URL http/https publique que LE SERVEUR télécharge "
+            "lui-même — à privilégier pour une grosse image, car les octets ne "
+            "transitent alors pas par la conversation). "
             "ÉCRITURE : l'artefact est stocké en base, dédupliqué par empreinte "
             "sha256 — pousser deux fois le même contenu retourne le même id "
             "(deduplicated=true). "
-            "Extensions autorisées : png, jpg, jpeg, gif, webp, svg. "
+            "Extensions autorisées : png, jpg, jpeg, gif, webp, svg. Taille max "
+            "bornée par la configuration de l'instance (artifact_max_bytes). "
             "Retourne {id, url, deduplicated, sha256, size_bytes} ; url est le "
             "chemin à insérer dans le markdown d'un document "
             "(![nom](/api/workspaces/{ws}/artifacts/{id})). "
@@ -41,10 +90,19 @@ ARTIFACT_TOOLS: list[Tool] = [
                 },
                 "data_base64": {
                     "type": "string",
-                    "description": "Contenu binaire du fichier encodé en base64",
+                    "description": (
+                        "Contenu binaire du fichier encodé en base64 (exclusif avec source_url)"
+                    ),
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": (
+                        "URL http/https publique du binaire, téléchargé côté serveur "
+                        "(exclusif avec data_base64)"
+                    ),
                 },
             },
-            "required": ["workspace_slug", "filename", "data_base64"],
+            "required": ["workspace_slug", "filename"],
         },
     ),
     Tool(
@@ -120,10 +178,28 @@ async def handle_create_artifact(
         return _text({"error": "configuration indisponible"})
     ws_slug = str(args.get("workspace_slug", ""))
     filename = str(args.get("filename", ""))
-    try:
-        data = base64.b64decode(str(args.get("data_base64", "")), validate=True)
-    except (binascii.Error, ValueError):
-        return _text({"error": "data_base64 invalide : base64 attendu"})
+    max_bytes = settings.artifact_max_bytes
+
+    # Exactement une source : le binaire inline (data_base64) OU une URL que le
+    # serveur télécharge (source_url).
+    raw_b64 = args.get("data_base64")
+    raw_url = args.get("source_url")
+    has_b64 = raw_b64 is not None and str(raw_b64) != ""
+    has_url = raw_url is not None and str(raw_url) != ""
+    if has_b64 == has_url:
+        return _text({"error": "fournir exactement l'un de data_base64 ou source_url"})
+
+    if has_url:
+        try:
+            data = await _download_artifact_bytes(str(raw_url), max_bytes)
+        except _DownloadError as e:
+            return _text({"error": str(e)})
+    else:
+        try:
+            data = base64.b64decode(str(raw_b64), validate=True)
+        except (binascii.Error, ValueError):
+            return _text({"error": "data_base64 invalide : base64 attendu"})
+
     user = require_identity()
     try:
         created = await service.create_artifact(
@@ -132,7 +208,7 @@ async def handle_create_artifact(
             filename=filename,
             data=data,
             created_by=user.id,
-            max_bytes=settings.artifact_max_bytes,
+            max_bytes=max_bytes,
         )
     except HTTPException as e:
         return _text({"error": e.detail})

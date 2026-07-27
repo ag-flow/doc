@@ -10,6 +10,7 @@ from docflow.artifacts.links import verify_download_sig
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
 from docflow.schemas.auth import AuthUser
+from docflow.workspaces.access import require_ws_access
 
 router = APIRouter(tags=["artifacts"])
 
@@ -34,7 +35,8 @@ def binary_response(data: bytes, media_type: str, filename: str, *, attachment: 
     )
 
 
-@router.post(_WS + "/artifacts", response_model=ArtifactCreatedOut, status_code=201)
+@router.post(_WS + "/artifacts", response_model=ArtifactCreatedOut, status_code=201,
+             dependencies=[Depends(require_ws_access)])
 async def upload_artifact(
     ws_slug: str, file: UploadFile, request: Request, user: AuthUser = _Auth
 ) -> ArtifactCreatedOut:
@@ -50,7 +52,8 @@ async def upload_artifact(
     )
 
 
-@router.get(_ART + "/meta", response_model=ArtifactMetaOut)
+@router.get(_ART + "/meta", response_model=ArtifactMetaOut,
+            dependencies=[Depends(require_ws_access)])
 async def get_artifact_meta(
     ws_slug: str, artifact_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> ArtifactMetaOut:
@@ -58,7 +61,7 @@ async def get_artifact_meta(
     return await service.get_artifact_meta(request.app.state.pool, ws_slug, artifact_id)
 
 
-@router.get(_ART)
+@router.get(_ART, dependencies=[Depends(require_ws_access)])
 async def serve_artifact(
     ws_slug: str, artifact_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> Response:

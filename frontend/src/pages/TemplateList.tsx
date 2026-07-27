@@ -333,6 +333,18 @@ function GalleryTemplates({
   )
 }
 
+/** Normalise une URL de source : strip toc.txt / slash final, et convertit les
+ *  pages GitHub (github.com/…/blob|tree/…) vers leur équivalent raw — la galerie
+ *  a besoin du contenu brut, pas de la page HTML. */
+export function normalizeSourceUrl(url: string): string {
+  const cleaned = url.trim().replace(/\/toc\.txt$/, '').replace(/\/$/, '')
+  const gh = cleaned.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|tree)\/([^/]+)\/(.+)$/)
+  if (gh) {
+    return `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/refs/heads/${gh[3]}/${gh[4]}`
+  }
+  return cleaned
+}
+
 function GalleryTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -352,13 +364,17 @@ function GalleryTab() {
 
   async function addSource() {
     if (!newLabel.trim() || !newUrl.trim()) return
-    const trimmedUrl = newUrl.trim().replace(/\/toc\.txt$/, '').replace(/\/$/, '')
+    const trimmedUrl = normalizeSourceUrl(newUrl)
     if (sources.some(s => s.url === trimmedUrl)) {
       setAddError('Cette source est déjà dans la liste')
       return
     }
     if (/\.(yaml|yml|txt)$/i.test(trimmedUrl)) {
       setAddError("L'URL doit pointer vers un répertoire de base, pas un fichier")
+      return
+    }
+    if (/^https:\/\/github\.com\//.test(trimmedUrl)) {
+      setAddError(t('tpl.gallery.sourceUrlGithubError'))
       return
     }
     setAdding(true)
@@ -423,6 +439,9 @@ function GalleryTab() {
               className="text-sm h-8"
               data-testid="gallery-new-url"
             />
+            <p className="text-xs text-gray-500" data-testid="gallery-url-hint">
+              {t('tpl.gallery.sourceUrlHint')}
+            </p>
             {addError && <p className="text-xs text-red-600">{addError}</p>}
             <Button size="sm" className="w-full" onClick={() => void addSource()} disabled={adding || !newLabel.trim() || !newUrl.trim()} data-testid="gallery-add-confirm">
               {adding ? t('common.loading') : t('tpl.gallery.add')}

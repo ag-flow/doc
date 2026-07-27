@@ -126,6 +126,42 @@ async def mcp_ws(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "mcp-camp-ws")
 
 
+@pytest.fixture()
+async def mcp_session(db_pool: asyncpg.Pool) -> AsyncIterator[uuid.UUID]:
+    """Session MCP authentifiée (identité JWT-like) pour les outils d'écriture.
+
+    create_workspace estampille désormais owner_id = utilisateur agissant : une
+    session doit être liée au contexte. Cède l'id de l'utilisateur système.
+    """
+    from docflow.mcp.session import McpSession, reset_current_session, set_current_session
+    from docflow.schemas.auth import AuthUser
+
+    row = await db_pool.fetchrow(
+        "INSERT INTO app_user (email, label, validated) VALUES ($1, $2, true) "
+        "ON CONFLICT (email) DO UPDATE SET label = EXCLUDED.label RETURNING id",
+        "mcp-tools@test.local",
+        "MCP Tools",
+    )
+    assert row is not None
+    uid: uuid.UUID = row["id"]
+    # Superadmin : bypass de l'accès-utilisateur (les workspaces des fixtures
+    # sont créés en SQL avec owner NULL — l'enforcement les refuserait sinon).
+    user = AuthUser(
+        id=uid,
+        email="mcp-tools@test.local",
+        label="MCP Tools",
+        is_admin=True,
+        validated=True,
+        disabled=False,
+    )
+    token = set_current_session(McpSession(user=user))
+    try:
+        yield uid
+    finally:
+        reset_current_session(token)
+        await db_pool.execute("DELETE FROM app_user WHERE email = 'mcp-tools@test.local'")
+
+
 # ---------------------------------------------------------------------------
 # 1. Inventaire des outils
 # ---------------------------------------------------------------------------
@@ -152,6 +188,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "generate_api_key",
         "set_document_parent",
         "delete_document",
+        "sync_child_documents",
         "workspace_exists",
         "block_exists",
         "get_block_type",
@@ -164,6 +201,24 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "list_block_objects",
         "query_documents",
         "list_block_tree",
+        "find_by_dedup_key",
+        "set_dedup_key",
+        "list_workspace_members",
+        "add_workspace_member",
+        "remove_workspace_member",
+        "find_referencing_documents",
+        "create_dataset",
+        "list_datasets",
+        "get_dataset",
+        "add_dataset_column",
+        "update_dataset_column",
+        "delete_dataset_column",
+        "add_dataset_row",
+        "update_dataset_row",
+        "delete_dataset_row",
+        "query_dataset",
+        "import_dataset_csv",
+        "export_dataset_csv",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 
@@ -632,7 +687,7 @@ async def test_list_templates_retourne_liste(db_pool: asyncpg.Pool) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_create_workspace_nominal(db_pool: asyncpg.Pool) -> None:
+async def test_create_workspace_nominal(db_pool: asyncpg.Pool, mcp_session: uuid.UUID) -> None:
     configure(db_pool)
     data = _json(
         await _create_workspace(
@@ -642,11 +697,13 @@ async def test_create_workspace_nominal(db_pool: asyncpg.Pool) -> None:
     )
     assert data["created"] is True  # type: ignore[index]
     assert data["slug"] == "mcp-new-ws"  # type: ignore[index]
+    owner = await db_pool.fetchval("SELECT owner_id FROM workspace WHERE slug = $1", "mcp-new-ws")
+    assert owner == mcp_session
     await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "mcp-new-ws")
 
 
 async def test_create_workspace_slug_duplique(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
 ) -> None:
     data = _json(await _create_workspace(db_pool, {"slug": mcp_ws["ws_slug"], "label": "Doublon"}))
     assert "error" in data  # type: ignore[operator]

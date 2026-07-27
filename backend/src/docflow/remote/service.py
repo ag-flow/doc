@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -11,6 +14,7 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
+from cryptography.x509.oid import NameOID
 from fastapi import HTTPException
 
 from docflow.crypto import decrypt_str, encrypt_str
@@ -102,14 +106,8 @@ async def create_certificate(
     return _cert_row(row)
 
 
-async def generate_certificate(
-    pool: asyncpg.Pool, body: RemoteCertificateGenerate, fernet_key: str
-) -> RemoteCertificateOut:
-    """Génère une paire de clés SSH ed25519 côté serveur.
-
-    La clé privée ne quitte jamais ce processus en clair : chiffrée Fernet
-    avant écriture, seule la clé publique (et son empreinte) est retournée.
-    """
+def _generate_ssh_material() -> tuple[str, str]:
+    """Paire ed25519 au format OpenSSH : (clé publique, clé privée PEM)."""
     private_key = Ed25519PrivateKey.generate()
     private_pem = private_key.private_bytes(
         encoding=Encoding.PEM,
@@ -121,16 +119,70 @@ async def generate_certificate(
         .public_bytes(encoding=Encoding.OpenSSH, format=PublicFormat.OpenSSH)
         .decode()
     )
+    return public_openssh, private_pem
+
+
+def _generate_tls_material(
+    common_name: str, expires_at: datetime | None
+) -> tuple[str, str, datetime]:
+    """Certificat X.509 auto-signé RSA 2048 (client FTPS) :
+    (cert PEM, clé privée PEM, expiration effective)."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        encoding=Encoding.PEM,
+        format=PrivateFormat.PKCS8,
+        encryption_algorithm=NoEncryption(),
+    ).decode()
+    now = datetime.now(UTC)
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    not_after = expires_at or now + timedelta(days=3650)
+    if not_after <= now:
+        raise HTTPException(422, "expires_at doit être dans le futur")
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(not_after)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(Encoding.PEM).decode(), private_pem, not_after
+
+
+async def generate_certificate(
+    pool: asyncpg.Pool, body: RemoteCertificateGenerate, fernet_key: str
+) -> RemoteCertificateOut:
+    """Génère le matériel côté serveur : paire SSH ed25519, ou certificat TLS
+    auto-signé (RSA 2048) selon cert_type.
+
+    La clé privée ne quitte jamais ce processus en clair : chiffrée Fernet
+    avant écriture, seule la partie publique (et son empreinte) est retournée.
+    """
+    expires_at = body.expires_at
+    if body.cert_type == "tls":
+        public_part, private_pem, expires_at = _generate_tls_material(
+            body.common_name or body.slug, body.expires_at
+        )
+    else:
+        public_part, private_pem = _generate_ssh_material()
+        if body.common_name:
+            # Commentaire de la clé (identité git / repère dans authorized_keys).
+            public_part = f"{public_part} {body.common_name}"
     private_enc = encrypt_str(fernet_key, private_pem).encode()
     async with pool.acquire() as conn:
         row = await _insert_certificate(
             conn,
             slug=body.slug,
             label=body.label,
-            cert_type="ssh_key",
-            public_part=public_openssh,
+            cert_type=body.cert_type,
+            public_part=public_part,
             private_enc=private_enc,
-            expires_at=body.expires_at,
+            expires_at=expires_at,
         )
     return _cert_row(row)
 

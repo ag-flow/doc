@@ -18,14 +18,33 @@ FROM app_user WHERE email = $1
 """
 
 
+async def _local_login_enabled(request: Request) -> bool:
+    """État effectif de la connexion locale.
+
+    Priorité : surcharge env LOCAL_LOGIN_ENABLED (break-glass fichier) si
+    définie, sinon réglage de la config OIDC — qui n'a d'effet que si l'OIDC
+    est activé : désactiver l'OIDC réactive automatiquement le local.
+    """
+    override: bool | None = request.app.state.settings.local_login_enabled
+    if override is not None:
+        return override
+    return not await oidc_service.local_login_disabled_by_oidc(request.app.state.pool)
+
+
 @router.get("/methods", response_model=AuthMethodsOut)
 async def auth_methods(request: Request) -> AuthMethodsOut:
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         count = await setup_service.user_count(conn)
         oidc_cfg = await oidc_service.get_public_config(pool)
+    # Réglage de la page OIDC (effectif seulement si l'OIDC est activé),
+    # surchargeable par LOCAL_LOGIN_ENABLED (/data/.env, break-glass), et
+    # ignoré tant qu'aucun utilisateur n'existe (wizard/premier login).
+    local_enabled = await _local_login_enabled(request)
+    if count == 0:
+        local_enabled = True
     return AuthMethodsOut(
-        local=True,
+        local=local_enabled,
         oidc=oidc_cfg is not None,
         needs_setup=count == 0,
     )
@@ -40,6 +59,9 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         count = await setup_service.user_count(conn)
         if count == 0:
             raise HTTPException(status_code=503, detail="SetupRequired")
+        if not await _local_login_enabled(request):
+            # Mode OIDC-only (page de configuration OIDC, ou surcharge .env).
+            raise HTTPException(status_code=403, detail="connexion locale désactivée")
         row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.email)
 
     _invalid = HTTPException(status_code=401, detail="identifiants invalides")

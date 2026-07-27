@@ -11,8 +11,9 @@ from mcp.types import TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
-from docflow.mcp import artifact_tools
-from docflow.mcp.session import current_session, require_identity
+from docflow.mcp import artifact_tools, dataset_tools
+from docflow.mcp.session import acting_identity, current_session, require_identity
+from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
@@ -783,7 +784,209 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "block_slug"],
         },
     ),
+    Tool(
+        name="sync_child_documents",
+        description=(
+            "Synchronise en une opération d'ensemble les documents enfants d'un "
+            "parent à partir d'une propriété de corrélation 'external_id'. "
+            "ÉCRITURE : réconcilie une livraison (items) avec les enfants existants "
+            "du parent, du type child_type_slug. "
+            "Par item (external_id obligatoire) : présent en base ET dans items → "
+            "update (titre/contenu/propriétés qui diffèrent) ou unchanged si rien ne "
+            "change ; absent en base → create (enfant du parent). "
+            "Si exhaustive=true, un enfant présent en base mais absent des items voit "
+            "sa propriété 'status' passée à 'removed_at_source' (JAMAIS de "
+            "suppression) → removed_marked ; s'il l'est déjà, unchanged. "
+            "exhaustive=false → aucun marquage de retrait. "
+            "Opération idempotente : un rejeu à l'identique n'écrit rien. "
+            "Le type enfant DOIT posséder une propriété 'external_id' ; le marquage de "
+            "retrait exige une propriété 'status' (restricted_list) avec une valeur "
+            "autorisée 'removed_at_source' — sinon l'item concerné est reporté dans "
+            "'errors' sans faire échouer l'opération. "
+            "Retourne {created, updated, unchanged, removed_marked} (listes d'ids), "
+            "counts (compteurs) et errors (items en échec)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "parent_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID du document parent dont on synchronise les enfants",
+                },
+                "child_type_slug": {
+                    "type": "string",
+                    "description": "Slug du type fonctionnel des enfants (ex. 'capture_item')",
+                },
+                "items": {
+                    "type": "array",
+                    "description": (
+                        "Liste des items à synchroniser. Chaque item : external_id "
+                        "(chaîne, obligatoire — clé de corrélation), title (chaîne), "
+                        "contenu (chaîne markdown, optionnel), properties (objet "
+                        "{slug: valeur} optionnel ; pour une restricted_list, la valeur "
+                        "est le slug de la valeur autorisée)."
+                    ),
+                    "items": {"type": "object"},
+                },
+                "exhaustive": {
+                    "type": "boolean",
+                    "description": (
+                        "true = les enfants absents des items sont marqués retirés "
+                        "(status=removed_at_source) ; false (défaut) = aucun marquage"
+                    ),
+                    "default": False,
+                },
+            },
+            "required": ["workspace_slug", "parent_id", "child_type_slug", "items"],
+        },
+    ),
+    Tool(
+        name="find_by_dedup_key",
+        description=(
+            "Recherche les documents d'un workspace par CLEF DE DÉDOUBLONNAGE. "
+            "Le `text` fourni est normalisé (trim + minuscules) puis hashé en "
+            "sha256 côté serveur ; retourne tous les documents dont la clef "
+            "correspond (0..N — aucune unicité n'est imposée). Typiquement appelé "
+            "AVANT un dépôt idempotent : un résultat vide (total=0) signifie « pas "
+            "encore stocké ». Retourne {dedup_sha256, total, documents[]}. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "Clef de dédoublonnage en clair (normalisée trim+minuscules "
+                        "puis hashée en sha256 côté serveur)"
+                    ),
+                },
+            },
+            "required": ["workspace_slug", "text"],
+        },
+    ),
+    Tool(
+        name="set_dedup_key",
+        description=(
+            "Pose la CLEF DE DÉDOUBLONNAGE d'un document. Le `text` est normalisé "
+            "(trim + minuscules) puis stocké sous forme de sha256 — la clef en "
+            "clair n'est jamais conservée. ÉCRITURE. La clef est nullable et NON "
+            "unique : poser la même valeur sur deux documents est autorisé (c'est "
+            "l'appelant qui décide d'un doublon, l'application ne l'empêche pas). "
+            "Un `text` vide ou omis efface la clef (remet à null). Retourne "
+            "{updated, doc_id, dedup_sha256}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {"type": "string", "format": "uuid", "description": "UUID du document"},
+                "text": {
+                    "type": "string",
+                    "description": "Clef de dédoublonnage en clair ; vide ou omis = efface la clef",
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
+    Tool(
+        name="list_workspace_members",
+        description=(
+            "Liste les membres d'un workspace : email et role ('owner' | 'member'). "
+            "Retourne aussi owner_email (propriétaire du workspace, distinct des "
+            "membres explicites ; null si aucun owner). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="add_workspace_member",
+        description=(
+            "Ajoute un utilisateur comme membre d'un workspace (accès à tout son "
+            "contenu). ÉCRITURE. "
+            "L'utilisateur est résolu par son email et doit être validé et non "
+            "désactivé, sinon erreur. role vaut 'member' (défaut) ou 'owner'. "
+            "Ré-appeler avec un role différent met à jour le rôle (idempotent). "
+            "GARDE : seuls l'owner du workspace ou un superadmin peuvent gérer les "
+            "membres."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "member_email": {
+                    "type": "string",
+                    "description": "Email de l'utilisateur à ajouter (doit exister, validé, actif)",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": ["owner", "member"],
+                    "description": "Rôle du membre (défaut 'member')",
+                },
+            },
+            "required": ["workspace_slug", "member_email"],
+        },
+    ),
+    Tool(
+        name="remove_workspace_member",
+        description=(
+            "Retire un membre d'un workspace (l'utilisateur perd l'accès s'il n'est "
+            "ni owner ni superadmin). ÉCRITURE. "
+            "L'utilisateur est résolu par son email. "
+            "GARDE : seuls l'owner du workspace ou un superadmin peuvent gérer les "
+            "membres."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "member_email": {
+                    "type": "string",
+                    "description": "Email du membre à retirer",
+                },
+            },
+            "required": ["workspace_slug", "member_email"],
+        },
+    ),
+    Tool(
+        name="find_referencing_documents",
+        description=(
+            "Retourne toutes les pages qui RÉFÉRENCENT une page cible (backlinks), "
+            "en fusionnant DEUX sources : un lien de contenu markdown "
+            "(docflow://doc/...) OU une propriété de type reference pointant la "
+            "cible. À utiliser AVANT un copier→supprimer pour vérifier qu'aucune "
+            "page ne pointe encore vers la cible (liens qui deviendraient cassés). "
+            "Chaque entrée : source_id (UUID de la page source), source_title, "
+            "block_slug (slug du bloc de la source), via ('content' ou 'property') ; "
+            "pour via='property', prop_slug (slug de la propriété reference) ; "
+            "pour via='content', label (libellé du lien). "
+            "Retourne {error: ...} si le document ou le workspace est introuvable. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "doc_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la page cible dont on veut les backlinks",
+                },
+            },
+            "required": ["workspace_slug", "doc_id"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
+    *dataset_tools.DATASET_TOOLS,
 ]
 
 mcp_server = Server("docflow")
@@ -822,6 +1025,7 @@ _WS_TOOLS: dict[str, bool] = {
     "update_document": True,
     "set_document_parent": True,
     "delete_document": True,
+    "sync_child_documents": True,
     "workspace_exists": False,
     "block_exists": False,
     "get_block_type": False,
@@ -833,7 +1037,14 @@ _WS_TOOLS: dict[str, bool] = {
     "list_block_objects": False,
     "query_documents": False,
     "list_block_tree": False,
+    "find_by_dedup_key": False,
+    "set_dedup_key": True,
+    "list_workspace_members": False,
+    "add_workspace_member": True,
+    "remove_workspace_member": True,
+    "find_referencing_documents": False,
     **artifact_tools.ARTIFACT_WS_TOOLS,
+    **dataset_tools.DATASET_WS_TOOLS,
 }
 
 # Outils structurels : réservés aux profils admin quand la session vient d'une clé API.
@@ -865,12 +1076,52 @@ def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextConte
     return None
 
 
+async def _check_user_access(
+    pool: asyncpg.Pool, name: str, arguments: dict[str, object]
+) -> list[TextContent] | None:
+    """Applique l'accès-utilisateur (owner/membre/superadmin) au workspace visé.
+
+    Se cumule avec ``_check_tool_authz`` (scope de clé) : une session clé API
+    doit satisfaire les deux. Superadmin (``is_admin``) → bypass. ``create_workspace``
+    est exempté (il crée un nouveau workspace). Si le workspace n'existe pas, on
+    laisse le handler répondre son 404 habituel.
+    """
+    session = current_session()
+    if session is None:
+        return None
+    user = acting_identity()
+    if user.is_admin or name == "create_workspace":
+        return None
+    if name in _WS_TOOLS or name == "import_template":
+        ws_slug = str(arguments.get("workspace_slug", ""))
+        async with pool.acquire() as conn:
+            ws_key: uuid.UUID | None = await conn.fetchval(
+                "SELECT workspace_technical_key FROM workspace WHERE slug = $1", ws_slug
+            )
+            if ws_key is None:
+                return None
+            if not await user_can_access_workspace(conn, ws_key, user):
+                return _text(
+                    {
+                        "error": (
+                            f"outil {name} : accès refusé au workspace "
+                            f"'{ws_slug}' pour l'utilisateur"
+                        )
+                    }
+                )
+    return None
+
+
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
 async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
     pool = _get_pool()
     log.info("mcp_call_tool", tool=name)
 
     denied = _check_tool_authz(name, arguments)
+    if denied is not None:
+        return denied
+
+    denied = await _check_user_access(pool, name, arguments)
     if denied is not None:
         return denied
 
@@ -894,6 +1145,12 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _set_document_parent(pool, arguments)
     if name == "delete_document":
         return await _delete_document(pool, arguments)
+    if name == "sync_child_documents":
+        return await _sync_child_documents(pool, arguments)
+    if name == "find_by_dedup_key":
+        return await _find_by_dedup_key(pool, arguments)
+    if name == "set_dedup_key":
+        return await _set_dedup_key(pool, arguments)
     if name == "workspace_exists":
         return await _workspace_exists(pool, str(arguments.get("workspace_slug", "")))
     if name == "block_exists":
@@ -951,22 +1208,39 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _create_api_profile(pool, arguments)
     if name == "generate_api_key":
         return await _generate_api_key(pool, arguments)
+    if name == "find_referencing_documents":
+        return await _find_referencing_documents(pool, arguments)
+    if name == "list_workspace_members":
+        return await _list_workspace_members(pool, arguments)
+    if name == "add_workspace_member":
+        return await _add_workspace_member(pool, arguments)
+    if name == "remove_workspace_member":
+        return await _remove_workspace_member(pool, arguments)
     if name == "create_artifact":
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
     if name == "get_artifact":
         return await artifact_tools.handle_get_artifact(pool, arguments)
     if name == "get_artifact_link":
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
+    if name in dataset_tools.DATASET_WS_TOOLS:
+        return await dataset_tools.handle(name, pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})
 
 
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
     rows = await pool.fetch("SELECT slug, label, description FROM workspace ORDER BY slug")
     session = current_session()
-    if session is not None and not session.unrestricted:
-        assert session.api_key_scopes is not None
-        allowed = allowed_workspace_slugs(session.api_key_scopes)
-        rows = [r for r in rows if r["slug"] in allowed]
+    if session is not None:
+        # Filtre scope de clé API (session restreinte) — inchangé.
+        if not session.unrestricted:
+            assert session.api_key_scopes is not None
+            key_allowed = allowed_workspace_slugs(session.api_key_scopes)
+            rows = [r for r in rows if r["slug"] in key_allowed]
+        # Filtre accès-utilisateur (owner/membre/superadmin). None = superadmin
+        # (tout). Intersection avec le scope de clé le cas échéant.
+        user_allowed = await accessible_workspace_slugs(pool, session.acting_user)
+        if user_allowed is not None:
+            rows = [r for r in rows if r["slug"] in user_allowed]
     return _text([dict(r) for r in rows])
 
 
@@ -1247,6 +1521,65 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     return _text({"deleted": True, **snapshot})
 
 
+async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.sync import sync_child_documents
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    child_type_slug = str(args.get("child_type_slug", ""))
+    exhaustive = bool(args.get("exhaustive", False))
+    try:
+        parent_id = uuid.UUID(str(args.get("parent_id", "")))
+    except ValueError:
+        return _text({"error": "parent_id : UUID invalide"})
+
+    raw_items = args.get("items")
+    if not isinstance(raw_items, list) or not all(isinstance(i, dict) for i in raw_items):
+        return _text({"error": "items : liste d'objets attendue"})
+
+    try:
+        result = await sync_child_documents(
+            pool, ws_slug, parent_id, child_type_slug, raw_items, exhaustive
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def _find_by_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.dedup import find_by_dedup_key
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    text = str(args.get("text", ""))
+    try:
+        result = await find_by_dedup_key(pool, ws_slug, text)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def _set_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.documents.dedup import set_dedup_key
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+    raw_text = args.get("text")
+    text = str(raw_text) if raw_text is not None else None
+    try:
+        result = await set_dedup_key(pool, ws_slug, doc_id, text)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
 async def _workspace_exists(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
     exists: object | None = await pool.fetchval("SELECT 1 FROM workspace WHERE slug = $1", ws_slug)
     return _text({"exists": exists is not None})
@@ -1446,7 +1779,9 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
 
     try:
         data = WorkspaceCreate(slug=ws_slug, label=label, description=description)
-        result = await ws_svc.create_workspace(pool, data, owner_id=None)
+        # Estampillage OBO : le workspace est attribué à l'utilisateur AGISSANT
+        # (l'humain si l'OBO du portail l'a résolu, sinon l'identité de la clé).
+        result = await ws_svc.create_workspace(pool, data, owner_id=acting_identity().id)
     except ValidationError as e:
         return _text({"error": e.errors(include_url=False)})
     except HTTPException as e:
@@ -1795,3 +2130,72 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
             "label": created.label,
         }
     )
+
+
+async def _find_referencing_documents(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.references import service as ref_svc
+
+    ws_slug = str(args.get("workspace_slug", ""))
+    try:
+        doc_id = uuid.UUID(str(args.get("doc_id", "")))
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+    try:
+        result = await ref_svc.find_referencing_documents(pool, ws_slug, doc_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    try:
+        out = await members.list_members(pool, str(args.get("workspace_slug", "")))
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)
+
+
+async def _add_workspace_member(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    role = str(args["role"]) if args.get("role") else "member"
+    try:
+        out = await members.add_member(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("member_email", "")),
+            role,
+            acting_identity(),
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)
+
+
+async def _remove_workspace_member(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    from fastapi import HTTPException
+
+    from docflow.workspaces import members
+
+    try:
+        out = await members.remove_member(
+            pool,
+            str(args.get("workspace_slug", "")),
+            str(args.get("member_email", "")),
+            acting_identity(),
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(out)

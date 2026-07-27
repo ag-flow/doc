@@ -40,11 +40,18 @@ class RemoteCertificateGenerate(BaseModel):
 
     slug: str
     label: str = Field(min_length=1, max_length=120)
+    cert_type: Literal["ssh_key", "tls"] = "ssh_key"
+    # TLS : CN du certificat auto-signé (défaut : slug).
+    # ssh_key : commentaire de la clé publique (ex. deploy@docflow).
+    common_name: str | None = Field(default=None, max_length=120)
     expires_at: datetime | None = None
 
     @model_validator(mode="after")
     def _validate_slug(self) -> RemoteCertificateGenerate:
         _valid_slug(self.slug)
+        # Le commentaire finit sur une ligne d'authorized_keys : une seule ligne.
+        if self.common_name is not None and ("\n" in self.common_name or "\r" in self.common_name):
+            raise ValueError("common_name : une seule ligne")
         return self
 
 
@@ -65,6 +72,23 @@ PointType = Literal["ftp", "ftps", "sftp", "git"]
 AuthType = Literal["password", "pat", "certificate"]
 AuthStorage = Literal["local", "vault"]
 GitProvider = Literal["github", "gitlab", "gitea", "bitbucket", "custom"]
+
+
+_GIT_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+_GIT_URL_RE = re.compile(r"^(?:https?://[^/]+/|git@[^:]+:|ssh://(?:git@)?[^/]+/)(.+)$")
+
+
+def _normalize_git_repo(value: str) -> str:
+    """Accepte org/nom, mais aussi une URL https ou SSH collée telle quelle —
+    n'en retient que org/nom. Refuse tout reste ambigu (schéma, deux-points…) :
+    la valeur stockée compose l'URL de clone, elle doit être irréprochable."""
+    v = value.strip().removesuffix(".git")
+    m = _GIT_URL_RE.match(v)
+    if m:
+        v = m.group(1).strip("/").removesuffix(".git")
+    if not _GIT_REPO_RE.match(v):
+        raise ValueError("git_repo : attendu « organisation/nom » (ou une URL de repo valide)")
+    return v
 
 
 def _check_git_fields(point_type: str, git_provider: str | None, git_repo: str | None) -> None:
@@ -103,6 +127,17 @@ def _check_auth_fields(
             raise ValueError("certificate_slug requis pour l'auth par certificat")
 
 
+def _normalize_certificate_auth(model: RemotePointCreate | RemotePointUpdate) -> None:
+    """Auth par certificat : les champs password/pat n'ont pas de sens et le
+    CHECK SQL rp_vault_needs_ref refuse auth_storage='vault' sans vault_ref —
+    on les neutralise plutôt que de laisser un reliquat de formulaire produire
+    un 500."""
+    if model.auth_type == "certificate":
+        model.auth_storage = None
+        model.auth_secret = None
+        model.auth_vault_ref = None
+
+
 class RemotePointCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -128,6 +163,9 @@ class RemotePointCreate(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> RemotePointCreate:
         _valid_slug(self.slug)
+        _normalize_certificate_auth(self)
+        if self.point_type == "git" and self.git_repo:
+            self.git_repo = _normalize_git_repo(self.git_repo)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,
@@ -161,6 +199,9 @@ class RemotePointUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> RemotePointUpdate:
+        _normalize_certificate_auth(self)
+        if self.point_type == "git" and self.git_repo:
+            self.git_repo = _normalize_git_repo(self.git_repo)
         _check_git_fields(self.point_type, self.git_provider, self.git_repo)
         _check_auth_fields(
             self.auth_type,

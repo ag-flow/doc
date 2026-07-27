@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle, ChevronDown, ChevronRight, Clock, Copy, Cpu, GitBranch,
-  Globe, HardDrive, KeyRound, Loader2, Network, Plug, Plus, ShieldCheck,
+  Globe, HardDrive, KeyRound, Loader2, Network, Play, Plug, Plus, ShieldCheck,
   Trash2, Wand2, XCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -30,116 +30,46 @@ function slugify(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Génération de paire de clés SSH (WebCrypto RSA-4096, côté client)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _abToB64(buf: ArrayBuffer): string {
-  const b = new Uint8Array(buf)
-  let s = ''
-  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i])
-  return btoa(s)
-}
-
-function _pemWrap(b64: string, type: string): string {
-  const lines: string[] = []
-  for (let i = 0; i < b64.length; i += 64) lines.push(b64.slice(i, i + 64))
-  return `-----BEGIN ${type}-----\n${lines.join('\n')}\n-----END ${type}-----`
-}
-
-// Parse un TLV DER : retourne [tag, longueur, offset données]
-function _derTlv(b: Uint8Array, off: number): [number, number, number] {
-  const tag = b[off]
-  let len = b[off + 1]
-  let dOff = off + 2
-  if (len & 0x80) {
-    const n = len & 0x7f; len = 0
-    for (let i = 0; i < n; i++) len = (len << 8) | b[dOff++]
-  }
-  return [tag, len, dOff]
-}
-
-// Convertit une clé publique RSA exportée au format SPKI (DER) → ssh-rsa <b64>
-function _spkiToSshRsa(spki: Uint8Array, identity: string): string {
-  let o = 0
-  const [, , s1] = _derTlv(spki, o); o = s1           // outer SEQUENCE
-  const [, al, ad] = _derTlv(spki, o); o = ad + al     // AlgorithmIdentifier (skip)
-  const [, , bd] = _derTlv(spki, o); o = bd + 1        // BIT STRING, skip unused-bits byte
-  const [, , rs] = _derTlv(spki, o); o = rs            // inner RSAPublicKey SEQUENCE
-  const [, ml, md] = _derTlv(spki, o)
-  const mod = spki.slice(md, md + ml); o = md + ml     // modulus INTEGER
-  const [, el, ed] = _derTlv(spki, o)
-  const exp = spki.slice(ed, ed + el)                   // exponent INTEGER
-
-  const mpint = (v: Uint8Array): Uint8Array => {
-    const pad = v[0] & 0x80 ? new Uint8Array([0, ...v]) : v
-    const r = new Uint8Array(4 + pad.length)
-    new DataView(r.buffer).setUint32(0, pad.length)
-    r.set(pad, 4); return r
-  }
-  const sshStr = (s: string): Uint8Array => {
-    const enc = new TextEncoder().encode(s)
-    const r = new Uint8Array(4 + enc.length)
-    new DataView(r.buffer).setUint32(0, enc.length)
-    r.set(enc, 4); return r
-  }
-
-  const parts = [sshStr('ssh-rsa'), mpint(exp), mpint(mod)]
-  const blob = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let pos = 0; for (const p of parts) { blob.set(p, pos); pos += p.length }
-  return `ssh-rsa ${_abToB64(blob.buffer)} ${identity || 'docflow-generated'}`
-}
-
-// WebCrypto (crypto.subtle) n'existe que dans un contexte sécurisé (HTTPS ou
-// localhost) — sur un déploiement dev en HTTP simple (LAN, sans proxy TLS),
-// `crypto.subtle` est `undefined` et generateKey plante avec une erreur
-// cryptique. Fonction (pas une constante figée à l'import) pour rester
-// testable et refléter l'état réel au moment de l'appel.
-function cryptoAvailable(): boolean {
-  return typeof window !== 'undefined' && window.isSecureContext && !!window.crypto?.subtle
-}
-
-async function _generateSshKeyPair(identity: string): Promise<{ publicKey: string; privateKey: string }> {
-  if (!cryptoAvailable()) {
-    throw new Error(
-      "génération indisponible hors HTTPS/localhost (contexte non sécurisé) — générez la paire de clés ailleurs (ex. ssh-keygen) et collez-la ci-dessous",
-    )
-  }
-  const kp = await window.crypto.subtle.generateKey(
-    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 4096, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
-    true, ['sign', 'verify'],
-  )
-  const [privDer, pubDer] = await Promise.all([
-    window.crypto.subtle.exportKey('pkcs8', kp.privateKey),
-    window.crypto.subtle.exportKey('spki', kp.publicKey),
-  ])
-  return {
-    publicKey: _spkiToSshRsa(new Uint8Array(pubDer), identity),
-    privateKey: _pemWrap(_abToB64(privDer), 'PRIVATE KEY'),
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Onglet Certificats
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CertificatesTab() {
   const qc = useQueryClient()
-  const cryptoOk = cryptoAvailable()
   const { data: certs = [] } = useQuery({ queryKey: ['remote-certs'], queryFn: remoteCertsApi.list })
   const [showForm, setShowForm] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const [generating, setGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [gitIdentity, setGitIdentity] = useState('')
   const [form, setForm] = useState({ slug: '', label: '', cert_type: 'ssh_key' as 'ssh_key' | 'tls', public_part: '', private_key: '' })
+
+  function resetForm() {
+    setShowForm(false)
+    setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' })
+    setGitIdentity('')
+  }
 
   const createMut = useMutation({
     mutationFn: () => remoteCertsApi.create(form),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['remote-certs'] })
-      setShowForm(false)
-      setForm({ slug: '', label: '', cert_type: 'ssh_key', public_part: '', private_key: '' })
-      setGitIdentity('')
+      resetForm()
+    },
+    onError: (e) => setErr((e as Error).message),
+  })
+  // Génération côté serveur (clé ed25519 format OpenSSH — le seul que le
+  // client SFTP/git du backend sait relire — ou certificat TLS auto-signé).
+  // Le matériel est créé et enregistré directement, la clé privée ne transite
+  // jamais par le navigateur.
+  const generateMut = useMutation({
+    mutationFn: () => remoteCertsApi.generate({
+      slug: form.slug,
+      label: form.label,
+      cert_type: form.cert_type,
+      common_name: gitIdentity.trim() || null,
+    }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['remote-certs'] })
+      resetForm()
     },
     onError: (e) => setErr((e as Error).message),
   })
@@ -147,17 +77,6 @@ function CertificatesTab() {
     mutationFn: (slug: string) => remoteCertsApi.delete(slug),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['remote-certs'] }),
   })
-
-  function handleGenerate() {
-    setGenerating(true)
-    setErr(null)
-    void _generateSshKeyPair(gitIdentity.trim())
-      .then(({ publicKey, privateKey }) => {
-        setForm(p => ({ ...p, public_part: publicKey, private_key: privateKey }))
-      })
-      .catch(e => setErr(`Génération échouée : ${(e as Error).message}`))
-      .finally(() => setGenerating(false))
-  }
 
   function handleCopyPublicKey() {
     void navigator.clipboard.writeText(form.public_part).then(() => {
@@ -191,35 +110,38 @@ function CertificatesTab() {
               <option value="ssh_key">Clé SSH (git / SFTP)</option>
               <option value="tls">Certificat TLS (FTPS)</option>
             </select>
-            {form.cert_type === 'ssh_key' && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleGenerate}
-                disabled={generating || !cryptoOk}
-                title={cryptoOk ? undefined : 'Indisponible hors HTTPS/localhost — collez une clé générée ailleurs (ex. ssh-keygen)'}
-              >
-                {generating
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Génération…</>
-                  : <><Wand2 className="h-3.5 w-3.5 mr-1" />{form.public_part ? 'Regénérer' : 'Générer'}</>
-                }
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => { setErr(null); generateMut.mutate() }}
+              disabled={generateMut.isPending || !form.slug || !form.label}
+              title={form.cert_type === 'ssh_key'
+                ? "Génère une paire ed25519 côté serveur et l'enregistre directement — copiez ensuite la clé publique depuis la liste"
+                : "Génère un certificat auto-signé (RSA 2048, 10 ans) côté serveur et l'enregistre directement"}
+              data-testid="cert-generate"
+            >
+              {generateMut.isPending
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Génération…</>
+                : <><Wand2 className="h-3.5 w-3.5 mr-1" />Générer</>
+              }
+            </Button>
           </div>
 
-          {form.cert_type === 'ssh_key' && (
-            <Input
-              placeholder="Identité git (commentaire de la clé, ex. deploy@docflow) — optionnel"
-              value={gitIdentity}
-              onChange={e => setGitIdentity(e.target.value)}
-              data-testid="cert-git-identity"
-            />
-          )}
+          <Input
+            placeholder={form.cert_type === 'ssh_key'
+              ? 'Identité git (commentaire de la clé, ex. deploy@docflow) — optionnel'
+              : 'Common Name du certificat (défaut : slug) — optionnel'}
+            value={gitIdentity}
+            onChange={e => setGitIdentity(e.target.value)}
+            data-testid="cert-git-identity"
+          />
 
           <div className="relative">
             <textarea
               rows={4}
-              placeholder={form.cert_type === 'ssh_key' ? 'Clé publique (ssh-rsa …) — ou cliquez Générer' : 'Certificat PEM (-----BEGIN CERTIFICATE-----)'}
+              placeholder={form.cert_type === 'ssh_key'
+                ? 'Clé publique (ssh-ed25519 …) — pour importer une paire existante, sinon cliquez Générer'
+                : 'Certificat PEM (-----BEGIN CERTIFICATE-----) — pour importer un existant, sinon cliquez Générer'}
               className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-mono resize-none"
               value={form.public_part}
               onChange={e => setForm(p => ({ ...p, public_part: e.target.value }))}
@@ -366,10 +288,6 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
 
   const isGit = form.point_type === 'git'
 
-  const testMut = useMutation({
-    mutationFn: () => remotePointsApi.test(initial!.slug),
-  })
-
   function setProvider(p: GitProvider) {
     const h = GIT_PROVIDER_HOST[p]
     setForm(f => ({ ...f, git_provider: p, host: h || f.host }))
@@ -411,14 +329,35 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Input placeholder="Host / URL" value={form.host} onChange={e => setForm(p => ({ ...p, host: e.target.value }))} />
-        <Input placeholder="Username" value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} />
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">
+            {isGit ? "Hôte git (serveur, pas l'URL du repo)" : 'Hôte (IP ou nom DNS)'}
+          </label>
+          <Input placeholder={isGit ? 'github.com' : '192.168.1.10'} value={form.host} onChange={e => setForm(p => ({ ...p, host: e.target.value }))} />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">
+            {isGit ? 'Utilisateur SSH (git chez GitHub/GitLab)' : 'Utilisateur'}
+          </label>
+          <Input placeholder={isGit ? 'git' : 'root'} value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} />
+        </div>
       </div>
 
       {isGit && (
         <div className="grid grid-cols-2 gap-3">
-          <Input placeholder="Repo (org/nom)" value={form.git_repo ?? ''} onChange={e => setForm(p => ({ ...p, git_repo: e.target.value }))} />
-          <Input placeholder="Branche (défaut: main)" value={form.git_branch ?? 'main'} onChange={e => setForm(p => ({ ...p, git_branch: e.target.value }))} />
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Dépôt — organisation/nom</label>
+            <Input placeholder="ag-flow/backup-docflow" value={form.git_repo ?? ''} onChange={e => setForm(p => ({ ...p, git_repo: e.target.value }))} />
+            <p className="text-xs text-gray-400 mt-1">
+              L'identifiant du dépôt chez l'hébergeur, pas un chemin (une URL collée est
+              réduite automatiquement). Le sous-répertoire de destination se choisit sur
+              le job de sauvegarde.
+            </p>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Branche</label>
+            <Input placeholder="main" value={form.git_branch ?? 'main'} onChange={e => setForm(p => ({ ...p, git_branch: e.target.value }))} />
+          </div>
         </div>
       )}
 
@@ -465,33 +404,10 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
 
       {isEdit && (
         <div className="flex items-center gap-2 pt-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => testMut.mutate()}
-            disabled={testMut.isPending}
-            data-testid="test-connection-btn"
-          >
-            {testMut.isPending
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
-              : <Plug className="h-3.5 w-3.5 mr-1" />}
-            Tester la connexion
-          </Button>
-          {testMut.data && (
-            <span
-              className={`flex items-center gap-1 text-xs ${testMut.data.ok ? 'text-green-600' : 'text-red-600'}`}
-              data-testid="test-connection-result"
-            >
-              {testMut.data.ok ? <CheckCircle className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
-              {testMut.data.detail}
-            </span>
-          )}
-          {testMut.isError && (
-            <span className="flex items-center gap-1 text-xs text-red-600" data-testid="test-connection-result">
-              <XCircle className="h-3.5 w-3.5 shrink-0" />
-              {(testMut.error as Error).message}
-            </span>
-          )}
+          <TestConnectionButton slug={initial!.slug} />
+          <span className="text-xs text-gray-400">
+            teste la configuration enregistrée — enregistrez d'abord vos modifications
+          </span>
         </div>
       )}
 
@@ -499,13 +415,78 @@ function PointForm({ initial, onSave, onCancel, certs, submitting = false }: {
         <Button
           size="sm"
           className="flex-1"
-          onClick={() => { if (submitting) return; onSave(form) }}
+          onClick={() => {
+            if (submitting) return
+            const body = { ...form, git_repo: form.git_repo ? normalizeGitRepo(form.git_repo) : form.git_repo }
+            if (body.auth_type === 'certificate') {
+              // Reliquats du mode password/pat : incohérents avec l'auth par
+              // certificat (le CHECK SQL vault↔ref les refuse).
+              body.auth_storage = null
+              body.auth_secret = null
+              body.auth_vault_ref = null
+            }
+            onSave(body)
+          }}
           disabled={submitting}
         >
           Enregistrer
         </Button>
         <Button size="sm" variant="secondary" onClick={onCancel}>Annuler</Button>
       </div>
+    </div>
+  )
+}
+
+/** Champ « Repo » : accepte org/nom, mais aussi une URL https ou SSH collée
+ *  telle quelle (https://github.com/org/nom.git, git@github.com:org/nom.git…)
+ *  — on n'en retient que org/nom. */
+export function normalizeGitRepo(input: string): string {
+  const v = input.trim().replace(/\.git$/, '')
+  const m = v.match(/^(?:https?:\/\/[^/]+\/|git@[^:]+:|ssh:\/\/(?:git@)?[^/]+\/)(.+)$/)
+  return (m ? m[1] : v).replace(/^\/+|\/+$/g, '')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test de connexion — adapté au type par le backend (git ls-remote / sftp / ftp)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TestConnectionButton({ slug, compact = false }: { slug: string; compact?: boolean }) {
+  const testMut = useMutation({ mutationFn: () => remotePointsApi.test(slug) })
+  const detailClass = compact ? 'max-w-[260px] truncate' : ''
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => testMut.mutate()}
+        disabled={testMut.isPending}
+        data-testid={`test-point-${slug}`}
+      >
+        {testMut.isPending
+          ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+          : <Plug className="h-3.5 w-3.5 mr-1" />}
+        {compact ? 'Tester' : 'Tester la connexion'}
+      </Button>
+      {testMut.data && (
+        <span
+          className={`flex items-center gap-1 text-xs ${testMut.data.ok ? 'text-green-600' : 'text-red-600'}`}
+          title={testMut.data.detail}
+          data-testid="test-connection-result"
+        >
+          {testMut.data.ok ? <CheckCircle className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
+          <span className={detailClass}>{testMut.data.detail}</span>
+        </span>
+      )}
+      {testMut.isError && (
+        <span
+          className="flex items-center gap-1 text-xs text-red-600"
+          title={(testMut.error as Error).message}
+          data-testid="test-connection-result"
+        >
+          <XCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className={detailClass}>{(testMut.error as Error).message}</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -569,7 +550,11 @@ function RemotePointsTab() {
     onError: (e) => setErr((e as Error).message),
   })
   const updateMut = useMutation({
-    mutationFn: ({ slug, body }: { slug: string; body: RemotePointBody }) => remotePointsApi.update(slug, body),
+    mutationFn: ({ slug, body }: { slug: string; body: RemotePointBody }) => {
+      // slug immuable : le backend (extra=forbid) rejette sa présence dans le corps
+      const { slug: _immutable, ...rest } = body
+      return remotePointsApi.update(slug, rest)
+    },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['remote-points'] }); setEditing(null) },
     onError: (e) => setErr((e as Error).message),
   })
@@ -613,6 +598,7 @@ function RemotePointsTab() {
                 <CopyableUrl url={connectionUrl(pt)} />
               </div>
               <div className="flex items-center gap-1">
+                <TestConnectionButton slug={pt.slug} compact />
                 <button
                   onClick={() => setEditing(e => e === pt.slug ? null : pt.slug)}
                   className="text-xs text-indigo-600 hover:underline px-2 py-1"
@@ -653,14 +639,30 @@ function RunStatus({ status }: { status: string }) {
   return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
 }
 
-function JobCard({ job }: { job: BackupJobOut }) {
+function JobCard({ job, onEdit }: { job: BackupJobOut; onEdit: () => void }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState(false)
   const { data: runs = [], refetch } = useQuery({
     queryKey: ['backup-runs', job.slug],
     queryFn: () => backupApi.listRuns(job.slug),
     enabled: expanded,
+    // Un run tourne en tâche de fond : rafraîchir jusqu'à son état final,
+    // sinon « en cours… » reste affiché indéfiniment.
+    refetchInterval: (query) => {
+      const data = query.state.data as BackupJobRunOut[] | undefined
+      return data?.some((r) => r.status === 'running') ? 2000 : false
+    },
   })
+  const hasRunning = (runs as BackupJobRunOut[]).some((r) => r.status === 'running')
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    // À la fin d'un run (running → terminé), recharger la liste des jobs
+    // pour rafraîchir last_run_status.
+    if (wasRunning.current && !hasRunning) {
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+    }
+    wasRunning.current = hasRunning
+  }, [hasRunning, qc])
 
   const delMut = useMutation({
     mutationFn: () => backupApi.deleteJob(job.slug),
@@ -668,12 +670,22 @@ function JobCard({ job }: { job: BackupJobOut }) {
   })
   const toggleMut = useMutation({
     mutationFn: () => backupApi.updateJob(job.slug, {
-      label: job.label, strategy: job.strategy, enabled: !job.enabled,
+      label: job.label, enabled: !job.enabled,
       remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
       schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
-      git_base_path: job.git_base_path,
+      git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
+      retention_count: job.retention_count,
     }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['backup-jobs'] }),
+  })
+  const runMut = useMutation({
+    mutationFn: () => backupApi.runJob(job.slug),
+    onSuccess: () => {
+      // Le run tourne en tâche de fond (202) : déplier l'historique pour le suivre.
+      setExpanded(true)
+      void refetch()
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+    },
   })
 
   return (
@@ -693,10 +705,29 @@ function JobCard({ job }: { job: BackupJobOut }) {
         <div className="flex items-center gap-2 shrink-0">
           {job.last_run_status && <RunStatus status={job.last_run_status} />}
           <button
+            onClick={() => runMut.mutate()}
+            disabled={runMut.isPending}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+            title="Déclencher un run immédiat, hors planification"
+            data-testid={`run-job-${job.slug}`}
+          >
+            {runMut.isPending
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Play className="h-3 w-3" />}
+            Lancer
+          </button>
+          <button
             onClick={() => toggleMut.mutate()}
             className={`text-xs px-2 py-1 rounded-full font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
           >
             {job.enabled ? 'Actif' : 'Inactif'}
+          </button>
+          <button
+            onClick={onEdit}
+            className="text-xs text-indigo-600 hover:underline px-1"
+            data-testid={`edit-job-${job.slug}`}
+          >
+            Éditer
           </button>
           <button onClick={() => { setExpanded(v => !v); if (!expanded) void refetch() }} className="text-gray-400 hover:text-gray-600">
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -706,6 +737,12 @@ function JobCard({ job }: { job: BackupJobOut }) {
           </button>
         </div>
       </div>
+
+      {runMut.isError && (
+        <p className="px-4 pb-2 text-xs text-red-600 bg-white" data-testid={`run-job-error-${job.slug}`}>
+          {(runMut.error as Error).message}
+        </p>
+      )}
 
       {expanded && (
         <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
@@ -765,27 +802,60 @@ function BackupTab() {
   const { data: jobs = [] } = useQuery({ queryKey: ['backup-jobs'], queryFn: backupApi.listJobs, refetchInterval: 15000 })
   const { data: points = [] } = useQuery({ queryKey: ['remote-points'], queryFn: remotePointsApi.list })
   const [showForm, setShowForm] = useState(false)
+  const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [form, setForm] = useState<BackupJobBody & { slug: string }>({
+  const emptyForm: BackupJobBody & { slug: string } = {
     slug: '', label: '', strategy: 'git_sync', enabled: true,
     remote_point_slug: '', workspace_slug: null,
     schedule_cron: null, schedule_every_seconds: 3600,
-    git_base_path: null,
-  })
+    git_base_path: null, include_restore_env: false, retention_count: null,
+  }
+  const [form, setForm] = useState<BackupJobBody & { slug: string }>(emptyForm)
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('daily')
   const [dailyTime, setDailyTime] = useState('03:00')
 
-  const createMut = useMutation({
+  function startEdit(job: BackupJobOut) {
+    setErr(null)
+    setEditingSlug(job.slug)
+    setForm({
+      slug: job.slug, label: job.label, strategy: job.strategy, enabled: job.enabled,
+      remote_point_slug: job.remote_point_slug, workspace_slug: job.workspace_slug,
+      schedule_cron: job.schedule_cron, schedule_every_seconds: job.schedule_every_seconds,
+      git_base_path: job.git_base_path, include_restore_env: job.include_restore_env,
+      retention_count: job.retention_count,
+    })
+    // Retrouver le mode de planification depuis les valeurs enregistrées
+    if (job.schedule_cron === '0 * * * *') {
+      setScheduleMode('hourly')
+    } else if (job.schedule_cron) {
+      setScheduleMode('daily')
+      const time = cronToDailyTime(job.schedule_cron)
+      if (time) setDailyTime(time)
+    } else {
+      setScheduleMode('interval')
+    }
+    setShowForm(true)
+  }
+
+  const saveMut = useMutation({
     mutationFn: () => {
       const schedule = scheduleMode === 'interval'
         ? { schedule_cron: null, schedule_every_seconds: form.schedule_every_seconds }
         : scheduleMode === 'daily'
           ? { schedule_cron: dailyTimeToCron(dailyTime), schedule_every_seconds: null }
           : { schedule_cron: '0 * * * *', schedule_every_seconds: null }
-      const body = { ...form, ...schedule }
-      return backupApi.createJob(body as BackupJobBody & { slug: string })
+      // slug et stratégie immuables : jamais dans le corps d'un update
+      // (le backend, extra=forbid, les rejette)
+      const { slug, strategy, ...rest } = { ...form, ...schedule }
+      return editingSlug
+        ? backupApi.updateJob(editingSlug, rest)
+        : backupApi.createJob({ ...rest, strategy, slug })
     },
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['backup-jobs'] }); setShowForm(false) },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['backup-jobs'] })
+      setShowForm(false)
+      setEditingSlug(null)
+    },
     onError: (e) => setErr((e as Error).message),
   })
 
@@ -797,7 +867,22 @@ function BackupTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">{(jobs as BackupJobOut[]).length} job{(jobs as BackupJobOut[]).length !== 1 ? 's' : ''}</p>
-        <Button size="sm" onClick={() => { setShowForm(v => !v); setErr(null) }}>
+        <Button
+          size="sm"
+          onClick={() => {
+            setErr(null)
+            if (showForm) {
+              setShowForm(false)
+              setEditingSlug(null)
+            } else {
+              setEditingSlug(null)
+              setForm(emptyForm)
+              setScheduleMode('daily')
+              setDailyTime('03:00')
+              setShowForm(true)
+            }
+          }}
+        >
           <Plus className="h-3.5 w-3.5 mr-1" />{showForm ? 'Annuler' : 'Nouveau job'}
         </Button>
       </div>
@@ -805,13 +890,13 @@ function BackupTab() {
       {showForm && (
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, slug: slugify(v) })) }} />
-            <Input placeholder="slug (auto)" value={form.slug} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
+            <Input placeholder="Label" value={form.label} onChange={e => { const v = e.target.value; setForm(p => ({ ...p, label: v, ...(editingSlug ? {} : { slug: slugify(v) }) })) }} />
+            <Input placeholder="slug (auto)" value={form.slug} disabled={editingSlug !== null} onChange={e => setForm(p => ({ ...p, slug: e.target.value }))} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Stratégie</label>
-              <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={form.strategy} onChange={e => setForm(p => ({ ...p, strategy: e.target.value as 'git_sync' | 'db_dump', remote_point_slug: '' }))}>
+              <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm disabled:opacity-60" disabled={editingSlug !== null} value={form.strategy} onChange={e => setForm(p => ({ ...p, strategy: e.target.value as 'git_sync' | 'db_dump', remote_point_slug: '' }))}>
                 <option value="git_sync">Sync git (documents)</option>
                 <option value="db_dump">Dump DB (pg_dump)</option>
               </select>
@@ -824,9 +909,48 @@ function BackupTab() {
               </select>
             </div>
           </div>
-          <Input placeholder="Workspace (vide = toute l'instance)" value={form.workspace_slug ?? ''} onChange={e => setForm(p => ({ ...p, workspace_slug: e.target.value || null }))} />
-          {form.strategy === 'git_sync' && (
-            <Input placeholder="Sous-répertoire dans le repo (optionnel)" value={form.git_base_path ?? ''} onChange={e => setForm(p => ({ ...p, git_base_path: e.target.value || null }))} />
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Workspace (vide = toute l'instance)</label>
+            <Input placeholder="mon-workspace" value={form.workspace_slug ?? ''} onChange={e => setForm(p => ({ ...p, workspace_slug: e.target.value || null }))} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">
+              {form.strategy === 'git_sync'
+                ? 'Sous-répertoire de destination dans le repo (optionnel)'
+                : 'Répertoire de destination sur le serveur (optionnel, créé si absent)'}
+            </label>
+            <Input placeholder={form.strategy === 'git_sync' ? 'backup/docflow' : '/backups/docflow'} value={form.git_base_path ?? ''} onChange={e => setForm(p => ({ ...p, git_base_path: e.target.value || null }))} />
+          </div>
+          {form.strategy === 'db_dump' && (
+            <label className="flex items-start gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.include_restore_env ?? false}
+                onChange={e => setForm(p => ({ ...p, include_restore_env: e.target.checked }))}
+                data-testid="include-restore-env"
+              />
+              <span>
+                Déposer le matériel de restauration à côté de chaque archive
+                (<span className="font-mono text-xs">&lt;dump&gt;.key</span> : clé de chiffrement,
+                JWT_SECRET, DATABASE_URL). À réserver à un serveur de backup de confiance.
+              </span>
+            </label>
+          )}
+          {form.strategy === 'db_dump' && (
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">
+                Nombre de dumps à conserver sur le serveur (vide = tout garder)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="ex. 7 — les archives plus anciennes (et leur .key) sont supprimées après chaque run"
+                value={form.retention_count ?? ''}
+                onChange={e => setForm(p => ({ ...p, retention_count: e.target.value ? Number(e.target.value) : null }))}
+                data-testid="retention-count"
+              />
+            </div>
           )}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Planification</label>
@@ -863,16 +987,111 @@ function BackupTab() {
             </div>
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
-          <Button size="sm" className="w-full" onClick={() => createMut.mutate()} disabled={createMut.isPending || !form.slug || !form.label || !form.remote_point_slug}>
-            {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Créer le job'}
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending || !form.slug || !form.label || !form.remote_point_slug}
+            data-testid="save-job-btn"
+          >
+            {saveMut.isPending
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : editingSlug ? 'Enregistrer' : 'Créer le job'}
           </Button>
         </div>
       )}
 
       <div className="space-y-3">
         {(jobs as BackupJobOut[]).length === 0 && !showForm && <p className="text-sm text-gray-400 text-center py-6">Aucun job de sauvegarde configuré.</p>}
-        {(jobs as BackupJobOut[]).map((j: BackupJobOut) => <JobCard key={j.id} job={j} />)}
+        {(jobs as BackupJobOut[]).map((j: BackupJobOut) => (
+          <JobCard key={j.id} job={j} onEdit={() => startEdit(j)} />
+        ))}
       </div>
+
+      <RestoreGitPanel gitPoints={gitPoints} />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Restauration depuis le miroir git — réalimente l'instance (additif)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RestoreGitPanel({ gitPoints }: { gitPoints: RemotePointOut[] }) {
+  const qc = useQueryClient()
+  const [pointSlug, setPointSlug] = useState('')
+  const [basePath, setBasePath] = useState('')
+  const [workspace, setWorkspace] = useState('')
+
+  const restoreMut = useMutation({
+    mutationFn: () => backupApi.restoreGit({
+      remote_point_slug: pointSlug,
+      git_base_path: basePath.trim() || null,
+      workspace: workspace.trim() || null,
+    }),
+    onSuccess: () => void qc.invalidateQueries(),
+  })
+  const report = restoreMut.data
+
+  return (
+    <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-gray-900">Restauration depuis le miroir git</p>
+        <p className="text-xs text-gray-500 mt-1">
+          Clone le dépôt de sauvegarde du remote point et recrée workspaces, types, blocs et
+          documents. <span className="font-medium">Additif et rejouable</span> : crée ce qui manque,
+          réaligne les documents existants, ne supprime jamais rien.
+        </p>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Remote point git</label>
+          <select
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+            value={pointSlug}
+            onChange={e => setPointSlug(e.target.value)}
+            data-testid="restore-git-point"
+          >
+            <option value="">-- choisir --</option>
+            {gitPoints.map(p => <option key={p.slug} value={p.slug}>{p.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Sous-répertoire (vide = détection automatique)</label>
+          <Input placeholder="auto — détecté depuis la sauvegarde" value={basePath} onChange={e => setBasePath(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Workspace seul (optionnel)</label>
+          <Input placeholder="vide = tous" value={workspace} onChange={e => setWorkspace(e.target.value)} />
+        </div>
+      </div>
+      <Button
+        size="sm"
+        onClick={() => restoreMut.mutate()}
+        disabled={!pointSlug || restoreMut.isPending}
+        data-testid="restore-git-btn"
+      >
+        {restoreMut.isPending
+          ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Restauration en cours…</>
+          : 'Restaurer'}
+      </Button>
+      {restoreMut.isError && (
+        <p className="text-xs text-red-600">{(restoreMut.error as Error).message}</p>
+      )}
+      {report && (
+        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 space-y-1" data-testid="restore-git-report">
+          <p>
+            {report.workspaces_created} workspace(s) créé(s) · {report.blocks_created} bloc(s) ·
+            {' '}{report.types_imported} import(s) de types · {report.docs_created} document(s) créé(s) ·
+            {' '}{report.docs_updated} réaligné(s)
+          </p>
+          {report.errors.length > 0 && (
+            <ul className="text-red-600 list-disc pl-4">
+              {report.errors.map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }

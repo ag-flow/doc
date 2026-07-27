@@ -15,6 +15,9 @@ class OidcConfigSet(BaseModel):
     client_id: str
     client_secret_ref: str
     enabled: bool = False
+    # Mode OIDC-only : sans effet tant que enabled est false ; désactiver
+    # l'OIDC réactive donc automatiquement la connexion locale.
+    disable_local_login: bool = False
 
 
 class OidcConfigOut(BaseModel):
@@ -24,16 +27,22 @@ class OidcConfigOut(BaseModel):
     issuer: str
     client_id: str
     enabled: bool
+    disable_local_login: bool = False
     created_at: datetime
     updated_at: datetime
 
 
 class OidcPublicConfig(BaseModel):
-    """Config minimale exposée publiquement pour le frontend."""
+    """Config minimale exposée publiquement pour le frontend.
+
+    `authorization_endpoint` n'est renseigné que par GET /auth/oidc/config
+    (découverte serveur) — jamais stocké en base.
+    """
 
     issuer: str
     client_id: str
     enabled: bool
+    authorization_endpoint: str | None = None
 
 
 class OidcCallbackIn(BaseModel):

@@ -5,6 +5,7 @@ import logging
 import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from typing import Any
 
 import asyncpg
 import structlog
@@ -22,19 +23,23 @@ from docflow.automations.worker import worker_loop
 from docflow.backup.router import router as backup_router
 from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
+from docflow.config.base_url import set_derived_base_url
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
+from docflow.datasets.router import router as datasets_router
 from docflow.db.apply import apply
 from docflow.db.pool import close_pool, open_pool
 from docflow.documents.router import router as documents_router
 from docflow.errors import DependentsConflictError
 from docflow.events import outbox as events_outbox
+from docflow.events.producer_config import seed_from_env_if_empty as seed_events_producer
+from docflow.events.producer_router import router as events_producer_router
 from docflow.events.router import router as events_router
-from docflow.events.worker import emission_configured
 from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
+from docflow.me.router import router as me_router
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router
@@ -83,10 +88,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await open_pool(settings.database_url)
     await apply(pool)
     configure_mcp(pool, settings)
-    # Producteur d'events : n'émettre (enqueue) que si le workflow est configuré.
-    events_outbox.configure(
-        enabled=emission_configured(settings), source=settings.event_source
-    )
+    # Producteur d'events : seed initial depuis l'env (si jamais configuré) puis
+    # reconcile → l'émission (enqueue) est pilotée par la config DB, à chaud.
+    await seed_events_producer(pool, settings)
+    await events_outbox.reconcile(pool)
     app.state.pool = pool
     app.state.settings = settings
     worker_task = asyncio.create_task(worker_loop(pool, settings))
@@ -116,6 +121,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="docflow", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _capture_base_url(request: Request, call_next: Any) -> Any:
+    """Dérive l'URL de base publique depuis la requête portail si non configurée.
+
+    Respecte X-Forwarded-Proto/Host (derrière un proxy / Cloudflare). Sert de
+    repli au worker d'automation pour construire des liens absolus ({doc_url}).
+    """
+    settings = getattr(request.app.state, "settings", None)
+    if settings is not None and not getattr(settings, "public_base_url", None):
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        if host:
+            proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+            set_derived_base_url(f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}")
+    return await call_next(request)
+
+
 @app.exception_handler(DependentsConflictError)
 async def dependents_conflict_handler(_: Request, exc: DependentsConflictError) -> JSONResponse:
     """DOC-07 : suppression destructrice sans confirm → 409 informatif."""
@@ -130,6 +151,7 @@ app.include_router(setup_router, prefix=_API)
 app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
+app.include_router(me_router, prefix=_API)
 app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
@@ -147,8 +169,10 @@ app.include_router(references_router, prefix=_API)
 app.include_router(contracts_router, prefix=_API)
 app.include_router(automations_router, prefix=_API)
 app.include_router(events_router, prefix=_API)
+app.include_router(events_producer_router, prefix=_API)
 app.include_router(export_router, prefix=_API)
 app.include_router(views_router, prefix=_API)
+app.include_router(datasets_router, prefix=_API)
 app.include_router(apikeys_router, prefix=_API)
 app.include_router(public_router, prefix="/pub")
 

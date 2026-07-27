@@ -14,7 +14,8 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from docflow.auth.deps import get_current_user
-from docflow.mcp.server import mcp_server
+from docflow.mcp.obo import resolve_actor_user
+from docflow.mcp.server import _get_pool, mcp_server
 from docflow.mcp.session import McpSession, reset_current_session, set_current_session
 from docflow.schemas.auth import AuthUser
 
@@ -53,32 +54,50 @@ class _AsgiEndpoint:
         await self._handler(scope, receive, send)
 
 
-async def _authenticate(request: Request) -> AuthUser | None:
+async def _authenticate(request: Request) -> tuple[AuthUser, str | None] | None:
     """Même dépendance d'auth que l'API REST (JWT ou clé API), en contexte ASGI.
 
-    Retourne l'AuthUser, ou None si une réponse d'erreur a déjà été renvoyée.
+    Retourne ``(user, raw_api_key)`` où ``raw_api_key`` est la clé API en clair
+    présentée (None pour une session JWT), ou None si une réponse d'erreur a déjà
+    été renvoyée. La clé brute sert de secret HMAC pour l'OBO first-party.
     """
     try:
         credentials = await _bearer(request)
-        return await get_current_user(request, credentials)
+        user = await get_current_user(request, credentials)
     except HTTPException as exc:
         response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         await response(request.scope, request.receive, request._send)  # noqa: SLF001
         return None
+    # Une session clé API est identifiée par la présence de scopes dans state
+    # (get_current_user les y dépose). Un JWT n'a pas de clé API en clair et
+    # identifie déjà l'humain : l'OBO ne s'y applique pas.
+    raw_api_key: str | None = None
+    if credentials is not None and getattr(request.state, "api_key_scopes", None) is not None:
+        raw_api_key = credentials.credentials
+    return user, raw_api_key
 
 
-def _build_session(request: Request, user: AuthUser) -> McpSession:
+async def _build_session(request: Request, user: AuthUser, raw_api_key: str | None) -> McpSession:
     """Session MCP dérivée de l'authentification HTTP (JWT ou clé API).
 
     Pour une clé API, get_current_user a déposé les scopes et le flag admin du
     profil dans request.state : la session les porte pour que le dispatch des
     outils applique le périmètre du profil. Pour un JWT, scopes = None (accès
     complet, comme sur l'API REST).
+
+    Frontière de confiance OBO : pour une session clé API, on tente de résoudre
+    le principal humain à partir des en-têtes signés du portail (secret =
+    ``raw_api_key``). Toute anomalie ⇒ ``actor_user=None`` (fail-safe) : jamais
+    de 401, on retombe sur l'identité de la clé. Jamais pour un JWT.
     """
+    actor_user: AuthUser | None = None
+    if raw_api_key is not None:
+        actor_user = await resolve_actor_user(_get_pool(), request.headers, raw_api_key)
     return McpSession(
         user=user,
         api_key_scopes=getattr(request.state, "api_key_scopes", None),
         api_key_admin=bool(getattr(request.state, "api_key_is_admin", False)),
+        actor_user=actor_user,
     )
 
 
@@ -91,10 +110,11 @@ async def _mcp_sse(scope: Scope, receive: Receive, send: Send) -> None:
     clé API, le périmètre du profil (scopes / admin) est appliqué aux outils.
     """
     request = Request(scope, receive, send)
-    user = await _authenticate(request)
-    if user is None:
+    authed = await _authenticate(request)
+    if authed is None:
         return
-    token = set_current_session(_build_session(request, user))
+    user, raw_api_key = authed
+    token = set_current_session(await _build_session(request, user, raw_api_key))
     try:
         async with _transport.connect_sse(scope, receive, send) as (read_stream, write_stream):
             await mcp_server.run(
@@ -118,8 +138,7 @@ async def _mcp_messages(scope: Scope, receive: Receive, send: Send) -> None:
     le canal SSE au lieu de se reposer uniquement sur le secret du session_id.
     """
     request = Request(scope, receive, send)
-    user = await _authenticate(request)
-    if user is None:
+    if await _authenticate(request) is None:
         return
 
     session_id: UUID | None = None

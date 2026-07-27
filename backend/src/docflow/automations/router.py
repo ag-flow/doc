@@ -3,22 +3,51 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from docflow.auth.deps import require_authenticated
 from docflow.automations import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.automations import (
     AutomationCreate,
+    AutomationOrderIn,
     AutomationOut,
     AutomationRunOut,
     AutomationUpdate,
 )
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["automations"])
+router = APIRouter(tags=["automations"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"
 _Auth = Depends(require_authenticated)
+
+
+class PushEventsSelection(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    workspace_slug: str
+    # Vide = tous les blocs du workspace.
+    block_slugs: list[str] = []
+
+
+class PushEventsIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    selections: list[PushEventsSelection]
+
+
+@router.post("/automations/push-events")
+async def push_events(
+    body: PushEventsIn, request: Request, _: AuthUser = _Auth
+) -> dict[str, int]:
+    """Émet des events de modification synthétiques sur les documents des
+    workspaces/blocs sélectionnés (re-déclenchement des automates)."""
+    return await service.push_update_events(
+        request.app.state.pool,
+        [s.model_dump() for s in body.selections],
+    )
 
 
 @router.get(_WS + "/automations", response_model=list[AutomationOut])
@@ -26,6 +55,14 @@ async def list_automations(
     ws_slug: str, request: Request, _: AuthUser = _Auth
 ) -> list[AutomationOut]:
     return await service.list_automations(request.app.state.pool, ws_slug)
+
+
+@router.put(_WS + "/automations/order", response_model=list[AutomationOut])
+async def reorder_automations(
+    ws_slug: str, body: AutomationOrderIn, request: Request, _: AuthUser = _Auth
+) -> list[AutomationOut]:
+    """Ordre d'évaluation des automates du workspace (drag & drop)."""
+    return await service.reorder_automations(request.app.state.pool, ws_slug, body.ids)
 
 
 @router.post(_WS + "/automations", response_model=AutomationOut, status_code=201)
@@ -69,6 +106,51 @@ async def list_runs(
     _: AuthUser = _Auth,
 ) -> list[AutomationRunOut]:
     return await service.list_runs(request.app.state.pool, ws_slug, automation_id, limit)
+
+
+@router.post(_AUTO + "/clone", response_model=AutomationOut, status_code=201)
+async def clone_automation(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> AutomationOut:
+    """Clone l'automate (config + portée + headers), créé désactivé."""
+    return await service.clone_automation(request.app.state.pool, ws_slug, automation_id)
+
+
+@router.post(_AUTO + "/run-next")
+async def run_next(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Joue le prochain event en attente SANS avancer le curseur (test)."""
+    return await service.run_next_pending(
+        request.app.state.pool, ws_slug, automation_id, request.app.state.settings
+    )
+
+
+@router.post(_AUTO + "/advance")
+async def advance(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Joue l'event courant ET avance le curseur (pas manuel)."""
+    return await service.advance_pending(
+        request.app.state.pool, ws_slug, automation_id, request.app.state.settings
+    )
+
+
+@router.post(_AUTO + "/cursor-back")
+async def cursor_back(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Recule le curseur d'un event (l'event précédent redevient courant)."""
+    return await service.cursor_back(request.app.state.pool, ws_slug, automation_id)
+
+
+@router.delete(_AUTO + "/runs", status_code=200)
+async def clear_runs(
+    ws_slug: str, automation_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, int]:
+    """Vide l'historique d'exécutions de l'automate."""
+    deleted = await service.clear_runs(request.app.state.pool, ws_slug, automation_id)
+    return {"deleted": deleted}
 
 
 @router.post(_AUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, Eye, EyeOff, Link2, Maximize2, Minimize2 } from 'lucide-react'
+import { Check, Copy, Eye, EyeOff, Link2, Loader2, Maximize2, Minimize2, Save } from 'lucide-react'
 import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 
 const _SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
 import { Button } from '../components/ui/button'
+import { ReparentDialog } from '../components/ReparentDialog'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
 import { ConflictResolver } from './ConflictResolver'
@@ -65,6 +66,7 @@ export function DocumentEditor() {
     },
   })
 
+  const [showReparent, setShowReparent] = useState(false)
   const { data: reactions } = useQuery<ReactionOut>({
     queryKey: ['doc-reactions', ws, docId],
     queryFn: () => reactionsApi.getDocReactions(ws!, docId!),
@@ -338,6 +340,14 @@ export function DocumentEditor() {
           </button>
 
           <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowReparent(true)}
+            data-testid="document-move-btn"
+          >
+            Déplacer
+          </Button>
+          <Button
             variant="danger"
             size="sm"
             onClick={() => setDeleteConfirm(true)}
@@ -348,9 +358,12 @@ export function DocumentEditor() {
           <Button
             onClick={() => void doSave()}
             disabled={status === 'idle' || status === 'saving'}
+            title={t('editor.save')}
             data-testid="document-save-btn"
           >
-            {status === 'saving' ? t('editor.saving') : t('editor.save')}
+            {status === 'saving'
+              ? <Loader2 size={15} className="animate-spin" />
+              : <Save size={15} />}
           </Button>
         </div>
       </div>
@@ -417,8 +430,11 @@ export function DocumentEditor() {
                   size="sm"
                   onClick={() => void doSave()}
                   disabled={status === 'idle' || status === 'saving'}
+                  title={t('editor.save')}
                 >
-                  {status === 'saving' ? t('editor.saving') : t('editor.save')}
+                  {status === 'saving'
+                    ? <Loader2 size={14} className="animate-spin" />
+                    : <Save size={14} />}
                 </Button>
                 <button
                   type="button"
@@ -455,6 +471,21 @@ export function DocumentEditor() {
         )}
         <CommentsPanel ws={ws} docId={docId} />
       </div>
+
+      {showReparent && doc && (
+        <ReparentDialog
+          ws={ws!}
+          block={blocSlug!}
+          doc={{ id: doc.doc_technical_key, title: doc.title, type: doc.functional_type_slug }}
+          onDone={() => {
+            setShowReparent(false)
+            void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+            void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, blocSlug] })
+            void queryClient.invalidateQueries()
+          }}
+          onCancel={() => setShowReparent(false)}
+        />
+      )}
 
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

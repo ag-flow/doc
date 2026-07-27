@@ -31,3 +31,8 @@ export function useWorkspace(): WorkspaceContextValue {
   if (!ctx) throw new Error('useWorkspace must be used inside WorkspaceProvider')
   return ctx
 }
+
+/** Variante tolérante : null hors provider (lecture publique). */
+export function useWorkspaceSlugOrNull(): string | null {
+  return useContext(WorkspaceContext)?.currentSlug ?? null
+}

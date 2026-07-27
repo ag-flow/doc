@@ -162,7 +162,23 @@ async def test_list_workspaces_filtre_par_scope(
 async def test_list_workspaces_complet_en_jwt(
     db_pool: asyncpg.Pool, test_workspace: dict, jwt_session: McpSession
 ) -> None:
+    """Session JWT non scopée par clé : list_workspaces retourne les workspaces
+    accessibles à l'utilisateur du JWT (design : le JWT est soumis à l'accès-
+    utilisateur). L'utilisateur possède ici test-ws → il le voit."""
     configure(db_pool)
+    # L'utilisateur du JWT devient owner du workspace de test → accès garanti.
+    await db_pool.execute(
+        "INSERT INTO app_user (id, email, label, validated) VALUES ($1, $2, $3, true) "
+        "ON CONFLICT (id) DO NOTHING",
+        jwt_session.user.id,
+        jwt_session.user.email,
+        jwt_session.user.label,
+    )
+    await db_pool.execute(
+        "UPDATE workspace SET owner_id = $1 WHERE slug = $2",
+        jwt_session.user.id,
+        _WS,
+    )
     result = await _call_tool("list_workspaces", {})
     slugs = {w["slug"] for w in json.loads(result[0].text)}
     assert _WS in slugs

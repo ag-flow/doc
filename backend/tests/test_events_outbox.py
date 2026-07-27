@@ -37,7 +37,7 @@ async def _events(pool: asyncpg.Pool) -> list[tuple[str, dict]]:
 
 
 def test_catalog_shape() -> None:
-    assert len(catalog.CATALOG) == 6
+    assert len(catalog.CATALOG) == 7
     assert catalog.catalog_revision().startswith("sha256:")
     codes = {e["eventCode"] for e in catalog.catalog_summary()}
     assert "docflow.document.created.v1" in codes
@@ -54,6 +54,55 @@ def test_get_schema_known_and_unknown() -> None:
     assert catalog.get_schema("docflow.inconnu.v1", 1) is None
     assert catalog.list_versions("docflow.document.created.v1") == [1]
     assert catalog.list_versions("docflow.inconnu.v1") is None
+
+
+async def test_enqueue_deterministic_id_and_dedup(
+    db_pool: asyncpg.Pool, test_workspace: dict, emit: None
+) -> None:
+    # Avec dedup_key : _eventId = uuid5 stable, et un ré-enqueue du même
+    # changement logique est absorbé (ON CONFLICT DO NOTHING) → une seule ligne.
+    import uuid
+
+    wk = test_workspace["workspace_technical_key"]
+    doc = uuid.uuid4()
+
+    async def _push() -> None:
+        async with db_pool.acquire() as conn, conn.transaction():
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.created.v1",
+                workspace_wk=wk,
+                business={"documentId": str(doc)},
+                dedup_key=str(doc),
+            )
+
+    await _push()
+    await _push()
+    rows = await db_pool.fetch("SELECT id FROM event_outbox")
+    assert len(rows) == 1
+    expected = uuid.uuid5(outbox._EVENT_NAMESPACE, f"docflow.document.created.v1|{doc}")
+    assert rows[0]["id"] == expected
+
+
+async def test_enqueue_without_dedup_key_is_random(
+    db_pool: asyncpg.Pool, test_workspace: dict, emit: None
+) -> None:
+    # Sans dedup_key (ex. moved/retyped, répétables) : id aléatoire → deux
+    # enqueues du même changement produisent deux events distincts (pas de perte).
+    wk = test_workspace["workspace_technical_key"]
+
+    async def _push() -> None:
+        async with db_pool.acquire() as conn, conn.transaction():
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.moved.v1",
+                workspace_wk=wk,
+                business={"documentId": "x"},
+            )
+
+    await _push()
+    await _push()
+    assert len(await db_pool.fetch("SELECT id FROM event_outbox")) == 2
 
 
 def test_envelope_flat_and_collision() -> None:

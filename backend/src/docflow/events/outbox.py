@@ -31,16 +31,38 @@ _SYSTEM_FIELDS = frozenset(
 
 _enabled: bool = False
 _source: str = "docflow"
+# Allowlist des eventCodes relayés. None = « tous autorisés » (rétro-compat :
+# un appel à `configure` sans `allowed_events` ne filtre pas). Un set explicite
+# (posé par `reconcile` depuis la config DB) applique le fail-closed : un set
+# vide relaie zéro event.
+_allowed_events: set[str] | None = None
 
 
-def configure(*, enabled: bool, source: str) -> None:
-    global _enabled, _source
+def configure(*, enabled: bool, source: str, allowed_events: set[str] | None = None) -> None:
+    global _enabled, _source, _allowed_events
     _enabled = enabled
     _source = source
+    _allowed_events = allowed_events
 
 
 def is_enabled() -> bool:
     return _enabled
+
+
+async def reconcile(pool: asyncpg.Pool) -> None:
+    """Reconfigure l'émission depuis la config DB (activation, source, allowlist).
+
+    Appelé au boot et à chaque tick du worker : propage aux handlers web l'état
+    piloté en admin. Pose TOUJOURS une allowlist explicite (set) → fail-closed.
+    """
+    from docflow.events import producer_config
+
+    cfg = await producer_config.get_config(pool)
+    configure(
+        enabled=cfg["enabled"],
+        source=cfg["source_uri"],
+        allowed_events=set(cfg["allowed_events"]),
+    )
 
 
 def build_envelope(
@@ -67,30 +89,93 @@ def build_envelope(
     }
 
 
+# Namespace stable pour les `_eventId` déterministes (uuid5). Fixe : ne jamais
+# changer, sinon la dédup côté workflow perdrait la corrélation historique.
+_EVENT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:yoops:docflow:events")
+
+
+def _event_id(event_code: str, dedup_key: str | None) -> uuid.UUID:
+    """`_eventId` déterministe (uuid5) si une clé de dédup est fournie, sinon aléatoire.
+
+    Déterministe = un rejeu du même changement logique porte le même id : la
+    dédup côté workflow joue, et l'INSERT `ON CONFLICT DO NOTHING` évite le
+    double-enqueue producteur. À réserver aux events dont la clé est
+    naturellement unique/monotone (création, suppression, version) — pour un
+    event répétable sans discriminant (déplacement, retypage), laisser
+    `dedup_key=None` (aléatoire) afin de NE PAS écraser une transition légitime.
+    """
+    if dedup_key is None:
+        return uuid.uuid4()
+    return uuid.uuid5(_EVENT_NAMESPACE, f"{event_code}|{dedup_key}")
+
+
+def _as_uuid(value: Any) -> uuid.UUID | None:
+    """Parse un uuid string tolérant (None si absent/invalide)."""
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+async def _record_document_event(
+    conn: asyncpg.Connection,
+    event_code: str,
+    workspace_wk: uuid.UUID | None,
+    business: dict[str, Any],
+) -> None:
+    """Journal DURABLE de l'event (consommé par les automates).
+
+    Écrit TOUJOURS, indépendamment de l'émission workflow externe (activation /
+    allowlist) : les automates internes ne doivent pas dépendre du producteur.
+    """
+    await conn.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1, $2, $3, $4::jsonb)",
+        workspace_wk,
+        _as_uuid(business.get("documentId")),
+        event_code,
+        json.dumps(business, ensure_ascii=False),
+    )
+
+
 async def enqueue(
     conn: asyncpg.Connection,
     *,
     event_code: str,
     workspace_wk: uuid.UUID | None,
     business: dict[str, Any],
+    dedup_key: str | None = None,
 ) -> None:
-    """Écrit un event dans l'outbox (dans la transaction courante).
+    """Écrit un event : journal durable `document_event` PUIS outbox producteur.
 
-    No-op si l'émission est désactivée. Ne lève jamais pour un eventCode hors
-    catalogue : on ne publie que des events déclarés dans la découverte — un
-    code inconnu est un bug producteur, journalisé, pas propagé à la mutation.
+    Le journal `document_event` est écrit inconditionnellement (source des
+    automates). L'écriture outbox (émission workflow externe) reste gouvernée
+    par l'activation + l'allowlist fail-closed. Ne lève jamais pour un eventCode
+    hors catalogue : code inconnu = bug producteur, journalisé, pas propagé.
+
+    `dedup_key` (optionnel) rend `_eventId` déterministe (uuid5) : un ré-enqueue
+    du même changement logique est absorbé par `ON CONFLICT DO NOTHING` (dédup
+    producteur), sans jamais faire échouer la mutation.
     """
-    if not _enabled:
-        return
     if not catalog.is_known(event_code):
         log.warning("event_code_unknown", event_code=event_code)
         return
-    event_id = uuid.uuid4()
+    # 1) Journal durable des events (automates) — toujours.
+    await _record_document_event(conn, event_code, workspace_wk, business)
+    # 2) Outbox producteur workflow — gated (activation + allowlist).
+    if not _enabled:
+        return
+    if _allowed_events is not None and event_code not in _allowed_events:
+        return
+    event_id = _event_id(event_code, dedup_key)
     occurred_at = datetime.now(UTC)
     envelope = build_envelope(event_id, event_code, occurred_at, _source, business)
     await conn.execute(
         "INSERT INTO event_outbox (id, event_code, workspace_technical_key, payload, occurred_at) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
         event_id,
         event_code,
         workspace_wk,

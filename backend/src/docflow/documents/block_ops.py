@@ -8,6 +8,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.artifacts.service import refresh_artifact_references
+from docflow.datasets.references import refresh_dataset_references
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
@@ -378,6 +379,7 @@ async def create_document_in_block(
             # Un template de contenu peut porter des références d'artefacts :
             # les tracer dès la création pour que le refcount soit juste.
             await refresh_artifact_references(conn, doc_id, wk, initial_content)
+            await refresh_dataset_references(conn, doc_id, wk, initial_content)
 
             # 5. Instancier les valeurs par défaut (helper partagé avec create_document)
             await prop_writes.instantiate_default_values(conn, wk, doc_id, ft_id)
@@ -425,6 +427,7 @@ async def create_document_in_block(
                     "parentId": str(body.parent_id) if body.parent_id else None,
                     "title": body.title,
                 },
+                dedup_key=str(doc_id),
             )
 
     return DocumentOut(

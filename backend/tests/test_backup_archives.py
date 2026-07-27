@@ -114,3 +114,84 @@ def test_list_ftp_filters_and_sizes() -> None:
     assert out[0]["filename"] == good
     assert out[0]["size"] == 2048
     mock_ftp.cwd.assert_called_once_with("/backups")
+
+
+class _FakeSftp:
+    """Simule le stat/mkdir de paramiko : seuls les chemins de `existing` existent."""
+
+    def __init__(self, existing: set[str]) -> None:
+        self.existing = existing
+        self.created: list[str] = []
+
+    def stat(self, path: str) -> None:
+        if path not in self.existing:
+            raise OSError(path)
+
+    def mkdir(self, path: str) -> None:
+        self.created.append(path)
+        self.existing.add(path)
+
+
+def test_sftp_makedirs_creates_missing_segments() -> None:
+    from docflow.backup.db_dump import _sftp_makedirs
+
+    sftp = _FakeSftp(existing={"/backups"})
+    _sftp_makedirs(sftp, "/backups/docflow/daily")
+    assert sftp.created == ["/backups/docflow", "/backups/docflow/daily"]
+
+
+def test_sftp_makedirs_idempotent() -> None:
+    from docflow.backup.db_dump import _sftp_makedirs
+
+    sftp = _FakeSftp(existing={"/backups", "/backups/docflow"})
+    _sftp_makedirs(sftp, "/backups/docflow")
+    assert sftp.created == []
+
+
+def test_sftp_makedirs_relative_path() -> None:
+    from docflow.backup.db_dump import _sftp_makedirs
+
+    sftp = _FakeSftp(existing=set())
+    _sftp_makedirs(sftp, "docflow/daily")
+    assert sftp.created == ["docflow", "docflow/daily"]
+
+
+def test_select_archives_to_purge_keeps_most_recent() -> None:
+    from datetime import UTC, datetime
+
+    from docflow.backup.archives import select_archives_to_purge
+
+    def arch(name: str, day: int, job: str = "job-a") -> dict:
+        return {
+            "filename": name,
+            "job_id": job,
+            "created_at": datetime(2026, 7, day, tzinfo=UTC),
+            "scope": "all",
+            "size": 1,
+        }
+
+    archives = [
+        arch("d1.dump", 1),
+        arch("d3.dump", 3),
+        arch("d2.dump", 2),
+        arch("autre.dump", 4, job="job-b"),  # autre job : jamais candidat
+    ]
+    victims = select_archives_to_purge(archives, "job-a", 2)
+    assert victims == ["d1.dump"]  # seules les plus anciennes au-delà de 2
+
+
+def test_select_archives_to_purge_under_retention() -> None:
+    from datetime import UTC, datetime
+
+    from docflow.backup.archives import select_archives_to_purge
+
+    archives = [
+        {
+            "filename": "d1.dump",
+            "job_id": "job-a",
+            "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+            "scope": "all",
+            "size": 1,
+        }
+    ]
+    assert select_archives_to_purge(archives, "job-a", 3) == []

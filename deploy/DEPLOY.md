@@ -163,6 +163,7 @@ Variables optionnelles disponibles dans `/data/.env` :
 | `HARPOCRATE_URL` | *(vide)* | URL Harpocrate pour résoudre les `${vault://…}` (automates, OIDC) |
 | `AUTOMATION_TICK_SECONDS` | `60` | Intervalle du worker d'automates (secondes) |
 | `LOG_LEVEL` | `INFO` | Niveau de log : `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOCAL_LOGIN_ENABLED` | *(absent)* | Surcharge du mode OIDC-only (réglé sur la page de config OIDC, effectif seulement si l'OIDC est activé). `true` = connexion locale forcée active (break-glass panne OIDC), `false` = forcée inactive. Ignoré tant qu'aucun utilisateur n'existe. |
 
 > **`ENCRYPTION_KEY` est critique.** Une fois des données chiffrées en base (wallets, secrets, headers webhook), cette clé ne doit plus jamais changer. La sauvegarder en dehors du serveur.
 
@@ -344,6 +345,59 @@ Cron quotidien (2h) :
 
 ## Restauration
 
+### Prérequis vital — à faire AVANT d'avoir besoin de restaurer
+
+Le dump ne contient **pas** la configuration de l'hôte. Ce qu'il faut comprendre
+sur les trois secrets de `/data/.env` :
+
+| Secret | Perte = quoi ? | Doit venir de l'ancienne instance ? |
+|---|---|---|
+| `ENCRYPTION_KEY` | **Irréversible** : certificats (clés privées git/SFTP), secrets locaux des remote points, headers webhooks, secrets d'automates — illisibles à jamais | **OUI, impérativement** |
+| `JWT_SECRET` | Sessions ouvertes invalidées (les clés API survivent : hashées en base) | Souhaitable, pas critique |
+| `DATABASE_URL` / `pg_password.txt` | Rien — doit simplement correspondre au Postgres **local** de l'instance qui restaure | **NON** (garder ceux du nouveau serveur) |
+
+Deux façons d'avoir `ENCRYPTION_KEY`/`JWT_SECRET` sous la main le jour J :
+
+1. **Automatique** : cocher « Déposer le matériel de restauration » sur le job
+   dump — chaque archive `docflow_…​.dump` est alors accompagnée d'un
+   `docflow_…​.key` (mêmes nom et date) contenant les trois valeurs.
+2. **Manuelle** : copier `/data/.env` hors du serveur (coffre, vault, autre machine).
+
+Le worker pousse les archives sur le remote point du job
+(`docflow_<scope>_<date>_<heure>_<jobid>.dump`) ; la plus récente se repère par
+son nom : `ls -1 docflow_*.dump | sort | tail -1` sur la machine de backup.
+
+### La voie rapide — `deploy/restore.sh`
+
+Le script automatise toute la mécanique des deux cas ci-dessous : report des
+clés depuis un `.key` (auto-détecté à côté de l'archive), arrêt de l'app,
+`pg_restore` strict, redémarrage (avec relecture de `/data/.env`) uniquement
+si la restauration est complète, et rappel des vérifications. Confirmation
+littérale `RESTORE` exigée (`--yes` pour les scripts).
+
+```bash
+# par-dessus l'instance (cas 1) :
+sudo ./deploy/restore.sh /data/backups/docflow_all_…​.dump
+
+# serveur neuf (cas 2), après l'installation de base — le .key posé à côté
+# du .dump est détecté tout seul, sinon --key :
+sudo ./deploy/restore.sh /data/backups/docflow_all_…​.dump --key /data/backups/docflow_all_…​.key
+```
+
+Les deux cas ci-dessous détaillent ce que le script fait — utiles pour
+comprendre, déboguer, ou opérer à la main.
+
+### Cas 1 — restauration par-dessus une instance existante
+
+Le `/data/.env` en place est le bon (même instance) : rien à toucher côté
+configuration. Si l'archive vient du worker, la rapatrier d'abord depuis la
+machine de backup (nom `docflow_<scope>_<date>_<heure>_<jobid>.dump`) :
+
+```bash
+mkdir -p /data/backups
+scp root@machine-backup:/chemin/docflow_all_…​.dump /data/backups/
+```
+
 La restauration **écrase le contenu existant** de la base (`--clean --if-exists`) : elle droppe
 chaque objet avant de le recréer, puis s'arrête à la première erreur (`--exit-on-error`) au lieu
 de continuer silencieusement sur une base dans un état mélangé.
@@ -363,3 +417,155 @@ une restauration incomplète, à ne pas exposer aux utilisateurs :
 ```bash
 docker compose -f /opt/docflow/docker-compose.prod.yml start app
 ```
+
+Au démarrage, `apply` rejoue les migrations manquantes si le dump provient d'une
+version plus ancienne que l'image — c'est le sens normal. **Ne jamais restaurer un
+dump plus récent que l'image déployée** : mettre d'abord l'image à jour.
+
+### Cas 2 — serveur tout neuf (reprise après sinistre)
+
+> **Le point qui ne pardonne pas** : `ENCRYPTION_KEY` et `JWT_SECRET` doivent
+> être en place dans `/data/.env` **avant le premier démarrage de l'app**.
+> L'installeur, lui, en génère des neufs — d'où l'ordre ci-dessous. En
+> revanche, mot de passe Postgres et `DATABASE_URL` restent ceux du nouveau
+> serveur : le rôle Postgres est créé localement, le dump ne contient pas
+> les mots de passe de rôles.
+
+1. **Provisionner la machine et lancer l'installation** (§ Procédure complète,
+   étapes 2-4). Laisser l'installeur générer `/data/.env` et démarrer la
+   stack ; **ne pas créer le premier compte admin** (les comptes reviendront
+   avec le dump) et **ne rien configurer d'autre**.
+2. **Rapatrier depuis la machine de backup** l'archive la plus récente et son
+   `.key` (ou le `/data/.env` sauvegardé manuellement) :
+   ```bash
+   mkdir -p /data/backups
+   # la plus récente : ls -1 docflow_*.dump | sort | tail -1 côté backup
+   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_JOBID.dump /data/backups/
+   scp root@machine-backup:/chemin/docflow_all_YYYYMMDD_HHMMSS_JOBID.key  /data/backups/
+   chmod 600 /data/backups/*.key
+   ```
+3. **Reporter les clés de l'ancienne instance dans `/data/.env`** — c'est ce
+   que fait `restore.sh --key` (avec sauvegarde `.bak` de l'ancien fichier) ;
+   à la main :
+   ```bash
+   grep '^ENCRYPTION_KEY=\|^JWT_SECRET=' /data/backups/docflow_all_…​.key
+   # → recopier ces deux lignes dans /data/.env (à la place des valeurs générées)
+   ```
+   **Ne PAS toucher** au `DATABASE_URL` du nouveau `/data/.env` ni à
+   `/data/pg_password.txt` : ils correspondent au Postgres local. La ligne
+   `DATABASE_URL` du `.key` ne sert qu'à documenter l'ancienne topologie.
+   Sans le `.key` ni copie de l'ancien `.env` : la restauration reste
+   possible, mais tous les secrets chiffrés sont perdus (recréer
+   certificats — et re-déclarer leurs clés publiques côté GitHub /
+   `authorized_keys` —, secrets de remote points, webhooks).
+4. **Arrêter l'app et restaurer** (l'app doit être arrêtée : `--clean` droppe
+   les objets sous ses pieds ; Postgres reste up) :
+   ```bash
+   cd /opt/docflow
+   docker compose -f docker-compose.prod.yml stop app
+   docker compose -f docker-compose.prod.yml exec -T postgres \
+     pg_restore -U docflow -d docflow --clean --if-exists --no-owner --exit-on-error \
+     < /data/backups/docflow_all_YYYYMMDD_HHMMSS_JOBID.dump
+   echo "code de sortie pg_restore : $?"        # doit être 0
+   ```
+5. **Redémarrer l'app** — le `/data/.env` modifié n'est relu qu'à la
+   re-création du conteneur, d'où `up -d --force-recreate` et non `start` :
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --force-recreate app
+   ```
+   Au boot, `apply` rejoue les migrations manquantes si le dump est plus
+   ancien que l'image (jamais l'inverse : cf. Cas 1).
+6. **Vérifier, dans cet ordre** :
+   - connexion avec un compte d'avant le sinistre (auth = données du dump) ;
+   - workspaces/documents présents ;
+   - **Tester** sur chaque remote point → ✓ (c'est LE test de
+     l'`ENCRYPTION_KEY` : il déchiffre la clé privée du certificat) ;
+   - un run de backup manuel de bout en bout.
+7. **Reconfigurer ce qui vit hors base et hors dump** : reverse proxy TLS,
+   DNS, et remettre en place la sauvegarde du nouveau `/data/.env` (ou
+   recocher l'option `.key` sur le job dump restauré).
+
+### Et le miroir git ?
+
+Le backup `git_sync` est un **export complet et lisible du contenu documentaire** :
+
+```
+<workspace>/                      ← marqueur .docflow-workspace
+  <bloc>/<sous-bloc>/             ← un répertoire par bloc (hiérarchie réelle)
+    _block.yaml                   ← slug/label du bloc + template du type racine
+                                    (sous-types, propriétés, contraintes, valeurs autorisées)
+    <doc>.md                      ← contenu markdown du document
+    <doc>.json                    ← titre, type, propriétés
+    <doc>/<enfant>.md …           ← descendance du document
+```
+
+Chaque commit est un état daté du contenu. Il permet de reconstruire un
+workspace : recréer les types depuis les `_block.yaml` (format aligné sur les
+templates importables), les blocs d'après l'arborescence, puis recoller les
+documents (`.md` + propriétés du `.json`).
+
+Il ne contient en revanche **ni les comptes, ni les certificats/secrets, ni
+l'historique des versions** : la restauration complète d'une instance passe
+toujours par le dump Postgres (§ ci-dessus).
+
+#### Restaurer depuis le miroir git — procédure IHM (voie normale)
+
+Scénario type : l'instance a été recréée de zéro (installation § Procédure
+complète, premier compte admin créé) et on veut la réalimenter depuis le
+repo git de sauvegarde. Tout se passe dans **Connexions & Sauvegarde**.
+
+La restauration est **additive et rejouable** : elle crée ce qui manque,
+réaligne titre/contenu/propriétés des documents existants (matching par
+chemin de slugs), et ne supprime jamais rien. On peut la relancer sans
+risque, y compris par-dessus une instance vivante.
+
+1. **Certificats → Ajouter** : type « Clé SSH (git / SFTP) », label/slug
+   (ex. `restore-github`), **Générer**. Copier la clé publique depuis la
+   liste des certificats.
+2. **Côté GitHub/GitLab** : sur le repo de sauvegarde → *Settings → Deploy
+   keys → Add deploy key* → coller la clé publique. **La lecture seule
+   suffit** pour restaurer (ne cocher *Allow write access* que si ce point
+   servira aussi au job de sauvegarde ensuite).
+3. **Remote Points → Ajouter** : type Git, hébergeur GitHub, dépôt
+   `organisation/nom` (ex. `ag-flow/backup-docflow`), branche `main`, auth
+   « Clé SSH » → certificat de l'étape 1 → Enregistrer → **Tester** → ✓.
+4. **Sauvegarde → Restauration depuis le miroir git** :
+   - *Remote point git* : le point de l'étape 3 ;
+   - *Sous-répertoire* : **laisser vide** — l'emplacement de l'export est
+     détecté automatiquement grâce aux marqueurs déposés à la sauvegarde
+     (le champ ne sert qu'à forcer un emplacement précis si le repo
+     contient plusieurs exports et qu'on n'en veut qu'un) ;
+   - *Workspace seul* : optionnel, pour ne réalimenter qu'un workspace ;
+   - **Restaurer**. L'opération clone le repo côté serveur (shallow, détruit
+     après usage) et peut durer plusieurs minutes sur un gros miroir.
+5. **Lire le bilan** affiché sous le bouton : workspaces/blocs créés,
+   imports de types, documents créés/réalignés, et la liste des erreurs
+   éventuelles — un élément en échec (conflit de types, propriété disparue)
+   n'empêche pas la restauration du reste. Corriger la cause puis
+   **relancer** : seuls les éléments manquants seront repris.
+6. **Vérifier** : arborescence des workspaces/blocs/documents, page Types
+   (types et hiérarchie recréés), contenu de quelques documents.
+7. **Remettre la sauvegarde en route** : recréer le job git (et donner le
+   droit d'écriture à la deploy key, ou créer une clé dédiée), relancer un
+   run manuel.
+
+**Ce que le miroir ne restaure pas** (contrairement au dump Postgres) :
+comptes utilisateurs, certificats/secrets, historique des versions,
+artefacts binaires. Pour une reprise totale → § Cas 2 avec le dump.
+
+#### Restaurer depuis le miroir git — en ligne de commande (équivalent)
+
+```bash
+# 1. Cloner le repo de sauvegarde sur la VM
+git clone git@github.com:org/backup-repo.git /tmp/restore-docflow
+
+# 2. Copier le clone dans le conteneur app et lancer la restauration
+docker compose -f /opt/docflow/docker-compose.prod.yml cp /tmp/restore-docflow app:/tmp/restore
+docker compose -f /opt/docflow/docker-compose.prod.yml exec app \
+  python -m docflow.backup.restore_git_cli /tmp/restore            # tout
+#                            … restore_git_cli /tmp/restore --workspace doc   # un seul workspace
+```
+
+La commande affiche le bilan (workspaces/blocs/documents créés, documents
+réalignés) et sort en erreur si un élément n'a pas pu être restauré (conflit
+de types, propriété disparue…) — les autres éléments sont restaurés quand même.

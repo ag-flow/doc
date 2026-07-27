@@ -25,10 +25,14 @@ def _auth(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-def test_schemas_requires_auth() -> None:
-    # Sans lifespan : le 401 tombe avant tout accès DB (token manquant).
-    client = TestClient(app)
-    assert client.get("/api/schemas").status_code == 401
+def test_schemas_is_public(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str
+) -> None:
+    # Découverte du contrat = endpoint PUBLIC : accessible sans token.
+    with _client(monkeypatch, test_schema_url) as client:
+        r = client.get("/api/schemas")
+    assert r.status_code == 200
+    assert len(r.json()["events"]) == 7
 
 
 def test_schema_catalog_and_versions(
@@ -43,7 +47,7 @@ def test_schema_catalog_and_versions(
         assert body["specVersion"]
         assert body["revision"].startswith("sha256:")
         codes = {e["eventCode"] for e in body["events"]}
-        assert len(codes) == 6
+        assert len(codes) == 7
         assert "docflow.document.created.v1" in codes
 
         r = client.get("/api/schemas/docflow.document.created.v1/versions", headers=hdrs)
@@ -62,9 +66,7 @@ def test_schema_catalog_and_versions(
         assert schema["hash"].startswith("sha256:")
 
         # Inconnus → 404 explicite.
-        assert (
-            client.get("/api/schemas/docflow.nope.v1/versions", headers=hdrs).status_code == 404
-        )
+        assert client.get("/api/schemas/docflow.nope.v1/versions", headers=hdrs).status_code == 404
         assert (
             client.get(
                 "/api/schemas/docflow.document.created.v1/versions/2", headers=hdrs

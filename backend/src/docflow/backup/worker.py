@@ -115,7 +115,19 @@ async def run_job(
             if not db_url:
                 raise RuntimeError("DATABASE_URL non configurée")
 
-            from docflow.backup.db_dump import run_db_dump
+            from docflow.backup.db_dump import build_restore_env, run_db_dump
+
+            restore_env: str | None = None
+            if job.get("include_restore_env"):
+                # settings est typé object dans le worker : accès défensif,
+                # cohérent avec database_url ci-dessus.
+                enc = getattr(settings, "encryption_key", None)
+                jwt = getattr(settings, "jwt_secret", None)
+                restore_env = build_restore_env(
+                    database_url=db_url,
+                    jwt_secret=jwt.reveal() if jwt is not None else "",
+                    encryption_key=enc.reveal() if enc is not None else None,
+                )
 
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -131,8 +143,30 @@ async def run_job(
                     ssh_key_path=ssh_key_path,
                     remote_dir=job.get("git_base_path"),
                     dumps_root=_DUMPS_ROOT,
+                    restore_env=restore_env,
                 ),
             )
+
+            retention = job.get("retention_count")
+            if retention:
+                from docflow.backup.archives import purge_old_archives
+
+                purged = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: purge_old_archives(
+                        point_type=point_detail["point_type"],
+                        host=host,
+                        port=port,
+                        username=username,
+                        password=password,
+                        ssh_key_path=ssh_key_path,
+                        remote_dir=job.get("git_base_path"),
+                        tls=(point_detail["point_type"] == "ftps"),
+                        job_id=str(job_id),
+                        retention_count=retention,
+                    ),
+                )
+                result["files_deleted"] = result.get("files_deleted", 0) + purged
 
         async with pool.acquire() as conn:
             await runs.finish_run(
@@ -182,7 +216,8 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         """
         SELECT j.id, j.slug, j.strategy, j.schedule_cron, j.schedule_every_seconds,
-               j.git_base_path, j.workspace_technical_key AS workspace_id,
+               j.git_base_path, j.include_restore_env, j.retention_count,
+               j.workspace_technical_key AS workspace_id,
                w.slug AS workspace_slug, j.data_block_ref AS data_block_id,
                rp.slug AS remote_point_slug,
                (SELECT r.started_at FROM backup_job_run r

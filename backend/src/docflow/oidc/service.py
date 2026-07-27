@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from docflow.auth.jwt import create_token
 from docflow.config.settings import Settings
-from docflow.oidc.verify import OidcVerifyError, exchange_code, verify_id_token
+from docflow.oidc.verify import OidcVerifyError, exchange_code, fetch_discovery, verify_id_token
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.oidc import OidcCallbackIn, OidcConfigOut, OidcConfigSet, OidcPublicConfig
 from docflow.secrets.resolver import resolve
@@ -15,7 +15,8 @@ from docflow.secrets.secret import Secret
 log = structlog.get_logger(__name__)
 
 _SELECT = """
-SELECT id, issuer, client_id, client_secret_ref, enabled, created_at, updated_at
+SELECT id, issuer, client_id, client_secret_ref, enabled, disable_local_login,
+       created_at, updated_at
 FROM oidc_config LIMIT 1
 """
 
@@ -26,6 +27,7 @@ def _to_out(row: asyncpg.Record) -> OidcConfigOut:
         issuer=row["issuer"],
         client_id=row["client_id"],
         enabled=row["enabled"],
+        disable_local_login=row["disable_local_login"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -51,6 +53,35 @@ async def get_public_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
     )
 
 
+async def get_login_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
+    """Config publique enrichie de l'authorization_endpoint découvert chez l'issuer.
+
+    C'est ce que consomme la mire de connexion pour construire la redirection
+    authorization-code. La découverte reste côté serveur (cache + garde SSRF).
+    """
+    public = await get_public_config(pool)
+    if public is None:
+        return None
+    try:
+        discovery = await fetch_discovery(public.issuer)
+    except OidcVerifyError as exc:
+        log.warning("oidc_discovery_failed", reason=str(exc))
+        raise HTTPException(status_code=502, detail="issuer OIDC injoignable") from exc
+    endpoint = str(discovery.get("authorization_endpoint", ""))
+    if not endpoint:
+        raise HTTPException(
+            status_code=502, detail="authorization_endpoint absent du document de découverte"
+        )
+    return public.model_copy(update={"authorization_endpoint": endpoint})
+
+
+async def local_login_disabled_by_oidc(pool: asyncpg.Pool) -> bool:
+    """Mode OIDC-only effectif : le flag ne compte que si l'OIDC est activé —
+    désactiver l'OIDC réactive donc automatiquement la connexion locale."""
+    row = await pool.fetchrow("SELECT enabled, disable_local_login FROM oidc_config LIMIT 1")
+    return bool(row and row["enabled"] and row["disable_local_login"])
+
+
 async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfigOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -58,30 +89,33 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
             if existing is None:
                 row = await conn.fetchrow(
                     """
-                    INSERT INTO oidc_config (issuer, client_id, client_secret_ref, enabled)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO oidc_config
+                        (issuer, client_id, client_secret_ref, enabled, disable_local_login)
+                    VALUES ($1, $2, $3, $4, $5)
                     RETURNING id, issuer, client_id, client_secret_ref,
-                              enabled, created_at, updated_at
+                              enabled, disable_local_login, created_at, updated_at
                     """,
                     data.issuer,
                     data.client_id,
                     data.client_secret_ref,
                     data.enabled,
+                    data.disable_local_login,
                 )
             else:
                 row = await conn.fetchrow(
                     """
                     UPDATE oidc_config
                     SET issuer = $1, client_id = $2, client_secret_ref = $3,
-                        enabled = $4, updated_at = now()
-                    WHERE id = $5
+                        enabled = $4, disable_local_login = $5, updated_at = now()
+                    WHERE id = $6
                     RETURNING id, issuer, client_id, client_secret_ref,
-                              enabled, created_at, updated_at
+                              enabled, disable_local_login, created_at, updated_at
                     """,
                     data.issuer,
                     data.client_id,
                     data.client_secret_ref,
                     data.enabled,
+                    data.disable_local_login,
                     existing["id"],
                 )
     assert row is not None
@@ -138,6 +172,7 @@ async def issue_token_for_verified_claims(
     sub = str(id_token_claims.get("sub", ""))
     name = str(id_token_claims.get("name", email))
     if not email or not sub:
+        log.warning("oidc_login_rejected", reason="claims manquants", has_email=bool(email))
         raise HTTPException(status_code=422, detail="claims OIDC manquants (email/sub)")
     # email_verified peut être un booléen (standard OIDC) ou une chaîne "true" selon l'IdP.
     email_verified_raw = id_token_claims.get("email_verified")
@@ -170,6 +205,11 @@ async def issue_token_for_verified_claims(
                     # sinon un sub attaquant portant l'email d'un compte local (admin) en
                     # prendrait le contrôle (account takeover). Cf. AUTH-02.
                     if not email_verified:
+                        log.warning(
+                            "oidc_login_rejected",
+                            reason="email non vérifié par l'IdP",
+                            email=email,
+                        )
                         raise HTTPException(
                             status_code=403,
                             detail="liaison OIDC refusée: email non vérifié par l'IdP",
@@ -194,8 +234,10 @@ async def issue_token_for_verified_claims(
                     )
     assert user_row is not None
     if user_row["disabled"]:
+        log.warning("oidc_login_rejected", reason="compte désactivé", email=email)
         raise HTTPException(status_code=403, detail="compte désactivé")
     if not user_row["validated"]:
+        log.info("oidc_login_pending_validation", email=email)
         raise HTTPException(status_code=403, detail="PendingValidation")
 
     user = AuthUser(

@@ -12,6 +12,8 @@ class AutomationHeaderIn(BaseModel):
     name: str
     value: str | None = None
     secret_ref: str | None = None
+    # Préfixe de la valeur finale (ex. "Bearer " pour un schéma HTTP bearer).
+    value_prefix: str | None = None
     required: bool = False
     enabled: bool = True
 
@@ -27,6 +29,7 @@ class AutomationHeaderOut(BaseModel):
     name: str
     value: str | None
     secret_ref: str | None
+    value_prefix: str | None
     required: bool
     enabled: bool
 
@@ -35,7 +38,20 @@ class AutomationCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     label: str
-    active: bool = True
+    # Toujours créé DÉSACTIVÉ (activation via le toggle de la carte).
+    active: bool = False
+    # Workspaces couverts (l'automate est visible et se déclenche dans chacun).
+    # Vide à la création = [workspace courant]. Jamais vide en base.
+    workspace_slugs: list[str] = []
+    # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
+    event_codes: list[str] = []
+    # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
+    block_slugs: list[str] = []
+    functional_type_slugs: list[str] = []
+    # Chaîne de responsabilité : si cet automate matche ET que l'appel réussit,
+    # les automates de priorité inférieure ne traitent pas l'event.
+    stop_chain: bool = False
+    # Rétro-compat : anciennes cases C/U (backfillées vers event_codes en base).
     on_create: bool = False
     on_update: bool = False
     delay_minutes: int = 0
@@ -52,6 +68,11 @@ class AutomationUpdate(BaseModel):
 
     label: str | None = None
     active: bool | None = None
+    workspace_slugs: list[str] | None = None
+    event_codes: list[str] | None = None
+    block_slugs: list[str] | None = None
+    stop_chain: bool | None = None
+    functional_type_slugs: list[str] | None = None
     on_create: bool | None = None
     on_update: bool | None = None
     delay_minutes: int | None = None
@@ -68,6 +89,15 @@ class AutomationOut(BaseModel):
     workspace_technical_key: uuid.UUID
     label: str
     active: bool
+    # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
+    pending_count: int = 0
+    # Position d'évaluation DANS LE WORKSPACE demandé (1..n).
+    position: int = 0
+    workspace_slugs: list[str] = []
+    event_codes: list[str]
+    block_slugs: list[str] = []
+    functional_type_slugs: list[str] = []
+    stop_chain: bool = False
     on_create: bool
     on_update: bool
     delay_minutes: int
@@ -84,8 +114,24 @@ class AutomationOut(BaseModel):
 class AutomationRunOut(BaseModel):
     id: uuid.UUID
     automation_ref: uuid.UUID
-    document_ref: uuid.UUID
-    document_version: int
+    document_ref: uuid.UUID | None
+    document_version: int | None
     change_log_seq: int
     status: str
     executed_at: datetime
+    # Détails de l'appel (historique enrichi).
+    http_status: int | None = None
+    url: str | None = None
+    request_body: str | None = None    # corps envoyé, variables résolues
+    response_body: str | None = None   # corps/message de réponse
+    event_code: str | None = None
+    manual: bool = False               # déclenché via « jouer l'event » (test)
+
+
+class AutomationOrderIn(BaseModel):
+    """Réordonnancement des automates d'un workspace (drag & drop)."""
+
+    model_config = {"extra": "forbid"}
+
+    # Ids dans le nouvel ordre — doit couvrir EXACTEMENT les automates du workspace.
+    ids: list[uuid.UUID]

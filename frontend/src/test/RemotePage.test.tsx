@@ -20,6 +20,7 @@ vi.mock('../lib/api', async () => {
       list: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
+      generate: vi.fn(),
     },
     backupApi: {
       listJobs: vi.fn(),
@@ -27,13 +28,14 @@ vi.mock('../lib/api', async () => {
       createJob: vi.fn(),
       updateJob: vi.fn(),
       deleteJob: vi.fn(),
+      runJob: vi.fn(),
     },
     getToken: vi.fn(() => 'tok'),
   }
 })
 
 import { remotePointsApi, remoteCertsApi, backupApi, type RemotePointOut, type BackupJobOut } from '../lib/api'
-import { RemotePage } from '../pages/RemotePage'
+import { RemotePage, normalizeGitRepo } from '../pages/RemotePage'
 
 const pt1: RemotePointOut = {
   id: 'pt-1',
@@ -66,12 +68,10 @@ function renderPage() {
   )
 }
 
-async function openPointsTabAndEdit() {
+async function openPointsTab() {
   renderPage()
   fireEvent.click(screen.getByText('Remote Points'))
-  await waitFor(() => expect(screen.getByTestId('edit-point-backup-101')).toBeInTheDocument())
-  fireEvent.click(screen.getByTestId('edit-point-backup-101'))
-  await waitFor(() => expect(screen.getByTestId('test-connection-btn')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByTestId('test-point-backup-101')).toBeInTheDocument())
 }
 
 describe('RemotePage — test connection', () => {
@@ -82,25 +82,35 @@ describe('RemotePage — test connection', () => {
     vi.mocked(backupApi.listJobs).mockResolvedValue([])
   })
 
-  it('shows a test button only when editing an existing point', async () => {
-    renderPage()
-    fireEvent.click(screen.getByText('Remote Points'))
-    await waitFor(() => expect(screen.getByTestId('edit-point-backup-101')).toBeInTheDocument())
-    expect(screen.queryByTestId('test-connection-btn')).not.toBeInTheDocument()
+  it('shows a test button on each point row, and one more in the edit form', async () => {
+    await openPointsTab()
+    expect(screen.getAllByTestId('test-point-backup-101')).toHaveLength(1)
 
     fireEvent.click(screen.getByTestId('edit-point-backup-101'))
-    await waitFor(() => expect(screen.getByTestId('test-connection-btn')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByTestId('test-point-backup-101')).toHaveLength(2))
   })
 
   it('shows a success result and reuses the saved point (no unsaved form fields sent)', async () => {
     vi.mocked(remotePointsApi.test).mockResolvedValue({ ok: true, detail: 'Connexion réussie' })
-    await openPointsTabAndEdit()
+    await openPointsTab()
 
-    fireEvent.click(screen.getByTestId('test-connection-btn'))
+    fireEvent.click(screen.getByTestId('test-point-backup-101'))
 
     await waitFor(() => expect(screen.getByTestId('test-connection-result')).toBeInTheDocument())
     expect(screen.getByTestId('test-connection-result')).toHaveTextContent('Connexion réussie')
     expect(remotePointsApi.test).toHaveBeenCalledWith('backup-101')
+  })
+
+  it("save on edit strips the immutable slug from the PUT body", async () => {
+    vi.mocked(remotePointsApi.update).mockResolvedValue(pt1)
+    await openPointsTab()
+    fireEvent.click(screen.getByTestId('edit-point-backup-101'))
+    fireEvent.click(await screen.findByText('Enregistrer'))
+
+    await waitFor(() => expect(remotePointsApi.update).toHaveBeenCalled())
+    const [slug, body] = vi.mocked(remotePointsApi.update).mock.calls[0]
+    expect(slug).toBe('backup-101')
+    expect('slug' in (body as unknown as Record<string, unknown>)).toBe(false)
   })
 
   it('shows a failure detail without throwing', async () => {
@@ -108,9 +118,9 @@ describe('RemotePage — test connection', () => {
       ok: false,
       detail: 'Authentication failed.',
     })
-    await openPointsTabAndEdit()
+    await openPointsTab()
 
-    fireEvent.click(screen.getByTestId('test-connection-btn'))
+    fireEvent.click(screen.getByTestId('test-point-backup-101'))
 
     await waitFor(() => expect(screen.getByTestId('test-connection-result')).toBeInTheDocument())
     expect(screen.getByTestId('test-connection-result')).toHaveTextContent('Authentication failed.')
@@ -132,47 +142,44 @@ describe('RemotePage — génération de clé SSH', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Label')).toBeInTheDocument())
   }
 
-  it('disables Générer and explains why outside a secure context (no isSecureContext in jsdom)', async () => {
+  it('disables Générer until label and slug are filled', async () => {
     await openCertForm()
-    const btn = screen.getByRole('button', { name: /Générer/ })
+    const btn = screen.getByTestId('cert-generate')
     expect(btn).toBeDisabled()
-    expect(btn).toHaveAttribute('title', expect.stringContaining('HTTPS'))
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
+    await waitFor(() => expect(btn).not.toBeDisabled())
   })
 
-  it('uses the git identity field as the generated key comment when crypto is available', async () => {
-    vi.stubGlobal('isSecureContext', true)
+  it('generates server-side with the identity as key comment and closes the form', async () => {
+    vi.mocked(remoteCertsApi.generate).mockResolvedValue({
+      id: 'c1', slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key',
+      public_part: 'ssh-ed25519 AAAA deploy@docflow', fingerprint: 'fp', expires_at: null, created_at: '',
+    })
     await openCertForm()
-
-    const btn = screen.getByRole('button', { name: /Générer/ })
-    await waitFor(() => expect(btn).not.toBeDisabled())
-
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
     fireEvent.change(screen.getByTestId('cert-git-identity'), { target: { value: 'deploy@docflow' } })
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByTestId('cert-generate'))
 
-    await waitFor(
-      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
-      { timeout: 10000 },
-    )
-    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
-    expect(publicKey.startsWith('ssh-rsa ')).toBe(true)
-    expect(publicKey.endsWith('deploy@docflow')).toBe(true)
-  }, 15000)
+    await waitFor(() => expect(remoteCertsApi.generate).toHaveBeenCalledWith({
+      slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key', common_name: 'deploy@docflow',
+    }))
+    // Le formulaire se ferme : le certificat créé se copie depuis la liste
+    await waitFor(() => expect(screen.queryByTestId('cert-generate')).not.toBeInTheDocument())
+  })
 
-  it('falls back to the default comment when no identity is given', async () => {
-    vi.stubGlobal('isSecureContext', true)
+  it('sends common_name null when no identity is given', async () => {
+    vi.mocked(remoteCertsApi.generate).mockResolvedValue({
+      id: 'c1', slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key',
+      public_part: 'ssh-ed25519 AAAA', fingerprint: 'fp', expires_at: null, created_at: '',
+    })
     await openCertForm()
+    fireEvent.change(screen.getByPlaceholderText('Label'), { target: { value: 'Deploy key' } })
+    fireEvent.click(screen.getByTestId('cert-generate'))
 
-    const btn = screen.getByRole('button', { name: /Générer/ })
-    await waitFor(() => expect(btn).not.toBeDisabled())
-    fireEvent.click(btn)
-
-    await waitFor(
-      () => expect(screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).not.toHaveValue(''),
-      { timeout: 10000 },
-    )
-    const publicKey = (screen.getByPlaceholderText(/Clé publique/) as HTMLTextAreaElement).value
-    expect(publicKey.endsWith('docflow-generated')).toBe(true)
-  }, 15000)
+    await waitFor(() => expect(remoteCertsApi.generate).toHaveBeenCalledWith({
+      slug: 'deploy-key', label: 'Deploy key', cert_type: 'ssh_key', common_name: null,
+    }))
+  })
 })
 
 const gitPoint: RemotePointOut = {
@@ -196,6 +203,8 @@ const jobBase: BackupJobOut = {
   schedule_cron: null,
   schedule_every_seconds: 3600,
   git_base_path: null,
+  include_restore_env: false,
+  retention_count: null,
   created_at: '',
   updated_at: '',
   last_run_at: null,
@@ -262,5 +271,64 @@ describe('RemotePage — planification de sauvegarde', () => {
     await waitFor(() => expect(screen.getByText(/tous les jours à 04:30/)).toBeInTheDocument())
     expect(screen.getByText(/toutes les heures/)).toBeInTheDocument()
     expect(screen.getByText(/toutes les 120s/)).toBeInTheDocument()
+  })
+})
+
+describe('normalizeGitRepo', () => {
+  it('extrait org/nom depuis une URL https collée telle quelle', () => {
+    expect(normalizeGitRepo('https://github.com/ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+    expect(normalizeGitRepo('https://github.com/ag-flow/backup-docflow')).toBe('ag-flow/backup-docflow')
+  })
+
+  it('extrait org/nom depuis une URL SSH', () => {
+    expect(normalizeGitRepo('git@github.com:ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+    expect(normalizeGitRepo('ssh://git@github.com/ag-flow/backup-docflow.git')).toBe('ag-flow/backup-docflow')
+  })
+
+  it('laisse org/nom inchangé', () => {
+    expect(normalizeGitRepo('ag-flow/backup-docflow')).toBe('ag-flow/backup-docflow')
+  })
+})
+
+describe('RemotePage — édition de job de sauvegarde', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(remotePointsApi.list).mockResolvedValue([gitPoint])
+    vi.mocked(remoteCertsApi.list).mockResolvedValue([])
+    vi.mocked(backupApi.listJobs).mockResolvedValue([
+      { ...jobBase, schedule_cron: '0 3 * * *', schedule_every_seconds: null },
+    ])
+  })
+
+  it('ouvre le formulaire pré-rempli et envoie un PUT sans slug ni strategy', async () => {
+    vi.mocked(backupApi.updateJob).mockResolvedValue(jobBase)
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+    fireEvent.click(await screen.findByTestId('edit-job-job-1'))
+
+    const label = (await screen.findByPlaceholderText('Label')) as HTMLInputElement
+    expect(label.value).toBe('Job 1')
+    fireEvent.change(label, { target: { value: 'Job renommé' } })
+    fireEvent.click(screen.getByTestId('save-job-btn'))
+
+    await waitFor(() => expect(backupApi.updateJob).toHaveBeenCalled())
+    const [slug, body] = vi.mocked(backupApi.updateJob).mock.calls[0]
+    expect(slug).toBe('job-1')
+    expect((body as Record<string, unknown>).label).toBe('Job renommé')
+    expect('slug' in (body as Record<string, unknown>)).toBe(false)
+    expect('strategy' in (body as Record<string, unknown>)).toBe(false)
+    expect((body as Record<string, unknown>).schedule_cron).toBe('0 3 * * *')
+  })
+
+  it("le toggle Actif n'envoie plus strategy (immuable, rejeté par le backend)", async () => {
+    vi.mocked(backupApi.updateJob).mockResolvedValue(jobBase)
+    renderPage()
+    fireEvent.click(screen.getByText('Sauvegarde'))
+    fireEvent.click(await screen.findByText('Actif'))
+
+    await waitFor(() => expect(backupApi.updateJob).toHaveBeenCalled())
+    const [, body] = vi.mocked(backupApi.updateJob).mock.calls[0]
+    expect('strategy' in (body as Record<string, unknown>)).toBe(false)
+    expect((body as Record<string, unknown>).enabled).toBe(false)
   })
 })

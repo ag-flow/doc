@@ -1,8 +1,8 @@
 """Worker de livraison de l'outbox d'events vers l'ingestion workflow.
 
 Balaie périodiquement les events non envoyés, les signe (HMAC corps brut) et
-les POST vers `{workflow_ingestion_url}/events/{workflow_source_id}`. Retry
-borné par backoff exponentiel ; l'`_eventId` (= id de ligne) est réutilisé tel
+les POST vers l'URL d'envoi complète (`ingestion_url`, collée depuis workflow).
+Retry borné par backoff exponentiel ; l'`_eventId` (= id de ligne) est réutilisé tel
 quel à chaque tentative → déduplication idempotente côté workflow.
 
 Le claim utilise `FOR UPDATE SKIP LOCKED` + un bail (`next_attempt_at` poussé)
@@ -29,6 +29,9 @@ _HTTP_TIMEOUT = 10.0
 _CLAIM_BATCH = 20
 _BACKOFF_BASE = 30  # secondes
 _BACKOFF_CAP = 3600  # 1 h
+# Au-delà, l'event passe en dead-letter (failed_at) et n'est plus re-tenté :
+# un event rejeté en permanence ne doit pas boucler indéfiniment.
+MAX_ATTEMPTS = 8
 
 # Poster injectable : (corps brut, en-têtes) → code HTTP. Isole l'I/O réseau
 # pour les tests.
@@ -40,7 +43,7 @@ _CLAIM = """
 UPDATE event_outbox SET next_attempt_at = now() + interval '60 seconds'
 WHERE id IN (
     SELECT id FROM event_outbox
-    WHERE sent_at IS NULL AND next_attempt_at <= now()
+    WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now()
     ORDER BY created_at
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -61,15 +64,42 @@ async def _mark_sent(pool: asyncpg.Pool, event_id: uuid.UUID) -> None:
 
 
 async def _mark_failed(pool: asyncpg.Pool, event_id: uuid.UUID, attempts: int, error: str) -> None:
+    new_attempts = attempts + 1
+    if new_attempts >= MAX_ATTEMPTS:
+        # Dead-letter : plus aucune tentative ; la ligne reste pour inspection.
+        await pool.execute(
+            "UPDATE event_outbox SET attempts = $2, failed_at = now(), last_error = $3 "
+            "WHERE id = $1",
+            event_id,
+            new_attempts,
+            error[:2000],
+        )
+        log.error("event_delivery_dead_letter", event_id=str(event_id), attempts=new_attempts)
+        return
     delay = _backoff_seconds(attempts)
     await pool.execute(
-        "UPDATE event_outbox SET attempts = attempts + 1, "
-        "next_attempt_at = now() + make_interval(secs => $2), last_error = $3 "
+        "UPDATE event_outbox SET attempts = $2, "
+        "next_attempt_at = now() + make_interval(secs => $3), last_error = $4 "
         "WHERE id = $1",
         event_id,
+        new_attempts,
         float(delay),
         error[:2000],
     )
+
+
+async def purge_delivered(pool: asyncpg.Pool, *, older_than_hours: int) -> int:
+    """Supprime les events LIVRÉS plus vieux que le seuil (rétention outbox).
+
+    Les entrées dead-letter (`failed_at`) sont conservées pour inspection —
+    seules les livraisons réussies sont purgées.
+    """
+    result = await pool.execute(
+        "DELETE FROM event_outbox WHERE sent_at IS NOT NULL "
+        "AND sent_at < now() - make_interval(hours => $1)",
+        older_than_hours,
+    )
+    return int(result.split()[-1])
 
 
 async def drain_once(
@@ -111,6 +141,7 @@ async def _resolve_secret(secret_obj: Any, *, pool: asyncpg.Pool, settings: Any)
 
 
 def emission_configured(settings: Any) -> bool:
+    """Émission seedable depuis l'env : les trois réglages workflow présents."""
     return bool(
         getattr(settings, "workflow_ingestion_url", None)
         and getattr(settings, "workflow_source_id", None)
@@ -118,15 +149,28 @@ def emission_configured(settings: Any) -> bool:
     )
 
 
+def _drainable(cfg: dict[str, Any]) -> bool:
+    """La config DB permet-elle de draîner ? (activée + endpoint + secret posés)."""
+    return bool(cfg["enabled"] and cfg["ingestion_url"] and cfg["secret_ref"])
+
+
 async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
-    """Boucle de fond : ne démarre réellement que si l'émission est configurée."""
-    if not emission_configured(settings):
-        log.info("event_worker_disabled")
-        return
-    base = str(settings.workflow_ingestion_url).rstrip("/")
-    endpoint = f"{base}/events/{settings.workflow_source_id}"
+    """Boucle de fond pilotée par la config DB (reconfiguration à chaud).
+
+    À chaque tick : `outbox.reconcile` propage enabled/source/allowlist aux
+    handlers web, puis on relit la config DB. Si elle est complète et activée,
+    on draîne + purge ; sinon on reste au repos (aucun redémarrage requis).
+    """
+    from docflow.events import outbox, producer_config
+    from docflow.secrets.secret import Secret
+
     tick = getattr(settings, "event_worker_tick_seconds", 15)
-    secret: str | None = None
+    purge_hours = getattr(settings, "event_outbox_purge_after_hours", 24)
+    # Cache (ref, secret résolu) invalidé quand secret_ref change.
+    secret_cache: tuple[str, str] | None = None
+    # Endpoint courant (réaffecté à chaque tick) — poster défini une seule fois
+    # hors boucle pour ne pas capturer une variable de boucle (B023).
+    endpoint = ""
 
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
 
@@ -134,14 +178,21 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
             resp = await client.post(endpoint, content=body, headers=headers)
             return resp.status_code
 
-        log.info("event_worker_started", endpoint=endpoint)
+        log.info("event_worker_started")
         while True:
             try:
-                if secret is None:
-                    secret = await _resolve_secret(
-                        settings.workflow_hmac_secret, pool=pool, settings=settings
-                    )
-                await drain_once(pool, secret=secret, poster=poster)
+                await outbox.reconcile(pool)
+                cfg = await producer_config.get_config(pool)
+                if _drainable(cfg):
+                    # ingestion_url = l'URL d'envoi COMPLÈTE (à coller depuis
+                    # workflow) : on POST directement dessus, aucun ajout.
+                    endpoint = str(cfg["ingestion_url"])
+                    ref: str = cfg["secret_ref"]
+                    if secret_cache is None or secret_cache[0] != ref:
+                        resolved = await _resolve_secret(Secret(ref), pool=pool, settings=settings)
+                        secret_cache = (ref, resolved)
+                    await drain_once(pool, secret=secret_cache[1], poster=poster)
+                    await purge_delivered(pool, older_than_hours=purge_hours)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

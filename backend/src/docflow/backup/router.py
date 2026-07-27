@@ -10,6 +10,8 @@ from docflow.backup.schemas import (
     BackupJobRunOut,
     BackupJobUpdate,
     DumpArchiveOut,
+    RestoreGitIn,
+    RestoreGitReport,
 )
 
 router = APIRouter(prefix="/admin/backup", tags=["backup"])
@@ -77,3 +79,31 @@ async def trigger_run(slug: str, request: Request, _: None = _Auth) -> BackupJob
     changement de document, via une clé API dédiée).
     """
     return await runs.trigger_run_now(request.app.state.pool, request.app.state.settings, slug)
+
+
+@router.post(
+    "/restore-git",
+    response_model=RestoreGitReport,
+    summary="Réalimente l'instance depuis le miroir git d'un remote point",
+)
+async def restore_git(body: RestoreGitIn, request: Request, _: None = _Auth) -> RestoreGitReport:
+    """Clone le dépôt de sauvegarde du remote point et recrée workspaces,
+    types, blocs et documents. Additif et idempotent : ne supprime rien ;
+    les éléments en échec sont listés dans `errors` sans bloquer le reste."""
+    from docflow.backup.restore_remote import restore_from_remote
+
+    report = await restore_from_remote(
+        request.app.state.pool,
+        request.app.state.settings,
+        remote_point_slug=body.remote_point_slug,
+        git_base_path=body.git_base_path,
+        workspace=body.workspace,
+    )
+    return RestoreGitReport(
+        workspaces_created=report.workspaces_created,
+        blocks_created=report.blocks_created,
+        types_imported=report.types_imported,
+        docs_created=report.docs_created,
+        docs_updated=report.docs_updated,
+        errors=report.errors,
+    )

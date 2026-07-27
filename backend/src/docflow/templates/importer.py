@@ -62,8 +62,28 @@ async def _fetch_version(conn: asyncpg.Connection, wk: str, template_slug: str) 
     )
 
 
+async def _stamp_provenance(
+    conn: asyncpg.Connection, wk: str, template_slug: str, type_slugs: list[str]
+) -> None:
+    """Réconcilie la provenance : les types que ce template définit et qui n'en
+    ont pas encore (import antérieur à la colonne source_template, ou type créé
+    à la main puis adopté par le template) sont estampillés. Idempotent."""
+    await conn.execute(
+        "UPDATE functional_type SET source_template = $1"
+        " WHERE workspace_technical_key = $2 AND slug = ANY($3::text[])"
+        " AND source_template IS NULL",
+        template_slug,
+        wk,
+        type_slugs,
+    )
+
+
 async def _write_types(
-    conn: asyncpg.Connection, wk: str, resolved: list[ResolvedType], diff: DiffResult
+    conn: asyncpg.Connection,
+    wk: str,
+    template_slug: str,
+    resolved: list[ResolvedType],
+    diff: DiffResult,
 ) -> None:
     """Applique les ajouts et mises-à-jour douces dans l'ordre topologique."""
     # Slug → UUID pour remapper les parents
@@ -87,22 +107,26 @@ async def _write_types(
                 parent_id = slug_to_id.get(rt.parent)
             row = await conn.fetchrow(
                 """
-                INSERT INTO functional_type (slug, label, parent, workspace_technical_key)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO functional_type
+                    (slug, label, parent, workspace_technical_key, source_template)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id
                 """,
                 rt.slug,
                 rt.label,
                 parent_id,
                 wk,
+                template_slug,
             )
             assert row is not None
             slug_to_id[rt.slug] = row["id"]
         elif rt.slug in soft_paths:
             await conn.execute(
-                "UPDATE functional_type SET label = $1, updated_at = now()"
-                " WHERE workspace_technical_key = $2 AND slug = $3",
+                "UPDATE functional_type"
+                " SET label = $1, source_template = $2, updated_at = now()"
+                " WHERE workspace_technical_key = $3 AND slug = $4",
                 rt.label,
+                template_slug,
                 wk,
                 rt.slug,
             )
@@ -286,6 +310,11 @@ async def run_import(
         # no_op uniquement si même version ET diff réellement vide
         # (si les types ont été supprimés, diff.adds sera non vide → on réimporte)
         if current_version == template.version and not diff.adds and not diff.soft_updates:
+            if not dry_run:
+                # Réconciliation métadonnée (pas un changement de structure) :
+                # les imports antérieurs à la colonne source_template n'ont pas
+                # de provenance — l'estampiller même quand l'import est no_op.
+                await _stamp_provenance(conn, wk, template.template, [rt.slug for rt in resolved])
             log.info(
                 "template_import_no_op",
                 workspace=ws_slug,
@@ -307,7 +336,10 @@ async def run_import(
             return ImportReport(dry_run=True, no_op=False, diff=diff)
 
         async with conn.transaction():
-            await _write_types(conn, wk, resolved, diff)
+            await _write_types(conn, wk, template.template, resolved, diff)
+            # Types du template inchangés par ce diff mais sans provenance
+            # (données antérieures à la colonne source_template).
+            await _stamp_provenance(conn, wk, template.template, [rt.slug for rt in resolved])
             # Une seule entrée feed par import : signal d'invalidation globale
             # (types/propriétés créés par _write_types en SQL direct).
             await log_structure_change(conn, wk_row["workspace_technical_key"], "template", "U")

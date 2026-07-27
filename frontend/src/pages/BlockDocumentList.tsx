@@ -25,6 +25,7 @@ import {
 import { useQuerySpecState } from '../hooks/useQuerySpecState'
 import { Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
+import { ReparentDialog } from '../components/ReparentDialog'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 import { HeaderFilterPopover } from '../components/HeaderFilterPopover'
@@ -164,6 +165,10 @@ export function BlockDocumentList() {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
   const [showColMenu, setShowColMenu] = useState(false)
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
+  // Drag & drop de re-parentage : doc glissé + destination (null = racine)
+  const [reparentDrop, setReparentDrop] = useState<
+    { doc: { id: string; title: string; type: string | null }; target: string | null } | null
+  >(null)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
   const { spec, mode, setFilter, toggleSort, setProjection, setPage, reset } = useQuerySpecState()
@@ -656,6 +661,30 @@ export function BlockDocumentList() {
                 className="cursor-pointer border-b hover:bg-gray-50"
                 onClick={() => navigate(`/ws/${ws}/blocs/${block}/documents/${row.original.id}`)}
                 data-testid={`doc-row-${row.original.id}`}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(
+                    'application/x-docflow-doc',
+                    JSON.stringify({
+                      id: row.original.id,
+                      title: row.original.title,
+                      type: row.original.functional_type_slug,
+                    }),
+                  )
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes('application/x-docflow-doc')) e.preventDefault()
+                }}
+                onDrop={(e) => {
+                  const raw = e.dataTransfer.getData('application/x-docflow-doc')
+                  if (!raw) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const dragged = JSON.parse(raw) as { id: string; title: string; type: string | null }
+                  if (dragged.id === row.original.id) return
+                  setReparentDrop({ doc: dragged, target: row.original.id })
+                }}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="py-2 pr-4">
@@ -666,6 +695,38 @@ export function BlockDocumentList() {
             ))}
           </tbody>
         </table>
+      )}
+
+      <div
+        className="mt-2 rounded border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-400"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/x-docflow-doc')) e.preventDefault()
+        }}
+        onDrop={(e) => {
+          const raw = e.dataTransfer.getData('application/x-docflow-doc')
+          if (!raw) return
+          e.preventDefault()
+          const dragged = JSON.parse(raw) as { id: string; title: string; type: string | null }
+          setReparentDrop({ doc: dragged, target: null })
+        }}
+        data-testid="reparent-root-dropzone"
+      >
+        Déposer ici pour placer à la racine du bloc — ou déposer une ligne sur une autre pour changer de parent.
+      </div>
+
+      {reparentDrop && ws && block && (
+        <ReparentDialog
+          ws={ws}
+          block={block}
+          doc={reparentDrop.doc}
+          newParentId={reparentDrop.target}
+          onDone={() => {
+            setReparentDrop(null)
+            void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, block] })
+            void queryClient.invalidateQueries()
+          }}
+          onCancel={() => setReparentDrop(null)}
+        />
       )}
 
       {dialogParent !== undefined && ws && block && (

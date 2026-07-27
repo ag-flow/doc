@@ -22,6 +22,8 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        git \
+        openssh-client \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
         https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -40,10 +42,11 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --no-dev --no-install-project --frozen
 
-# Code source + migrations SQL + templates YAML
+# Code source + migrations SQL. Le répertoire templates/ n'est plus embarqué :
+# il est peuplé au runtime par la galerie (pull distant), on le crée vide.
 COPY backend/src/ ./src/
 COPY backend/migrations/ ./migrations/
-COPY templates/ ./templates/
+RUN mkdir -p ./templates
 RUN uv sync --no-dev --frozen
 
 # Assets frontend

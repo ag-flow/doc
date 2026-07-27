@@ -8,8 +8,9 @@ from docflow.auth.deps import require_authenticated
 from docflow.reactions import service
 from docflow.reactions.service import CommentCreate, CommentOut, ReactionOut, ReactionSet
 from docflow.schemas.auth import AuthUser
+from docflow.workspaces.access import require_ws_access
 
-router = APIRouter(tags=["reactions"])
+router = APIRouter(tags=["reactions"], dependencies=[Depends(require_ws_access)])
 
 _WS = "/workspaces/{ws_slug}"
 _DOC = _WS + "/documents/{doc_id}"

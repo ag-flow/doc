@@ -43,7 +43,9 @@ async def _setup(pool: asyncpg.Pool) -> None:
     )
     # statut sur epic (restricted_list, défaut a_cadrer)
     await prop_svc.create_def(
-        pool, _WS, "epic",
+        pool,
+        _WS,
+        "epic",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     for slug, label, pos in [("a_cadrer", "À cadrer", 0), ("done", "Done", 1)]:
@@ -55,16 +57,23 @@ async def _setup(pool: asyncpg.Pool) -> None:
     )
     # budget (int, required) sur epic pour couvrir un type scalaire
     await prop_svc.create_def(
-        pool, _WS, "epic",
+        pool,
+        _WS,
+        "epic",
         PropertiesDefCreate(slug="budget", label="Budget", type="int", required=True),
     )
     # statut sur feature (vocabulaire distinct)
     await prop_svc.create_def(
-        pool, _WS, "feature",
+        pool,
+        _WS,
+        "feature",
         PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list"),
     )
     await prop_svc.create_allowed_value(
-        pool, _WS, "feature", "statut",
+        pool,
+        _WS,
+        "feature",
+        "statut",
         AllowedValueCreate(slug="pret_pour_dev", label="Prêt pour dev", position=0),
     )
 
@@ -106,9 +115,7 @@ async def test_introspect_covers_descendant_types(
     assert [v.slug for v in f_statut.allowed_values or []] == ["pret_pour_dev"]
 
 
-async def test_introspect_unknown_block_404(
-    db_pool: asyncpg.Pool, test_workspace: dict
-) -> None:
+async def test_introspect_unknown_block_404(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:
         await list_block_properties(db_pool, _WS, "nope")

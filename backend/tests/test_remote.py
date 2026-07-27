@@ -412,3 +412,162 @@ def test_update_certificate_requires_slug() -> None:
             username="user",
             auth_type="certificate",
         )
+
+
+async def test_generate_tls_certificate_self_signed(db_pool: asyncpg.Pool) -> None:
+    """cert_type=tls : certificat X.509 auto-signé, clé privée chiffrée redéchiffrable."""
+    cert = await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(
+            slug="cert-tls", label="TLS", cert_type="tls", common_name="docflow-ftps"
+        ),
+        _FERNET_KEY,
+    )
+    assert cert.cert_type == "tls"
+    assert cert.public_part.startswith("-----BEGIN CERTIFICATE-----")
+    assert cert.expires_at is not None  # défaut : +10 ans
+    assert not hasattr(cert, "private_key")
+
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    parsed = x509.load_pem_x509_certificate(cert.public_part.encode())
+    cns = parsed.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    assert cns[0].value == "docflow-ftps"
+    assert parsed.issuer == parsed.subject  # auto-signé
+
+    private_key = await svc.get_certificate_private_key(db_pool, "cert-tls", _FERNET_KEY)
+    assert "PRIVATE KEY" in private_key
+
+
+async def test_generate_tls_certificate_rejects_past_expiry(db_pool: asyncpg.Pool) -> None:
+    from datetime import UTC, datetime
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.generate_certificate(
+            db_pool,
+            RemoteCertificateGenerate(
+                slug="cert-tls-past",
+                label="TLS",
+                cert_type="tls",
+                expires_at=datetime(2020, 1, 1, tzinfo=UTC),
+            ),
+            _FERNET_KEY,
+        )
+    assert exc_info.value.status_code == 422
+
+
+async def test_generate_ssh_key_with_comment(db_pool: asyncpg.Pool) -> None:
+    """common_name = commentaire de la clé publique (repère dans authorized_keys)."""
+    cert = await svc.generate_certificate(
+        db_pool,
+        RemoteCertificateGenerate(slug="cert-gen-comment", label="G", common_name="deploy@docflow"),
+        _FERNET_KEY,
+    )
+    assert cert.public_part.startswith("ssh-ed25519 ")
+    assert cert.public_part.endswith(" deploy@docflow")
+    assert "\n" not in cert.public_part
+
+
+def test_generate_common_name_single_line() -> None:
+    with pytest.raises(ValueError):
+        RemoteCertificateGenerate(slug="x-y", label="X", common_name="a\nb")
+
+
+async def test_update_point_certificate_ignores_stale_storage_fields(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Reliquat de formulaire : auth_storage='vault' sans ref avec auth certificat
+    ne doit plus violer le CHECK rp_vault_needs_ref (500) — champs neutralisés."""
+    await svc.create_certificate(db_pool, _cert(slug="cert-sftp"), _FERNET_KEY)
+    await svc.create_point(
+        db_pool,
+        RemotePointCreate(
+            slug="sftp-pt",
+            label="SFTP",
+            point_type="sftp",
+            host="h",
+            username="root",
+            auth_type="certificate",
+            certificate_slug="cert-sftp",
+        ),
+        None,
+    )
+    updated = await svc.update_point(
+        db_pool,
+        "sftp-pt",
+        RemotePointUpdate(
+            label="SFTP",
+            point_type="sftp",
+            host="h",
+            port=22,
+            username="root",
+            auth_type="certificate",
+            auth_storage="vault",  # reliquat incohérent envoyé par un client
+            certificate_slug="cert-sftp",
+        ),
+        None,
+    )
+    assert updated.auth_storage is None
+    assert updated.certificate_slug == "cert-sftp"
+
+
+def test_git_repo_normalized_from_pasted_url() -> None:
+    """Une URL collée telle quelle est réduite à org/nom — la valeur stockée
+    compose l'URL de clone (git@host:repo.git), elle doit être irréprochable."""
+    p = RemotePointCreate(
+        slug="git-pt",
+        label="Git",
+        point_type="git",
+        host="github.com",
+        username="git",
+        git_provider="github",
+        git_repo="https://github.com/ag-flow/backup-docflow.git",
+        auth_type="certificate",
+        certificate_slug="c",
+    )
+    assert p.git_repo == "ag-flow/backup-docflow"
+
+
+def test_git_repo_rejects_ambiguous_value() -> None:
+    with pytest.raises(ValueError):
+        RemotePointCreate(
+            slug="git-pt",
+            label="Git",
+            point_type="git",
+            host="github.com",
+            username="git",
+            git_provider="github",
+            git_repo="git@github.com:https://github.com/x/y.git",
+            auth_type="certificate",
+            certificate_slug="c",
+        )
+
+
+async def test_migration_0039_normalizes_legacy_git_repo(db_pool: asyncpg.Pool) -> None:
+    """La migration de données réduit une URL collée héritée à org/nom.
+
+    Insertion directe (en contournant la validation applicative, comme les
+    lignes historiques), puis rejeu de l'UPDATE de la migration — idempotent.
+    """
+    import pathlib
+
+    await db_pool.execute(
+        """
+        INSERT INTO remote_point
+            (slug, label, point_type, host, username, git_provider, git_repo,
+             git_branch, auth_type, auth_storage, auth_secret_enc)
+        VALUES ('legacy-git', 'Legacy', 'git', 'github.com', 'git', 'github',
+                'https://github.com/ag-flow/backup-docflow.git', 'main', 'pat',
+                'local', 'x'::bytea)
+        """
+    )
+    try:
+        sql = (
+            pathlib.Path(__file__).parent.parent / "migrations" / "0039_normalize_git_repo.sql"
+        ).read_text(encoding="utf-8")
+        await db_pool.execute(sql)
+        repo = await db_pool.fetchval("SELECT git_repo FROM remote_point WHERE slug = 'legacy-git'")
+        assert repo == "ag-flow/backup-docflow"
+    finally:
+        await db_pool.execute("DELETE FROM remote_point WHERE slug = 'legacy-git'")

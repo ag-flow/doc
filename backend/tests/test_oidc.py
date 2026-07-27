@@ -179,3 +179,66 @@ async def test_public_config_hidden_when_disabled(db_pool: asyncpg.Pool) -> None
     )
     public = await oidc_svc.get_public_config(db_pool)
     assert public is None
+
+
+async def test_login_config_includes_authorization_endpoint(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La mire de connexion a besoin de l'authorization_endpoint découvert."""
+    await oidc_svc.set_oidc_config(
+        db_pool,
+        OidcConfigSet(
+            issuer="https://issuer.example.com",
+            client_id="docflow",
+            client_secret_ref=_SECRET_REF,
+            enabled=True,
+        ),
+    )
+
+    async def fake_discovery(issuer: str) -> dict[str, object]:
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": "https://issuer.example.com/protocol/openid-connect/auth",
+        }
+
+    monkeypatch.setattr(oidc_svc, "fetch_discovery", fake_discovery)
+    public = await oidc_svc.get_login_config(db_pool)
+    assert public is not None
+    assert (
+        public.authorization_endpoint == "https://issuer.example.com/protocol/openid-connect/auth"
+    )
+
+
+async def test_login_config_none_when_disabled(db_pool: asyncpg.Pool) -> None:
+    await oidc_svc.set_oidc_config(
+        db_pool,
+        OidcConfigSet(
+            issuer="https://issuer.example.com",
+            client_id="docflow",
+            client_secret_ref=_SECRET_REF,
+            enabled=False,
+        ),
+    )
+    assert await oidc_svc.get_login_config(db_pool) is None
+
+
+async def test_login_config_502_when_issuer_unreachable(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await oidc_svc.set_oidc_config(
+        db_pool,
+        OidcConfigSet(
+            issuer="https://issuer.example.com",
+            client_id="docflow",
+            client_secret_ref=_SECRET_REF,
+            enabled=True,
+        ),
+    )
+
+    async def failing_discovery(issuer: str) -> dict[str, object]:
+        raise oidc_svc.OidcVerifyError("injoignable")
+
+    monkeypatch.setattr(oidc_svc, "fetch_discovery", failing_discovery)
+    with pytest.raises(HTTPException) as exc_info:
+        await oidc_svc.get_login_config(db_pool)
+    assert exc_info.value.status_code == 502

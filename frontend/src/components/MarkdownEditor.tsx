@@ -1,19 +1,22 @@
 import { useEffect, useImperativeHandle, forwardRef, useRef, useState, useCallback } from 'react'
-import { BlockNoteSchema, defaultBlockSpecs } from '@blocknote/core'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import {
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
+  type DefaultReactSuggestionItem,
 } from '@blocknote/react'
 import '@blocknote/mantine/style.css'
 import { Link } from 'lucide-react'
-import { MermaidBlock } from './MermaidBlock'
+import { useTranslation } from 'react-i18next'
 import {
-  parseMarkdownWithMermaid,
-  serializeMarkdownWithMermaid,
-  type MarkdownEditorApi,
-} from '../lib/mermaidMarkdown'
+  docflowSchema,
+  parseMarkdownWithCodecs,
+  serializeMarkdownWithCodecs,
+  slashItemsFromRegistry,
+  type CodecEditorApi,
+  type SlashContext,
+} from '../lib/blockCodecs'
 import { type DocumentSearchResult } from '../lib/api'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
@@ -31,10 +34,6 @@ function filterItems<T extends { title: string; aliases?: string[] }>(
   )
 }
 
-const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock() },
-})
-
 export interface MarkdownEditorHandle {
   getMarkdown: () => Promise<string>
 }
@@ -49,13 +48,14 @@ interface MarkdownEditorProps {
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   ({ initialContent, onDirty, wsSlug }, ref) => {
+    const { t } = useTranslation()
     // uploadFile : collage/drop d'une image → POST artefact, l'URL retournée est
     // stockée dans le bloc image et sérialisée en markdown ![nom](url).
     // resolveFileUrl : l'endpoint est authentifié Bearer, l'affichage passe par
     // un fetch authentifié + object URL (une <img> ne porte pas de header).
     const editor = useCreateBlockNote(
       {
-        schema,
+        schema: docflowSchema,
         uploadFile: wsSlug ? makeUploadFile(wsSlug) : undefined,
         resolveFileUrl: resolveArtifactUrl,
       },
@@ -73,8 +73,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       loadedRef.current = true
       let cancelled = false
       void (async () => {
-        const api = editor as unknown as MarkdownEditorApi
-        const blocks = await parseMarkdownWithMermaid(api, initialContent ?? '')
+        const api = editor as unknown as CodecEditorApi
+        const blocks = await parseMarkdownWithCodecs(api, initialContent ?? '')
         if (cancelled) return
         if (blocks.length > 0) {
           editor.replaceBlocks(editor.document, blocks as never)
@@ -85,7 +85,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     }, [editor, initialContent])
 
     useImperativeHandle(ref, () => ({
-      getMarkdown: () => serializeMarkdownWithMermaid(editor as unknown as MarkdownEditorApi),
+      getMarkdown: () => serializeMarkdownWithCodecs(editor as unknown as CodecEditorApi),
     }), [editor])
 
     const handleLinkSelect = useCallback((doc: DocumentSearchResult) => {
@@ -104,6 +104,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       key: 'link-document',
     }
 
+    // Items des composants custom, dérivés du registre de codecs.
+    const codecSlashItems = wsSlug
+      ? slashItemsFromRegistry({
+          editor: editor as unknown as SlashContext['editor'],
+          wsSlug,
+          t,
+        })
+      : []
+
     return (
       <div className="rounded border border-gray-200 bg-white" data-testid="markdown-editor">
         <BlockNoteView
@@ -116,7 +125,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
               triggerCharacter="/"
               getItems={async (query) =>
                 filterItems(
-                  [linkSlashItem, ...getDefaultReactSlashMenuItems(editor)],
+                  [
+                    linkSlashItem,
+                    ...codecSlashItems,
+                    ...getDefaultReactSlashMenuItems(editor),
+                  ] as DefaultReactSuggestionItem[],
                   query,
                 )
               }

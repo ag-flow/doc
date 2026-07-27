@@ -26,7 +26,7 @@ async def set_oidc_config(
 
 @router.get("/auth/oidc/config", response_model=OidcPublicConfig | None)
 async def get_public_oidc_config(request: Request) -> OidcPublicConfig | None:
-    return await service.get_public_config(request.app.state.pool)
+    return await service.get_login_config(request.app.state.pool)
 
 
 @router.post("/auth/oidc/callback")

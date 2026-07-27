@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 
     database_url: str
     jwt_secret: Secret
+    # Surcharge break-glass du mode OIDC-only, pilotée par /data/.env :
+    # absent (None) = suivre le réglage de la page de configuration OIDC ;
+    # true = connexion locale FORCÉE active (panne OIDC) ; false = forcée
+    # inactive. Ignorée tant qu'aucun utilisateur n'existe (setup wizard).
+    local_login_enabled: bool | None = None
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.
@@ -26,6 +31,8 @@ class Settings(BaseSettings):
     artifact_link_ttl_seconds: int = 900
     # Purge des artefacts jamais référencés (brouillons abandonnés)
     artifact_purge_after_hours: int = 24
+    # Purge des datasets jamais référencés (brouillons abandonnés)
+    dataset_purge_after_hours: int = 24
     # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
     public_base_url: str | None = None
 
@@ -39,3 +46,6 @@ class Settings(BaseSettings):
     event_source: str = "docflow"
     # Intervalle de balayage de l'outbox par le worker (secondes).
     event_worker_tick_seconds: int = 15
+    # Rétention des events LIVRÉS dans l'outbox : purgés au-delà (heures). Les
+    # entrées dead-letter (failed_at) sont conservées pour inspection.
+    event_outbox_purge_after_hours: int = 24

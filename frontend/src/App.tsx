@@ -3,10 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './lib/i18n'
 import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
+import { ToastProvider } from './components/Toast'
 import { Sidebar } from './components/Sidebar'
 import { Breadcrumb } from './components/Breadcrumb'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
+import { OidcCallback } from './pages/OidcCallback'
 import TemplateList from './pages/TemplateList'
 import WorkspaceList from './pages/WorkspaceList'
 import { WorkspaceLayout } from './pages/WorkspaceLayout'
@@ -16,11 +18,14 @@ import { BlockDocumentList } from './pages/BlockDocumentList'
 import { DocumentEditor } from './pages/DocumentEditor'
 import { WebhooksAdmin } from './pages/WebhooksAdmin'
 import { OidcAdmin } from './pages/OidcAdmin'
+import { EventsProducerAdmin } from './pages/EventsProducerAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
 import { UsersAdmin } from './pages/UsersAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
+import { ContractsAdmin } from './pages/ContractsAdmin'
+import { MyProfilePage } from './pages/MyProfilePage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -34,7 +39,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 /** Layout principal : sidebar fixe à gauche + contenu scrollable. */
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50">
       <Sidebar />
       <div className="ml-14 flex flex-1 flex-col overflow-hidden">
         <Breadcrumb />
@@ -48,6 +53,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
+  { path: '/oidc/callback', element: <OidcCallback /> },
 
   {
     path: '/templates',
@@ -99,6 +105,14 @@ const router = createBrowserRouter([
     ),
   },
   {
+    path: '/admin/events-producer',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><EventsProducerAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
     path: '/admin/users',
     element: (
       <ProtectedRoute>
@@ -111,6 +125,22 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><ApiKeysPage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/me',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><MyProfilePage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/contracts',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ContractsAdmin /></AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -130,9 +160,11 @@ const router = createBrowserRouter([
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <WorkspaceProvider>
-        <RouterProvider router={router} />
-      </WorkspaceProvider>
+      <ToastProvider>
+        <WorkspaceProvider>
+          <RouterProvider router={router} />
+        </WorkspaceProvider>
+      </ToastProvider>
     </QueryClientProvider>
   )
 }

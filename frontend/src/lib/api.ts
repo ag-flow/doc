@@ -29,7 +29,7 @@ export class ApiError extends Error {
 
 /** Endpoints d'authentification : un 401 y est un échec de login légitime, pas une
  *  session expirée. On ne doit ni purger de token ni recharger la page. */
-const AUTH_PATHS = ['/auth/login', '/auth/methods', '/setup/init-admin']
+const AUTH_PATHS = ['/auth/login', '/auth/methods', '/auth/oidc', '/setup/init-admin']
 
 function isAuthPath(path: string): boolean {
   return AUTH_PATHS.some((p) => path.startsWith(p))
@@ -154,6 +154,8 @@ export interface FunctionalType {
   parent_slug: string | null
   workspace_slug: string
   content_template: string | null
+  /** Slug du template ayant créé le type via import ; null = créé à la main. */
+  source_template: string | null
   created_at: string
   updated_at: string
 }
@@ -445,7 +447,13 @@ export const docsApi = {
   patchDocument: (
     ws: string,
     docId: string,
-    body: { title?: string; content?: string; expected_version?: number; slug?: string },
+    body: {
+      title?: string; content?: string; expected_version?: number; slug?: string
+      /** null = déplacer à la racine du bloc. */
+      parent_id?: string | null
+      /** Conversion de type à la volée lors d'un déplacement. */
+      functional_type_slug?: string
+    },
   ) => api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}`, body),
 
   getDocumentValues: (ws: string, docId: string) =>
@@ -758,6 +766,50 @@ export const secretsApi = {
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }
 
+// ── Mon profil ───────────────────────────────────────────────────────────────
+
+export interface MeProfileOut {
+  id: string
+  email: string
+  username: string | null
+  label: string
+  source: string
+  is_admin: boolean
+  /** GUID d'identité OBO (null = appels MCP non attribués). */
+  identity: string | null
+}
+
+export const meApi = {
+  get: () => api.get<MeProfileOut>('/me/profile'),
+  update: (body: { email?: string; identity?: string }) =>
+    api.patch<MeProfileOut>('/me/profile', body),
+}
+
+// ── Secrets HMAC (par utilisateur ; valeur copiable par le propriétaire) ──────
+
+export interface HmacSecretOut {
+  id: string
+  slug: string
+  label: string
+  created_at: string
+  updated_at: string
+}
+
+export interface HmacSecretCreated extends HmacSecretOut {
+  /** Valeur renvoyée UNE fois à la création (copie immédiate). */
+  value: string
+}
+
+export const hmacSecretsApi = {
+  list: () => api.get<HmacSecretOut[]>('/hmac-secrets'),
+  /** value omis → généré côté serveur. */
+  create: (body: { label: string; slug: string; value?: string }) =>
+    api.post<HmacSecretCreated>('/hmac-secrets', body),
+  /** Re-révèle la valeur (bouton copier). Réservé au propriétaire. */
+  reveal: (id: string) => api.get<{ value: string }>(`/hmac-secrets/${id}/reveal`),
+  delete: (id: string) => api.delete(`/hmac-secrets/${id}`),
+}
+
 // ── OIDC admin ──────────────────────────────────────────────────────────────
 
 export interface OidcConfigOut {
@@ -765,6 +817,8 @@ export interface OidcConfigOut {
   issuer: string
   client_id: string
   enabled: boolean
+  /** Mode OIDC-only — sans effet tant que enabled est false. */
+  disable_local_login: boolean
   created_at: string
   updated_at: string
 }
@@ -774,9 +828,56 @@ export const oidcApi = {
   set: (body: {
     issuer: string
     client_id: string
+    disable_local_login?: boolean
     client_secret_ref: string
     enabled: boolean
   }) => api.put<OidcConfigOut>('/admin/oidc', body),
+}
+
+// ── Producteur d'events workflow ─────────────────────────────────────────────
+
+export interface EventsProducerConfigOut {
+  enabled: boolean
+  ingestion_url: string | null
+  source_id: string | null
+  source_uri: string
+  allowed_events: string[]
+  /** Le secret HMAC n'est jamais renvoyé — seul ce booléen l'indique. */
+  secret_configured: boolean
+}
+
+export interface EventsProducerUpdate {
+  enabled?: boolean
+  ingestion_url?: string | null
+  source_id?: string | null
+  source_uri?: string | null
+  /** Référence vault ${vault://...} — jamais le secret en clair. */
+  secret_ref?: string | null
+  allowed_events?: string[]
+}
+
+export interface EventCatalogEntry {
+  eventCode: string
+  latestVersion: number
+  title: string
+  description: string
+  deprecated: boolean
+}
+
+export interface EventCatalog {
+  revision: string
+  specVersion: string
+  events: EventCatalogEntry[]
+}
+
+export const eventsProducerApi = {
+  get: () => api.get<EventsProducerConfigOut>('/admin/events-producer'),
+  update: (body: EventsProducerUpdate) =>
+    api.put<EventsProducerConfigOut>('/admin/events-producer', body),
+  testConnection: () =>
+    api.post<{ status: number; ok: boolean }>('/admin/events-producer/test-connection', {}),
+  /** Catalogue des eventCode émis (contrat producteur exposé via /api/schemas). */
+  catalog: () => api.get<EventCatalog>('/schemas'),
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────
@@ -821,6 +922,13 @@ export interface ContractOut {
   updated_at: string
 }
 
+export interface AuthHeaderRequirement {
+  header: string
+  value_prefix: string
+  scheme_name: string
+  scheme_type: string
+}
+
 export interface OperationOut {
   operation_id: string | null
   method: string
@@ -829,11 +937,13 @@ export interface OperationOut {
   parameters: object[]
   request_body: object | null
   body_skeleton: Record<string, unknown> | null
+  auth_headers: AuthHeaderRequirement[]
 }
 
 export interface ContractDetailOut {
   contract: ContractOut
   operations: OperationOut[]
+  servers: string[]
 }
 
 export const contractsApi = {
@@ -841,6 +951,7 @@ export const contractsApi = {
   import: (body: { label: string; source_url?: string; raw_spec: object }) =>
     api.post<ContractOut>('/admin/contracts', body),
   detail: (id: string) => api.get<ContractDetailOut>(`/admin/contracts/${id}`),
+  spec: (id: string) => api.get<Record<string, unknown>>(`/admin/contracts/${id}/spec`),
   refresh: (id: string) => api.post<ContractOut>(`/admin/contracts/${id}/refresh`, {}),
   delete: (id: string) => api.delete(`/admin/contracts/${id}`),
 }
@@ -851,6 +962,7 @@ export interface AutomationHeaderIn {
   name: string
   value?: string | null
   secret_ref?: string | null
+  value_prefix?: string | null
   required?: boolean
   enabled?: boolean
 }
@@ -860,6 +972,7 @@ export interface AutomationHeaderOut {
   name: string
   value: string | null
   secret_ref: string | null
+  value_prefix: string | null
   required: boolean
   enabled: boolean
 }
@@ -869,6 +982,14 @@ export interface AutomationOut {
   workspace_technical_key: string
   label: string
   active: boolean
+  pending_count: number
+  /** Position d'évaluation dans le workspace demandé (1..n). */
+  position: number
+  workspace_slugs: string[]
+  event_codes: string[]
+  block_slugs: string[]
+  stop_chain: boolean
+  functional_type_slugs: string[]
   on_create: boolean
   on_update: boolean
   delay_minutes: number
@@ -885,6 +1006,11 @@ export interface AutomationOut {
 export interface AutomationCreate {
   label: string
   active?: boolean
+  workspace_slugs?: string[]
+  event_codes?: string[]
+  block_slugs?: string[]
+  stop_chain?: boolean
+  functional_type_slugs?: string[]
   on_create?: boolean
   on_update?: boolean
   delay_minutes?: number
@@ -899,11 +1025,17 @@ export interface AutomationCreate {
 export interface AutomationRunOut {
   id: string
   automation_ref: string
-  document_ref: string
-  document_version: number
+  document_ref: string | null
+  document_version: number | null
   change_log_seq: number
   status: string
   executed_at: string
+  http_status: number | null
+  url: string | null
+  request_body: string | null
+  response_body: string | null
+  event_code: string | null
+  manual: boolean
 }
 
 export const automationsApi = {
@@ -918,6 +1050,37 @@ export const automationsApi = {
     api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
   replay: (ws: string, id: string, runId: string) =>
     api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
+  runNext: (ws: string, id: string) =>
+    api.post<{
+      status: string
+      http_status?: number | null
+      body?: string | null
+      event_code?: string
+      event_seq?: number
+    }>(`/workspaces/${ws}/automations/${id}/run-next`, {}),
+  advance: (ws: string, id: string) =>
+    api.post<{
+      status: string
+      http_status?: number | null
+      body?: string | null
+      event_code?: string
+      event_seq?: number
+      advanced?: boolean
+    }>(`/workspaces/${ws}/automations/${id}/advance`, {}),
+  cursorBack: (ws: string, id: string) =>
+    api.post<{ cursor: number }>(`/workspaces/${ws}/automations/${id}/cursor-back`, {}),
+  /** Ordre d'évaluation dans le workspace (drag & drop) — ids dans le nouvel ordre. */
+  reorder: (ws: string, ids: string[]) =>
+    api.put<AutomationOut[]>(`/workspaces/${ws}/automations/order`, { ids }),
+  /** Clone (config + portée + headers), créé désactivé. */
+  clone: (ws: string, id: string) =>
+    api.post<AutomationOut>(`/workspaces/${ws}/automations/${id}/clone`, {}),
+  /** Vide l'historique d'exécutions (le curseur est conservé). */
+  clearRuns: (ws: string, id: string) =>
+    api.delete<{ deleted: number }>(`/workspaces/${ws}/automations/${id}/runs`),
+  /** Émet des events de modification synthétiques (re-déclenchement d'automates). */
+  pushEvents: (selections: { workspace_slug: string; block_slugs?: string[] }[]) =>
+    api.post<{ events: number }>('/automations/push-events', { selections }),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
@@ -1005,6 +1168,10 @@ export const remoteCertsApi = {
   }) => api.post<RemoteCertificateOut>('/admin/remote/certificates', body),
   get: (slug: string) => api.get<RemoteCertificateOut>(`/admin/remote/certificates/${slug}`),
   delete: (slug: string) => api.delete(`/admin/remote/certificates/${slug}`),
+  /** Génération côté serveur (clé SSH ou certificat TLS auto-signé) : la clé
+   *  privée est chiffrée en base et n'est jamais renvoyée. */
+  generate: (body: RemoteCertificateGenerateBody) =>
+    api.post<RemoteCertificateOut>('/admin/remote/certificates/generate', body),
 }
 
 // ── Remote points ─────────────────────────────────────────────────────────────
@@ -1080,6 +1247,8 @@ export interface BackupJobOut {
   schedule_cron: string | null
   schedule_every_seconds: number | null
   git_base_path: string | null
+  include_restore_env: boolean
+  retention_count: number | null
   created_at: string
   updated_at: string
   last_run_at: string | null
@@ -1109,6 +1278,10 @@ export interface BackupJobBody {
   schedule_cron?: string | null
   schedule_every_seconds?: number | null
   git_base_path?: string | null
+  /** Dump uniquement : dépose <dump>.key (clé de chiffrement, JWT, DSN) à côté de l'archive. */
+  include_restore_env?: boolean
+  /** Dump uniquement : nombre d'archives à conserver sur le remote (null = tout garder). */
+  retention_count?: number | null
 }
 
 export const backupApi = {
@@ -1116,10 +1289,32 @@ export const backupApi = {
   createJob: (body: BackupJobBody & { slug: string }) =>
     api.post<BackupJobOut>('/admin/backup/jobs', body),
   getJob: (slug: string) => api.get<BackupJobOut>(`/admin/backup/jobs/${slug}`),
-  updateJob: (slug: string, body: BackupJobBody) =>
+  /** slug et strategy sont immuables : le backend (extra=forbid) les rejette du corps. */
+  updateJob: (slug: string, body: Omit<BackupJobBody, 'slug' | 'strategy'>) =>
     api.put<BackupJobOut>(`/admin/backup/jobs/${slug}`, body),
   deleteJob: (slug: string) => api.delete(`/admin/backup/jobs/${slug}`),
   listRuns: (slug: string) => api.get<BackupJobRunOut[]>(`/admin/backup/jobs/${slug}/runs`),
+  runJob: (slug: string) => api.post<BackupJobRunOut>(`/admin/backup/jobs/${slug}/run`, {}),
+  /** Réalimente l'instance depuis le miroir git d'un remote point (additif, idempotent). */
+  restoreGit: (body: { remote_point_slug: string; git_base_path?: string | null; workspace?: string | null }) =>
+    api.post<RestoreGitReport>('/admin/backup/restore-git', body),
+}
+
+export interface RestoreGitReport {
+  workspaces_created: number
+  blocks_created: number
+  types_imported: number
+  docs_created: number
+  docs_updated: number
+  errors: string[]
+}
+
+export interface RemoteCertificateGenerateBody {
+  slug: string
+  label: string
+  cert_type?: 'ssh_key' | 'tls'
+  common_name?: string | null
+  expires_at?: string | null
 }
 
 // ── Setup wizard ─────────────────────────────────────────────────────────────
@@ -1139,4 +1334,25 @@ export interface InitAdminRequest {
 export const setupApi = {
   methods: () => api.get<AuthMethodsOut>('/auth/methods'),
   initAdmin: (body: InitAdminRequest) => api.post<{ id: string }>('/setup/init-admin', body),
+}
+
+// ── Login OIDC (endpoints publics) ───────────────────────────────────────────
+
+export interface OidcPublicConfig {
+  issuer: string
+  client_id: string
+  enabled: boolean
+  authorization_endpoint: string | null
+}
+
+export interface OidcCallbackRequest {
+  code: string
+  redirect_uri: string
+  nonce?: string
+}
+
+export const oidcLoginApi = {
+  config: () => api.get<OidcPublicConfig | null>('/auth/oidc/config'),
+  callback: (body: OidcCallbackRequest) =>
+    api.post<{ access_token: string; token_type: string }>('/auth/oidc/callback', body),
 }

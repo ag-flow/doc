@@ -502,11 +502,12 @@ async def _mcp_identity(db_pool: asyncpg.Pool) -> tuple[object, object]:
         "Artifact MCP",
     )
     assert row is not None
+    # Superadmin : bypass de l'accès-utilisateur (workspace de test owner NULL).
     user = AuthUser(
         id=row["id"],
         email="artifact-mcp@test.local",
         label="Artifact MCP",
-        is_admin=False,
+        is_admin=True,
         validated=True,
         disabled=False,
     )
@@ -569,6 +570,108 @@ async def test_mcp_create_artifact_rejects_bad_base64(
     finally:
         reset_current_session(token)  # type: ignore[arg-type]
         await db_pool.execute("DELETE FROM app_user WHERE email = 'artifact-mcp@test.local'")
+
+
+async def test_mcp_create_artifact_from_source_url(
+    db_pool: asyncpg.Pool,
+    test_workspace: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La voie source_url télécharge côté serveur : les octets ne passent pas inline."""
+    import json
+
+    from docflow.mcp import artifact_tools
+    from docflow.mcp.session import reset_current_session
+
+    async def _fake_download(url: str, max_bytes: int) -> bytes:
+        assert url == "https://example.test/shot.png"
+        return _PNG
+
+    monkeypatch.setattr(artifact_tools, "_download_artifact_bytes", _fake_download)
+
+    _, token = await _mcp_identity(db_pool)
+    try:
+        result = json.loads(
+            (
+                await artifact_tools.handle_create_artifact(
+                    db_pool,
+                    _fake_settings(),  # type: ignore[arg-type]
+                    {
+                        "workspace_slug": "test-ws",
+                        "filename": "shot.png",
+                        "source_url": "https://example.test/shot.png",
+                    },
+                )
+            )[0].text
+        )
+        assert result["deduplicated"] is False
+        assert result["url"].endswith(result["id"])
+        assert result["size_bytes"] == len(_PNG)
+    finally:
+        reset_current_session(token)  # type: ignore[arg-type]
+        await db_pool.execute("DELETE FROM app_user WHERE email = 'artifact-mcp@test.local'")
+
+
+async def test_mcp_create_artifact_source_url_ssrf_blocked(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Une source_url visant une adresse interne est refusée par la garde SSRF."""
+    import json
+
+    from docflow.mcp import artifact_tools
+
+    result = json.loads(
+        (
+            await artifact_tools.handle_create_artifact(
+                db_pool,
+                _fake_settings(),  # type: ignore[arg-type]
+                {
+                    "workspace_slug": "test-ws",
+                    "filename": "x.png",
+                    "source_url": "http://127.0.0.1:9/x.png",
+                },
+            )
+        )[0].text
+    )
+    assert "error" in result
+    assert "source_url" in result["error"]
+
+
+async def test_mcp_create_artifact_requires_exactly_one_source(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Ni data_base64 ni source_url (ou les deux) → refus explicite."""
+    import base64
+    import json
+
+    from docflow.mcp import artifact_tools
+
+    neither = json.loads(
+        (
+            await artifact_tools.handle_create_artifact(
+                db_pool,
+                _fake_settings(),  # type: ignore[arg-type]
+                {"workspace_slug": "test-ws", "filename": "x.png"},
+            )
+        )[0].text
+    )
+    assert "error" in neither
+
+    both = json.loads(
+        (
+            await artifact_tools.handle_create_artifact(
+                db_pool,
+                _fake_settings(),  # type: ignore[arg-type]
+                {
+                    "workspace_slug": "test-ws",
+                    "filename": "x.png",
+                    "data_base64": base64.b64encode(_PNG).decode(),
+                    "source_url": "https://example.test/x.png",
+                },
+            )
+        )[0].text
+    )
+    assert "error" in both
 
 
 async def test_mcp_get_artifact_and_link(

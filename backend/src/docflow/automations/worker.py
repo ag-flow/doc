@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 import asyncpg
 import httpx
 import structlog
 
+from docflow.automations import events_query
 from docflow.automations.substitution import render_and_validate
+from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
 
 log = structlog.get_logger(__name__)
 
 _HTTP_TIMEOUT = 15.0
+# Rétention du journal d'events consommé par les automates (heures).
+_EVENT_RETENTION_HOURS = 168  # 7 jours
+# Longueur max de l'extrait du corps de réponse remonté (test « jouer l'event »).
+_BODY_EXCERPT = 500
+# Nombre de runs conservés en base par automate (historique).
+_RUN_HISTORY_KEEP = 20
+
+
+@dataclass
+class ExecResult:
+    """Résultat d'un appel d'automate : statut + détails (aperçu + historique).
+
+    `status` = 'ok'/'failed' (2xx = ok). `http_status`/`body` renseignés quand
+    l'appel HTTP a bien eu lieu ; `body` = corps/message de RÉPONSE (ou raison
+    de l'échec amont : secret, corps, URL). `request_body` = corps ENVOYÉ, avec
+    les variables déjà résolues."""
+
+    status: str
+    http_status: int | None = None
+    body: str | None = None
+    request_body: str | None = None
 
 
 # ── Résolution de secret ──────────────────────────────────────────────────────
@@ -34,17 +60,132 @@ async def resolve_secret(secret_ref: str, *, pool: asyncpg.Pool, settings: objec
     )
 
 
-# ── Contenu courant du document ───────────────────────────────────────────────
+# ── Variables exposées au template ────────────────────────────────────────────
 
 
-async def _current_content(conn: asyncpg.Connection, doc_id: uuid.UUID) -> str | None:
-    val: str | None = await conn.fetchval(
-        "SELECT content FROM document WHERE doc_technical_key = $1", doc_id
+class _Snapshot:
+    __slots__ = ("title", "content", "ws_slug", "block_slug", "doc_type")
+
+    def __init__(
+        self,
+        title: str | None,
+        content: str | None,
+        ws_slug: str | None,
+        block_slug: str | None,
+        doc_type: str | None,
+    ) -> None:
+        self.title = title
+        self.content = content
+        self.ws_slug = ws_slug
+        self.block_slug = block_slug
+        self.doc_type = doc_type
+
+
+async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapshot | None:
+    """Snapshot courant du document (None s'il n'existe plus).
+
+    Contenu = document_version à la version courante ; ws_slug/block_slug servent
+    à construire l'URL de consultation ; doc_type = type technique (md | csv).
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT d.title, d.type AS doc_type, dv.content,
+               w.slug AS ws_slug, b.slug AS block_slug
+        FROM document d
+        JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+        LEFT JOIN data_block b ON b.id = d.data_block_ref
+        LEFT JOIN document_version dv
+            ON dv.document_ref = d.doc_technical_key AND dv.version_number = d.version
+        WHERE d.doc_technical_key = $1
+        """,
+        doc_id,
     )
-    return val
+    if row is None:
+        return None
+    return _Snapshot(
+        row["title"], row["content"], row["ws_slug"], row["block_slug"], row["doc_type"]
+    )
 
 
-# ── Avance le curseur ─────────────────────────────────────────────────────────
+def _doc_url(
+    base_url: str | None,
+    doc_id: uuid.UUID | None,
+    ws_slug: str | None,
+    block_slug: str | None,
+) -> str:
+    """URL de consultation du document dans docflow.
+
+    Absolue si public_base_url est configuré, sinon chemin relatif. Vide si les
+    éléments manquent (ex. document supprimé)."""
+    if not (doc_id and ws_slug and block_slug):
+        return ""
+    path = f"/ws/{ws_slug}/blocs/{block_slug}/documents/{doc_id}"
+    return f"{base_url.rstrip('/')}{path}" if base_url else path
+
+
+def _parse_business(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _variables(
+    event_code: str,
+    business: dict[str, Any],
+    doc_id: uuid.UUID | None,
+    snap: _Snapshot | None,
+    base_url: str | None,
+) -> dict[str, str]:
+    """Variables du body_template : contenu doc + URL + propriétés de l'event.
+
+    - `{id_document}`, `{title}`, `{content}` : snapshot courant du document.
+    - `{doc_type}` : type technique du document (`md` ou `csv`).
+    - `{doc_url}` : URL de consultation du document dans docflow.
+    - `{event.code}` : l'eventCode déclencheur.
+    - `{event.<prop>}` : chaque propriété métier de l'event (documentId,
+      workspaceSlug, blockSlug, parentId, version, functionalTypeSlug…).
+    """
+    doc_ref = str(doc_id) if doc_id else str(business.get("documentId", ""))
+    variables: dict[str, str] = {
+        "id_document": doc_ref,
+        "title": snap.title or "" if snap else "",
+        "content": snap.content or "" if snap else "",
+        "doc_type": snap.doc_type or "" if snap else "",
+        "doc_url": _doc_url(
+            base_url,
+            doc_id,
+            snap.ws_slug if snap else None,
+            snap.block_slug if snap else None,
+        ),
+        "event.code": event_code,
+    }
+    for key, value in business.items():
+        variables[f"event.{key}"] = "" if value is None else str(value)
+    return variables
+
+
+# ── Curseur ───────────────────────────────────────────────────────────────────
+
+
+async def _prune_runs(conn: asyncpg.Connection, automation_id: uuid.UUID) -> None:
+    """Ne conserve que les N runs les plus récents de l'automate."""
+    await conn.execute(
+        """
+        DELETE FROM automation_run
+        WHERE automation_ref = $1 AND id NOT IN (
+            SELECT id FROM automation_run WHERE automation_ref = $1
+            ORDER BY executed_at DESC, id DESC LIMIT $2
+        )
+        """,
+        automation_id,
+        _RUN_HISTORY_KEEP,
+    )
 
 
 async def _advance(conn: asyncpg.Connection, automation_id: uuid.UUID, seq: int) -> None:
@@ -66,31 +207,33 @@ async def _advance(conn: asyncpg.Connection, automation_id: uuid.UUID, seq: int)
 async def execute(
     conn: asyncpg.Connection,
     automation: asyncpg.Record,
-    doc: asyncpg.Record,
-    version: int,
+    event: dict[str, Any],
     pool: asyncpg.Pool,
     settings: object,
-) -> str:
-    content = await _current_content(conn, doc["doc_technical_key"])
-    variables = {
-        "id_document": str(doc["doc_technical_key"]),
-        "title": doc["title"] or "",
-        "content": content or "",
-    }
+) -> ExecResult:
+    """Exécute l'appel HTTP de l'automate pour un event donné.
+
+    `event` = {event_code, document_ref (uuid|None), business (dict|json str)}.
+    """
+    business = _parse_business(event["business"])
+    doc_id: uuid.UUID | None = event["document_ref"]
+    snap = await _doc_snapshot(conn, doc_id) if doc_id is not None else None
+    base_url = effective_base_url(settings)
+    variables = _variables(event["event_code"], business, doc_id, snap, base_url)
 
     headers: dict[str, str] = {}
     header_rows = await conn.fetch(
-        "SELECT name, value, secret_ref, enabled FROM automation_header WHERE automation_ref = $1",
+        "SELECT name, value, secret_ref, value_prefix, enabled "
+        "FROM automation_header WHERE automation_ref = $1",
         automation["id"],
     )
     for h in header_rows:
         if not h["enabled"]:
             continue
+        prefix = h["value_prefix"] or ""
         if h["secret_ref"]:
             try:
-                headers[h["name"]] = await resolve_secret(
-                    h["secret_ref"], pool=pool, settings=settings
-                )
+                resolved = await resolve_secret(h["secret_ref"], pool=pool, settings=settings)
             except Exception as exc:
                 log.error(
                     "automation_secret_resolution_failed",
@@ -98,9 +241,10 @@ async def execute(
                     header=h["name"],
                     error=str(exc),
                 )
-                return "failed"
+                return ExecResult("failed", body=f"résolution du secret « {h['name']} » échouée")
+            headers[h["name"]] = prefix + resolved
         elif h["value"] is not None:
-            headers[h["name"]] = h["value"]
+            headers[h["name"]] = prefix + h["value"]
 
     body: str | None = None
     if automation["body_template"]:
@@ -109,9 +253,9 @@ async def execute(
             log.warning(
                 "automation_body_render_failed",
                 automation_id=str(automation["id"]),
-                doc_id=str(doc["doc_technical_key"]),
+                event_code=event["event_code"],
             )
-            return "failed"
+            return ExecResult("failed", body="corps JSON invalide après substitution")
         headers.setdefault("Content-Type", "application/json")
 
     try:
@@ -120,10 +264,9 @@ async def execute(
         log.warning(
             "automation_url_rejected",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
             error=str(exc),
         )
-        return "failed"
+        return ExecResult("failed", body=f"URL refusée : {exc}", request_body=body)
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -137,32 +280,28 @@ async def execute(
         log.info(
             "automation_executed",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
-            version=version,
+            event_code=event["event_code"],
+            doc_id=str(doc_id) if doc_id else None,
             http_status=resp.status_code,
             status=status,
         )
-        return status
+        return ExecResult(status, resp.status_code, resp.text[:_BODY_EXCERPT], request_body=body)
     except Exception as exc:
         log.warning(
             "automation_http_failed",
             automation_id=str(automation["id"]),
-            doc_id=str(doc["doc_technical_key"]),
+            event_code=event["event_code"],
             error=str(exc),
         )
-        return "failed"
+        return ExecResult("failed", body=str(exc), request_body=body)
 
 
 # ── Tick par automate ─────────────────────────────────────────────────────────
 
 
 async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
-    natures: list[str] = []
-    if automation["on_create"]:
-        natures.append("C")
-    if automation["on_update"]:
-        natures.append("U")
-    if not natures:
+    codes: list[str] = list(automation["event_codes"] or [])
+    if not codes:
         return
 
     async with pool.acquire() as conn:
@@ -174,94 +313,123 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
             or 0
         )
 
-        rows = await conn.fetch(
-            """
-            SELECT seq, document_ref FROM document_change_log
-            WHERE workspace_technical_key = $1
-              AND seq > $2
-              AND nature = ANY($3::text[])
-            ORDER BY seq ASC
-            LIMIT 100
-            """,
-            automation["workspace_technical_key"],
+        # Portée multi-workspaces : les events de TOUS les workspaces couverts.
+        wks: list[uuid.UUID] = [
+            r["workspace_technical_key"]
+            for r in await conn.fetch(
+                "SELECT workspace_technical_key FROM automation_workspace "
+                "WHERE automation_ref = $1",
+                automation["id"],
+            )
+        ]
+        if not wks:
+            return
+        rows = await events_query.matching_batch(
+            conn,
+            wks,
+            codes,
+            list(automation["block_slugs"] or []),
+            list(automation["functional_type_slugs"] or []),
+            automation["id"],
             cursor,
-            natures,
+            100,
         )
 
-        # Le curseur représente le plus petit `seq` non encore traité. On
-        # l'avance au fil des changements tant qu'aucun document « chaud »
-        # (dans sa fenêtre de debounce) n'a été rencontré. Dès qu'on diffère
-        # un document chaud, on gèle le curseur (`deferred = True`) afin de le
-        # retraiter à un tick ultérieur, tout en CONTINUANT à traiter les
-        # autres documents du batch : un seul document fréquemment édité ne
-        # doit pas affamer les automations du reste du workspace. Les
-        # changements traités au-delà du curseur gelé sont protégés contre un
-        # double traitement par la table `automation_run` (already_done).
+        # Le curseur = plus petit seq non traité. On l'avance tant qu'aucun
+        # document « chaud » (dans sa fenêtre de debounce) n'est rencontré ;
+        # dès qu'on diffère un document chaud, on gèle le curseur (deferred)
+        # sans bloquer le reste du batch. La table automation_run (event_seq)
+        # protège contre le double traitement des events au-delà du gel.
         deferred = False
 
         for row in rows:
-            doc = await conn.fetchrow(
-                "SELECT doc_technical_key, version, title "
-                "FROM document WHERE doc_technical_key = $1",
-                row["document_ref"],
-            )
-            if doc is None:
-                if not deferred:
-                    await _advance(conn, automation["id"], row["seq"])
-                continue
-
-            version: int = doc["version"]
+            event_seq: int = row["seq"]
 
             already_done = await conn.fetchval(
-                """
-                SELECT 1 FROM automation_run
-                WHERE automation_ref = $1
-                  AND document_ref = $2
-                  AND document_version = $3
-                """,
+                "SELECT 1 FROM automation_run WHERE automation_ref = $1 AND event_seq = $2",
                 automation["id"],
-                doc["doc_technical_key"],
-                version,
+                event_seq,
             )
             if already_done:
                 if not deferred:
-                    await _advance(conn, automation["id"], row["seq"])
+                    await _advance(conn, automation["id"], event_seq)
                 continue
 
-            if automation["delay_minutes"] > 0:
+            doc_ref: uuid.UUID | None = row["document_ref"]
+            if automation["delay_minutes"] > 0 and doc_ref is not None:
                 hot = await conn.fetchval(
                     """
-                    SELECT 1 FROM document_change_log
+                    SELECT 1 FROM document_event
                     WHERE document_ref = $1
                       AND occurred_at > now() - ($2 || ' minutes')::interval
                     LIMIT 1
                     """,
-                    doc["doc_technical_key"],
+                    doc_ref,
                     str(automation["delay_minutes"]),
                 )
                 if hot:
-                    # Document chaud : on le laisse mûrir sans avancer le
-                    # curseur au-delà de lui, mais on ne bloque pas le batch.
                     deferred = True
                     continue
 
-            status = await execute(conn, automation, doc, version, pool, settings)
+            event = {
+                "event_code": row["event_code"],
+                "document_ref": doc_ref,
+                "business": row["business"],
+            }
+            res = await execute(conn, automation, event, pool, settings)
+
+            # Chaîne de responsabilité : match + appel RÉUSSI d'un automate
+            # stop_chain → l'event est consommé, les priorités inférieures
+            # ne le traiteront pas.
+            if automation["stop_chain"] and res.status == "ok":
+                await events_query.consume(conn, event_seq, automation["id"])
+
+            version: int | None = None
+            if doc_ref is not None:
+                version = await conn.fetchval(
+                    "SELECT version FROM document WHERE doc_technical_key = $1", doc_ref
+                )
 
             await conn.execute(
                 """
                 INSERT INTO automation_run
-                    (automation_ref, document_ref, document_version, change_log_seq, status)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (automation_ref, document_ref, document_version) DO NOTHING
+                    (automation_ref, document_ref, document_version, change_log_seq,
+                     event_seq, status, http_status, url, request_body, response_body, event_code)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (automation_ref, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
                 """,
                 automation["id"],
-                doc["doc_technical_key"],
+                doc_ref,
                 version,
-                row["seq"],
-                status,
+                event_seq,
+                event_seq,
+                res.status,
+                res.http_status,
+                automation["url"],
+                res.request_body,
+                res.body,
+                row["event_code"],
             )
+            await _prune_runs(conn, automation["id"])
             if not deferred:
-                await _advance(conn, automation["id"], row["seq"])
+                await _advance(conn, automation["id"], event_seq)
+
+
+# ── Purge du journal d'events ─────────────────────────────────────────────────
+
+
+async def _purge_events(pool: asyncpg.Pool) -> None:
+    """Purge les events plus vieux que la rétention ET déjà dépassés par TOUS
+    les curseurs d'automation (aucun automate ne les retraitera)."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            DELETE FROM document_event
+            WHERE occurred_at < now() - ($1 || ' hours')::interval
+              AND seq <= COALESCE((SELECT min(last_seq) FROM automation_cursor), seq)
+            """,
+            str(_EVENT_RETENTION_HOURS),
+        )
 
 
 # ── Boucle principale ─────────────────────────────────────────────────────────
@@ -269,10 +437,17 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
 
 async def tick(pool: asyncpg.Pool, settings: object) -> None:
     async with pool.acquire() as conn:
+        # Ordre d'évaluation : la priorité par workspace (position de la table
+        # de liaison). Un automate multi-workspaces est évalué UNE fois par
+        # tick (curseur unique) — sa priorité effective est la plus haute
+        # (min des positions) parmi ses workspaces.
         automations = await conn.fetch(
-            "SELECT id, workspace_technical_key, on_create, on_update, "
-            "delay_minutes, url, http_method, body_template "
-            "FROM automation WHERE active = true"
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "functional_type_slugs, delay_minutes, url, http_method, body_template, "
+            "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
+            " WHERE aw.automation_ref = automation.id) AS prio "
+            "FROM automation WHERE active = true "
+            "ORDER BY prio, created_at, id"
         )
 
     for automation in automations:
@@ -284,6 +459,11 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
                 automation_id=str(automation["id"]),
                 error=str(exc),
             )
+
+    try:
+        await _purge_events(pool)
+    except Exception as exc:
+        log.error("automation_event_purge_failed", error=str(exc))
 
 
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:

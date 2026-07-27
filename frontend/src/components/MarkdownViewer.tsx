@@ -1,15 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { BlockNoteSchema, defaultBlockSpecs } from '@blocknote/core'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
-import { MermaidBlock } from './MermaidBlock'
+import { docflowSchema, parseMarkdownWithCodecs, type CodecEditorApi } from '../lib/blockCodecs'
 import { resolveArtifactUrl } from '../lib/artifacts'
-import { parseMarkdownWithMermaid, type MarkdownEditorApi } from '../lib/mermaidMarkdown'
-
-const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, mermaid: MermaidBlock() },
-})
 
 interface MarkdownViewerProps {
   content: string
@@ -18,7 +12,9 @@ interface MarkdownViewerProps {
 }
 
 export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
-  const editor = useCreateBlockNote({ schema, resolveFileUrl: resolveArtifactUrl })
+  // Même schéma et même parsing que l'éditeur (registre de codecs) : le chemin
+  // lecture (DocumentReader, PublicDocumentViewer) est couvert par transitivité.
+  const editor = useCreateBlockNote({ schema: docflowSchema, resolveFileUrl: resolveArtifactUrl })
   const loadedRef = useRef(false)
 
   useEffect(() => {
@@ -26,8 +22,8 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
     loadedRef.current = true
     let cancelled = false
     void (async () => {
-      const api = editor as unknown as MarkdownEditorApi
-      const blocks = await parseMarkdownWithMermaid(api, content ?? '')
+      const api = editor as unknown as CodecEditorApi
+      const blocks = await parseMarkdownWithCodecs(api, content ?? '')
       if (cancelled) return
       if (blocks.length > 0) {
         editor.replaceBlocks(editor.document, blocks as never)

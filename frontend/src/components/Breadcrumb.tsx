@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMatch, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight } from 'lucide-react'
+import { HomeNavPopover } from './HomeNavPopover'
 import { api, docsApi, type DataBlockOut, type DocumentOut, type WorkspaceOut } from '../lib/api'
 
 interface Crumb { label: string; href: string | null }
@@ -83,7 +84,9 @@ export function Breadcrumb() {
   if (crumbs.length === 0) return null
 
   return (
-    <div className="flex items-center gap-1 px-6 py-2.5 text-sm border-b border-gray-100 bg-white">
+    <div className="sticky top-0 z-30 flex items-center gap-1 px-6 py-2.5 text-sm border-b border-gray-100 bg-white">
+      <HomeNavPopover />
+      <span className="mx-1 text-gray-200">|</span>
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1">
           {i > 0 && <ChevronRight size={13} className="text-gray-300 shrink-0" />}
