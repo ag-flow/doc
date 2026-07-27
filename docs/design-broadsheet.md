@@ -112,6 +112,22 @@ focusable au clavier sans `tabIndex`. Les actions de fin de ligne vivent **hors*
 de ce bouton et apparaissent au survol *ou au focus* (`focus-within`), sinon
 elles deviennent inatteignables au clavier.
 
+## Tri et filtres dans l'URL
+
+`lib/querySpecUrl.ts` — un tri et un filtrage sont **partageables** : ils vivent
+dans l'URL (`?sort=statut:desc&f=statut:in:fait|en_cours&page=2&vue=liste`), pas
+seulement dans le state React. Les séparateurs `:` `|` `,` sont échappés dans les
+valeurs, et tout paramètre illisible est ignoré — une URL bricolée dégrade vers
+l'état par défaut au lieu de casser l'écran.
+
+L'écriture se fait en `replace` : trier une colonne n'empile pas une entrée
+d'historique. L'hydratation est un **événement d'entrée de route** (garde par
+`useRef` sur `ws/block`), sinon l'écriture relancerait la lecture en boucle.
+
+Un filtre sans résultat rend un **état vide qui se nomme** (« aucun document ne
+correspond aux filtres actifs ») avec l'action pour les relâcher — jamais une
+table blanche.
+
 ## Conventions
 
 - `.card` est réservée aux **items discrets d'un listing**, jamais à la mise

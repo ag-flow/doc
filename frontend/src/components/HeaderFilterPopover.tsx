@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Filter } from 'lucide-react'
+import { Funnel } from '@phosphor-icons/react'
 import type { FilterClause, QueryOperator } from '../lib/api'
 import { Button } from './ui/button'
 
@@ -44,6 +44,8 @@ function inputType(propType: string): 'number' | 'date' | 'text' {
 export function HeaderFilterPopover({ column, clause, onChange }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const ops = OPS_BY_TYPE[column.type] ?? ['eq']
   const active = clause !== null
@@ -55,6 +57,27 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
   const [selected, setSelected] = useState<string[]>(
     clause?.values ?? (clause?.value ? [clause.value] : []),
   )
+
+  /** Ferme et rend le focus au déclencheur : sans ça, Échap laisse le focus dans
+   *  le vide et la navigation clavier repart du début du document. */
+  function close() {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    const onClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onClick)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onClick)
+    }
+  }, [open])
 
   function openPopover() {
     // Rehydrate le brouillon depuis l'état courant avant d'afficher.
@@ -73,12 +96,12 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
     } else {
       onChange(v1 !== '' ? { op, value: v1 } : null)
     }
-    setOpen(false)
+    close()
   }
 
   function clear() {
     onChange(null)
-    setOpen(false)
+    close()
   }
 
   function toggleValue(slug: string) {
@@ -88,27 +111,29 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
   }
 
   return (
-    <span className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+    <span className="relative inline-block" ref={rootRef} onClick={(e) => e.stopPropagation()}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => (open ? setOpen(false) : openPopover())}
-        className={active ? 'text-indigo-600' : 'text-gray-300 hover:text-gray-500'}
+        onClick={() => (open ? close() : openPopover())}
+        className={active ? 'text-accent' : 'text-ink/[0.3] hover:text-ink/[0.6]'}
         title={t('documents.filter.title')}
+        aria-expanded={open}
         data-testid={`filter-btn-${column.slug}`}
         data-active={active ? 'true' : 'false'}
       >
-        <Filter size={13} fill={active ? 'currentColor' : 'none'} />
+        <Funnel size={13} weight={active ? 'fill' : 'duotone'} />
       </button>
 
       {open && (
         <div
-          className="absolute left-0 z-20 mt-1 w-56 rounded border border-gray-200 bg-white p-3 text-left shadow-lg"
+          className="dialog elev-lg absolute left-0 z-20 mt-1 w-56 gap-2 p-3 text-left"
           data-testid={`filter-popover-${column.slug}`}
         >
           {column.type === 'restricted_list' ? (
-            <div className="mb-2 max-h-48 space-y-1 overflow-y-auto">
+            <div className="dialog-scroll max-h-48 space-y-1 overflow-y-auto">
               {column.allowedValues.map((av) => (
-                <label key={av.slug} className="flex items-center gap-2 text-sm">
+                <label key={av.slug} className="flex items-center gap-2 text-[14px]">
                   <input
                     type="checkbox"
                     checked={selected.includes(av.slug)}
@@ -121,7 +146,7 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
             </div>
           ) : column.type === 'bool' ? (
             <select
-              className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+              className="input"
               value={v1}
               onChange={(e) => setV1(e.target.value)}
               data-testid={`filter-value-${column.slug}`}
@@ -134,30 +159,29 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
             <>
               {ops.length > 1 && (
                 <select
-                  className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  className="input"
                   value={op}
                   onChange={(e) => setOp(e.target.value as QueryOperator)}
                   data-testid={`filter-op-${column.slug}`}
                 >
                   {ops.map((o) => (
-                    <option key={o} value={o}>
-                      {t(`documents.filter.op.${o}`)}
-                    </option>
+                    <option key={o} value={o}>{t(`documents.filter.op.${o}`)}</option>
                   ))}
                 </select>
               )}
               <input
                 type={inputType(column.type)}
-                className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                className="input"
                 placeholder={op === 'between' ? t('documents.filter.min') : t('documents.filter.value')}
                 value={v1}
                 onChange={(e) => setV1(e.target.value)}
+                autoFocus
                 data-testid={`filter-value-${column.slug}`}
               />
               {op === 'between' && (
                 <input
                   type={inputType(column.type)}
-                  className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  className="input"
                   placeholder={t('documents.filter.max')}
                   value={v2}
                   onChange={(e) => setV2(e.target.value)}

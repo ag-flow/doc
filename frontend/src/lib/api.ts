@@ -347,6 +347,40 @@ export interface SortKey {
 /** Corps REST de POST .../blocks/{block}/query — miroir de `BlockQueryBody`
  *  (backend `schemas/query.py`). Structure partagée : rejouable telle quelle
  *  par une requête nommée (milestone ultérieur). */
+export interface ViewOut {
+  id: string
+  slug: string
+  label: string
+  layout: string
+  filter: FilterClause[]
+  sort: SortKey[]
+  group_by: string | null
+  columns: string[]
+  bloc_ref: string | null
+  owner_ref: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ViewCreateBody {
+  slug: string
+  label: string
+  layout: string
+  filter?: FilterClause[]
+  sort?: SortKey[]
+  columns?: string[]
+  bloc_ref?: string | null
+  shared?: boolean
+}
+
+/** Vues enregistrées : un jeu tri + filtres + colonnes, rappelable. */
+export const viewsApi = {
+  list: (ws: string) => api.get<ViewOut[]>(`/workspaces/${ws}/views`),
+  create: (ws: string, body: ViewCreateBody) =>
+    api.post<ViewOut>(`/workspaces/${ws}/views`, body),
+  remove: (ws: string, slug: string) => api.delete<void>(`/workspaces/${ws}/views/${slug}`),
+}
+
 export interface BlockQueryBody {
   type_slugs?: string[] | null
   filters: FilterClause[]

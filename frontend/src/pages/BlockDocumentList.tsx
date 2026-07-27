@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   flexRender,
@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table'
 import {
   docsApi,
+  viewsApi,
   type AllowedTypeOut,
   type BlockObjectsPage,
   type BlockTreeNode,
@@ -21,10 +22,17 @@ import {
   type DocumentOut,
   type FunctionalTypeRich,
   type PropertyDefRich,
+  type ViewOut,
 } from '../lib/api'
 import { useQuerySpecState } from '../hooks/useQuerySpecState'
-import { Trash2 } from 'lucide-react'
+import { readUrlState, writeUrlState } from '../lib/querySpecUrl'
+import { labelToSlug } from '../lib/slug'
+import { ArrowDown, ArrowUp, ArrowSquareOut, Plus, Trash } from '@phosphor-icons/react'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { SectionHead } from '../components/SectionHead'
+import { ActiveFilterBar } from '../components/ActiveFilterBar'
 import { ReparentDialog } from '../components/ReparentDialog'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
@@ -171,15 +179,65 @@ export function BlockDocumentList() {
   >(null)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
-  const { spec, mode, setFilter, toggleSort, setProjection, setPage, reset } = useQuerySpecState()
+  const { spec, mode, setFilter, toggleSort, setProjection, setPage, loadSpec, reset } =
+    useQuerySpecState()
 
   // Pagination + tri hiérarchique du mode browse (racines, ≤100/page).
   const [browsePage, setBrowsePage] = useState(1)
   const [browseSort, setBrowseSort] = useState<BrowseSort | null>(null)
+
+  // ── Tri et filtres dans l'URL ────────────────────────────────────────────
+  // L'URL est la forme partageable de l'état : on l'hydrate UNE fois par bloc
+  // (sinon l'écriture ci-dessous relancerait l'hydratation en boucle), puis on
+  // l'écrit à chaque changement d'état.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const hydratedFor = useRef<string | null>(null)
+
   useEffect(() => {
-    setBrowsePage(1)
-    setBrowseSort(null)
-  }, [ws, block])
+    const routeKey = `${ws}/${block}`
+    if (hydratedFor.current === routeKey) return
+    hydratedFor.current = routeKey
+
+    // Les params viennent du router (et non de window.location) : c'est la même
+    // source en navigateur, et la seule qui existe sous MemoryRouter (tests).
+    const url = readUrlState(searchParams)
+    setTreeMode(url.treeMode)
+    if (url.spec.filters.length > 0) {
+      // Filtres présents → mode requête : le tri appartient au QuerySpec.
+      loadSpec({
+        filters: url.spec.filters,
+        sort: url.spec.sort,
+        projection: null,
+        page: url.spec.page,
+        page_size: BROWSE_PAGE_SIZE,
+      })
+      setBrowseSort(null)
+      setBrowsePage(1)
+    } else {
+      // Sans filtre on reste en navigation : le tri est celui de l'arbre.
+      reset()
+      setBrowseSort(url.spec.sort[0] ? { key: url.spec.sort[0].key, dir: url.spec.sort[0].dir } : null)
+      setBrowsePage(url.spec.page)
+    }
+    // `searchParams` volontairement hors dépendances : l'hydratation est un
+    // événement d'entrée de route, pas un abonnement aux changements d'URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws, block, loadSpec, reset])
+
+  useEffect(() => {
+    if (hydratedFor.current !== `${ws}/${block}`) return
+    const next = writeUrlState({
+      spec: {
+        filters: spec.filters,
+        sort: mode === 'query' ? spec.sort : browseSort ? [browseSort] : [],
+        page: mode === 'query' ? spec.page : browsePage,
+      },
+      treeMode,
+    })
+    // Remplacement (et non push) : trier ne doit pas empiler des entrées
+    // d'historique que le bouton « retour » devrait dépiler une par une.
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true })
+  }, [spec, mode, browseSort, browsePage, treeMode, ws, block, searchParams, setSearchParams])
 
   // Clic d'entête en mode browse : cycle asc → desc → aucun, appliqué à l'arbre
   // (ne bascule pas en mode requête, contrairement à `toggleSort` du QuerySpec).
@@ -234,6 +292,62 @@ export function BlockDocumentList() {
   useEffect(() => {
     if (treePage) setExpanded(computeDefaultExpanded(treePage.roots))
   }, [treePage])
+
+  // ── Vues enregistrées ────────────────────────────────────────────────────
+  const [showSaveView, setShowSaveView] = useState(false)
+  const { data: views = [] } = useQuery<ViewOut[]>({
+    queryKey: ['views', ws],
+    queryFn: () => viewsApi.list(ws!),
+    enabled: Boolean(ws),
+    staleTime: 60_000,
+  })
+  // Les vues du bloc courant, plus celles qui ne visent aucun bloc en particulier.
+  const blocViews = useMemo(
+    () => views.filter((v) => v.bloc_ref === null || v.bloc_ref === currentBloc?.id),
+    [views, currentBloc?.id],
+  )
+
+  const saveViewMutation = useMutation({
+    mutationFn: (label: string) =>
+      viewsApi.create(ws!, {
+        slug: labelToSlug(label),
+        label,
+        layout: 'table',
+        filter: spec.filters,
+        sort: mode === 'query' ? spec.sort : browseSort ? [browseSort] : [],
+        columns: Object.entries(columnVisibility)
+          .filter(([, visible]) => visible === false)
+          .map(([id]) => id),
+        bloc_ref: currentBloc?.id ?? null,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['views', ws] })
+      setShowSaveView(false)
+    },
+  })
+
+  const deleteViewMutation = useMutation({
+    mutationFn: (slug: string) => viewsApi.remove(ws!, slug),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['views', ws] }) },
+  })
+
+  /** Rappelle une vue : filtres + tri. Sans filtre, la vue ne fait que trier
+   *  l'arbre — on ne bascule pas en mode requête pour rien. */
+  function applyView(view: ViewOut) {
+    if (view.filter.length > 0) {
+      loadSpec({
+        filters: view.filter,
+        sort: view.sort,
+        projection: null,
+        page: 1,
+        page_size: BROWSE_PAGE_SIZE,
+      })
+      setBrowseSort(null)
+    } else {
+      reset()
+      setBrowseSort(view.sort[0] ? { key: view.sort[0].key, dir: view.sort[0].dir } : null)
+    }
+  }
 
   const { data: rootAllowedTypes = [] } = useQuery<AllowedTypeOut[]>({
     queryKey: ['allowed-types', ws, block, 'root'],
@@ -431,11 +545,11 @@ export function BlockDocumentList() {
               href={docPath}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-400 hover:text-gray-700 text-sm"
+              className="text-ink/[0.4] hover:text-accent-700"
               title={t('documents.openNewTab')}
               data-testid={`open-newtab-${docId}`}
             >
-              ↗
+              <ArrowSquareOut size={14} weight="duotone" />
             </a>
             {docChildren.length > 0 && (
               <Button
@@ -476,16 +590,20 @@ export function BlockDocumentList() {
     void navigate(`/ws/${ws}/blocs/${block}/documents/${docId}`)
   }
 
-  if (isLoading) return <div className="p-8">{t('common.loading')}</div>
+  if (isLoading) return <div className="px-6 pt-11 text-muted">{t('common.loading')}</div>
 
   const isEmpty =
     mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : (treePage?.roots.length ?? 0) === 0
 
-  return (
-    <div className="p-8" data-testid="block-document-list">
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="mr-auto text-2xl font-semibold text-gray-900">{t('documents.title')}</h1>
+  const propLabelOf = (prop: string) =>
+    propColumns.find((p) => p.slug === prop)?.label ?? prop
+  const propValueLabelOf = (prop: string, value: string) =>
+    propColumns.find((p) => p.slug === prop)?.allowedValues.find((av) => av.slug === value)?.label
+    ?? value
 
+  return (
+    <div className="mx-auto max-w-[1200px] px-6 pt-11 pb-24" data-testid="block-document-list">
+      <SectionHead kicker={ws ?? ''} title={blocLabel || t('documents.title')}>
         {/* Dropdown visibilité colonnes */}
         <div className="relative">
           <Button
@@ -497,14 +615,14 @@ export function BlockDocumentList() {
           </Button>
           {showColMenu && (
             <div
-              className="absolute right-0 z-10 mt-1 min-w-40 rounded border border-gray-200 bg-white p-3 shadow-lg"
+              className="dialog elev-lg absolute right-0 z-20 mt-1 min-w-40 gap-1 p-3"
               data-testid="columns-menu"
             >
               {table
                 .getAllColumns()
                 .filter((c) => c.id !== 'title' && c.id !== 'actions')
                 .map((col) => (
-                  <label key={col.id} className="mb-1 flex items-center gap-2 text-sm">
+                  <label key={col.id} className="flex items-center gap-2 text-[14px]">
                     <input
                       type="checkbox"
                       checked={col.getIsVisible()}
@@ -528,6 +646,7 @@ export function BlockDocumentList() {
           </Button>
         )}
         <Button onClick={() => setDialogParent(null)} data-testid="add-root-btn">
+          <Plus size={16} weight="duotone" />
           {rootAllowedTypes.length === 1
             ? t('documents.addType', { type: rootAllowedTypes[0].label })
             : t('documents.add')}
@@ -535,17 +654,56 @@ export function BlockDocumentList() {
         <Button
           variant="secondary"
           onClick={() => setShowDeleteBloc(true)}
-          className="text-red-600 hover:bg-red-50"
+          className="text-accent-2-700"
           data-testid="delete-current-bloc-btn"
         >
-          <Trash2 size={14} className="mr-1" />
+          <Trash size={14} weight="duotone" />
           {t('blocs.deleteTitle')}
         </Button>
-      </div>
+      </SectionHead>
+
+      {/* Vues enregistrées : rappel d'un jeu tri + filtres, à côté du bloc. */}
+      {blocViews.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="saved-views">
+          <span className="text-[11px] uppercase tracking-[0.09em] text-ink/[0.5]">
+            {t('views.saved')}
+          </span>
+          {blocViews.map((v) => (
+            <span key={v.slug} className="tag tag-outline gap-1.5">
+              <button
+                type="button"
+                onClick={() => applyView(v)}
+                className="border-0 bg-transparent p-0 text-inherit"
+                data-testid={`apply-view-${v.slug}`}
+              >
+                {v.label}
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteViewMutation.mutate(v.slug)}
+                aria-label={`${t('views.delete')} ${v.label}`}
+                className="border-0 bg-transparent p-0 text-inherit"
+                data-testid={`delete-view-${v.slug}`}
+              >
+                <Trash size={11} weight="duotone" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <ActiveFilterBar
+        spec={spec}
+        labelOf={propLabelOf}
+        valueLabelOf={propValueLabelOf}
+        onRemoveFilter={(prop) => setFilter(prop, null)}
+        onClearAll={reset}
+        onSaveView={() => setShowSaveView(true)}
+      />
 
       {/* Pagination en haut, mode browse : racines paginées (list_block_tree, ≤100/page). */}
       {mode === 'browse' && (
-        <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="browse-pagination">
+        <div className="mb-4 flex items-center gap-3 text-[13px] text-ink/[0.55]" data-testid="browse-pagination">
           <Button
             variant="secondary"
             size="sm"
@@ -574,7 +732,7 @@ export function BlockDocumentList() {
 
       {/* Pagination en haut, mode requête : liste plate paginée serveur (≤100/page). */}
       {mode === 'query' && (
-        <div className="mb-4 flex items-center gap-3 text-sm text-gray-600" data-testid="query-pagination">
+        <div className="mb-4 flex items-center gap-3 text-[13px] text-ink/[0.55]" data-testid="query-pagination">
           <Button
             variant="secondary"
             size="sm"
@@ -605,14 +763,27 @@ export function BlockDocumentList() {
       )}
 
       {isEmpty ? (
-        <p className="text-gray-500">
-          {mode === 'query' ? t('documents.noResults') : t('documents.noDocuments')}
-        </p>
+        /* État vide explicite : un filtre trop restrictif ne rend pas une table
+           blanche, il dit pourquoi et propose de relâcher les filtres. */
+        <div className="py-24 text-center" data-testid="documents-empty">
+          <p className="mb-5 text-[16px] text-ink/[0.6]">
+            {mode === 'query' ? t('documents.emptyFiltered') : t('documents.emptyBloc')}
+          </p>
+          {mode === 'query' ? (
+            <Button variant="secondary" onClick={reset} data-testid="empty-clear-filters">
+              {t('documents.clearAll')}
+            </Button>
+          ) : (
+            <Button onClick={() => setDialogParent(null)}>
+              <Plus size={16} weight="duotone" /> {t('documents.add')}
+            </Button>
+          )}
+        </div>
       ) : (
-        <table className="w-full border-collapse" data-testid="documents-table">
+        <table className="table" data-testid="documents-table">
           <thead>
             {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b text-left text-sm font-medium text-gray-500">
+              <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const sortKey = headerSortKey(header.column.id)
                   const sortState = sortKey ? sortStateFor(sortKey) : null
@@ -622,7 +793,10 @@ export function BlockDocumentList() {
                   return (
                     <th
                       key={header.id}
-                      className={sortKey ? 'cursor-pointer select-none pb-2 pr-4' : 'pb-2 pr-4'}
+                      className={sortKey ? 'cursor-pointer select-none' : undefined}
+                      aria-sort={
+                        sortState ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : undefined
+                      }
                       onClick={
                         sortKey
                           ? (e) =>
@@ -636,8 +810,12 @@ export function BlockDocumentList() {
                       <span className="inline-flex items-center gap-1">
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {sortState && (
-                          <span className="text-xs">
-                            {sortState.dir === 'asc' ? '↑' : '↓'}
+                          /* La colonne triée porte une flèche cyan ; le rang
+                             n'apparaît que sur un tri multi-clé. */
+                          <span className="inline-flex items-center text-accent" data-testid={`sort-arrow-${sortKey}`}>
+                            {sortState.dir === 'asc'
+                              ? <ArrowUp size={12} weight="bold" />
+                              : <ArrowDown size={12} weight="bold" />}
                             {showRank ? <sup>{sortState.index + 1}</sup> : null}
                           </span>
                         )}
@@ -659,7 +837,7 @@ export function BlockDocumentList() {
             {table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className="cursor-pointer border-b hover:bg-gray-50"
+                className="cursor-pointer"
                 onClick={() => navigate(`/ws/${ws}/blocs/${block}/documents/${row.original.id}`)}
                 data-testid={`doc-row-${row.original.id}`}
                 draggable
@@ -688,7 +866,7 @@ export function BlockDocumentList() {
                 }}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="py-2 pr-4">
+                  <td key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
@@ -699,7 +877,7 @@ export function BlockDocumentList() {
       )}
 
       <div
-        className="mt-2 rounded border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-400"
+        className="mt-3 rounded-md border border-dashed border-[var(--color-divider)] px-3 py-2 text-[12px] text-ink/[0.45]"
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes('application/x-docflow-doc')) e.preventDefault()
         }}
@@ -738,6 +916,33 @@ export function BlockDocumentList() {
           onCreated={handleCreated}
           onClose={() => setDialogParent(undefined)}
         />
+      )}
+
+      {showSaveView && (
+        <div className="dialog-backdrop z-50" data-testid="save-view-dialog">
+          <form
+            className="dialog"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const label = new FormData(e.currentTarget).get('label')
+              if (typeof label === 'string' && label.trim()) saveViewMutation.mutate(label.trim())
+            }}
+          >
+            <h4 className="dialog-title">{t('views.saveTitle')}</h4>
+            <p className="dialog-body">{t('views.saveHint')}</p>
+            <Field label={t('views.namePrompt')} htmlFor="view-label">
+              <Input id="view-label" name="label" autoFocus required />
+            </Field>
+            <div className="dialog-actions">
+              <Button variant="secondary" type="button" onClick={() => setShowSaveView(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" disabled={saveViewMutation.isPending}>
+                {t('views.save')}
+              </Button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showDeleteBloc && ws && block && (

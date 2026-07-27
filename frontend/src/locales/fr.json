@@ -218,7 +218,10 @@
         "after": "après",
         "in": "parmi"
       }
-    }
+    },
+    "clearAll": "Tout effacer",
+    "emptyFiltered": "Aucun document ne correspond aux filtres actifs.",
+    "emptyBloc": "Ce bloc ne contient encore aucun document."
   },
   "editor": {
     "save": "Enregistrer",
@@ -439,5 +442,16 @@
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"
+  },
+  "views": {
+    "saveAs": "Enregistrer comme vue",
+    "saved": "Vues",
+    "namePrompt": "Nom de la vue",
+    "save": "Enregistrer",
+    "apply": "Appliquer la vue",
+    "delete": "Supprimer la vue",
+    "none": "Aucune vue enregistrée",
+    "saveTitle": "Enregistrer la vue courante",
+    "saveHint": "Le tri, les filtres et les colonnes affichées sont mémorisés."
   }
 }

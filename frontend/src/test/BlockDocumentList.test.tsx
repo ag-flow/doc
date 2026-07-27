@@ -19,11 +19,13 @@ vi.mock('../lib/api', async () => {
       getDocumentValues: vi.fn(),
       putDocumentValue: vi.fn(),
     },
+    viewsApi: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
   }
 })
 
 import {
   docsApi,
+  viewsApi,
   type BlockTreeNode,
   type BlockTreePage,
   type DocumentOut,
@@ -85,11 +87,11 @@ const emptyTreePage: BlockTreePage = {
   roots: [],
 }
 
-function renderList() {
+function renderList(url = '/ws/ws/blocs/b1/documents') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/ws/ws/blocs/b1/documents']}>
+      <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route
             path="/ws/:wsSlug/blocs/:blocSlug/documents"
@@ -106,13 +108,16 @@ describe('BlockDocumentList', () => {
     vi.clearAllMocks()
     vi.mocked(docsApi.getTypesRich).mockResolvedValue(emptyTypesRich)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(emptyTreePage)
+    vi.mocked(viewsApi.list).mockResolvedValue([])
   })
 
-  // DoD 26.1 — état vide
+  // DoD 26.1 — état vide : une phrase et l'action de création, pas une table blanche.
   it('shows empty state', async () => {
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([])
     renderList()
-    await waitFor(() => expect(screen.getByText('Aucun document')).toBeInTheDocument())
+    const empty = await screen.findByTestId('documents-empty')
+    expect(empty).toHaveTextContent('aucun document')
+    expect(empty.querySelector('button')).not.toBeNull()
   })
 
   // DoD 26.2 — arbre indenté + toggle
@@ -838,5 +843,125 @@ describe('BlockDocumentList', () => {
     // severite diverge mais statut est homogène → parent replié.
     expect(screen.queryByText('Bug A')).not.toBeInTheDocument()
     expect(screen.queryByText('Bug B')).not.toBeInTheDocument()
+  })
+})
+
+// ── Écran Documents Broadsheet : tri/filtres dans l'URL, chips, popover ──────
+
+const TYPES_WITH_STATUS: FunctionalTypeRich[] = [
+  {
+    id: 't-epic', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws',
+    source_template: null, content_template: null, created_at: '', updated_at: '',
+    properties: [
+      {
+        slug: 'statut', label: 'Statut', type: 'restricted_list', required: false,
+        behavior: null, default_value: null,
+        allowed_values: [
+          { slug: 'en_cours', label: 'En cours', color: null, position: 0 },
+          { slug: 'fait', label: 'Fait', color: null, position: 1 },
+        ],
+      },
+    ],
+  },
+]
+
+describe('BlockDocumentList — tri, filtres et URL', () => {
+  const docs = [makeDoc({ doc_technical_key: 'd1', title: 'Alpha' })]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue(TYPES_WITH_STATUS)
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      objects: [], block_slug: 'b1', page: 1, page_size: 100, total: 0, has_next: false,
+    })
+  })
+
+  it('hydrate le tri et les filtres depuis l’URL (partageable, survit au reload)', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait&sort=statut:desc')
+    // Filtre présent → mode requête, la requête serveur reçoit la clause de l'URL.
+    await waitFor(() =>
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', expect.objectContaining({
+        filters: [{ prop: 'statut', op: 'in', values: ['fait'] }],
+        sort: [{ key: 'statut', dir: 'desc' }],
+      })),
+    )
+    // Et la chip du filtre actif est affichée avec le libellé de la valeur.
+    expect(await screen.findByTestId('filter-chip-statut')).toHaveTextContent('Fait')
+  })
+
+  it('un filtre sans résultat affiche l’état vide et propose de l’effacer', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    const empty = await screen.findByTestId('documents-empty')
+    expect(empty).toHaveTextContent('Aucun document ne correspond')
+    expect(screen.getByTestId('empty-clear-filters')).toBeInTheDocument()
+  })
+
+  it('retirer la chip d’un filtre revient en navigation', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    fireEvent.click(await screen.findByTestId('filter-chip-remove-statut'))
+    await waitFor(() => expect(screen.queryByTestId('filter-chip-statut')).not.toBeInTheDocument())
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+  })
+
+  it('le popover de filtre se ferme par Échap et rend le focus au déclencheur', async () => {
+    renderList()
+    const trigger = await screen.findByTestId('filter-btn-statut')
+    fireEvent.click(trigger)
+    expect(await screen.findByTestId('filter-popover-statut')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-popover-statut')).not.toBeInTheDocument(),
+    )
+    expect(trigger).toHaveFocus()
+  })
+
+  it('le popover se ferme au clic extérieur', async () => {
+    renderList()
+    fireEvent.click(await screen.findByTestId('filter-btn-statut'))
+    expect(await screen.findByTestId('filter-popover-statut')).toBeInTheDocument()
+    fireEvent.mouseDown(document.body)
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-popover-statut')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('la colonne triée porte une flèche cyan et aria-sort', async () => {
+    // Il faut au moins une ligne : sans résultat, c'est l'état vide qui s'affiche.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      objects: [{
+        id: 'd1', title: 'Alpha', functional_type_slug: 'epic',
+        properties: [{
+          prop_slug: 'statut', type: 'restricted_list', value: null,
+          allowed_value_slug: 'fait', allowed_value_label: 'Fait',
+        }],
+      }],
+      block_slug: 'b1', page: 1, page_size: 100, total: 1, has_next: false,
+    })
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait&sort=statut:asc')
+    const arrow = await screen.findByTestId('sort-arrow-statut')
+    expect(arrow).toHaveClass('text-accent')
+    expect(arrow.closest('th')).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('enregistre la sélection courante comme vue', async () => {
+    vi.mocked(viewsApi.create).mockResolvedValue({
+      id: 'v1', slug: 'ma-vue', label: 'Ma vue', layout: 'table', filter: [], sort: [],
+      group_by: null, columns: [], bloc_ref: null, owner_ref: null, created_at: '', updated_at: '',
+    })
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    fireEvent.click(await screen.findByTestId('save-view-btn'))
+    const input = await screen.findByLabelText('Nom de la vue')
+    fireEvent.change(input, { target: { value: 'Ma vue' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() =>
+      expect(viewsApi.create).toHaveBeenCalledWith('ws', expect.objectContaining({
+        slug: 'ma-vue',
+        label: 'Ma vue',
+        filter: [{ prop: 'statut', op: 'in', values: ['fait'] }],
+      })),
+    )
   })
 })
