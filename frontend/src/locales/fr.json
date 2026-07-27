@@ -11,7 +11,28 @@
     "oidcError": "Échec de la connexion SSO",
     "pendingValidation": "Votre compte est en attente de validation par un administrateur.",
     "backToLogin": "Retour à la connexion",
-    "localDisabled": "La connexion locale est désactivée sur cette instance — utilisez le SSO."
+    "localDisabled": "La connexion locale est désactivée sur cette instance — utilisez le SSO.",
+    "kicker": "Gestion documentaire · self-hosted",
+    "hook": "La gestion documentaire dont <em>vous</em> définissez le schéma : pages markdown arborescentes et données typées, sur une structure de stockage entièrement dynamique, auto-hébergée et pilotable par vos agents.",
+    "formTitle": "Connexion",
+    "formHint": "Compte local ou fournisseur OIDC.",
+    "setupHint": "Premier démarrage ? Le wizard crée le compte administrateur.",
+    "pillars": {
+      "writeTitle": "Écrire",
+      "writeBody": "Des pages markdown organisées en arbre, éditeur riche, liens internes et backlinks automatiques.",
+      "structureTitle": "Structurer",
+      "structureBody": "Le modèle de stockage est dynamique : vous déclarez vos propres types fonctionnels — epic ⊃ feature ⊃ tâche — et leurs propriétés typées, sans migration ni ligne de code. Rien n'est câblé en dur, pas même les statuts.",
+      "operateTitle": "Exploiter",
+      "operateBody": "Tableaux triables, vues sauvegardées, export Markdown / Obsidian, automates HTTP et webhooks signés sur changement de propriété.",
+      "agentsTitle": "Piloter par agents",
+      "agentsBody": "Tout ce que fait l'interface, un agent le fait aussi : le serveur MCP et l'API exposent types, documents et propriétés. Vos agents créent le schéma, écrivent, requêtent et déclenchent les automates."
+    },
+    "suiteTitle": "Une suite de trois outils",
+    "suite": {
+      "workflowBody": "Le moteur d'orchestration. Il consomme le change feed de docflow et déclenche les traitements ; docflow lui expose ses documents et reçoit en retour statuts et résultats.",
+      "ragflowBody": "L'index sémantique. Il indexe les workspaces en continu et rend la base interrogeable en langage naturel, propriétés typées comprises."
+    },
+    "stack": "Postgres · FastAPI · React"
   },
   "nav": {
     "workspaces": "Workspaces",

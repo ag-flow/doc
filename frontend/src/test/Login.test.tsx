@@ -104,6 +104,70 @@ describe('Login', () => {
     fireEvent.click(button)
     await waitFor(() => expect(beginOidcLogin).toHaveBeenCalledTimes(1))
   })
+  it('la touche Entrée dans un champ valide le formulaire', async () => {
+    vi.mocked(api.post).mockResolvedValue({ access_token: 'tok-enter' })
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    const email = await screen.findByTestId('email-input')
+    fireEvent.change(email, { target: { value: 'a@b.com' } })
+    fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
+    // Submit natif du formulaire (ce que produit Entrée dans un input)
+    fireEvent.submit(email.closest('form')!)
+    await waitFor(() => expect(setToken).toHaveBeenCalledWith('tok-enter'))
+  })
+
+  it('l’erreur est annoncée (role=alert), sous le champ mot de passe, et le marque invalide', async () => {
+    vi.mocked(api.post).mockRejectedValue(new Error('bad credentials'))
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    const pw = screen.getByTestId('password-input')
+    fireEvent.change(pw, { target: { value: 'wrong' } })
+    fireEvent.click(screen.getByTestId('submit-button'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Identifiants invalides')
+    expect(alert).toHaveClass('field-error')
+    // Le message vit dans le même groupe de champ que le mot de passe.
+    expect(pw.closest('.field')).toContainElement(alert)
+    expect(pw).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('le compte en attente de validation est annoncé dans une région aria-live', async () => {
+    vi.mocked(api.post).mockRejectedValue({ detail: 'PendingValidation' })
+    const { container } = render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByTestId('submit-button'))
+
+    const msg = await screen.findByTestId('pending-validation')
+    // La région existe avant l'événement, sinon son apparition n'est pas lue.
+    expect(container.querySelector('[aria-live="polite"]')).toContainElement(msg)
+  })
+
+  it('OIDC : bouton secondaire séparé par du blanc, aucun filet « ou »', async () => {
+    vi.mocked(setupApi.methods).mockResolvedValue({ local: true, oidc: true, needs_setup: false })
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    )
+    const oidc = await screen.findByTestId('oidc-button')
+    expect(oidc).toHaveClass('btn-secondary')
+    expect(oidc).toHaveClass('btn-block')
+    expect(screen.queryByText('ou')).not.toBeInTheDocument()
+  })
+
   it('hides the local form and shows a notice when local login is disabled', async () => {
     vi.mocked(setupApi.methods).mockResolvedValue({
       local: false,

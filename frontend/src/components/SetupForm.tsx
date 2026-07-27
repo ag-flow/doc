@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { setupApi, setToken, api } from '../lib/api'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { Field } from './ui/field'
 
 const schema = z
   .object({
@@ -80,61 +81,63 @@ export function SetupForm() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="mb-2 text-2xl font-semibold text-gray-900">Bienvenue sur docflow</h1>
-        <p className="mb-6 text-sm text-gray-500">
+    // Premier démarrage : même composition que la connexion, sans la colonne
+    // éditoriale — il n'y a encore rien à présenter, il y a un compte à créer.
+    <div className="flex min-h-screen items-center justify-center bg-paper">
+      <div className="w-full max-w-[340px] px-6">
+        <h3 className="mb-1">Bienvenue sur docflow</h3>
+        <p className="mb-6 text-[13px] text-ink/[0.6]">
           Créez le compte administrateur pour commencer.
         </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Nom d'utilisateur
-            </label>
+        <form onSubmit={handleSubmit} className="grid gap-3.5">
+          <Field label="Nom d'utilisateur" htmlFor="setup-username" error={errors.username}>
             <Input
+              id="setup-username"
               value={values.username}
               onChange={set('username')}
               autoComplete="username"
+              aria-invalid={errors.username ? 'true' : undefined}
               autoFocus
             />
-            {errors.username && <p className="mt-1 text-xs text-red-600">{errors.username}</p>}
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+          </Field>
+          <Field label="Email" htmlFor="setup-email" error={errors.email}>
             <Input
+              id="setup-email"
               type="email"
               value={values.email}
               onChange={set('email')}
               autoComplete="email"
+              aria-invalid={errors.email ? 'true' : undefined}
             />
-            {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Mot de passe</label>
+          </Field>
+          <Field label="Mot de passe" htmlFor="setup-password" error={errors.password}>
             <Input
+              id="setup-password"
               type="password"
               value={values.password}
               onChange={set('password')}
               autoComplete="new-password"
+              aria-invalid={errors.password ? 'true' : undefined}
             />
-            {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password}</p>}
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Confirmer le mot de passe
-            </label>
+          </Field>
+          <Field
+            label="Confirmer le mot de passe"
+            htmlFor="setup-confirm"
+            error={errors.confirm_password}
+          >
             <Input
+              id="setup-confirm"
               type="password"
               value={values.confirm_password}
               onChange={set('confirm_password')}
               autoComplete="new-password"
+              aria-invalid={errors.confirm_password ? 'true' : undefined}
             />
-            {errors.confirm_password && (
-              <p className="mt-1 text-xs text-red-600">{errors.confirm_password}</p>
-            )}
+          </Field>
+          <div aria-live="polite" className="empty:hidden">
+            {globalError && <p className="field-error">{globalError}</p>}
           </div>
-          {globalError && <p className="text-sm text-red-600">{globalError}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" block disabled={loading}>
             {loading ? 'Création…' : 'Créer le compte administrateur'}
           </Button>
         </form>
