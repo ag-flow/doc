@@ -1,13 +1,14 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: light dark;
-}
+/* Source Serif 4 en fonte variable, servie par notre propre build (aucun CDN :
+   l'instance est self-hosted et peut tourner hors réseau). L'italique est une
+   vraie italique dessinée, au poids du texte courant. */
+@import "@fontsource-variable/source-serif-4/index.css";
+@import "@fontsource-variable/source-serif-4/wght-italic.css";
 
-body {
-  margin: 0;
-  font-family: system-ui, sans-serif;
-}
+@import "./styles/tokens.css";
+@import "./styles/base.css";
+@import "./styles/components.css";
 
 /* Lecture « wiki » : prose aérée pour le rendu lecture seule d'un document.
    BlockNote (mantine) rend le contenu sous .bn-editor ; on élargit l'interligne
@@ -32,11 +33,11 @@ body {
   margin-bottom: 0.4em;
 }
 
-/* Ascenseur discret pour les zones scrollables des dialogues : fin, gris
-   clair, sans flèches — n'apparaît qu'au besoin. */
+/* Ascenseur discret pour les zones scrollables des dialogues : fin, teinté
+   encre, sans flèches — n'apparaît qu'au besoin. */
 .dialog-scroll {
   scrollbar-width: thin;               /* Firefox */
-  scrollbar-color: #e5e7eb transparent;
+  scrollbar-color: var(--color-neutral-300) transparent;
 }
 .dialog-scroll::-webkit-scrollbar {
   width: 6px;
@@ -45,9 +46,9 @@ body {
   background: transparent;
 }
 .dialog-scroll::-webkit-scrollbar-thumb {
-  background: #e5e7eb;
-  border-radius: 3px;
+  background: var(--color-neutral-300);
+  border-radius: var(--radius-lg);
 }
 .dialog-scroll::-webkit-scrollbar-thumb:hover {
-  background: #d1d5db;
+  background: var(--color-neutral-400);
 }

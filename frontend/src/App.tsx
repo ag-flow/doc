@@ -26,6 +26,7 @@ import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
 import { ContractsAdmin } from './pages/ContractsAdmin'
 import { MyProfilePage } from './pages/MyProfilePage'
+import { DesignSystemPage } from './pages/DesignSystemPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -149,6 +150,15 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><RemotePage /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  // Référence interne du système de design : hors navigation, route directe.
+  {
+    path: '/design-system',
+    element: (
+      <ProtectedRoute>
+        <DesignSystemPage />
       </ProtectedRoute>
     ),
   },

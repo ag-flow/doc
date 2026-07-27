@@ -1,0 +1,92 @@
+/* Broadsheet — tokens. Source de vérité : la maquette de référence.
+   Tout ce qui est couleur, police, espacement, rayon ou ombre se déclare ICI
+   et nulle part ailleurs : aucun hex ni nom de police en dur dans les écrans.
+
+   Les noms exposés à Tailwind (@theme) génèrent à la fois la variable CSS et
+   l'utilitaire : `--color-accent` → `bg-accent`, `text-accent`, `border-accent`. */
+
+@theme {
+  /* ── Rôles ──────────────────────────────────────────────────────────── */
+  --color-paper: #f3f2f2; /* fond de page (le papier) */
+  --color-surface: #eae9e9; /* aplat surélevé : carte, champ, dialogue */
+  --color-ink: #201e1d; /* encre */
+  --color-accent: #0088b0; /* cyan — SEULE couleur interactive */
+  --color-accent-2: #d6006c; /* magenta — erreur / échec, rien d'autre */
+
+  /* ── Rampes tonales ─────────────────────────────────────────────────────
+     Générées en OKLCH sur une échelle de clarté partagée : le même cran de
+     deux rôles a la même valeur visuelle. */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  --color-accent-100: #e9f8ff;
+  --color-accent-200: #cbeeff;
+  --color-accent-300: #99e0ff;
+  --color-accent-400: #62c5ee;
+  --color-accent-500: #38a6cf;
+  --color-accent-600: #1186ac;
+  --color-accent-700: #006786;
+  --color-accent-800: #004961;
+  --color-accent-900: #0a303e;
+
+  --color-accent-2-100: #fff1f4;
+  --color-accent-2-200: #ffdee6;
+  --color-accent-2-300: #ffc0d0;
+  --color-accent-2-400: #ff90b1;
+  --color-accent-2-500: #ff458e;
+  --color-accent-2-600: #d82071;
+  --color-accent-2-700: #aa0b56;
+  --color-accent-2-800: #790e3d;
+  --color-accent-2-900: #4b1528;
+
+  /* ── Typographie ────────────────────────────────────────────────────────
+     Une seule famille pour les titres et le texte : le sérif EST le chrome.
+     Repli sérif (et non system-ui) pour rester éditorial si la police tombe. */
+  --font-heading: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, serif;
+  --font-body: var(--font-heading);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Espacement ─────────────────────────────────────────────────────────
+     Densité 1.25× : la base Tailwind passe de 4px à 5px, donc `p-2` = 10px,
+     `gap-3` = 15px, `p-4` = 20px. Ne pas resserrer — l'aération fait système. */
+  --spacing: 5px;
+
+  /* ── Rayons ─────────────────────────────────────────────────────────── */
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --radius-lg: 4px;
+
+  /* ── Élévation ──────────────────────────────────────────────────────────
+     Ombres teintées encre, jamais noir pur. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);
+}
+
+:root {
+  /* Filet : encre à 16 %, jamais un gris opaque — il doit prendre le papier. */
+  --color-divider: color-mix(in srgb, var(--color-ink) 16%, transparent);
+
+  /* Poids des titres (variable font : réglable sans changer de fichier). */
+  --font-heading-weight: 600;
+
+  /* Alias des noms de la maquette : le CSS repris tel quel de la maquette
+     référence --color-bg / --color-text, on les fait pointer sur les rôles. */
+  --color-bg: var(--color-paper);
+  --color-text: var(--color-ink);
+
+  /* Échelle d'espacement nommée, pour le CSS de composant hors Tailwind. */
+  --space-1: 5px;
+  --space-2: 10px;
+  --space-3: 15px;
+  --space-4: 20px;
+  --space-6: 30px;
+  --space-8: 40px;
+}
