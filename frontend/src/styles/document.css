@@ -26,6 +26,23 @@
 }
 .doc-sheet > * { max-width: 72ch; }
 
+/* Le corps du document (éditeur BlockNote ou rendu de lecture) exploite TOUTE
+   la surface de la feuille : pas de page blanche dans la page. Le wrapper perd
+   sa bordure et son fond propres — la feuille porte déjà le cadre. */
+.doc-sheet > [data-testid='markdown-editor'],
+.doc-sheet > .wiki-prose {
+  max-width: none;
+  width: 100%;
+}
+.doc-sheet > [data-testid='markdown-editor'] {
+  border: 0;
+  background: transparent;
+}
+.doc-sheet .bn-editor,
+.doc-sheet .bn-container {
+  background: transparent;
+}
+
 .doc-sheet h1 { font-size: 32px; margin: 40px 0 12px; }
 .doc-sheet h2 { font-size: 26px; margin: 34px 0 10px; }
 .doc-sheet h3 { font-size: 21px; margin: 28px 0 8px; }
