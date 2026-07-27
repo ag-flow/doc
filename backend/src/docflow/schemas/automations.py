@@ -109,6 +109,10 @@ class AutomationOut(BaseModel):
     headers: list[AutomationHeaderOut]
     created_at: datetime
     updated_at: datetime
+    # Dernière exécution (renseignées par le listing ; None sinon).
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+    last_run_http_status: int | None = None
 
 
 class AutomationRunOut(BaseModel):

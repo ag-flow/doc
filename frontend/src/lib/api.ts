@@ -1023,6 +1023,10 @@ export interface AutomationHeaderOut {
 }
 
 export interface AutomationOut {
+  /** Dernière exécution — renseignées par le listing, null sinon. */
+  last_run_at?: string | null
+  last_run_status?: string | null
+  last_run_http_status?: number | null
   id: string
   workspace_technical_key: string
   label: string

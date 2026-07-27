@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { CaretRight, Plus, Trash, X } from '@phosphor-icons/react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
@@ -56,16 +56,16 @@ function WorkspaceBlocksNode({
     queryFn: () => docsApi.getBlocks(wsSlug),
     staleTime: 60_000,
   })
-  if (isLoading) return <p className="ml-6 text-xs text-gray-400">Chargement des blocs…</p>
-  if (blocks.length === 0) return <p className="ml-6 text-xs text-gray-400">Aucun bloc</p>
+  if (isLoading) return <p className="text-muted ml-6 text-[12px]">Chargement des blocs…</p>
+  if (blocks.length === 0) return <p className="text-muted ml-6 text-[12px]">Aucun bloc</p>
   return (
-    <div className="ml-6 space-y-0.5 border-l border-gray-100 pl-3">
+    <div className="ml-6 space-y-0.5 border-l border-[var(--color-divider)] pl-3">
       {blocks.map((b) => (
         <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
           <input type="checkbox" checked={blockSlugs.includes(b.slug)}
             onChange={() => onToggleBlock(b.slug)} />
           <span className="truncate">{b.label}</span>
-          <span className="ml-auto shrink-0 rounded bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">
+          <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
             {b.functional_type_slug}
           </span>
         </label>
@@ -74,20 +74,34 @@ function WorkspaceBlocksNode({
   )
 }
 
-/** Section repliable de l'onglet Events (ouverte par défaut). */
-function Section({ title, hint, children }: {
+/** Section repliable de l'onglet Events. Repliée, elle tient sur une ligne
+ *  avec son résumé ; dépliée, son corps défile dans une hauteur bornée au lieu
+ *  de pousser le reste de l'onglet. */
+function Section({ title, hint, summary, defaultOpen = true, maxBody = false, children }: {
   title: string
   hint?: string
+  /** Résumé affiché quand la section est repliée (« 2 workspaces · 3 blocs »). */
+  summary?: string
+  defaultOpen?: boolean
+  /** Borne la hauteur du corps (~200px) avec défilement interne. */
+  maxBody?: boolean
   children: React.ReactNode
 }) {
   return (
-    <details open className="group rounded border border-gray-200">
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
-        <ChevronRight size={14} className="shrink-0 text-gray-400 transition-transform group-open:rotate-90" />
+    <details open={defaultOpen} className="group rounded-md border border-[var(--color-divider)]">
+      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[14px] font-[600] [font-family:var(--font-heading)] hover:bg-ink/[0.04] [&::-webkit-details-marker]:hidden">
+        <CaretRight size={13} weight="duotone" className="shrink-0 text-ink/[0.4] transition-transform group-open:rotate-90" />
         {title}
-        {hint && <span className="font-normal text-xs text-gray-400">{hint}</span>}
+        {summary && (
+          <span className="font-normal text-[12px] text-accent-700 [font-family:var(--font-body)] group-open:hidden">
+            {summary}
+          </span>
+        )}
+        {hint && <span className="font-normal text-[11px] text-ink/[0.45] [font-family:var(--font-body)]">{hint}</span>}
       </summary>
-      <div className="border-t border-gray-100 p-2">{children}</div>
+      <div className={`border-t border-[var(--color-divider)] p-2.5 ${maxBody ? 'dialog-scroll max-h-[200px] overflow-y-auto' : ''}`}>
+        {children}
+      </div>
     </details>
   )
 }
@@ -95,6 +109,14 @@ function Section({ title, hint, children }: {
 export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }: Props) {
   const jsonRef = useRef<JsonEditorHandle>(null)
   const [tab, setTab] = useState<Tab>('label')
+
+  // Le focus revient à l'élément qui a ouvert la modale (le bouton de la ligne) :
+  // capturé au montage, restauré au démontage — Échap comme Annuler.
+  const openerRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null
+    return () => openerRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -237,30 +259,33 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
 
   const TabBtn = ({ id, children }: { id: Tab; children: React.ReactNode }) => (
     <button type="button" onClick={() => setTab(id)}
-      className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-        tab === id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+      className={`border-0 border-b-2 bg-transparent px-4 py-2 text-[14px] font-[600] [font-family:var(--font-heading)] transition-colors ${
+        tab === id
+          ? 'border-b-accent text-accent-700 [border-bottom-style:solid]'
+          : 'border-b-transparent text-ink/[0.55] hover:text-ink [border-bottom-style:solid]'
       }`} data-testid={`auto-tab-${id}`}>
       {children}
     </button>
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
-      onClick={onClose}>
+    <div className="dialog-backdrop z-50 overflow-y-auto" onClick={onClose}>
       {/* Taille FIXE (celle du plus grand onglet, « Appel ») : changer d'onglet
-          ne fait pas sauter la fenêtre ; le contenu scrolle à l'intérieur. */}
-      <div className="my-4 flex h-[min(94vh,980px)] w-full max-w-2xl flex-col gap-4 rounded-lg bg-white p-6 shadow-xl"
+          ne fait pas sauter la fenêtre ; seul le corps défile, les onglets et
+          les actions restent visibles (DoD). */}
+      <div className="dialog my-4 h-[min(94vh,980px)] w-full !max-w-2xl"
+        role="dialog" aria-modal="true"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">{initial ? 'Modifier' : 'Nouvel automate'}</h2>
+          <h4 className="dialog-title m-0">{initial ? 'Modifier' : 'Nouvel automate'}</h4>
           <button type="button" onClick={onClose} title="Fermer" aria-label="Fermer"
-            className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            className="border-0 bg-transparent p-1 text-ink/[0.4] transition-colors hover:text-ink"
             data-testid="auto-dialog-close">
-            <X size={18} />
+            <X size={18} weight="bold" />
           </button>
         </div>
 
-        <div className="flex gap-1 border-b border-gray-200">
+        <div className="flex gap-1 border-b border-[var(--color-divider)]">
           <TabBtn id="label">Libellé</TabBtn>
           <TabBtn id="events">Events déclencheurs</TabBtn>
           <TabBtn id="call">Appel</TabBtn>
@@ -271,14 +296,14 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         {tab === 'label' && (
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium">Libellé</label>
+              <label className="mb-1 block text-[12px] text-ink/[0.7]">Libellé</label>
               <Input value={label} onChange={(e) => setLabel(e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Délai débounce (minutes)</label>
+              <label className="mb-1 block text-[12px] text-ink/[0.7]">Délai débounce (minutes)</label>
               <Input type="number" min={0} value={delay} onChange={(e) => setDelay(e.target.value)} className="w-32" />
             </div>
-            <p className="text-xs text-gray-400">
+            <p className="text-[12px] text-ink/[0.5]">
               La règle est créée <strong>désactivée</strong> ; activez-la ensuite via le toggle de la carte.
             </p>
           </div>
@@ -287,8 +312,14 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         {/* ── Onglet Events déclencheurs + filtres ── */}
         {tab === 'events' && (
           <div className="space-y-4">
-            <Section title="Couverture de déclenchement"
-              hint="workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous">
+            <Section
+              title="Couverture de déclenchement"
+              defaultOpen={false}
+              maxBody
+              summary={`${workspaceSlugs.length} workspace${workspaceSlugs.length > 1 ? 's' : ''} · ${
+                blockSlugs.length > 0 ? `${blockSlugs.length} bloc${blockSlugs.length > 1 ? 's' : ''}` : 'tous les blocs'
+              }`}
+              hint="au moins un workspace ; blocs cochés = filtre, aucun = tous">
               <div className="space-y-1.5">
                 {workspaces.map((w) => {
                   const covered = workspaceSlugs.includes(w.slug)
@@ -298,7 +329,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                         <input type="checkbox" checked={covered}
                           onChange={() => setWorkspaceSlugs((p) => toggle(p, w.slug))} />
                         <span className="truncate">{w.label}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-gray-400">{w.slug}</span>
+                        <span className="shrink-0 text-[10px] text-accent-700 [font-family:var(--font-mono)]">{w.slug}</span>
                       </label>
                       {covered && (
                         <WorkspaceBlocksNode
@@ -311,12 +342,13 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   )
                 })}
               </div>
-              {workspaceSlugs.length === 0 && (
-                <p className="mt-1 text-xs text-red-600" data-testid="auto-ws-empty">
-                  Un automate doit couvrir au moins un workspace.
-                </p>
-              )}
             </Section>
+
+            {workspaceSlugs.length === 0 && (
+              <p className="field-error m-0" data-testid="auto-ws-empty" role="alert">
+                Un automate doit couvrir au moins un workspace.
+              </p>
+            )}
 
             <Section title="Events déclencheurs">
               <div className="grid grid-cols-2 gap-1.5">
@@ -326,7 +358,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                       checked={eventCodes.includes(ev.eventCode)}
                       onChange={() => setEventCodes((p) => toggle(p, ev.eventCode))} />
                     <span>{ev.title}
-                      <span className="block font-mono text-[10px] text-gray-400">{ev.eventCode}</span>
+                      <span className="block text-[10px] text-accent-700 [font-family:var(--font-mono)]">{ev.eventCode}</span>
                     </span>
                   </label>
                 ))}
@@ -335,7 +367,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
 
             <Section title="Filtre type de document" hint="combiné en ET — vide = tous">
               <div className="grid grid-cols-2 gap-1">
-                {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
+                {types.length === 0 && <p className="text-[12px] text-ink/[0.5]">Aucun type</p>}
                 {types.map((t) => (
                   <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
                     <input type="checkbox" checked={typeSlugs.includes(t.slug)}
@@ -346,12 +378,12 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               </div>
             </Section>
 
-            <label className="flex items-start gap-2 text-sm text-gray-700" data-testid="auto-stop-chain">
+            <label className="flex items-start gap-2 text-[14px]" data-testid="auto-stop-chain">
               <input type="checkbox" className="mt-0.5" checked={stopChain}
                 onChange={(e) => setStopChain(e.target.checked)} />
               <span>
                 Stopper la chaîne si déclenché
-                <span className="block text-xs text-gray-500">
+                <span className="block text-[12px] text-ink/[0.55]">
                   Si cet automate matche l'event ET que l'appel réussit, les automates de
                   priorité inférieure ne traitent pas cet event.
                 </span>
@@ -365,8 +397,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium">Contrat OpenAPI</label>
-                <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Contrat OpenAPI</label>
+                <select className="input"
                   value={contractId} onChange={(e) => { setContractId(e.target.value); setOperationId('') }}
                   data-testid="auto-contract-select">
                   <option value="">— aucun —</option>
@@ -374,8 +406,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Opération</label>
-                <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Opération</label>
+                <select className="input"
                   value={operationId} onChange={(e) => selectOperation(e.target.value)} disabled={!contractId}
                   data-testid="auto-operation-select">
                   <option value="">— sélectionner —</option>
@@ -387,12 +419,12 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </select>
               </div>
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium">URL</label>
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">URL</label>
                 <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" data-testid="auto-url" />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Méthode</label>
-                <select className="rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Méthode</label>
+                <select className="input w-auto"
                   value={method} onChange={(e) => setMethod(e.target.value)}>
                   {['GET','POST','PUT','PATCH','DELETE'].map((m) => <option key={m}>{m}</option>)}
                 </select>
@@ -407,7 +439,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                     <button key={v} type="button" onClick={() => copyVariable(v)}
                       title="Copier dans le presse-papier"
                       className={`rounded px-2 py-0.5 font-mono text-xs transition-colors ${
-                        copiedVar === v ? 'bg-green-100 text-green-700' : 'bg-gray-100 hover:bg-gray-200'
+                        copiedVar === v ? 'bg-accent-100 text-accent-800' : 'bg-surface hover:bg-neutral-300/60'
                       }`}>
                       {copiedVar === v ? '✓ copié' : `{${v}}`}
                     </button>
@@ -421,8 +453,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               <div className="mb-2 flex items-center justify-between">
                 <label className="text-sm font-medium">Headers</label>
                 <button type="button" onClick={() => setHeaders((h) => [...h, newRow()])}
-                  className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
-                  <Plus size={12} /> Ajouter
+                  className="flex items-center gap-1 border-0 bg-transparent p-0 text-[12px] text-accent-700 hover:underline">
+                  <Plus size={12} weight="duotone" /> Ajouter
                 </button>
               </div>
               {headers.map((h, i) => (
@@ -441,7 +473,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   {h.isSecret ? (
                     <select value={h.secretRef}
                       onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
-                      className="flex-1 rounded border border-gray-300 px-2 py-2 text-xs"
+                      className="input flex-1 text-[12px]"
                       data-testid={`header-secret-${i}`}>
                       <option value="">— choisir un secret —</option>
                       {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
@@ -455,7 +487,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                       placeholder="Valeur" className="flex-1" />
                   )}
                   <button type="button" onClick={() => setHeaders((arr) => arr.filter((_, j) => j !== i))}
-                    className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                    className="border-0 bg-transparent p-0 text-ink/[0.4] hover:text-accent-2-700"><Trash size={14} weight="duotone" /></button>
                 </div>
               ))}
             </div>
@@ -463,14 +495,15 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         )}
         </div>
 
-        {error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
-            data-testid="auto-dialog-error">
-            Échec de l'enregistrement : {error}
-          </p>
-        )}
+        <div aria-live="polite" className="empty:hidden">
+          {error && (
+            <p className="field-error m-0" data-testid="auto-dialog-error">
+              Échec de l'enregistrement : {error}
+            </p>
+          )}
+        </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
+        <div className="dialog-actions m-0 border-t border-[var(--color-divider)] pt-3">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
           <Button onClick={submit} disabled={saving || !label.trim() || !url.trim() || workspaceSlugs.length === 0}>
             {saving ? 'Enregistrement…' : 'Enregistrer'}

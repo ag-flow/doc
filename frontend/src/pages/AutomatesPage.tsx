@@ -1,12 +1,19 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Trash2, Pencil, Plus, FileJson, Play, SkipForward, SkipBack, GripVertical, Copy, Send } from 'lucide-react'
+import {
+  CaretDown, CaretRight, Copy, DotsSixVertical, FileCode, PaperPlaneTilt, PencilSimple,
+  Play, Plus, SkipBack, SkipForward, Trash,
+} from '@phosphor-icons/react'
 import { Button } from '../components/ui/button'
 import { AutomationDialog } from '../components/AutomationDialog'
 import { PushEventsDialog, type PushSelection } from '../components/PushEventsDialog'
 import { AutomationRunHistory } from '../components/AutomationRunHistory'
 import { useToast } from '../components/Toast'
+import { SectionHead } from '../components/SectionHead'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EmptyState, TableSkeleton } from '../components/ui/states'
+import { relativeDate } from '../lib/relativeDate'
 import { automationsApi, type AutomationOut, type AutomationCreate } from '../lib/api'
 
 // ── Page principale ───────────────────────────────────────────────────────────
@@ -42,7 +49,10 @@ export function AutomatesPage() {
 
   const deleteAutoMut = useMutation({
     mutationFn: (id: string) => automationsApi.delete(ws!, id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
+    onSuccess: () => {
+      setDeleteTarget(null)
+      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+    },
   })
 
   const toggleActiveMut = useMutation({
@@ -127,6 +137,7 @@ export function AutomatesPage() {
   const clearRunsMut = useMutation({
     mutationFn: (id: string) => automationsApi.clearRuns(ws!, id),
     onSuccess: (res, id) => {
+      setClearRunsTarget(null)
       toast(`Historique vidé (${res.deleted} exécution${res.deleted > 1 ? 's' : ''})`, 'success')
       void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
     },
@@ -134,6 +145,8 @@ export function AutomatesPage() {
   })
 
   const [pushOpen, setPushOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AutomationOut | null>(null)
+  const [clearRunsTarget, setClearRunsTarget] = useState<AutomationOut | null>(null)
   const pushEventsMut = useMutation({
     mutationFn: (selections: PushSelection[]) => automationsApi.pushEvents(selections),
     onSuccess: (res) => {
@@ -181,10 +194,17 @@ export function AutomatesPage() {
   const isSaving = createMut.isPending || updateMut.isPending
 
   return (
-    <div className="p-6 max-w-4xl">
-      <h1 className="text-xl font-bold mb-3">Automates sortants</h1>
+    <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+      <SectionHead kicker={ws ?? ''} title="Automates">
+        <Button variant="secondary" onClick={() => setPushOpen(true)} data-testid="push-events-btn">
+          <PaperPlaneTilt size={15} weight="duotone" /> Push events
+        </Button>
+        <Button onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
+          <Plus size={15} weight="duotone" /> Nouvel automate
+        </Button>
+      </SectionHead>
 
-      <p className="text-sm text-gray-500 mb-6 max-w-2xl">
+      <p className="mb-4 max-w-[70ch] text-[16px] leading-[1.6] text-ink/[0.68]">
         Les automates déclenchent des appels vers des API externes quand un document change
         dans ce workspace. Contrairement aux webhooks qui envoient un payload JSON brut, un
         automate suit un <strong>contrat OpenAPI</strong> importé : vous sélectionnez
@@ -194,38 +214,30 @@ export function AutomatesPage() {
         traitement sans écrire de code d'intégration.
       </p>
 
-      <p className="mb-6 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600">
-        <FileJson size={15} className="shrink-0 text-gray-400" />
+      <p className="mb-8 flex items-center gap-2 text-[13px] text-ink/[0.6]">
+        <FileCode size={15} weight="duotone" className="shrink-0 text-accent-700" />
         Les <strong>contrats OpenAPI</strong> sont partagés entre workspaces.
-        <Link to="/contracts" className="font-medium text-indigo-600 hover:underline">
-          Gérer les contrats →
-        </Link>
+        <Link to="/contracts">Gérer les contrats →</Link>
       </p>
 
       {/* ── Automates ── */}
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold">Automates</h2>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setPushOpen(true)}
-              data-testid="push-events-btn">
-              <Send size={13} className="mr-1.5" />
-              Push events
-            </Button>
-            <Button size="sm" onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
-              <Plus size={13} className="mr-1.5" />
-              Nouvel automate
-            </Button>
-          </div>
-        </div>
         {aLoading ? (
-          <p className="text-sm text-gray-400">Chargement…</p>
+          <TableSkeleton rows={4} columns={4} />
         ) : automations.length === 0 ? (
-          <p className="text-sm text-gray-500">Aucun automate dans ce workspace.</p>
+          <EmptyState
+            testId="no-automations"
+            message="Aucun automate dans ce workspace."
+            action={
+              <Button onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
+                <Plus size={15} weight="duotone" /> Nouvel automate
+              </Button>
+            }
+          />
         ) : (
-          <div className="space-y-2">
+          <ul className="m-0 list-none p-0">
             {automations.map((a) => (
-              <div
+              <li
                 key={a.id}
                 draggable
                 onDragStart={() => setDragId(a.id)}
@@ -233,125 +245,165 @@ export function AutomatesPage() {
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(a.id)}
                 data-testid={`auto-card-${a.id}`}
-                className={`rounded-md border bg-white overflow-hidden transition-colors ${
-                  dragId === a.id ? 'border-indigo-400 opacity-60' : 'border-gray-200'
+                className={`border-b border-[var(--color-divider)] transition-opacity ${
+                  dragId === a.id ? 'opacity-50' : ''
                 }`}
               >
-                <div className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="flex shrink-0 cursor-grab items-center text-gray-300 hover:text-gray-500 active:cursor-grabbing"
-                    title="Glisser pour changer l'ordre d'évaluation (propre à ce workspace)">
-                    <GripVertical size={14} />
+                <div className="flex items-center gap-2.5 px-1 py-3">
+                  <span
+                    className="flex shrink-0 cursor-grab items-center text-ink/[0.25] hover:text-ink/[0.6] active:cursor-grabbing"
+                    title="Glisser pour changer l'ordre d'évaluation (propre à ce workspace)"
+                  >
+                    <DotsSixVertical size={15} weight="duotone" />
                   </span>
-                  <span className="w-5 shrink-0 text-right font-mono text-[11px] text-gray-400"
-                    title="Position d'évaluation dans ce workspace">
-                    {a.position}
+                  <span
+                    className="w-6 shrink-0 text-right text-[13px] font-[600] text-ink/[0.38] [font-family:var(--font-heading)]"
+                    title="Position d'évaluation dans ce workspace"
+                  >
+                    {String(a.position).padStart(2, '0')}
                   </span>
-                  <button type="button" onClick={() => setExpandedAuto(expandedAuto === a.id ? null : a.id)}
-                    className="text-gray-400 hover:text-gray-700 shrink-0">
-                    {expandedAuto === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedAuto(expandedAuto === a.id ? null : a.id)}
+                    className="shrink-0 border-0 bg-transparent p-0 text-ink/[0.4] hover:text-ink"
+                    aria-expanded={expandedAuto === a.id}
+                    aria-label={`Détail de ${a.label}`}
+                  >
+                    {expandedAuto === a.id
+                      ? <CaretDown size={15} weight="duotone" />
+                      : <CaretRight size={15} weight="duotone" />}
                   </button>
-                  <div className="flex-1 min-w-0">
-                    <span className={`font-medium text-sm ${!a.active ? 'text-gray-400' : ''}`}>{a.label}</span>
-                    <span className="ml-2 text-xs text-gray-400">
+                  <div className="min-w-0 flex-1">
+                    <span className={`text-[16px] font-[600] [font-family:var(--font-heading)] ${!a.active ? 'text-ink/[0.4]' : ''}`}>
+                      {a.label}
+                    </span>
+                    <span className="ml-2.5 text-[12px] text-ink/[0.5]">
                       {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
+                    {/* Dernière exécution : code en cyan si succès, magenta si échec. */}
+                    {a.last_run_at && (
+                      <span className="ml-2.5 text-[12px] text-ink/[0.45]" data-testid={`last-run-${a.id}`}>
+                        {relativeDate(a.last_run_at)}
+                        {a.last_run_http_status != null && (
+                          <span className={a.last_run_status === 'ok' ? 'text-accent-700' : 'text-accent-2-700'}>
+                            {' '}· {a.last_run_http_status}
+                          </span>
+                        )}
+                      </span>
+                    )}
                     {runMsg[a.id] && (
-                      <span className={`ml-2 text-xs ${runMsg[a.id].err ? 'text-red-600' : 'text-indigo-600'}`}>
+                      <span className={`ml-2.5 text-[12px] ${runMsg[a.id].err ? 'text-accent-2-700' : 'text-accent-700'}`}>
                         {runMsg[a.id].text}
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {/* Events en attente (au-delà du curseur) */}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {/* Events en attente (au-delà du curseur) — magenta : il y a à faire. */}
                     {a.pending_count > 0 ? (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                      <span className="tag tag-accent-2"
                         title="Events non encore évalués (au-delà du curseur)"
                         data-testid={`pending-${a.id}`}>
                         {a.pending_count} en attente
                       </span>
                     ) : (
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-                        data-testid={`pending-${a.id}`}>
+                      <span className="tag tag-neutral" data-testid={`pending-${a.id}`}>
                         à jour
                       </span>
                     )}
                     {/* Revenir à l'event précédent (recule le curseur) */}
-                    <button type="button" title="Revenir à l'event précédent"
+                    <Button variant="icon" size="sm" title="Revenir à l'event précédent"
                       onClick={() => cursorBackMut.mutate(a.id)} disabled={cursorBackMut.isPending}
-                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
                       data-testid={`cursor-back-${a.id}`}>
-                      <SkipBack size={14} />
-                    </button>
+                      <SkipBack size={14} weight="duotone" />
+                    </Button>
                     {/* Jouer l'event courant SANS avancer le curseur (test) */}
-                    <button type="button" title="Jouer l'event courant (test, sans avancer)"
+                    <Button variant="icon" size="sm" title="Jouer l'event courant (test, sans avancer)"
                       onClick={() => runNextMut.mutate(a.id)} disabled={runNextMut.isPending}
-                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
                       data-testid={`run-next-${a.id}`}>
-                      <Play size={14} />
-                    </button>
+                      <Play size={14} weight="duotone" />
+                    </Button>
                     {/* Envoyer l'appel ET passer au suivant (avance le curseur) */}
-                    <button type="button" title="Envoyer l'appel et passer au suivant"
+                    <Button variant="icon" size="sm" title="Envoyer l'appel et passer au suivant"
                       onClick={() => advanceMut.mutate(a.id)} disabled={advanceMut.isPending}
-                      className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
                       data-testid={`advance-${a.id}`}>
-                      <SkipForward size={14} />
-                    </button>
+                      <SkipForward size={14} weight="duotone" />
+                    </Button>
                     {/* Toggle d'activation */}
                     <button type="button" role="switch" aria-checked={a.active}
                       onClick={() => toggleActiveMut.mutate({ id: a.id, active: !a.active })}
                       disabled={toggleActiveMut.isPending}
                       title={a.active ? 'Actif — cliquer pour arrêter' : 'Inactif — cliquer pour activer'}
-                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                        a.active ? 'bg-indigo-600' : 'bg-gray-300'
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-0 transition-colors ${
+                        a.active ? 'bg-accent' : 'bg-neutral-300'
                       }`}
                       data-testid={`toggle-active-${a.id}`}>
-                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-paper shadow-sm transition-transform ${
                         a.active ? 'translate-x-[18px]' : 'translate-x-0.5'
                       }`} />
                     </button>
-                    <button type="button" title="Cloner (créé désactivé)"
+                    <Button variant="icon" size="sm" title="Cloner (créé désactivé)"
                       onClick={() => cloneMut.mutate(a.id)} disabled={cloneMut.isPending}
-                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
                       data-testid={`clone-${a.id}`}>
-                      <Copy size={14} />
-                    </button>
-                    <button type="button" title="Modifier"
-                      onClick={() => { setDialogAuto(a); setDialogError(null) }}
-                      className="rounded p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50">
-                      <Pencil size={14} />
-                    </button>
-                    <button type="button" title="Supprimer"
-                      onClick={() => { if (confirm(`Supprimer « ${a.label} » ?`)) deleteAutoMut.mutate(a.id) }}
-                      className="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50">
-                      <Trash2 size={14} />
-                    </button>
+                      <Copy size={14} weight="duotone" />
+                    </Button>
+                    <Button variant="icon" size="sm" title="Modifier"
+                      onClick={() => { setDialogAuto(a); setDialogError(null) }}>
+                      <PencilSimple size={14} weight="duotone" />
+                    </Button>
+                    <Button variant="icon" size="sm" title="Supprimer" className="text-accent-2-700"
+                      onClick={() => setDeleteTarget(a)}>
+                      <Trash size={14} weight="duotone" />
+                    </Button>
                   </div>
                 </div>
                 {expandedAuto === a.id && (
-                  <div className="border-t border-gray-100 px-4 py-3">
-                    <p className="text-xs font-mono text-gray-500 mb-1 truncate">{a.url}</p>
+                  <div className="px-9 pb-4">
+                    <p className="mb-1 truncate text-[12px] text-ink/[0.55] [font-family:var(--font-mono)]">{a.url}</p>
                     {a.body_template && (
-                      <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto max-h-24 mb-2">{a.body_template}</pre>
+                      <pre className="mb-2 max-h-24 overflow-x-auto rounded-md bg-ink/[0.05] p-2 text-[12px]">{a.body_template}</pre>
                     )}
-                    <div className="mt-2 mb-1 flex items-center justify-between">
-                      <p className="text-xs font-semibold text-gray-500">Historique des exécutions</p>
-                      <button type="button"
-                        onClick={() => { if (confirm('Vider l\'historique de cet automate ?')) clearRunsMut.mutate(a.id) }}
+                    <div className="mt-3 mb-1 flex items-center justify-between">
+                      <h6 className="m-0 text-ink/[0.5]">Historique des exécutions</h6>
+                      <Button variant="ghost" size="sm" className="text-accent-2-700"
+                        onClick={() => setClearRunsTarget(a)}
                         disabled={clearRunsMut.isPending}
-                        className="text-xs text-gray-400 hover:text-red-600 hover:underline disabled:opacity-50"
                         data-testid={`clear-runs-${a.id}`}>
                         Vider l'historique
-                      </button>
+                      </Button>
                     </div>
                     <AutomationRunHistory ws={ws!} automationId={a.id} />
                   </div>
                 )}
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </section>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          testId="delete-auto-dialog"
+          title="Supprimer l'automate"
+          message={`Supprimer « ${deleteTarget.label} » ? Son historique d'exécutions part avec lui.`}
+          confirmLabel="Supprimer l'automate"
+          pending={deleteAutoMut.isPending}
+          onConfirm={() => deleteAutoMut.mutate(deleteTarget.id)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {clearRunsTarget && (
+        <ConfirmDialog
+          testId="clear-runs-dialog"
+          title="Vider l'historique"
+          message={`Effacer l'historique des exécutions de « ${clearRunsTarget.label} » ? Le curseur d'events n'est pas modifié.`}
+          confirmLabel="Vider l'historique"
+          pending={clearRunsMut.isPending}
+          onConfirm={() => clearRunsMut.mutate(clearRunsTarget.id)}
+          onCancel={() => setClearRunsTarget(null)}
+        />
+      )}
 
       {pushOpen && (
         <PushEventsDialog

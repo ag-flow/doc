@@ -139,6 +139,7 @@ def _row_to_out(
     workspace_slugs: list[str] | None = None,
     position: int = 0,
 ) -> AutomationOut:
+    keys = row.keys()
     return AutomationOut(
         id=row["id"],
         workspace_technical_key=row["workspace_technical_key"],
@@ -162,6 +163,11 @@ def _row_to_out(
         headers=headers,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_run_at=row["last_run_at"] if "last_run_at" in keys else None,
+        last_run_status=row["last_run_status"] if "last_run_status" in keys else None,
+        last_run_http_status=(
+            row["last_run_http_status"] if "last_run_http_status" in keys else None
+        ),
     )
 
 
@@ -196,7 +202,14 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationO
             "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
             "a.block_slugs, a.functional_type_slugs, a.stop_chain, a.on_create, a.on_update, "
             "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-            "a.body_template, a.created_at, a.updated_at, aw.position "
+            "a.body_template, a.created_at, a.updated_at, aw.position, "
+            # Dernière exécution : sous-requête sur le run le plus récent.
+            "(SELECT r.executed_at FROM automation_run r WHERE r.automation_ref = a.id "
+            " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_at, "
+            "(SELECT r.status FROM automation_run r WHERE r.automation_ref = a.id "
+            " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_status, "
+            "(SELECT r.http_status FROM automation_run r WHERE r.automation_ref = a.id "
+            " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_http_status "
             "FROM automation a "
             "JOIN automation_workspace aw ON aw.automation_ref = a.id "
             "WHERE aw.workspace_technical_key = $1 "

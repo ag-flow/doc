@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { CaretDown, CaretRight } from '@phosphor-icons/react'
 import { automationsApi, type AutomationRunOut } from '../lib/api'
 
 interface Props {
@@ -84,11 +84,11 @@ export function AutomationRunHistory({ ws, automationId }: Props) {
     onError: () => setReplayingId(null),
   })
 
-  if (isLoading) return <p className="py-2 text-xs text-gray-400">Chargement…</p>
-  if (!runs.length) return <p className="py-2 text-xs text-gray-400">Aucune exécution.</p>
+  if (isLoading) return <p className="text-muted py-2 text-[12px]">Chargement…</p>
+  if (!runs.length) return <p className="text-muted py-2 text-[12px]">Aucune exécution.</p>
 
   return (
-    <div className="mt-2 divide-y divide-gray-100 rounded border border-gray-100">
+    <div className="mt-2 divide-y divide-[var(--color-divider)] rounded-md border border-[var(--color-divider)]">
       {runs.map((run) => {
         const isOpen = expanded === run.id
         const httpLabel = run.http_status != null ? `HTTP ${run.http_status}` : run.status
@@ -96,61 +96,57 @@ export function AutomationRunHistory({ ws, automationId }: Props) {
           <div key={run.id} data-testid={`run-${run.id}`}>
             <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
               <button type="button" onClick={() => setExpanded(isOpen ? null : run.id)}
-                className="text-gray-400 hover:text-gray-700">
-                {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                className="border-0 bg-transparent p-0 text-ink/[0.4] hover:text-ink">
+                {isOpen ? <CaretDown size={13} weight="duotone" /> : <CaretRight size={13} weight="duotone" />}
               </button>
               <span
                 title={httpHint(run.http_status)}
-                className={`inline-block cursor-help rounded-full px-2 py-0.5 font-medium ${
-                  run.status === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                }`}
+                className={`tag cursor-help ${run.status === 'ok' ? 'tag-accent' : 'tag-accent-2'}`}
               >
                 {run.status === 'ok' ? '✓' : '✗'} {httpLabel}
               </span>
               {run.event_code && (
-                <span className="font-mono text-[10px] text-gray-400">
+                <span className="text-[10px] text-ink/[0.45] [font-family:var(--font-mono)]">
                   {run.event_code.split('.')[2] ?? run.event_code}
                 </span>
               )}
               {run.manual && (
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                  manuel
-                </span>
+                <span className="tag tag-neutral text-[10px]">manuel</span>
               )}
-              <span className="font-mono text-gray-400 truncate">
+              <span className="truncate text-ink/[0.45] [font-family:var(--font-mono)]">
                 {run.document_ref ? `${run.document_ref.slice(0, 8)}…` : '—'}
                 {run.document_version != null ? ` v${run.document_version}` : ''}
               </span>
-              <span className="ml-auto text-gray-400">{fmtDate(run.executed_at)}</span>
+              <span className="ml-auto text-ink/[0.45]">{fmtDate(run.executed_at)}</span>
               {run.status === 'failed' && (
                 <button type="button"
                   disabled={replayingId === run.id || replayMutation.isPending}
                   onClick={() => { setReplayingId(run.id); replayMutation.mutate(run.id) }}
-                  className="rounded px-2 py-0.5 font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">
+                  className="btn btn-ghost btn-sm">
                   {replayingId === run.id ? 'Rejeu…' : 'Rejouer'}
                 </button>
               )}
             </div>
 
             {isOpen && (
-              <div className="space-y-2 border-t border-gray-100 bg-gray-50 px-3 py-2 text-xs">
+              <div className="space-y-2 border-t border-[var(--color-divider)] bg-surface px-3 py-2 text-[12px]">
                 {run.url && (
                   <div>
-                    <span className="font-semibold text-gray-500">URL</span>
-                    <p className="font-mono text-gray-700 break-all">{run.url}</p>
+                    <h6 className="m-0 text-ink/[0.5]">URL</h6>
+                    <p className="m-0 break-all text-ink/[0.75] [font-family:var(--font-mono)]">{run.url}</p>
                   </div>
                 )}
                 <div>
-                  <span className="font-semibold text-gray-500">Corps envoyé (variables résolues)</span>
-                  <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-white p-2 font-mono text-[11px] text-gray-700">
+                  <h6 className="m-0 text-ink/[0.5]">Corps envoyé (variables résolues)</h6>
+                  <pre className="mt-0.5 max-h-40 overflow-auto rounded-sm bg-paper p-2 text-[11px] [font-family:var(--font-mono)]">
                     {pretty(run.request_body) || '(aucun corps)'}
                   </pre>
                 </div>
                 <div>
-                  <span className={`font-semibold ${run.status === 'ok' ? 'text-emerald-600' : 'text-red-600'}`}>
+                  <h6 className={`m-0 ${run.status === 'ok' ? 'text-accent-700' : 'text-accent-2-700'}`}>
                     {run.status === 'ok' ? 'Réponse' : 'Erreur / réponse'}
-                  </span>
-                  <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-white p-2 font-mono text-[11px] text-gray-700">
+                  </h6>
+                  <pre className="mt-0.5 max-h-40 overflow-auto rounded-sm bg-paper p-2 text-[11px] [font-family:var(--font-mono)]">
                     {pretty(run.response_body) || '(aucune réponse)'}
                   </pre>
                 </div>
