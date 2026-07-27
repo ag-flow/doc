@@ -115,3 +115,58 @@ def test_rest_access_unknown_ws_keeps_usual_404(
         user = _login(client, _USER)
         # Workspace inexistant : 404 habituel (aucune fuite de différenciation).
         assert client.get("/api/workspaces/nope-ws/blocks", headers=user).status_code == 404
+
+
+def test_global_search_scoped_to_accessible_workspaces(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Écart n°3 : la recherche globale ne voit que les workspaces accessibles."""
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _setup_users_and_ws(client, test_schema_url)
+        user = _login(client, _USER)
+
+        # Un document dans le workspace (créé par l'admin, avec bloc).
+        async def _seed() -> None:
+            conn = await asyncpg.connect(test_schema_url)
+            try:
+                wk = await conn.fetchval(
+                    "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
+                )
+                type_id = await conn.fetchval(
+                    "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+                    "VALUES ('page', 'Page', $1) RETURNING id",
+                    wk,
+                )
+                block_id = await conn.fetchval(
+                    "INSERT INTO data_block (slug, label, functional_type_ref, "
+                    "workspace_technical_key) VALUES ('blk', 'Bloc', $1, $2) RETURNING id",
+                    type_id,
+                    wk,
+                )
+                await conn.execute(
+                    "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+                    "workspace_technical_key) VALUES ('Rapport annuel', $1, $2, $3)",
+                    type_id,
+                    block_id,
+                    wk,
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_seed())
+
+        # Superadmin : trouve le document, avec workspace et bloc.
+        r = client.get("/api/search/documents?q=rapport", headers=admin)
+        assert r.status_code == 200
+        hits = r.json()
+        assert [h["title"] for h in hits] == ["Rapport annuel"]
+        assert hits[0]["workspace_slug"] == _WS
+        assert hits[0]["block_slug"] == "blk"
+
+        # Non-membre : rien (fail closed), pas d'erreur.
+        r = client.get("/api/search/documents?q=rapport", headers=user)
+        assert r.status_code == 200
+        assert r.json() == []
+
+        # Sans token : refusé.
+        assert client.get("/api/search/documents?q=rapport").status_code == 401

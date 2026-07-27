@@ -96,3 +96,23 @@ class DocumentOut(BaseModel):
     exposed: bool
     created_at: datetime
     updated_at: datetime
+    # Auteur de la dernière écriture (libellé affichable) ; null = inconnu.
+    updated_by: str | None = None
+
+
+class DocumentVersionInfo(BaseModel):
+    """Entrée de l'historique des versions (sans le contenu, volumineux)."""
+
+    version_number: int
+    title: str
+    content_length: int
+    created_at: datetime
+
+
+class DocumentVersionOut(BaseModel):
+    """Une version précise, avec son contenu (lecture seule)."""
+
+    version_number: int
+    title: str
+    content: str | None
+    created_at: datetime

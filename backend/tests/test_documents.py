@@ -446,3 +446,60 @@ async def test_board_query_functional_type_only(
     docs = await doc_svc.list_documents(db_pool, _WS, functional_type="epic")
     assert all(d.functional_type_slug == "epic" for d in docs)
     assert {d.title for d in docs} == {"Epic 1", "Epic 2"}
+
+
+async def test_document_versions_history(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Écart n°2 : l'historique des versions est listable et chaque version lisible."""
+    from docflow.schemas.document import DocumentUpdate
+
+    doc = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="V1", content="# un", block_id=test_block["id"])
+    )
+    await doc_svc.update_document(
+        db_pool, _WS, doc.doc_technical_key,
+        DocumentUpdate(title="V2", content="# deux", expected_version=1),
+    )
+
+    versions = await doc_svc.list_document_versions(db_pool, _WS, doc.doc_technical_key)
+    assert [v.version_number for v in versions] == [2, 1]
+    assert versions[1].title == "V1"
+    assert versions[1].content_length == len("# un")
+
+    v1 = await doc_svc.get_document_version(db_pool, _WS, doc.doc_technical_key, 1)
+    assert v1.content == "# un"
+
+    # Version inexistante → 404 explicite.
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.get_document_version(db_pool, _WS, doc.doc_technical_key, 99)
+    assert exc.value.status_code == 404
+
+
+async def test_document_author_recorded(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Écart n°4 : l'auteur de la dernière écriture est porté par le document."""
+    from docflow.schemas.document import DocumentUpdate
+
+    doc = await doc_svc.create_document(
+        db_pool, _WS,
+        DocumentCreate(title="Signé", block_id=test_block["id"]),
+        author="G. Aubert",
+    )
+    assert doc.updated_by == "G. Aubert"
+
+    updated = await doc_svc.update_document(
+        db_pool, _WS, doc.doc_technical_key,
+        DocumentUpdate(title="Signé v2", content="x", expected_version=1),
+        author="Agent RAG",
+    )
+    assert updated.updated_by == "Agent RAG"
+
+    # Écriture sans auteur connu : on GARDE le dernier auteur (coalesce),
+    # on ne l'efface pas.
+    kept = await doc_svc.update_document(
+        db_pool, _WS, doc.doc_technical_key,
+        DocumentUpdate(title="Signé v3", content="y", expected_version=2),
+    )
+    assert kept.updated_by == "Agent RAG"

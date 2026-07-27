@@ -116,6 +116,7 @@ const doc: DocumentOut = {
   exposed: false,
   created_at: '',
   updated_at: '',
+  updated_by: null,
 }
 
 describe('DocumentEditor', () => {

@@ -104,6 +104,8 @@ async def _assemble_page(
             id=str(d["id"]),
             title=d["title"],
             functional_type_slug=d["functional_type_slug"],
+            updated_at=d["updated_at"] if "updated_at" in d.keys() else None,
+            updated_by=d["updated_by"] if "updated_by" in d.keys() else None,
             properties=values.get(d["id"], []),
         )
         for d in docs
@@ -119,7 +121,8 @@ async def _assemble_page(
 
 
 _SELECT_DOCS = """
-SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug
+SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug,
+       d.updated_at, d.updated_by
 FROM document d
 LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
 WHERE d.data_block_ref = $1
@@ -347,7 +350,8 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
         limit_ph = p.add(spec.page_size)
         offset_ph = p.add((spec.page - 1) * spec.page_size)
         docs = await conn.fetch(
-            f"SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug "
+            f"SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug, "
+            f"d.updated_at, d.updated_by "
             "FROM document d LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref "
             f"WHERE {where_sql} {order_sql} LIMIT {limit_ph} OFFSET {offset_ph}",
             *p.values,

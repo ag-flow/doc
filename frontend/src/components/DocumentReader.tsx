@@ -61,7 +61,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
               </span>
             )}
             <span>
-              v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}
+              v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}{doc.updated_by ? ` par ${doc.updated_by}` : ''}
             </span>
             <span className="flex-1" />
             {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}

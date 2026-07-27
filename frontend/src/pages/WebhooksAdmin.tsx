@@ -11,6 +11,7 @@ import { SectionHead } from '../components/SectionHead'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
 import { HmacSecretsTab } from '../components/HmacSecretsTab'
+import { relativeDate } from '../lib/relativeDate'
 
 type FormState = {
   label: string
@@ -293,6 +294,8 @@ function WebhooksTab() {
               <th>{t('webhooks.colTarget', 'Cible')}</th>
               <th>{t('webhooks.events')}</th>
               <th>{t('webhooks.colState', 'État')}</th>
+              <th>{t('webhooks.colLastDelivery', 'Dernier envoi')}</th>
+              <th>{t('webhooks.colFailures', 'Échecs 24 h')}</th>
               <th>{t('webhooks.colTest', 'Dernier test')}</th>
               <th />
             </tr>
@@ -325,6 +328,35 @@ function WebhooksTab() {
                       {wh.active ? t('webhooks.statusActive') : t('webhooks.statusInactive')}
                     </span>
                   </button>
+                </td>
+                <td className="text-[13px]" data-testid={`delivery-cell-${wh.id}`}>
+                  {wh.last_delivery_at ? (
+                    <span
+                      className={
+                        wh.last_delivery_status != null && wh.last_delivery_status < 400
+                          ? 'text-accent-700'
+                          : 'text-accent-2-700'
+                      }
+                      title={wh.last_delivery_error ?? undefined}
+                    >
+                      {wh.last_delivery_status != null
+                        ? `HTTP ${wh.last_delivery_status}`
+                        : t('webhooks.deliveryFailed', 'échec')}
+                      <span className="ml-1.5 text-[12px] text-ink/[0.45]">
+                        {relativeDate(wh.last_delivery_at)}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-ink/[0.4]">—</span>
+                  )}
+                </td>
+                <td data-testid={`failures-cell-${wh.id}`}>
+                  {/* Échecs non nuls en magenta — c'est le signal de l'écran. */}
+                  {wh.failures_24h > 0 ? (
+                    <span className="tag tag-accent-2">{wh.failures_24h}</span>
+                  ) : (
+                    <span className="text-ink/[0.4]">0</span>
+                  )}
                 </td>
                 <td className="text-[13px]" data-testid={`test-cell-${wh.id}`}>
                   {/* DoD : code retour + temps de réponse, en ligne. */}

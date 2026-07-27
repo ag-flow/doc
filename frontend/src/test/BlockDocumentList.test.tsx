@@ -51,6 +51,7 @@ function makeDoc(over: Partial<DocumentOut>): DocumentOut {
     exposed: false,
     created_at: '',
     updated_at: '',
+    updated_by: null,
     ...over,
   }
 }
@@ -72,6 +73,8 @@ function makeTreePage(
     title: doc.title,
     functional_type_slug: doc.functional_type_slug,
     parent_id: doc.parent_id,
+    updated_at: null,
+    updated_by: null,
     properties: propsByDoc[doc.doc_technical_key] ?? [],
     children: (byParent.get(doc.doc_technical_key) ?? []).map(toNode),
   })
@@ -321,6 +324,8 @@ describe('BlockDocumentList', () => {
           id: 'atdd1',
           title: 'ATDD done',
           functional_type_slug: 'atdd',
+          updated_at: null,
+          updated_by: null,
           properties: [
             { prop_slug: 'statut', type: 'restricted_list', value: null, allowed_value_slug: 'done', allowed_value_label: 'Terminé' },
           ],
@@ -373,7 +378,7 @@ describe('BlockDocumentList', () => {
       page_size: 100,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -418,7 +423,7 @@ describe('BlockDocumentList', () => {
       page_size: 100,
       total: 250,
       has_next: true,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -505,6 +510,8 @@ describe('BlockDocumentList', () => {
         {
           id: 'e1',
           title: 'Epic 1',
+          updated_at: null,
+          updated_by: null,
           functional_type_slug: 'epic',
           properties: [statut('done')],
         },
@@ -591,7 +598,7 @@ describe('BlockDocumentList', () => {
       page_size: 100,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [statut('done')] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [statut('done')] }],
     })
 
     renderList()
@@ -713,6 +720,8 @@ describe('BlockDocumentList', () => {
       roots: docs.map((d) => ({
         id: d.doc_technical_key,
         title: d.title,
+        updated_at: null,
+        updated_by: null,
         functional_type_slug: d.functional_type_slug,
         parent_id: d.parent_id,
         properties: [],
@@ -947,6 +956,7 @@ describe('BlockDocumentList — tri, filtres et URL', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       objects: [{
         id: 'd1', title: 'Alpha', functional_type_slug: 'epic',
+        updated_at: null, updated_by: null,
         properties: [{
           prop_slug: 'statut', type: 'restricted_list', value: null,
           allowed_value_slug: 'fait', allowed_value_label: 'Fait',

@@ -27,6 +27,7 @@ import {
 } from '../lib/api'
 import { useQuerySpecState } from '../hooks/useQuerySpecState'
 import { readUrlState, writeUrlState } from '../lib/querySpecUrl'
+import { relativeDate } from '../lib/relativeDate'
 import { labelToSlug } from '../lib/slug'
 import { ArrowDown, ArrowUp, ArrowSquareOut, Plus, Trash } from '@phosphor-icons/react'
 import { Button } from '../components/ui/button'
@@ -45,6 +46,8 @@ interface TreeRow {
   id: string
   title: string
   functional_type_slug: string | null
+  updated_at?: string | null
+  updated_by?: string | null
   subRows: TreeRow[]
   /** Renseigné en mode requête (query) : valeurs déjà aplaties par le serveur. */
   properties?: { prop_slug: string; value: string | null; allowed_value_slug: string | null }[]
@@ -91,6 +94,8 @@ function treeNodeToRow(node: BlockTreeNode): TreeRow {
     id: node.id,
     title: node.title,
     functional_type_slug: node.functional_type_slug,
+    updated_at: node.updated_at,
+    updated_by: node.updated_by,
     subRows: node.children.map(treeNodeToRow),
     properties: node.properties,
   }
@@ -135,6 +140,8 @@ function flatRows(page: BlockObjectsPage): TreeRow[] {
     id: o.id,
     title: o.title,
     functional_type_slug: o.functional_type_slug,
+    updated_at: o.updated_at,
+    updated_by: o.updated_by,
     subRows: [],
     properties: o.properties,
   }))
@@ -534,6 +541,24 @@ export function BlockDocumentList() {
         cell: ({ getValue }) => (
           <span className="font-mono text-xs text-gray-500">{String(getValue() ?? '—')}</span>
         ),
+      },
+      {
+        id: 'updated',
+        accessorKey: 'updated_at',
+        header: t('documents.modified', 'Modifié'),
+        cell: ({ row }) => {
+          const at = row.original.updated_at
+          if (!at) return <span className="text-ink/[0.4]">—</span>
+          return (
+            <span className="text-[12px] text-ink/[0.55]"
+              data-testid={`modified-${row.original.id}`}>
+              {relativeDate(at)}
+              {row.original.updated_by && (
+                <span className="text-ink/[0.45]"> par {row.original.updated_by}</span>
+              )}
+            </span>
+          )
+        },
       },
     ]
 

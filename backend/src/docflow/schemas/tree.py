@@ -7,6 +7,8 @@ chaque nœud. Réutilise `PropertyValueBrief` (même forme aplatie que les objet
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from docflow.schemas.introspection import PropertyValueBrief
@@ -19,6 +21,8 @@ class BlockTreeNode(BaseModel):
     title: str
     functional_type_slug: str | None
     parent_id: str | None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
     properties: list[PropertyValueBrief]
     children: list[BlockTreeNode]
 

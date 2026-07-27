@@ -250,3 +250,48 @@ async def test_test_webhook_returns_status_code(db_pool: asyncpg.Pool, ws: dict[
     assert status == 204
     assert error is None
     assert duration_ms >= 0
+
+
+async def test_emit_event_records_delivery_journal(
+    db_pool: asyncpg.Pool, ws: dict[str, Any]
+) -> None:
+    """Écart n°1 : chaque envoi laisse une trace ; le listing porte le dernier
+    envoi et les échecs sur 24 h."""
+    key = _key()
+    wh = await svc.create_webhook(
+        db_pool,
+        "hook-ws",
+        WebhookCreate(label="Journal", url="https://example.com/", events=["document.created"]),
+        encryption_key=key,
+    )
+
+    ok_resp = MagicMock()
+    ok_resp.status_code = 200
+    bad_resp = MagicMock()
+    bad_resp.status_code = 500
+
+    for resp in (ok_resp, bad_resp):
+        with patch("httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=None)
+            instance.post = AsyncMock(return_value=resp)
+            MockClient.return_value = instance
+            await svc.emit_event(
+                db_pool, "hook-ws", "document.created", {"id": "x"}, encryption_key=key
+            )
+
+    listed = next(
+        w for w in await svc.list_webhooks(db_pool, "hook-ws", encryption_key=key)
+        if w.id == wh.id
+    )
+    # Dernier envoi = le 500 ; un seul échec sur 24 h (le 200 n'en est pas un).
+    assert listed.last_delivery_status == 500
+    assert listed.last_delivery_at is not None
+    assert listed.failures_24h == 1
+
+    rows = await db_pool.fetch(
+        "SELECT status_code FROM webhook_delivery WHERE webhook_ref = $1 ORDER BY delivered_at",
+        wh.id,
+    )
+    assert [r["status_code"] for r in rows] == [200, 500]

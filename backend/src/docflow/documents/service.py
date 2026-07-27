@@ -31,6 +31,8 @@ from docflow.schemas.document import (
     DocumentCreate,
     DocumentOut,
     DocumentUpdate,
+    DocumentVersionInfo,
+    DocumentVersionOut,
 )
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
 
@@ -47,7 +49,7 @@ __all__ = [
 
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
-       d.parent, d.created_at, d.updated_at,
+       d.parent, d.created_at, d.updated_at, d.updated_by,
        d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
@@ -60,7 +62,7 @@ ORDER BY d.created_at
 
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
-       d.parent, d.created_at, d.updated_at,
+       d.parent, d.created_at, d.updated_at, d.updated_by,
        d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
@@ -87,6 +89,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=row["updated_by"] if "updated_by" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -105,6 +108,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=row["updated_by"] if "updated_by" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -323,8 +327,9 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
 
 _DOC_INSERT_SQL = """
 INSERT INTO document
-    (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref, exposed)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+    (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref,
+     exposed, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING doc_technical_key, title, type, version, parent,
           data_block_ref, exposed, slug, created_at, updated_at
 """
@@ -336,6 +341,7 @@ async def _insert_document(
     data: DocumentCreate,
     ft_id: uuid.UUID | None,
     parent_exposed: bool,
+    author: str | None = None,
 ) -> asyncpg.Record:
     """Insère le document en gérant le slug d'instance.
 
@@ -347,7 +353,7 @@ async def _insert_document(
         try:
             row = await conn.fetchrow(
                 _DOC_INSERT_SQL, data.title, data.slug, data.parent_id,
-                ft_id, wk, data.block_id, parent_exposed,
+                ft_id, wk, data.block_id, parent_exposed, author,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -365,7 +371,7 @@ async def _insert_document(
             async with conn.transaction():  # savepoint : rejeu sûr sur collision
                 row = await conn.fetchrow(
                     _DOC_INSERT_SQL, data.title, candidate, data.parent_id,
-                    ft_id, wk, data.block_id, parent_exposed,
+                    ft_id, wk, data.block_id, parent_exposed, author,
                 )
         except asyncpg.UniqueViolationError:
             i = 2 if i == 0 else i + 1
@@ -378,7 +384,9 @@ async def _insert_document(
         return row
 
 
-async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
+async def create_document(
+    pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate, author: str | None = None
+) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
@@ -416,7 +424,7 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
-            row = await _insert_document(conn, wk, data, ft_id, parent_exposed)
+            row = await _insert_document(conn, wk, data, ft_id, parent_exposed, author)
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
                 "VALUES ($1, 1, $2, $3)",
@@ -487,13 +495,18 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
         workspace_slug=ws_slug,
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=author,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
 async def update_document(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, data: DocumentUpdate
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    data: DocumentUpdate,
+    author: str | None = None,
 ) -> DocumentOut:
     raw = data.model_dump(exclude_unset=True)
     if not raw:
@@ -563,11 +576,13 @@ async def update_document(
                     new_content,
                 )
                 await conn.execute(
-                    "UPDATE document SET version = $1, title = $2, updated_at = now() "
+                    "UPDATE document SET version = $1, title = $2, updated_at = now(), "
+                    "updated_by = coalesce($4, updated_by) "
                     "WHERE doc_technical_key = $3",
                     new_v,
                     new_title,
                     doc_id,
+                    author,
                 )
                 await log_change(conn, wk, doc_id, "U")
                 await refresh_references(conn, doc_id, wk, new_content)
@@ -1314,3 +1329,59 @@ async def delete_property_value(
                     status_code=404,
                     detail=f"aucune valeur pour la propriété '{prop_slug}' sur ce document",
                 )
+
+
+async def list_document_versions(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID
+) -> list[DocumentVersionInfo]:
+    """Historique des versions, la plus récente d'abord (sans contenu)."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 "
+            "AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail="document introuvable")
+        rows = await conn.fetch(
+            "SELECT version_number, title, coalesce(length(content), 0) AS content_length, "
+            "created_at FROM document_version WHERE document_ref = $1 "
+            "ORDER BY version_number DESC",
+            doc_id,
+        )
+    return [
+        DocumentVersionInfo(
+            version_number=r["version_number"],
+            title=r["title"],
+            content_length=r["content_length"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+async def get_document_version(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, version_number: int
+) -> DocumentVersionOut:
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        row = await conn.fetchrow(
+            "SELECT v.version_number, v.title, v.content, v.created_at "
+            "FROM document_version v "
+            "JOIN document d ON d.doc_technical_key = v.document_ref "
+            "WHERE v.document_ref = $1 AND v.version_number = $2 "
+            "AND d.workspace_technical_key = $3",
+            doc_id,
+            version_number,
+            wk,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="version introuvable")
+    return DocumentVersionOut(
+        version_number=row["version_number"],
+        title=row["title"],
+        content=row["content"],
+        created_at=row["created_at"],
+    )

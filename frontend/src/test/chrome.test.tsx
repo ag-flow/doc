@@ -13,7 +13,7 @@ vi.mock('../lib/api', async () => {
     ...actual,
     api: { get: vi.fn() },
     docsApi: { getBlocks: vi.fn(), getDocument: vi.fn() },
-    referencesApi: { searchDocuments: vi.fn() },
+    referencesApi: { searchGlobal: vi.fn() },
     isSuperAdmin: () => true,
     clearToken: vi.fn(),
   }

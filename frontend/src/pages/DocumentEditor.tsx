@@ -3,8 +3,8 @@ import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, Eye, EyeSlash, FloppyDisk,
-  LinkSimple, Trash,
+  ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, ClockCounterClockwise, Eye, EyeSlash,
+  FloppyDisk, LinkSimple, Trash,
 } from '@phosphor-icons/react'
 import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 
@@ -21,6 +21,7 @@ import { CommentsPanel } from '../components/CommentsPanel'
 import { BacklinksPanel } from '../components/BacklinksPanel'
 import { DocumentReader } from '../components/DocumentReader'
 import { DocumentShell } from '../components/DocumentShell'
+import { VersionHistoryDialog } from '../components/VersionHistoryDialog'
 import { relativeDate } from '../lib/relativeDate'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
@@ -72,6 +73,7 @@ export function DocumentEditor() {
   })
 
   const [showReparent, setShowReparent] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const { data: reactions } = useQuery<ReactionOut>({
     queryKey: ['doc-reactions', ws, docId],
     queryFn: () => reactionsApi.getDocReactions(ws!, docId!),
@@ -345,6 +347,15 @@ export function DocumentEditor() {
       <Button
         variant="icon"
         size="sm"
+        onClick={() => setShowHistory(true)}
+        title={t('editor.history', 'Historique des versions')}
+        data-testid="document-history-btn"
+      >
+        <ClockCounterClockwise size={14} weight="duotone" />
+      </Button>
+      <Button
+        variant="icon"
+        size="sm"
         onClick={() => setShowReparent(true)}
         title={t('editor.move')}
         data-testid="document-move-btn"
@@ -469,7 +480,7 @@ export function DocumentEditor() {
                   : <span className="italic">{t('editor.slugAdd')}</span>}
               </button>
             )}
-            <span>v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}</span>
+            <span>v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}{doc.updated_by ? ` par ${doc.updated_by}` : ''}</span>
             <span className="flex-1" />
             {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
           </>
@@ -504,6 +515,15 @@ export function DocumentEditor() {
       >
         {editorSheet}
       </DocumentShell>
+
+      {showHistory && ws && docId && (
+        <VersionHistoryDialog
+          ws={ws}
+          docId={docId}
+          currentVersion={doc.version}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
 
       {showReparent && doc && (
         <ReparentDialog

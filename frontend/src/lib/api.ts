@@ -236,6 +236,20 @@ export interface GallerySourceOut {
   builtin: boolean
 }
 
+export interface DocumentVersionInfo {
+  version_number: number
+  title: string
+  content_length: number
+  created_at: string
+}
+
+export interface DocumentVersionOut {
+  version_number: number
+  title: string
+  content: string | null
+  created_at: string
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string
@@ -250,6 +264,8 @@ export interface DocumentOut {
   exposed: boolean
   created_at: string
   updated_at: string
+  /** Auteur de la dernière écriture ; null = inconnu. */
+  updated_by: string | null
 }
 
 export interface DataBlockOut {
@@ -426,6 +442,8 @@ export interface BlockObjectOut {
   title: string
   functional_type_slug: string | null
   properties: PropertyValueBrief[]
+  updated_at: string | null
+  updated_by: string | null
 }
 
 export interface BlockObjectsPage {
@@ -445,6 +463,8 @@ export interface BlockTreeNode {
   parent_id: string | null
   properties: PropertyValueBrief[]
   children: BlockTreeNode[]
+  updated_at: string | null
+  updated_by: string | null
 }
 
 /** Page de racines d'un bloc (mode browse) : `total`/`has_next` comptent les
@@ -534,6 +554,12 @@ export const docsApi = {
 
   deleteDocument: (ws: string, docId: string) =>
     api.delete(`/workspaces/${ws}/documents/${docId}`),
+
+  /** Historique des versions (métadonnées, la plus récente d'abord). */
+  listVersions: (ws: string, docId: string) =>
+    api.get<DocumentVersionInfo[]>(`/workspaces/${ws}/documents/${docId}/versions`),
+  getVersion: (ws: string, docId: string, n: number) =>
+    api.get<DocumentVersionOut>(`/workspaces/${ws}/documents/${docId}/versions/${n}`),
 
   setDocumentExposed: (ws: string, docId: string, exposed: boolean) =>
     api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}/exposed`, { exposed }),
@@ -719,7 +745,20 @@ export interface BacklinkOut {
   target_label: string
 }
 
+export interface GlobalSearchResult {
+  id: string
+  title: string
+  type: string | null
+  workspace_slug: string
+  block_slug: string | null
+}
+
 export const referencesApi = {
+  /** Recherche par titre sur tous les workspaces accessibles à l'appelant. */
+  searchGlobal: (q: string, limit = 10) =>
+    api.get<GlobalSearchResult[]>(
+      `/search/documents?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
   searchDocuments: (ws: string, q: string, limit = 10, type?: string) =>
     api.get<DocumentSearchResult[]>(
       `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}${type ? `&type=${encodeURIComponent(type)}` : ''}`
@@ -747,6 +786,11 @@ export interface WebhookOut {
   active: boolean
   created_at: string
   updated_at: string
+  /** Journal de livraison (renseignés par le listing). */
+  last_delivery_at: string | null
+  last_delivery_status: number | null
+  last_delivery_error: string | null
+  failures_24h: number
 }
 
 export interface WebhookTestOut {

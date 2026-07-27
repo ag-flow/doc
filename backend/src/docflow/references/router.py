@@ -6,9 +6,14 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import require_authenticated
 from docflow.references import service
-from docflow.references.service import BacklinkOut, BrokenLinkBloc, BrokenLinkDetail
+from docflow.references.service import (
+    BacklinkOut,
+    BrokenLinkBloc,
+    BrokenLinkDetail,
+    GlobalSearchResult,
+)
 from docflow.schemas.auth import AuthUser
-from docflow.workspaces.access import require_ws_access
+from docflow.workspaces.access import accessible_workspace_slugs, require_ws_access
 
 router = APIRouter(tags=["references"], dependencies=[Depends(require_ws_access)])
 
@@ -52,3 +57,17 @@ async def broken_links_detail(
     _: AuthUser = _Auth,
 ) -> list[BrokenLinkDetail]:
     return await service.broken_links_detail(request.app.state.pool, ws_slug, bloc_id)
+
+
+@router.get("/search/documents", response_model=list[GlobalSearchResult])
+async def search_documents_global(
+    request: Request,
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    user: AuthUser = _Auth,
+) -> list[GlobalSearchResult]:
+    """Recherche par titre sur tous les workspaces accessibles à l'appelant."""
+    allowed = await accessible_workspace_slugs(request.app.state.pool, user)
+    return await service.search_documents_global(
+        request.app.state.pool, q, limit, allowed_ws=allowed
+    )

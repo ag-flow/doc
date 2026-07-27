@@ -12,7 +12,13 @@ from docflow.documents import service
 from docflow.references import service as ref_service
 from docflow.references.service import DocumentSearchResult
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.document import DocumentCreate, DocumentOut, DocumentUpdate
+from docflow.schemas.document import (
+    DocumentCreate,
+    DocumentOut,
+    DocumentUpdate,
+    DocumentVersionInfo,
+    DocumentVersionOut,
+)
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
 from docflow.webhooks import service as wh_service
 from docflow.workspaces.access import require_ws_access
@@ -89,10 +95,10 @@ async def list_documents(
 
 @router.post(_WS + "/documents", response_model=DocumentOut, status_code=201)
 async def create_document(
-    ws_slug: str, body: DocumentCreate, request: Request, _: AuthUser = _Auth
+    ws_slug: str, body: DocumentCreate, request: Request, user: AuthUser = _Auth
 ) -> DocumentOut:
     check_api_key_scope(request, ws_slug, write=True)
-    doc = await service.create_document(request.app.state.pool, ws_slug, body)
+    doc = await service.create_document(request.app.state.pool, ws_slug, body, author=user.label)
     _fire(
         request,
         "document.created",
@@ -119,6 +125,29 @@ async def search_documents(
     return await ref_service.search_documents(request.app.state.pool, ws_slug, q, limit)
 
 
+# Routes littérales AVANT la route paramétrique {doc_id} du même préfixe.
+@router.get(_DOC + "/versions", response_model=list[DocumentVersionInfo])
+async def list_document_versions(
+    ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> list[DocumentVersionInfo]:
+    check_api_key_scope(request, ws_slug)
+    return await service.list_document_versions(request.app.state.pool, ws_slug, doc_id)
+
+
+@router.get(_DOC + "/versions/{version_number}", response_model=DocumentVersionOut)
+async def get_document_version(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> DocumentVersionOut:
+    check_api_key_scope(request, ws_slug)
+    return await service.get_document_version(
+        request.app.state.pool, ws_slug, doc_id, version_number
+    )
+
+
 @router.get(_DOC, response_model=DocumentOut)
 async def get_document(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
@@ -133,10 +162,12 @@ async def update_document(
     doc_id: uuid.UUID,
     body: DocumentUpdate,
     request: Request,
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> DocumentOut:
     check_api_key_scope(request, ws_slug, write=True)
-    doc = await service.update_document(request.app.state.pool, ws_slug, doc_id, body)
+    doc = await service.update_document(
+        request.app.state.pool, ws_slug, doc_id, body, author=user.label
+    )
     _fire(
         request,
         "document.updated",

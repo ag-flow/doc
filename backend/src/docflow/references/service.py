@@ -290,3 +290,58 @@ async def broken_links_detail(
         )
         for r in rows
     ]
+
+
+class GlobalSearchResult(BaseModel):
+    id: uuid.UUID
+    title: str
+    type: str | None
+    workspace_slug: str
+    block_slug: str | None
+
+
+async def search_documents_global(
+    pool: asyncpg.Pool,
+    q: str,
+    limit: int,
+    *,
+    allowed_ws: set[str] | None,
+) -> list[GlobalSearchResult]:
+    """Recherche par titre sur TOUS les workspaces accessibles.
+
+    ``allowed_ws=None`` = superadmin (aucun filtre) ; un ensemble vide renvoie
+    une liste vide sans toucher la base (fail closed).
+    """
+    if allowed_ws is not None and not allowed_ws:
+        return []
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT d.doc_technical_key AS id,
+                   d.title,
+                   ft.slug AS type,
+                   w.slug  AS workspace_slug,
+                   b.slug  AS block_slug
+            FROM document d
+            JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+            LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
+            LEFT JOIN data_block b ON b.id = d.data_block_ref
+            WHERE d.title ILIKE '%' || $1 || '%'
+              AND ($2::text[] IS NULL OR w.slug = ANY($2::text[]))
+            ORDER BY similarity(d.title, $1) DESC
+            LIMIT $3
+            """,
+            q,
+            sorted(allowed_ws) if allowed_ws is not None else None,
+            limit,
+        )
+    return [
+        GlobalSearchResult(
+            id=r["id"],
+            title=r["title"],
+            type=r["type"],
+            workspace_slug=r["workspace_slug"],
+            block_slug=r["block_slug"],
+        )
+        for r in rows
+    ]

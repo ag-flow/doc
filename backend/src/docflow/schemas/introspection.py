@@ -8,6 +8,8 @@ Trois primitives, indépendantes des slugs (découverte dynamique) :
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -63,6 +65,8 @@ class BlockObjectOut(BaseModel):
     id: str
     title: str
     functional_type_slug: str | None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
     properties: list[PropertyValueBrief]
 
 

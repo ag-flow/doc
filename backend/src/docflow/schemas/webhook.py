@@ -72,6 +72,11 @@ class WebhookOut(BaseModel):
     active: bool
     created_at: datetime
     updated_at: datetime
+    # Journal de livraison (renseignés par le listing ; None/0 sinon).
+    last_delivery_at: datetime | None = None
+    last_delivery_status: int | None = None
+    last_delivery_error: str | None = None
+    failures_24h: int = 0
 
 
 class WebhookTestOut(BaseModel):

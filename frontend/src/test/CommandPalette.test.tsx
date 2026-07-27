@@ -10,7 +10,7 @@ vi.mock('../lib/api', async () => {
     ...actual,
     api: { get: vi.fn() },
     docsApi: { getBlocks: vi.fn() },
-    referencesApi: { searchDocuments: vi.fn() },
+    referencesApi: { searchGlobal: vi.fn() },
   }
 })
 
@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.mocked(docsApi.getBlocks).mockResolvedValue([
     { id: 'b1', slug: 'specs', label: 'Spécifications', functional_type_slug: 'epic' },
   ] as never)
-  vi.mocked(referencesApi.searchDocuments).mockResolvedValue([])
+  vi.mocked(referencesApi.searchGlobal).mockResolvedValue([])
 })
 
 describe('CommandPalette', () => {
@@ -62,17 +62,18 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
-  it('recherche documents dans le workspace courant, avec le chemin en indice', async () => {
-    vi.mocked(referencesApi.searchDocuments).mockResolvedValue([
-      { id: 'd1', title: 'Socle CSS', type: 'feature', bloc: 'specs' },
+  it('recherche documents sur tous les workspaces accessibles, chemin en indice', async () => {
+    vi.mocked(referencesApi.searchGlobal).mockResolvedValue([
+      { id: 'd1', title: 'Socle CSS', type: 'feature', workspace_slug: 'autre-ws', block_slug: 'specs' },
     ])
     renderPalette()
     fireEvent.change(screen.getByTestId('palette-input'), { target: { value: 'socle' } })
     await waitFor(() =>
-      expect(referencesApi.searchDocuments).toHaveBeenCalledWith('prod', 'socle', 8),
+      expect(referencesApi.searchGlobal).toHaveBeenCalledWith('socle', 8),
     )
-    // Le titre est découpé par le surlignage : on vérifie l'item entier.
-    const hint = await screen.findByText('prod › Spécifications')
+    // Le titre est découpé par le surlignage : on vérifie l'item entier ; le
+    // chemin pointe vers le workspace du RÉSULTAT, pas le courant.
+    const hint = await screen.findByText('autre-ws › specs')
     expect(hint.closest('button')).toHaveTextContent('Socle CSS')
   })
 

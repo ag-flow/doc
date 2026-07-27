@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { api, docsApi, referencesApi, type DataBlockOut, type DocumentSearchResult, type WorkspaceOut } from '../lib/api'
+import { api, docsApi, referencesApi, type DataBlockOut, type GlobalSearchResult, type WorkspaceOut } from '../lib/api'
 
 interface PaletteItem {
   group: string
@@ -52,12 +52,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     enabled: Boolean(wsSlug),
     staleTime: 60_000,
   })
-  // Documents : recherche serveur dans le workspace courant uniquement (il n'y
-  // a pas d'index cross-workspace) — hors workspace, le groupe est absent.
-  const { data: docs = [] } = useQuery<DocumentSearchResult[]>({
-    queryKey: ['palette-docs', wsSlug, query],
-    queryFn: () => referencesApi.searchDocuments(wsSlug!, query.trim(), 8),
-    enabled: Boolean(wsSlug) && query.trim().length >= 2,
+  // Documents : recherche serveur sur TOUS les workspaces accessibles.
+  const { data: docs = [] } = useQuery<GlobalSearchResult[]>({
+    queryKey: ['palette-docs', query],
+    queryFn: () => referencesApi.searchGlobal(query.trim(), 8),
+    enabled: query.trim().length >= 2,
     staleTime: 10_000,
     placeholderData: (prev) => prev,
   })
@@ -66,14 +65,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const q = query.trim().toLowerCase()
     const out: PaletteItem[] = []
     for (const d of docs) {
-      // `bloc` = slug du bloc porteur (résultat serveur).
-      const block = blocks.find((b) => b.slug === d.bloc)
-      if (!d.bloc) continue
+      if (!d.block_slug) continue
       out.push({
         group: 'Documents',
         label: d.title,
-        hint: block ? `${wsSlug} › ${block.label}` : wsSlug ?? undefined,
-        path: `/ws/${wsSlug}/blocs/${d.bloc}/documents/${d.id}`,
+        hint: `${d.workspace_slug} › ${d.block_slug}`,
+        path: `/ws/${d.workspace_slug}/blocs/${d.block_slug}/documents/${d.id}`,
       })
     }
     for (const b of blocks) {

@@ -31,6 +31,14 @@ def _row_to_out(row: asyncpg.Record, headers: dict[str, str]) -> WebhookOut:
         active=row["active"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_delivery_at=row["last_delivery_at"] if "last_delivery_at" in row.keys() else None,
+        last_delivery_status=(
+            row["last_delivery_status"] if "last_delivery_status" in row.keys() else None
+        ),
+        last_delivery_error=(
+            row["last_delivery_error"] if "last_delivery_error" in row.keys() else None
+        ),
+        failures_24h=row["failures_24h"] if "failures_24h" in row.keys() else 0,
     )
 
 
@@ -53,9 +61,23 @@ async def list_webhooks(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT id, workspace_technical_key, label, url, headers_encrypted, "
-            "       events, active, created_at, updated_at "
-            "FROM webhook_subscription WHERE workspace_technical_key = $1 ORDER BY created_at",
+            """
+            SELECT w.id, w.workspace_technical_key, w.label, w.url, w.headers_encrypted,
+                   w.events, w.active, w.created_at, w.updated_at,
+                   d.status_code  AS last_delivery_status,
+                   d.error        AS last_delivery_error,
+                   d.delivered_at AS last_delivery_at,
+                   (SELECT count(*) FROM webhook_delivery f
+                     WHERE f.webhook_ref = w.id
+                       AND f.delivered_at > now() - interval '24 hours'
+                       AND (f.status_code IS NULL OR f.status_code >= 400)) AS failures_24h
+            FROM webhook_subscription w
+            LEFT JOIN LATERAL (
+                SELECT status_code, error, delivered_at FROM webhook_delivery
+                WHERE webhook_ref = w.id ORDER BY delivered_at DESC LIMIT 1
+            ) d ON true
+            WHERE w.workspace_technical_key = $1 ORDER BY w.created_at
+            """,
             wk,
         )
     return [_row_to_out(r, _decrypt_safe(encryption_key, r["headers_encrypted"])) for r in rows]
@@ -214,6 +236,39 @@ async def test_webhook(
         return None, str(exc), int((time.monotonic() - started) * 1000)
 
 
+async def _record_delivery(
+    pool: asyncpg.Pool,
+    webhook_id: uuid.UUID,
+    event: str,
+    status_code: int | None,
+    error: str | None,
+    duration_ms: int,
+) -> None:
+    """Trace une livraison et purge le journal au-delà de 7 jours.
+
+    Best-effort : un journal en échec ne doit jamais faire échouer l'émission.
+    """
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO webhook_delivery "
+                "(webhook_ref, event, status_code, error, duration_ms) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                webhook_id,
+                event,
+                status_code,
+                error[:2000] if error else None,
+                duration_ms,
+            )
+            await conn.execute(
+                "DELETE FROM webhook_delivery WHERE webhook_ref = $1 "
+                "AND delivered_at < now() - interval '7 days'",
+                webhook_id,
+            )
+    except Exception as exc:
+        log.warning("webhook_delivery_log_failed", webhook_id=str(webhook_id), error=str(exc))
+
+
 async def emit_event(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -253,9 +308,13 @@ async def emit_event(
                 doc_id = str(doc_snapshot.get("id", ""))
                 url = row["url"].replace("{id_document}", doc_id)
                 headers = _decrypt_safe(encryption_key, row["headers_encrypted"])
+                started = time.monotonic()
+                status_code: int | None = None
+                error: str | None = None
                 try:
                     await validate_public_url(url)
                     resp = await client.post(url, json=payload, headers=headers)
+                    status_code = resp.status_code
                     log.info(
                         "webhook_sent",
                         webhook_id=str(row["id"]),
@@ -263,11 +322,20 @@ async def emit_event(
                         status=resp.status_code,
                     )
                 except Exception as exc:
+                    error = str(exc)
                     log.warning(
                         "webhook_send_failed",
                         webhook_id=str(row["id"]),
                         webhook_event=event,
                         error=str(exc),
                     )
+                await _record_delivery(
+                    pool,
+                    row["id"],
+                    event,
+                    status_code,
+                    error,
+                    int((time.monotonic() - started) * 1000),
+                )
     except Exception as exc:
         log.error("webhook_emit_error", webhook_event=event, error=str(exc))

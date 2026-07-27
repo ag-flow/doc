@@ -1004,6 +1004,17 @@ def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+def _author_label() -> str | None:
+    """Libellé d'auteur pour les écritures : l'acteur OBO s'il est résolu,
+    sinon l'identité de la session (JWT ou propriétaire de la clé API)."""
+    session = current_session()
+    if session is None:
+        return None
+    if session.actor_user is not None:
+        return session.actor_user.label
+    return session.user.label
+
+
 def _text(data: object) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(data, default=str))]
 
@@ -1394,7 +1405,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             parent_id=parent_id,
             properties=properties,
         )
-        doc = await doc_svc.create_document(pool, ws_slug, data)
+        doc = await doc_svc.create_document(pool, ws_slug, data, author=_author_label())
     except HTTPException as e:
         return _text({"error": e.detail})
 
@@ -1440,7 +1451,7 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
 
     try:
         data = DocumentUpdate(**update_fields)
-        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
     except HTTPException as e:
         return _text({"error": e.detail})
 
@@ -1470,7 +1481,7 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
         else DocumentUpdate(parent_id=parent_id)
     )
     try:
-        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
     except HTTPException as e:
         return _text({"error": e.detail})
 
