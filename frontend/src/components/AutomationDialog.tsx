@@ -273,7 +273,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       {/* Taille FIXE (celle du plus grand onglet, « Appel ») : changer d'onglet
           ne fait pas sauter la fenêtre ; seul le corps défile, les onglets et
           les actions restent visibles (DoD). */}
-      <div className="dialog my-4 h-[min(94vh,980px)] w-full !max-w-2xl"
+      <div className="dialog my-4 h-[min(94vh,980px)] w-full !max-w-4xl"
         role="dialog" aria-modal="true"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
@@ -291,7 +291,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <TabBtn id="call">Appel</TabBtn>
         </div>
 
-        <div className="dialog-scroll min-h-0 flex-1 overflow-y-auto pr-2">
+        <div className="dialog-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-2">
         {/* ── Onglet Libellé ── */}
         {tab === 'label' && (
           <div className="space-y-4">
