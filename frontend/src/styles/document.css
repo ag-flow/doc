@@ -22,21 +22,23 @@
   .doc-nav-col {
     position: fixed;
     left: calc(var(--rail-width) + 18px);
-    top: 60px;
+    top: 64px;
     bottom: 18px;
     width: 250px;
     z-index: 20;
+    padding-top: 14px;
     background: var(--color-paper);
   }
 
   .doc-aside {
     position: fixed;
     right: 18px;
-    top: 60px;
+    top: 64px;
     bottom: 18px;
     width: 294px;
     overflow-y: auto;
     z-index: 20;
+    padding-top: 14px;
     background: var(--color-paper);
   }
 }
