@@ -12,6 +12,8 @@ interface Props {
   actions?: ReactNode
   /** Colonne de droite (propriétés, backlinks). Absente = colonne unique. */
   aside?: ReactNode
+  /** Colonne de gauche (sommaire du bloc). Absente = pas de colonne. */
+  nav?: ReactNode
   /** Contenu de la feuille (texte du document). */
   children: ReactNode
   /** Sous la feuille, pleine mesure : enfants, réactions, commentaires. */
@@ -24,7 +26,7 @@ interface Props {
  * de l'une à l'autre ne déplace pas le texte d'un pixel — deux implémentations
  * parallèles dériveraient au premier ajustement.
  */
-export function DocumentShell({ kicker, title, meta, actions, aside, children, footer }: Props) {
+export function DocumentShell({ kicker, title, meta, actions, aside, nav, children, footer }: Props) {
   return (
     <div className="mx-auto max-w-[1440px] px-[30px] pt-12 pb-24">
       {actions && <HeaderActions>{actions}</HeaderActions>}
@@ -37,7 +39,8 @@ export function DocumentShell({ kicker, title, meta, actions, aside, children, f
 
       {meta && <div className="doc-meta">{meta}</div>}
 
-      <div className={`doc-grid${aside ? ' doc-grid-aside' : ''}`}>
+      <div className={`doc-grid${aside ? ' doc-grid-aside' : ''}${nav ? ' doc-grid-nav' : ''}`}>
+        {nav && <div className="doc-nav-col">{nav}</div>}
         <div className="min-w-0">
           <div className="doc-sheet wiki-prose">{children}</div>
           {footer}

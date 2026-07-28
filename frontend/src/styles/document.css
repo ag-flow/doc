@@ -11,7 +11,73 @@
 }
 @media (min-width: 1100px) {
   .doc-grid-aside { grid-template-columns: minmax(0, 1fr) 300px; }
+  .doc-grid-nav { grid-template-columns: 240px minmax(0, 1fr); }
+  .doc-grid-nav.doc-grid-aside { grid-template-columns: 240px minmax(0, 1fr) 300px; }
 }
+/* Sous 1100px la grille est monocolonne : le sommaire s'efface plutôt que de
+   s'empiler au-dessus de la feuille. */
+@media (max-width: 1099.98px) {
+  .doc-nav-col { display: none; }
+}
+
+/* ── Sommaire du bloc (colonne gauche, lecture) ── */
+.doc-toc {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding-right: 22px;
+  border-right: 1px solid var(--color-divider);
+}
+.doc-toc li { margin: 0 0 2px; }
+.doc-toc-link {
+  display: block;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--color-ink) 78%, transparent);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.doc-toc-link:hover { color: var(--color-accent-700); }
+.doc-toc-current {
+  color: var(--color-accent-700);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+
+/* ── Précédent / Suivant en bas de feuille ── */
+.doc-pagenav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-divider);
+}
+.doc-pagenav-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+}
+.doc-pagenav-next { text-align: right; align-items: flex-end; }
+.doc-pagenav-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+}
+.doc-pagenav-title {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 17px;
+  color: var(--color-ink);
+}
+.doc-pagenav-link:hover .doc-pagenav-title { color: var(--color-accent-700); }
 
 /* La feuille : encre sur papier légèrement teinté, mesure limitée à ~72
    caractères, interlignage de lecture. */

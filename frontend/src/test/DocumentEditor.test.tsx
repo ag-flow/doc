@@ -228,8 +228,10 @@ describe('DocumentEditor — ossature Broadsheet', () => {
     const editSheet = container.querySelector('.doc-sheet')!
     // Même classe de feuille et même conteneur de grille : les métriques (mesure,
     // interlignage, marges) viennent d'une seule source, donc rien ne bouge.
+    // Seule exception voulue : le sommaire (doc-grid-nav) n'existe qu'en lecture.
+    const dropNav = (cls?: string) => (cls ?? '').replace(' doc-grid-nav', '')
     expect(editSheet.className).toBe(readClasses)
-    expect(editSheet.parentElement?.parentElement?.className).toBe(readShell)
+    expect(dropNav(editSheet.parentElement?.parentElement?.className)).toBe(dropNav(readShell))
   })
 
   it('Cmd/Ctrl+S enregistre et affiche un accusé discret (pas de toast)', async () => {

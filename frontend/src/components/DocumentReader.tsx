@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, LinkSimple, PencilSimple } from '@phosphor-icons/react'
+import { Check, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { MarkdownViewer } from './MarkdownViewer'
@@ -11,7 +11,10 @@ import { PropertiesPanel } from './PropertiesPanel'
 import { ReactionBar } from './ReactionBar'
 import { CommentsPanel } from './CommentsPanel'
 import { DocumentShell } from './DocumentShell'
+import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
 import { Button } from './ui/button'
+
+const TOC_STORAGE_KEY = 'docflow.doc.toc'
 
 interface DocumentReaderProps {
   ws: string
@@ -29,6 +32,14 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
+  // Sommaire à gauche : ouvert par défaut, le choix est retenu localement.
+  const [tocOpen, setTocOpen] = useState(() => localStorage.getItem(TOC_STORAGE_KEY) !== '0')
+  function toggleToc() {
+    setTocOpen((open) => {
+      localStorage.setItem(TOC_STORAGE_KEY, open ? '0' : '1')
+      return !open
+    })
+  }
 
   const { data: reactions } = useQuery<ReactionOut>({
     queryKey: ['doc-reactions', ws, docId],
@@ -63,8 +74,22 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         title={
           <h1 className="m-0 text-[42px] leading-[1.08] tracking-[-0.03em]">{doc.title}</h1>
         }
+        nav={tocOpen ? <DocumentToc ws={ws} bloc={blocSlug} docId={docId} /> : undefined}
         meta={
           <>
+            <button
+              type="button"
+              onClick={toggleToc}
+              title={t(tocOpen ? 'docnav.hideToc' : 'docnav.showToc')}
+              aria-pressed={tocOpen}
+              data-testid="toc-toggle"
+              className={`inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 ${
+                tocOpen ? 'text-accent-700' : 'text-ink/[0.5]'
+              } hover:text-accent-700`}
+            >
+              <ListBullets size={14} weight="duotone" />
+              {t('docnav.toc')}
+            </button>
             {doc.slug && (
               <span className="inline-flex items-center gap-1">
                 <LinkSimple size={13} weight="duotone" />
@@ -108,6 +133,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
         footer={
           <>
+            <DocumentPrevNext ws={ws} bloc={blocSlug} docId={docId} />
             <div className="mt-8">
               <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
             </div>
