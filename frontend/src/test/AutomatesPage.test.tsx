@@ -63,9 +63,9 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <MemoryRouter initialEntries={['/ws/ws1/automations']}>
+        <MemoryRouter initialEntries={['/automations']}>
           <Routes>
-            <Route path="/ws/:wsSlug/automations" element={<AutomatesPage />} />
+            <Route path="/automations" element={<AutomatesPage />} />
           </Routes>
         </MemoryRouter>
       </ToastProvider>
@@ -123,13 +123,13 @@ describe('AutomatesPage — inventaire des commandes de ligne', () => {
     vi.mocked(automationsApi.clone).mockResolvedValue(makeAuto({ id: 'a2', label: 'Vers RAG (copie)' }))
     renderPage()
     fireEvent.click(await screen.findByTestId('run-next-a1'))
-    await waitFor(() => expect(automationsApi.runNext).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.runNext).toHaveBeenCalledWith('a1'))
     fireEvent.click(screen.getByTestId('advance-a1'))
-    await waitFor(() => expect(automationsApi.advance).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.advance).toHaveBeenCalledWith('a1'))
     fireEvent.click(screen.getByTestId('cursor-back-a1'))
-    await waitFor(() => expect(automationsApi.cursorBack).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.cursorBack).toHaveBeenCalledWith('a1'))
     fireEvent.click(screen.getByTestId('clone-a1'))
-    await waitFor(() => expect(automationsApi.clone).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.clone).toHaveBeenCalledWith('a1'))
   })
 
   it('suppression : ConfirmDialog avec verbe explicite (plus de window.confirm)', async () => {
@@ -139,7 +139,7 @@ describe('AutomatesPage — inventaire des commandes de ligne', () => {
     const dialog = await screen.findByTestId('delete-auto-dialog')
     expect(dialog).toHaveTextContent('Vers RAG')
     fireEvent.click(screen.getByTestId('delete-auto-dialog-confirm'))
-    await waitFor(() => expect(automationsApi.delete).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.delete).toHaveBeenCalledWith('a1'))
   })
 
   it('détail déplié : URL, template de corps, historique et vidage confirmé', async () => {
@@ -150,7 +150,7 @@ describe('AutomatesPage — inventaire des commandes de ligne', () => {
     expect(screen.getByText('{"doc": "{title}"}')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('clear-runs-a1'))
     fireEvent.click(await screen.findByTestId('clear-runs-dialog-confirm'))
-    await waitFor(() => expect(automationsApi.clearRuns).toHaveBeenCalledWith('ws1', 'a1'))
+    await waitFor(() => expect(automationsApi.clearRuns).toHaveBeenCalledWith('a1'))
   })
 
   it('réordonnancement par glisser-déposer, optimiste', async () => {
@@ -163,7 +163,7 @@ describe('AutomatesPage — inventaire des commandes de ligne', () => {
     const second = screen.getByTestId('auto-card-a2')
     fireEvent.dragStart(first)
     fireEvent.drop(second)
-    await waitFor(() => expect(automationsApi.reorder).toHaveBeenCalledWith('ws1', ['a2', 'a1']))
+    await waitFor(() => expect(automationsApi.reorder).toHaveBeenCalledWith(['a2', 'a1']))
   })
 
   it('Push events et Nouvel automate sont en tête de page', async () => {

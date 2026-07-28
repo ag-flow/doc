@@ -1213,27 +1213,28 @@ export interface AutomationRunOut {
   manual: boolean
 }
 
+/** Automates : objets d'INSTANCE (une règle couvre plusieurs workspaces).
+ *  Routes globales /automations — réservées aux admins côté backend. */
 export const automationsApi = {
-  list: (ws: string) => api.get<AutomationOut[]>(`/workspaces/${ws}/automations`),
-  create: (ws: string, body: AutomationCreate) =>
-    api.post<AutomationOut>(`/workspaces/${ws}/automations`, body),
-  get: (ws: string, id: string) => api.get<AutomationOut>(`/workspaces/${ws}/automations/${id}`),
-  update: (ws: string, id: string, body: Partial<AutomationCreate>) =>
-    api.patch<AutomationOut>(`/workspaces/${ws}/automations/${id}`, body),
-  delete: (ws: string, id: string) => api.delete(`/workspaces/${ws}/automations/${id}`),
-  listRuns: (ws: string, id: string, limit = 50) =>
-    api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
-  replay: (ws: string, id: string, runId: string) =>
-    api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
-  runNext: (ws: string, id: string) =>
+  list: () => api.get<AutomationOut[]>('/automations'),
+  create: (body: AutomationCreate) => api.post<AutomationOut>('/automations', body),
+  get: (id: string) => api.get<AutomationOut>(`/automations/${id}`),
+  update: (id: string, body: Partial<AutomationCreate>) =>
+    api.patch<AutomationOut>(`/automations/${id}`, body),
+  delete: (id: string) => api.delete(`/automations/${id}`),
+  listRuns: (id: string, limit = 50) =>
+    api.get<AutomationRunOut[]>(`/automations/${id}/runs?limit=${limit}`),
+  replay: (id: string, runId: string) =>
+    api.post<AutomationRunOut>(`/automations/${id}/runs/${runId}/replay`, {}),
+  runNext: (id: string) =>
     api.post<{
       status: string
       http_status?: number | null
       body?: string | null
       event_code?: string
       event_seq?: number
-    }>(`/workspaces/${ws}/automations/${id}/run-next`, {}),
-  advance: (ws: string, id: string) =>
+    }>(`/automations/${id}/run-next`, {}),
+  advance: (id: string) =>
     api.post<{
       status: string
       http_status?: number | null
@@ -1241,18 +1242,15 @@ export const automationsApi = {
       event_code?: string
       event_seq?: number
       advanced?: boolean
-    }>(`/workspaces/${ws}/automations/${id}/advance`, {}),
-  cursorBack: (ws: string, id: string) =>
-    api.post<{ cursor: number }>(`/workspaces/${ws}/automations/${id}/cursor-back`, {}),
-  /** Ordre d'évaluation dans le workspace (drag & drop) — ids dans le nouvel ordre. */
-  reorder: (ws: string, ids: string[]) =>
-    api.put<AutomationOut[]>(`/workspaces/${ws}/automations/order`, { ids }),
+    }>(`/automations/${id}/advance`, {}),
+  cursorBack: (id: string) =>
+    api.post<{ cursor: number }>(`/automations/${id}/cursor-back`, {}),
+  /** Ordre global d'évaluation (projeté sur chaque workspace couvert). */
+  reorder: (ids: string[]) => api.put<AutomationOut[]>('/automations/order', { ids }),
   /** Clone (config + portée + headers), créé désactivé. */
-  clone: (ws: string, id: string) =>
-    api.post<AutomationOut>(`/workspaces/${ws}/automations/${id}/clone`, {}),
+  clone: (id: string) => api.post<AutomationOut>(`/automations/${id}/clone`, {}),
   /** Vide l'historique d'exécutions (le curseur est conservé). */
-  clearRuns: (ws: string, id: string) =>
-    api.delete<{ deleted: number }>(`/workspaces/${ws}/automations/${id}/runs`),
+  clearRuns: (id: string) => api.delete<{ deleted: number }>(`/automations/${id}/runs`),
   /** Émet des events de modification synthétiques (re-déclenchement d'automates). */
   pushEvents: (selections: { workspace_slug: string; block_slugs?: string[] }[]) =>
     api.post<{ events: number }>('/automations/push-events', { selections }),

@@ -84,7 +84,6 @@ export function AppRail() {
               <RailItem icon={FileText} label="Documents (choisir un bloc)" disabled />
             )}
             <RailItem to={`/ws/${wsSlug}/webhooks`} icon={WebhooksLogo} label="Webhooks" />
-            <RailItem to={`/ws/${wsSlug}/automations`} icon={Lightning} label="Automates" />
           </>
         )}
       </div>
@@ -98,6 +97,8 @@ export function AppRail() {
         <RailItem to="/api-keys" icon={Password} label="Clés API" />
         {superAdmin && (
           <>
+            {/* Objets d'instance : un automate couvre plusieurs workspaces. */}
+            <RailItem to="/automations" icon={Lightning} label="Automates" />
             <RailItem to="/templates" icon={Layout} label="Templates" />
             <RailItem to="/admin/users" icon={UsersThree} label="Utilisateurs" />
             <RailItem to="/admin/vault" icon={Key} label="Wallets Vault" />

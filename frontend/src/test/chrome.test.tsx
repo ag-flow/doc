@@ -45,8 +45,8 @@ beforeEach(() => {
 
 describe('rail de navigation', () => {
   it('garde son état actif sur navigation directe par URL', async () => {
-    renderAt('/ws/prod/automations', <AppRail />)
-    const active = await screen.findByTitle('Automates')
+    renderAt('/ws/prod/webhooks', <AppRail />)
+    const active = await screen.findByTitle('Webhooks')
     expect(active).toHaveAttribute('aria-current', 'page')
     // Une seule entrée active à la fois.
     const rail = screen.getByTestId('app-rail')
@@ -55,7 +55,9 @@ describe('rail de navigation', () => {
 
   it('les entrées de workspace n’apparaissent qu’en contexte de workspace', () => {
     renderAt('/templates', <AppRail />)
-    expect(screen.queryByTitle('Automates')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Webhooks')).not.toBeInTheDocument()
+    // Automates est devenu une entrée d'administration : lien global, hors ws.
+    expect(screen.getByTitle('Automates')).toHaveAttribute('href', '/automations')
     expect(screen.getByTitle('Workspaces')).toBeInTheDocument()
   })
 

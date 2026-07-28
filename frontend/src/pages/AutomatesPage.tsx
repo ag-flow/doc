@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   CaretDown, CaretRight, Copy, DotsSixVertical, FileCode, PaperPlaneTilt, PencilSimple,
@@ -19,7 +19,6 @@ import { automationsApi, type AutomationOut, type AutomationCreate } from '../li
 // ── Page principale ───────────────────────────────────────────────────────────
 
 export function AutomatesPage() {
-  const { wsSlug: ws } = useParams<{ wsSlug: string }>()
   const qc = useQueryClient()
   const { toast } = useToast()
 
@@ -28,42 +27,41 @@ export function AutomatesPage() {
   const [dialogError, setDialogError] = useState<string | null>(null)
 
   const { data: automations = [], isLoading: aLoading } = useQuery({
-    queryKey: ['automations', ws],
-    queryFn: () => automationsApi.list(ws!),
-    enabled: !!ws,
+    queryKey: ['automations'],
+    queryFn: () => automationsApi.list(),
     staleTime: 15_000,
   })
 
   const createMut = useMutation({
-    mutationFn: (body: AutomationCreate) => automationsApi.create(ws!, body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations', ws] }); setDialogAuto(undefined); setDialogError(null) },
+    mutationFn: (body: AutomationCreate) => automationsApi.create(body),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations'] }); setDialogAuto(undefined); setDialogError(null) },
     onError: (e: Error) => setDialogError(e.message),
   })
 
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: AutomationCreate }) =>
-      automationsApi.update(ws!, id, body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations', ws] }); setDialogAuto(undefined); setDialogError(null) },
+      automationsApi.update(id, body),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['automations'] }); setDialogAuto(undefined); setDialogError(null) },
     onError: (e: Error) => setDialogError(e.message),
   })
 
   const deleteAutoMut = useMutation({
-    mutationFn: (id: string) => automationsApi.delete(ws!, id),
+    mutationFn: (id: string) => automationsApi.delete(id),
     onSuccess: () => {
       setDeleteTarget(null)
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
     },
   })
 
   const toggleActiveMut = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
-      automationsApi.update(ws!, id, { active }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations', ws] }),
+      automationsApi.update(id, { active }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['automations'] }),
   })
 
   const [runMsg, setRunMsg] = useState<Record<string, { text: string; err: boolean }>>({})
   const runNextMut = useMutation({
-    mutationFn: (id: string) => automationsApi.runNext(ws!, id),
+    mutationFn: (id: string) => automationsApi.runNext(id),
     onSuccess: (res, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
       let entry: { text: string; err: boolean }
@@ -84,7 +82,7 @@ export function AutomatesPage() {
         }
       }
       setRunMsg((m) => ({ ...m, [id]: entry }))
-      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', id] })
     },
     onError: (e: Error, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
@@ -103,12 +101,12 @@ export function AutomatesPage() {
   }
 
   const advanceMut = useMutation({
-    mutationFn: (id: string) => automationsApi.advance(ws!, id),
+    mutationFn: (id: string) => automationsApi.advance(id),
     onSuccess: (res, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
       toastRun(label, res, ' → event suivant')
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
-      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', id] })
     },
     onError: (e: Error, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
@@ -117,29 +115,29 @@ export function AutomatesPage() {
   })
 
   const cursorBackMut = useMutation({
-    mutationFn: (id: string) => automationsApi.cursorBack(ws!, id),
+    mutationFn: (id: string) => automationsApi.cursorBack(id),
     onSuccess: (_res, id) => {
       const label = automations.find((a) => a.id === id)?.label ?? 'Automate'
       toast(`« ${label} » — revenu à l'event précédent`, 'info')
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
     },
   })
 
   const cloneMut = useMutation({
-    mutationFn: (id: string) => automationsApi.clone(ws!, id),
+    mutationFn: (id: string) => automationsApi.clone(id),
     onSuccess: (created) => {
       toast(`« ${created.label} » créé (désactivé)`, 'success')
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
     },
     onError: (e: Error) => toast(`Clonage échoué : ${e.message}`, 'error'),
   })
 
   const clearRunsMut = useMutation({
-    mutationFn: (id: string) => automationsApi.clearRuns(ws!, id),
+    mutationFn: (id: string) => automationsApi.clearRuns(id),
     onSuccess: (res, id) => {
       setClearRunsTarget(null)
       toast(`Historique vidé (${res.deleted} exécution${res.deleted > 1 ? 's' : ''})`, 'success')
-      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, id] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', id] })
     },
     onError: (e: Error) => toast(`Échec : ${e.message}`, 'error'),
   })
@@ -153,7 +151,7 @@ export function AutomatesPage() {
       setPushOpen(false)
       toast(`${res.events} event${res.events > 1 ? 's' : ''} de modification émis`, 'success')
       // Les compteurs « en attente » bougent immédiatement.
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
     },
     onError: (e: Error) => toast(`Push events échoué : ${e.message}`, 'error'),
   })
@@ -161,11 +159,11 @@ export function AutomatesPage() {
   // ── Ordre d'évaluation (drag & drop, propre à CE workspace) ──
   const [dragId, setDragId] = useState<string | null>(null)
   const reorderMut = useMutation({
-    mutationFn: (ids: string[]) => automationsApi.reorder(ws!, ids),
-    onSuccess: (list) => qc.setQueryData(['automations', ws], list),
+    mutationFn: (ids: string[]) => automationsApi.reorder(ids),
+    onSuccess: (list) => qc.setQueryData(['automations'], list),
     onError: (e: Error) => {
       toast(`Réordonnancement échoué : ${e.message}`, 'error')
-      void qc.invalidateQueries({ queryKey: ['automations', ws] })
+      void qc.invalidateQueries({ queryKey: ['automations'] })
     },
   })
 
@@ -178,7 +176,7 @@ export function AutomatesPage() {
     ids.splice(to, 0, ...ids.splice(from, 1))
     setDragId(null)
     // Optimiste : réordonner localement en attendant la réponse.
-    qc.setQueryData(['automations', ws], ids.map((id) => automations.find((a) => a.id === id)!))
+    qc.setQueryData(['automations'], ids.map((id) => automations.find((a) => a.id === id)!))
     reorderMut.mutate(ids)
   }
 
@@ -195,7 +193,7 @@ export function AutomatesPage() {
 
   return (
     <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
-      <SectionHead kicker={ws ?? ''} title="Automates">
+      <SectionHead kicker="Administration" title="Automates">
         <Button variant="secondary" onClick={() => setPushOpen(true)} data-testid="push-events-btn">
           <PaperPlaneTilt size={15} weight="duotone" /> Push events
         </Button>
@@ -206,7 +204,8 @@ export function AutomatesPage() {
 
       <p className="mb-4 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
         Les automates déclenchent des appels vers des API externes quand un document change
-        dans ce workspace. Contrairement aux webhooks qui envoient un payload JSON brut, un
+        dans les workspaces qu'ils couvrent — une règle peut couvrir plusieurs workspaces.
+        Contrairement aux webhooks qui envoient un payload JSON brut, un
         automate suit un <strong>contrat OpenAPI</strong> importé : vous sélectionnez
         l'opération à appeler, mappez les champs du document sur les paramètres et choisissez
         les événements déclencheurs. Cas d'usage typiques : créer un ticket dans un outil de
@@ -227,7 +226,7 @@ export function AutomatesPage() {
         ) : automations.length === 0 ? (
           <EmptyState
             testId="no-automations"
-            message="Aucun automate dans ce workspace."
+            message="Aucun automate."
             action={
               <Button onClick={() => { setDialogAuto('new'); setDialogError(null) }}>
                 <Plus size={15} weight="duotone" /> Nouvel automate
@@ -252,13 +251,13 @@ export function AutomatesPage() {
                 <div className="flex items-center gap-2.5 px-1 py-3">
                   <span
                     className="flex shrink-0 cursor-grab items-center text-ink/[0.25] hover:text-ink/[0.6] active:cursor-grabbing"
-                    title="Glisser pour changer l'ordre d'évaluation (propre à ce workspace)"
+                    title="Glisser pour changer l'ordre d'évaluation (global, projeté sur chaque workspace)"
                   >
                     <DotsSixVertical size={15} weight="duotone" />
                   </span>
                   <span
                     className="w-6 shrink-0 text-right text-[13px] font-[600] text-ink/[0.38] [font-family:var(--font-heading)]"
-                    title="Position d'évaluation dans ce workspace"
+                    title="Position d'évaluation"
                   >
                     {String(a.position).padStart(2, '0')}
                   </span>
@@ -372,7 +371,7 @@ export function AutomatesPage() {
                         Vider l'historique
                       </Button>
                     </div>
-                    <AutomationRunHistory ws={ws!} automationId={a.id} />
+                    <AutomationRunHistory automationId={a.id} />
                   </div>
                 )}
               </li>
@@ -415,7 +414,6 @@ export function AutomatesPage() {
 
       {dialogAuto !== undefined && (
         <AutomationDialog
-          ws={ws!}
           initial={dialogAuto === 'new' ? null : dialogAuto}
           onSave={saveAuto}
           onClose={() => { setDialogAuto(undefined); setDialogError(null) }}

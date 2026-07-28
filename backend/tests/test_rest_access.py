@@ -187,3 +187,16 @@ def test_global_search_scoped_to_accessible_workspaces(
 
         # Sans token : refusé.
         assert client.get(f"/api/documents/locate/{doc_id}").status_code == 401
+
+
+def test_global_automations_admin_only(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """La vue globale des automates (hors workspace) est réservée aux admins."""
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _setup_users_and_ws(client, test_schema_url)
+        user = _login(client, _USER)
+
+        assert client.get("/api/automations", headers=admin).status_code == 200
+        assert client.get("/api/automations", headers=user).status_code == 403
+        assert client.get("/api/automations").status_code == 401

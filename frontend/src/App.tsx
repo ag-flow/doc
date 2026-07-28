@@ -95,8 +95,17 @@ const router = createBrowserRouter([
       { path: 'blocs/:blocSlug/documents', element: <BlockDocumentList /> },
       { path: 'blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> },
       { path: 'webhooks', element: <WebhooksAdmin /> },
-      { path: 'automations', element: <AutomatesPage /> },
+      // Les automates ont quitté le workspace : redirection vers l'écran global.
+      { path: 'automations', element: <Navigate to="/automations" replace /> },
     ],
+  },
+  {
+    path: '/automations',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><AutomatesPage /></AppLayout>
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/admin/vault',

@@ -4,7 +4,6 @@ import { CaretDown, CaretRight } from '@phosphor-icons/react'
 import { automationsApi, type AutomationRunOut } from '../lib/api'
 
 interface Props {
-  ws: string
   automationId: string
 }
 
@@ -63,22 +62,22 @@ function pretty(body: string | null): string {
   }
 }
 
-export function AutomationRunHistory({ ws, automationId }: Props) {
+export function AutomationRunHistory({ automationId }: Props) {
   const qc = useQueryClient()
   const [replayingId, setReplayingId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
 
   // On garde 20 runs en base, on affiche les 10 derniers.
   const { data: runs = [], isLoading } = useQuery<AutomationRunOut[]>({
-    queryKey: ['automation-runs', ws, automationId],
-    queryFn: () => automationsApi.listRuns(ws, automationId, 10),
+    queryKey: ['automation-runs', automationId],
+    queryFn: () => automationsApi.listRuns(automationId, 10),
     staleTime: 10_000,
   })
 
   const replayMutation = useMutation({
-    mutationFn: (runId: string) => automationsApi.replay(ws, automationId, runId),
+    mutationFn: (runId: string) => automationsApi.replay(automationId, runId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['automation-runs', ws, automationId] })
+      void qc.invalidateQueries({ queryKey: ['automation-runs', automationId] })
       setReplayingId(null)
     },
     onError: () => setReplayingId(null),
