@@ -156,10 +156,12 @@ export function Login() {
           <Kicker>{t('login.kicker')}</Kicker>
           <div className="mt-2.5 h-[3px] bg-ink" />
           <h3 className="mt-4 mb-1">{t('login.formTitle')}</h3>
-          <p className="mb-6 text-[13px] text-ink/[0.6]">{t('login.formHint')}</p>
-
-          {!localEnabled && (
-            <p className="mb-5 text-[13px] text-ink/[0.7]" data-testid="local-disabled-notice">
+          {/* En mode OIDC-only, le sous-titre EST l'explication : pas de
+              doublon, pas de mention d'un compte local qui n'existe plus. */}
+          {localEnabled ? (
+            <p className="mb-6 text-[13px] text-ink/[0.6]">{t('login.formHint')}</p>
+          ) : (
+            <p className="mb-6 text-[13px] text-ink/[0.6]" data-testid="local-disabled-notice">
               {t('login.localDisabled')}
             </p>
           )}
@@ -225,7 +227,11 @@ export function Login() {
             </div>
           )}
 
-          <p className="mt-6 text-[12px] text-ink/[0.55]">{t('login.setupHint')}</p>
+          {/* L'astuce « wizard de premier démarrage » ne concerne que le
+              compte local : hors sujet en mode OIDC-only. */}
+          {localEnabled && (
+            <p className="mt-6 text-[12px] text-ink/[0.55]">{t('login.setupHint')}</p>
+          )}
         </div>
       </section>
     </div>

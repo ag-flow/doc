@@ -11,7 +11,7 @@
     "oidcError": "Échec de la connexion SSO",
     "pendingValidation": "Votre compte est en attente de validation par un administrateur.",
     "backToLogin": "Retour à la connexion",
-    "localDisabled": "La connexion locale est désactivée sur cette instance — utilisez le SSO.",
+    "localDisabled": "Cette instance utilise le SSO — la connexion locale est désactivée.",
     "kicker": "Gestion documentaire · self-hosted",
     "hook": "La gestion documentaire dont <em>vous</em> définissez le schéma : pages markdown arborescentes et données typées, sur une structure de stockage entièrement dynamique, auto-hébergée et pilotable par vos agents.",
     "formTitle": "Connexion",
