@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { usersApi, type AppUserOut, type InviteCreated } from '../lib/api'
+import { meApi, usersApi, type AppUserOut, type InviteCreated, type MeProfileOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { SectionHead } from '../components/SectionHead'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -47,6 +47,12 @@ export function UsersAdmin() {
   const { data: users = [], isLoading } = useQuery<AppUserOut[]>({
     queryKey: ['admin-users'],
     queryFn: () => usersApi.list(),
+  })
+
+  // L'appelant ne s'administre pas lui-même : sa ligne n'offre aucune action.
+  const { data: me } = useQuery<MeProfileOut>({
+    queryKey: ['me-profile'],
+    queryFn: () => meApi.get(),
   })
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin-users'] })
@@ -98,6 +104,11 @@ export function UsersAdmin() {
   const busy = validateMut.isPending || unvalidateMut.isPending || updateMut.isPending
 
   function row(user: AppUserOut, isPending: boolean) {
+    const isSelf = me != null && me.id === user.id
+    // L'admin du site (compte local admin avec mot de passe — le break-glass) :
+    // ni rétrogradé, ni désactivé, ni supprimé depuis l'UI. Le backend porte le
+    // même garde (anti-lock-out) — ici on n'offre simplement pas le bouton.
+    const isSiteAdmin = user.source === 'local' && user.is_admin && user.has_local_password
     return (
       <tr key={user.id} data-testid={`user-row-${user.id}`}>
         <td>
@@ -125,33 +136,39 @@ export function UsersAdmin() {
         </td>
         <td><StatusTag user={user} /></td>
         <td className="whitespace-nowrap text-right">
-          {isPending ? (
+          {isSelf ? null : isPending ? (
             <Button size="sm" onClick={() => validateMut.mutate(user.id)} disabled={busy}
               data-testid={`validate-${user.id}`}>
               Valider
             </Button>
           ) : (
             <>
-              <Button variant="ghost" size="sm" disabled={busy}
-                onClick={() => updateMut.mutate({ id: user.id, body: { is_admin: !user.is_admin } })}
-                data-testid={`toggle-role-${user.id}`}>
-                {user.is_admin ? 'Rétrograder' : 'Promouvoir admin'}
-              </Button>
+              {!isSiteAdmin && (
+                <Button variant="ghost" size="sm" disabled={busy}
+                  onClick={() => updateMut.mutate({ id: user.id, body: { is_admin: !user.is_admin } })}
+                  data-testid={`toggle-role-${user.id}`}>
+                  {user.is_admin ? 'Rétrograder' : 'Promouvoir admin'}
+                </Button>
+              )}
               {user.validated && !user.is_admin && (
                 <Button variant="ghost" size="sm" disabled={busy}
                   onClick={() => unvalidateMut.mutate(user.id)}>
                   Révoquer
                 </Button>
               )}
-              <Button variant="ghost" size="sm" disabled={busy}
-                onClick={() => updateMut.mutate({ id: user.id, body: { disabled: !user.disabled } })}
-                data-testid={`toggle-disabled-${user.id}`}>
-                {user.disabled ? 'Réactiver' : 'Désactiver'}
-              </Button>
-              <Button variant="ghost" size="sm" className="text-accent-2-700" disabled={busy}
-                onClick={() => setDeleteTarget(user)} data-testid={`delete-${user.id}`}>
-                Supprimer
-              </Button>
+              {!isSiteAdmin && (
+                <>
+                  <Button variant="ghost" size="sm" disabled={busy}
+                    onClick={() => updateMut.mutate({ id: user.id, body: { disabled: !user.disabled } })}
+                    data-testid={`toggle-disabled-${user.id}`}>
+                    {user.disabled ? 'Réactiver' : 'Désactiver'}
+                  </Button>
+                  <Button variant="ghost" size="sm" className="text-accent-2-700" disabled={busy}
+                    onClick={() => setDeleteTarget(user)} data-testid={`delete-${user.id}`}>
+                    Supprimer
+                  </Button>
+                </>
+              )}
             </>
           )}
         </td>
