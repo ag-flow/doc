@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from docflow.auth.deps import require_authenticated
 from docflow.references import service
+from docflow.references.locate import DocLocationOut, locate_document
 from docflow.references.service import (
     BacklinkOut,
     BrokenLinkBloc,
@@ -57,6 +58,17 @@ async def broken_links_detail(
     _: AuthUser = _Auth,
 ) -> list[BrokenLinkDetail]:
     return await service.broken_links_detail(request.app.state.pool, ws_slug, bloc_id)
+
+
+@router.get("/documents/locate/{doc_id}", response_model=DocLocationOut)
+async def locate(
+    doc_id: uuid.UUID,
+    request: Request,
+    user: AuthUser = _Auth,
+) -> DocLocationOut:
+    """Résout un lien interne ``docflow://doc/{id}`` en workspace/bloc."""
+    allowed = await accessible_workspace_slugs(request.app.state.pool, user)
+    return await locate_document(request.app.state.pool, doc_id, allowed_ws=allowed)
 
 
 @router.get("/search/documents", response_model=list[GlobalSearchResult])

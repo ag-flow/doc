@@ -170,3 +170,20 @@ def test_global_search_scoped_to_accessible_workspaces(
 
         # Sans token : refusé.
         assert client.get("/api/search/documents?q=rapport").status_code == 401
+
+        # ── Locate (résolution des liens docflow://doc/{id}) : même périmètre ──
+        doc_id = hits[0]["id"]
+        r = client.get(f"/api/documents/locate/{doc_id}", headers=admin)
+        assert r.status_code == 200
+        loc = r.json()
+        assert loc["workspace_slug"] == _WS
+        assert loc["block_slug"] == "blk"
+        assert loc["title"] == "Rapport annuel"
+
+        # Non-membre : 404 — même réponse qu'un id inconnu, aucun oracle.
+        assert client.get(f"/api/documents/locate/{doc_id}", headers=user).status_code == 404
+        unknown = "00000000-0000-0000-0000-000000000000"
+        assert client.get(f"/api/documents/locate/{unknown}", headers=admin).status_code == 404
+
+        # Sans token : refusé.
+        assert client.get(f"/api/documents/locate/{doc_id}").status_code == 401

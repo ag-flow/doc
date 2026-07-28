@@ -753,7 +753,18 @@ export interface GlobalSearchResult {
   block_slug: string | null
 }
 
+export interface DocLocationOut {
+  id: string
+  title: string
+  workspace_slug: string
+  block_slug: string | null
+}
+
 export const referencesApi = {
+  /** Résout un lien interne docflow://doc/{id} en workspace/bloc. */
+  locate: (docId: string) =>
+    api.get<DocLocationOut>(`/documents/locate/${docId}`),
+
   /** Recherche par titre sur tous les workspaces accessibles à l'appelant. */
   searchGlobal: (q: string, limit = 10) =>
     api.get<GlobalSearchResult[]>(
