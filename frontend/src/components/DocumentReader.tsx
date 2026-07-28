@@ -127,7 +127,12 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
         aside={
           <>
-            <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
+            <PropertiesPanel
+              ws={ws}
+              docId={docId}
+              functionalTypeSlug={doc.functional_type_slug}
+              readOnly
+            />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
           </>
         }

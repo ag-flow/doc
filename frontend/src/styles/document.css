@@ -9,22 +9,46 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 44px;
 }
+/* ── Enveloppe de l'écran document ─────────────────────────────────────────
+   La feuille exploite toute la largeur ; sommaire et propriétés FLOTTENT aux
+   bords du viewport (fixes, sous l'en-tête). Le padding du shell réserve leur
+   espace : rien ne se recouvre, et fermer le sommaire rend sa place au texte. */
+.doc-shell { padding: 48px 30px 96px; }
+
 @media (min-width: 1100px) {
-  .doc-grid-aside { grid-template-columns: minmax(0, 1fr) 300px; }
-  .doc-grid-nav { grid-template-columns: 240px minmax(0, 1fr); }
-  .doc-grid-nav.doc-grid-aside { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  .doc-shell-nav { padding-left: 296px; }
+  .doc-shell-aside { padding-right: 342px; }
+
+  .doc-nav-col {
+    position: fixed;
+    left: calc(var(--rail-width) + 18px);
+    top: 60px;
+    bottom: 18px;
+    width: 250px;
+    z-index: 20;
+    background: var(--color-paper);
+  }
+
+  .doc-aside {
+    position: fixed;
+    right: 18px;
+    top: 60px;
+    bottom: 18px;
+    width: 294px;
+    overflow-y: auto;
+    z-index: 20;
+    background: var(--color-paper);
+  }
 }
-/* Sous 1100px la grille est monocolonne : le sommaire s'efface plutôt que de
-   s'empiler au-dessus de la feuille. */
+/* Sous 1100px : le sommaire s'efface, les propriétés redescendent sous la
+   feuille (flux normal de la grille monocolonne). */
 @media (max-width: 1099.98px) {
   .doc-nav-col { display: none; }
 }
 
-/* ── Sommaire du bloc (colonne gauche, lecture) ── */
+/* ── Sommaire du bloc (flottant à gauche, lecture) ── */
 .doc-toc {
-  position: sticky;
-  top: 20px;
-  max-height: calc(100vh - 40px);
+  max-height: 100%;
   overflow-y: auto;
   padding-right: 22px;
   border-right: 1px solid var(--color-divider);

@@ -266,7 +266,12 @@ describe('feuille document — aucun débordement horizontal possible', () => {
 
   it('la colonne de texte a un minimum à 0 (sinon un tableau large pousse la page)', () => {
     expect(css).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
-    expect(css).toMatch(/\.doc-grid-aside\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/)
+    // Panneaux flottants : le shell réserve leur espace par padding — s'ils
+    // sont fixes sans padding réservé, ils recouvrent le texte.
+    expect(css).toMatch(/\.doc-shell-nav\s*\{\s*padding-left/)
+    expect(css).toMatch(/\.doc-shell-aside\s*\{\s*padding-right/)
+    expect(css).toMatch(/\.doc-aside\s*\{[^}]*position:\s*fixed/)
+    expect(css).toMatch(/\.doc-nav-col\s*\{[^}]*position:\s*fixed/)
   })
 
   it('tableaux, blocs de code et images sont contenus dans la feuille', () => {

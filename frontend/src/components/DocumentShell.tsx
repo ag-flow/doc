@@ -28,7 +28,7 @@ interface Props {
  */
 export function DocumentShell({ kicker, title, meta, actions, aside, nav, children, footer }: Props) {
   return (
-    <div className="mx-auto max-w-[1440px] px-[30px] pt-12 pb-24">
+    <div className={`doc-shell${nav ? ' doc-shell-nav' : ''}${aside ? ' doc-shell-aside' : ''}`}>
       {actions && <HeaderActions>{actions}</HeaderActions>}
       <div className="mb-1.5">
         <div className="text-[11px] font-[600] uppercase tracking-[0.09em] text-accent-700">
