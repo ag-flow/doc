@@ -234,6 +234,13 @@ export function AutomatesPage() {
             }
           />
         ) : (
+          <>
+          {/* Un automate multi-workspaces = UNE ligne (il apparaissait une
+              fois par workspace avant la vue globale) : le compte + la
+              couverture rendent l'exhaustivité vérifiable. */}
+          <p className="m-0 mb-1.5 text-[12px] text-ink/[0.5]" data-testid="automations-count">
+            {automations.length} automate{automations.length > 1 ? 's' : ''}
+          </p>
           <ul className="m-0 list-none p-0">
             {automations.map((a) => (
               <li
@@ -278,6 +285,13 @@ export function AutomatesPage() {
                     </span>
                     <span className="ml-2.5 text-[12px] text-ink/[0.5]">
                       {a.event_codes.map((c) => c.split('.')[2]).join('/') || '—'} · {a.http_method}
+                      {a.workspace_slugs.length > 0 && (
+                        <span className="ml-2 text-[11px] text-accent-700 [font-family:var(--font-mono)]"
+                          data-testid={`auto-coverage-${a.id}`}
+                          title="Workspaces couverts">
+                          {a.workspace_slugs.join(' · ')}
+                        </span>
+                      )}
                       {a.delay_minutes > 0 && ` · ${a.delay_minutes}min`}
                     </span>
                     {/* Dernière exécution : code en cyan si succès, magenta si échec. */}
@@ -377,6 +391,7 @@ export function AutomatesPage() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </section>
 
