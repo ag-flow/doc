@@ -38,6 +38,26 @@ export interface MarkdownEditorHandle {
   getMarkdown: () => Promise<string>
 }
 
+/**
+ * Collage : garder le HTML quand il existe. Le défaut BlockNote
+ * (`prioritizeMarkdownOverHTML: true`) jette le `text/html` dès que le
+ * `text/plain` « ressemble à du markdown » — un tableau copié depuis
+ * Confluence/Excel/Sheets arrive avec les deux saveurs et son texte brut
+ * déclenche l'heuristique : on collait du texte au lieu du tableau. Avec le
+ * HTML prioritaire, ces tableaux collent en vrais blocs table ; un texte brut
+ * SEUL (éditeur de code, fichier .md) reste interprété comme markdown.
+ */
+export function docflowPasteHandler({
+  defaultPasteHandler,
+}: {
+  defaultPasteHandler: (context?: {
+    prioritizeMarkdownOverHTML?: boolean
+    plainTextAsMarkdown?: boolean
+  }) => boolean | undefined
+}): boolean | undefined {
+  return defaultPasteHandler({ prioritizeMarkdownOverHTML: false })
+}
+
 interface MarkdownEditorProps {
   initialContent: string
   onDirty: () => void
@@ -58,6 +78,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         schema: docflowSchema,
         uploadFile: wsSlug ? makeUploadFile(wsSlug) : undefined,
         resolveFileUrl: resolveArtifactUrl,
+        pasteHandler: docflowPasteHandler,
       },
       [wsSlug],
     )
