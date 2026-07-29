@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
+import { Check, FilePdf, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { MarkdownViewer } from './MarkdownViewer'
@@ -12,6 +12,7 @@ import { ReactionBar } from './ReactionBar'
 import { CommentsPanel } from './CommentsPanel'
 import { DocumentShell } from './DocumentShell'
 import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
+import { ExportPdfDialog } from './ExportPdfDialog'
 import { Button } from './ui/button'
 
 const TOC_STORAGE_KEY = 'docflow.doc.toc'
@@ -32,6 +33,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   // Sommaire à gauche : ouvert par défaut, le choix est retenu localement.
   const [tocOpen, setTocOpen] = useState(() => localStorage.getItem(TOC_STORAGE_KEY) !== '0')
   function toggleToc() {
@@ -119,6 +121,15 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
                 {copied ? <Check size={14} weight="bold" /> : <LinkSimple size={14} weight="duotone" />}
               </Button>
             )}
+            <Button
+              variant="icon"
+              size="sm"
+              title={t('exportPdf.title')}
+              onClick={() => setExportOpen(true)}
+              data-testid="export-pdf-btn"
+            >
+              <FilePdf size={14} weight="duotone" />
+            </Button>
             <Button onClick={onEdit} data-testid="document-edit-btn">
               <PencilSimple size={14} weight="duotone" />
               {t('editor.edit')}
@@ -163,6 +174,16 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
           <p className="text-muted italic">{t('editor.readEmpty')}</p>
         )}
       </DocumentShell>
+
+      {exportOpen && (
+        <ExportPdfDialog
+          ws={ws}
+          blocSlug={blocSlug}
+          docId={docId}
+          filename={doc.slug || doc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'document'}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </div>
   )
 }

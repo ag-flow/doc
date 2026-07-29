@@ -342,6 +342,18 @@
     "actions": "Actions",
     "close": "Fermer"
   },
+  "exportPdf": {
+    "title": "Exporter en PDF",
+    "scopeDoc": "Le document seul",
+    "scopeChildren": "Le document et ses enfants",
+    "childrenHint": "Cochez les enfants à inclure et ordonnez-les — l'ordre choisi est celui du PDF.",
+    "noChildren": "Ce document n'a pas d'enfants.",
+    "signed": "Document signé (cadre de signatures en fin de PDF)",
+    "moveUp": "Monter",
+    "moveDown": "Descendre",
+    "validate": "Valider",
+    "pending": "Génération…"
+  },
   "vault": {
     "title": "Gestionnaire de clés",
     "tabWallets": "Wallets Harpocrate",

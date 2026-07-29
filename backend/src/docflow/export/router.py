@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from docflow.auth.deps import require_authenticated
-from docflow.export import service
+from docflow.export import pdf, service
 from docflow.schemas.auth import AuthUser
 from docflow.workspaces.access import require_ws_access
 
@@ -29,4 +32,33 @@ async def export_workspace(
         content=zip_bytes,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/workspaces/{ws_slug}/documents/{doc_id}/export/pdf")
+async def export_document_pdf(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    request: Request,
+    _: AuthUser = _Auth,
+    children: str = Query(
+        default="", description="ids d'enfants directs, ordonnés, séparés par des virgules"
+    ),
+    signed: bool = Query(default=False),
+) -> Response:
+    """Exporte le document (et les enfants cochés, dans l'ordre choisi) en PDF."""
+    try:
+        child_ids = [uuid.UUID(c) for c in children.split(",") if c.strip()]
+    except ValueError as exc:
+        raise HTTPException(422, "children : liste d'UUID séparés par des virgules") from exc
+    filename, docs = await pdf.fetch_export_docs(
+        request.app.state.pool, ws_slug, doc_id, child_ids
+    )
+    html_doc = pdf.build_html(docs, signed=signed)
+    # Rendu CPU-bound (Pango) : hors event loop.
+    pdf_bytes = await run_in_threadpool(pdf.render_pdf, html_doc)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
     )
