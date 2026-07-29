@@ -87,6 +87,7 @@ export function TypesAdmin() {
   const [newSlug, setNewSlug] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [newParent, setNewParent] = useState('')
+  const [newInherit, setNewInherit] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -118,7 +119,7 @@ export function TypesAdmin() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (body: { slug: string; label: string; parent_slug?: string }) =>
+    mutationFn: (body: { slug: string; label: string; parent_slug?: string; inherit_slug?: string }) =>
       api.post<FunctionalTypeRich>(`/workspaces/${ws}/types`, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
@@ -126,6 +127,7 @@ export function TypesAdmin() {
       setNewSlug('')
       setNewLabel('')
       setNewParent('')
+      setNewInherit('')
       setSlugTouched(false)
       setFormError(null)
     },
@@ -162,7 +164,12 @@ export function TypesAdmin() {
 
   function handleCreate() {
     if (!newSlug || !newLabel) return
-    createMutation.mutate({ slug: newSlug, label: newLabel, parent_slug: newParent || undefined })
+    createMutation.mutate({
+      slug: newSlug,
+      label: newLabel,
+      parent_slug: newParent || undefined,
+      inherit_slug: newInherit || undefined,
+    })
   }
 
   function openImportModal() {
@@ -229,6 +236,26 @@ export function TypesAdmin() {
                 value={newParent}
                 onChange={(e) => setNewParent(e.target.value)}
                 data-testid="parent-select"
+              >
+                <option value="">{t('types.none')}</option>
+                {flattenTypeTree(types).map(({ type: ty, depth }) => (
+                  <option key={ty.slug} value={ty.slug}>
+                    {'\u00a0'.repeat(depth * 3) + ty.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {/* Héritage = copie des propriétés du type choisi À LA CRÉATION
+                (même sémantique que `inherit:` des templates) — pas de lien
+                vivant, les évolutions du type source ne se propagent pas. */}
+            <Field label={t('types.inherit')} htmlFor="type-inherit">
+              <select
+                id="type-inherit"
+                className="input"
+                value={newInherit}
+                onChange={(e) => setNewInherit(e.target.value)}
+                title={t('types.inheritHint')}
+                data-testid="inherit-select"
               >
                 <option value="">{t('types.none')}</option>
                 {flattenTypeTree(types).map(({ type: ty, depth }) => (

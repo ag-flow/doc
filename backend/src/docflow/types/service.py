@@ -16,6 +16,7 @@ from docflow.schemas.types import (
     FunctionalTypeUpdate,
     PropertyDefRich,
 )
+from docflow.types.inherit import copy_properties, resolve_inherit_source
 
 _SELECT_TYPE = """
 SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.source_template,
@@ -179,6 +180,9 @@ async def create_type(
             parent_id: uuid.UUID | None = None
             if data.parent_slug:
                 parent_id = await _resolve_parent(conn, wk, data.parent_slug)
+            inherit_id: uuid.UUID | None = None
+            if data.inherit_slug:
+                inherit_id = await resolve_inherit_source(conn, wk, data.inherit_slug)
             try:
                 row = await conn.fetchrow(
                     """
@@ -199,6 +203,8 @@ async def create_type(
                 ) from exc
             assert row is not None
             await log_structure_change(conn, wk, "type", "C", row["id"])
+            if inherit_id is not None:
+                await copy_properties(conn, inherit_id, row["id"], wk)
     return FunctionalTypeOut(
         id=row["id"],
         slug=row["slug"],

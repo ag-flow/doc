@@ -173,6 +173,8 @@
     "slug": "Identifiant (slug)",
     "label": "Libellé",
     "parent": "Parent",
+    "inherit": "Hérite de",
+    "inheritHint": "Les propriétés du type choisi sont copiées à la création (pas de lien vivant).",
     "baseType": "Type de base",
     "templateGroup": "Template « {{template}} »",
     "manualGroup": "Créés à la main",

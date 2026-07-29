@@ -14,6 +14,10 @@ class FunctionalTypeCreate(BaseModel):
     slug: str
     label: str
     parent_slug: str | None = None
+    # Héritage à la création : les propriétés du type source sont COPIÉES
+    # (matérialisées) sur le nouveau type — même sémantique que `inherit:`
+    # des templates, résolu une fois, aucun lien vivant conservé.
+    inherit_slug: str | None = None
 
     @field_validator("slug")
     @classmethod
