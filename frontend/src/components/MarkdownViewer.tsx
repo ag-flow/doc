@@ -20,18 +20,25 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
   // Même schéma et même parsing que l'éditeur (registre de codecs) : le chemin
   // lecture (DocumentReader, PublicDocumentViewer) est couvert par transitivité.
   const editor = useCreateBlockNote({ schema: docflowSchema, resolveFileUrl: resolveArtifactUrl })
-  const loadedRef = useRef(false)
+  // Dernier contenu parsé : naviguer entre documents SANS remonter le
+  // composant (sommaire, Précédent/Suivant, doc déjà en cache) doit re-parser
+  // — un simple « déjà chargé » laissait l'article figé sur le premier doc.
+  const lastParsedRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (loadedRef.current) return
-    loadedRef.current = true
+    const next = content ?? ''
+    if (lastParsedRef.current === next) return
+    lastParsedRef.current = next
     let cancelled = false
     void (async () => {
       const api = editor as unknown as CodecEditorApi
-      const blocks = await parseMarkdownWithCodecs(api, content ?? '')
-      if (cancelled) return
+      const blocks = await parseMarkdownWithCodecs(api, next)
+      // Une navigation plus récente a relancé un parse : ne pas écraser.
+      if (cancelled || lastParsedRef.current !== next) return
       if (blocks.length > 0) {
         editor.replaceBlocks(editor.document, blocks as never)
+      } else {
+        editor.replaceBlocks(editor.document, [{ type: 'paragraph' }] as never)
       }
     })()
     return () => { cancelled = true }
