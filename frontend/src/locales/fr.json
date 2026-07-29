@@ -454,7 +454,12 @@
   },
   "blockFrame": {
     "copy": "Copier la source",
-    "download": "Télécharger"
+    "download": "Télécharger",
+    "edit": "Modifier la source",
+    "attrs": "Attributs",
+    "attrsHint": "title=\"…\" (valeurs entre guillemets doubles)",
+    "apply": "Appliquer",
+    "cancel": "Annuler"
   },
   "records": {
     "ignoredLines_one": "{{count}} ligne ignorée",

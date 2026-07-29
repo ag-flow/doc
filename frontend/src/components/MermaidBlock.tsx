@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createReactBlockSpec } from '@blocknote/react'
 import mermaid from 'mermaid'
-import { BlockFrame } from './BlockFrame'
+import { BlockFrame, type BlockFrameEdit } from './BlockFrame'
 
 mermaid.initialize({ startOnLoad: false })
 
@@ -76,18 +76,32 @@ export const MermaidBlock = createReactBlockSpec(
     content: 'none',
   },
   {
-    render: (props) => <MermaidFramed source={props.block.props.source} />,
+    render: (props) => (
+      <MermaidFramed
+        source={props.block.props.source}
+        edit={
+          props.editor.isEditable
+            ? {
+                body: props.block.props.source,
+                onApply: ({ body }) =>
+                  props.editor.updateBlock(props.block, { props: { source: body } }),
+              }
+            : undefined
+        }
+      />
+    ),
   },
 )
 
 /** Chrome commun autour du rendu mermaid (copie de la fence, export SVG). */
-function MermaidFramed({ source }: { source: string }) {
+function MermaidFramed({ source, edit }: { source: string; edit?: BlockFrameEdit }) {
   const ref = useRef<HTMLDivElement>(null)
   return (
     <BlockFrame
       typeLabel="mermaid"
       source={'```mermaid\n' + source + '\n```'}
       svg={() => ref.current?.querySelector('svg')?.outerHTML ?? null}
+      edit={edit}
     >
       <div ref={ref}>
         <MermaidRenderer source={source} />

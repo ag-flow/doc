@@ -2,7 +2,7 @@ import { createReactBlockSpec } from '@blocknote/react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 import { parseAttrs, parseRecords } from '../lib/blockCodecs/records'
-import { BlockFrame } from './BlockFrame'
+import { BlockFrame, type BlockFrameEdit } from './BlockFrame'
 
 const attrsSchema = z.object({
   title: z.string().optional(),
@@ -24,7 +24,12 @@ export function DiagnosticBadge({ children }: { children: string }) {
 }
 
 /** Vue timeline (exportée pour les tests) : rail vertical d'étapes numérotées. */
-export function TimelineView({ attrs, body, source }: { attrs: string; body: string; source: string }) {
+export function TimelineView({ attrs, body, source, edit }: {
+  attrs: string
+  body: string
+  source: string
+  edit?: BlockFrameEdit
+}) {
   const { t } = useTranslation()
   const { attrs: rawAttrs, unknown } = parseAttrs(attrs)
   const parsed = attrsSchema.safeParse(rawAttrs)
@@ -45,7 +50,7 @@ export function TimelineView({ attrs, body, source }: { attrs: string; body: str
   if (!parsed.success || unknown.length > 0) badges.push(t('records.unknownAttrs'))
 
   return (
-    <BlockFrame title={conf.title ?? null} typeLabel="timeline" source={source}>
+    <BlockFrame title={conf.title ?? null} typeLabel="timeline" source={source} edit={edit}>
       <ol className="relative ml-2 border-l-2 border-indigo-100 pl-5" data-testid="timeline">
         {steps.map((step, i) => (
           <li key={i} className="relative pb-4 last:pb-0">
@@ -84,6 +89,16 @@ export const TimelineBlock = createReactBlockSpec(
         attrs={props.block.props.attrs}
         body={props.block.props.body}
         source={'```df-timeline' + props.block.props.attrs + '\n' + props.block.props.body + '\n```'}
+        edit={
+          props.editor.isEditable
+            ? {
+                attrs: props.block.props.attrs,
+                body: props.block.props.body,
+                onApply: ({ attrs, body }) =>
+                  props.editor.updateBlock(props.block, { props: { attrs, body } }),
+              }
+            : undefined
+        }
       />
     ),
   },

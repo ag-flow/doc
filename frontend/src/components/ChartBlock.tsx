@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { parseAttrs, parseRecords } from '../lib/blockCodecs/records'
 import { datasetsApi, type DatasetDetailOut } from '../lib/datasetsApi'
 import { useWorkspaceSlugOrNull } from '../contexts/WorkspaceContext'
-import { BlockFrame } from './BlockFrame'
+import { BlockFrame, type BlockFrameEdit } from './BlockFrame'
 import { DiagnosticBadge } from './TimelineBlock'
 
 const CHART_TYPES = ['pie', 'donut', 'bar', 'line'] as const
@@ -286,7 +286,7 @@ function buildDatasetData(detail: DatasetDetailOut): { data: ChartData; noNumeri
 }
 
 /** Chart branché sur un dataset vivant (attribut source). */
-function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, extraBadges }: {
+function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, extraBadges, edit }: {
   datasetId: string
   conf: { title?: string }
   type: ChartType
@@ -295,6 +295,7 @@ function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, ext
   body: string
   source: string
   extraBadges: string[]
+  edit?: BlockFrameEdit
 }) {
   const { t } = useTranslation()
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -340,6 +341,7 @@ function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, ext
       typeLabel="chart"
       source={source}
       svg={() => svgRef.current?.outerHTML ?? null}
+      edit={edit}
     >
       {content}
       {badges.map((b) => (
@@ -350,7 +352,12 @@ function DatasetChart({ datasetId, conf, type, typeOk, format, body, source, ext
 }
 
 /** Vue chart (exportée pour les tests). */
-export function ChartView({ attrs, body, source }: { attrs: string; body: string; source: string }) {
+export function ChartView({ attrs, body, source, edit }: {
+  attrs: string
+  body: string
+  source: string
+  edit?: BlockFrameEdit
+}) {
   const { t } = useTranslation()
   const svgRef = useRef<SVGSVGElement | null>(null)
   const { attrs: rawAttrs, unknown } = parseAttrs(attrs)
@@ -379,6 +386,7 @@ export function ChartView({ attrs, body, source }: { attrs: string; body: string
         body={body}
         source={source}
         extraBadges={commonBadges}
+        edit={edit}
       />
     )
   }
@@ -397,6 +405,7 @@ export function ChartView({ attrs, body, source }: { attrs: string; body: string
       typeLabel="chart"
       source={source}
       svg={() => svgRef.current?.outerHTML ?? null}
+      edit={edit}
     >
       <ChartBody data={data} type={type} typeOk={typeOk} format={format} body={body} svgRef={svgRef} />
       {badges.map((b) => (
@@ -422,6 +431,16 @@ export const ChartBlock = createReactBlockSpec(
         attrs={props.block.props.attrs}
         body={props.block.props.body}
         source={'```df-chart' + props.block.props.attrs + '\n' + props.block.props.body + '\n```'}
+        edit={
+          props.editor.isEditable
+            ? {
+                attrs: props.block.props.attrs,
+                body: props.block.props.body,
+                onApply: ({ attrs, body }) =>
+                  props.editor.updateBlock(props.block, { props: { attrs, body } }),
+              }
+            : undefined
+        }
       />
     ),
   },

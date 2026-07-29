@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 import { TimelineView } from '../components/TimelineBlock'
@@ -32,6 +32,33 @@ describe('TimelineView', () => {
     render(<TimelineView attrs="" body={' | sans titre\nOk | bien'} source="s" />)
     expect(screen.getByText('Ok')).toBeInTheDocument()
     expect(screen.getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
+  })
+
+  it('mode édition : le crayon ouvre la source, Appliquer renvoie attrs + corps', () => {
+    const onApply = vi.fn()
+    render(
+      <TimelineView attrs=' title="Plan"' body="Un | x" source="s"
+        edit={{ attrs: ' title="Plan"', body: 'Un | x', onApply }} />,
+    )
+    fireEvent.click(screen.getByTestId('blockframe-edit'))
+    fireEvent.change(screen.getByTestId('blockframe-edit-attrs'), {
+      target: { value: 'title="Livraison"' },
+    })
+    fireEvent.change(screen.getByTestId('blockframe-edit-body'), {
+      target: { value: 'Scan Colis | Lecture du colis.\nRegEx Matching | Candidats.' },
+    })
+    fireEvent.click(screen.getByTestId('blockframe-edit-apply'))
+    expect(onApply).toHaveBeenCalledWith({
+      attrs: ' title="Livraison"',
+      body: 'Scan Colis | Lecture du colis.\nRegEx Matching | Candidats.',
+    })
+    // Panneau refermé après application.
+    expect(screen.queryByTestId('blockframe-edit-panel')).not.toBeInTheDocument()
+  })
+
+  it('sans edit (lecture) : pas de crayon', () => {
+    render(<TimelineView attrs="" body="Un | x" source="s" />)
+    expect(screen.queryByTestId('blockframe-edit')).not.toBeInTheDocument()
   })
 })
 
