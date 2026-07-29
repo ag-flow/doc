@@ -472,6 +472,11 @@
     "skeletonTitle": "Plan d'action",
     "defaultLabel": "Étape"
   },
+  "conversation": {
+    "slashTitle": "Conversation",
+    "slashHint": "Échange en bulles, un interlocuteur par ligne",
+    "skeletonTitle": "Échange"
+  },
   "chart": {
     "slashTitle": "Graphique (chart)",
     "slashHint": "Camembert, barres ou courbe",

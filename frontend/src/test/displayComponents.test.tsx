@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 import { TimelineView } from '../components/TimelineBlock'
 import { ChartView } from '../components/ChartBlock'
+import { ConversationView } from '../components/ConversationBlock'
 import { WorkspaceProvider } from '../contexts/WorkspaceContext'
 import { datasetsApi } from '../lib/datasetsApi'
 
@@ -59,6 +60,61 @@ describe('TimelineView', () => {
   it('sans edit (lecture) : pas de crayon', () => {
     render(<TimelineView attrs="" body="Un | x" source="s" />)
     expect(screen.queryByTestId('blockframe-edit')).not.toBeInTheDocument()
+  })
+})
+
+describe('ConversationView', () => {
+  const BODY = 'Alice | On livre vendredi ?\nAlice | Recette OK ?\nBob | Oui, jeudi.'
+
+  it('rend les bulles, aligne « me » à droite et groupe les suites', () => {
+    render(<ConversationView attrs=' title="Point" me="Alice"' body={BODY} source="s" />)
+    expect(screen.getByTestId('conversation-msg-0')).toHaveTextContent('On livre vendredi ?')
+    // Alice = me → conteneur aligné à droite.
+    expect(screen.getByTestId('conversation-msg-0').parentElement?.className).toContain('items-end')
+    expect(screen.getByTestId('conversation-msg-2').parentElement?.className).toContain('items-start')
+    // Le nom n'apparaît qu'en tête de suite : Alice une fois, Bob une fois.
+    expect(screen.getAllByText('Alice')).toHaveLength(1)
+    expect(screen.getAllByText('Bob')).toHaveLength(1)
+  })
+
+  it('sans attribut me : tout à gauche ; ligne sans message ignorée avec badge', () => {
+    render(<ConversationView attrs="" body={'Alice | Bonjour.\nBob |'} source="s" />)
+    expect(screen.getByTestId('conversation-msg-0').parentElement?.className).toContain('items-start')
+    expect(screen.getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
+  })
+})
+
+describe('ConversationView — formats transcript & vtt', () => {
+  it('transcript « Speaker • 0:00 \\ » : interlocuteurs, temps et texte multi-lignes', () => {
+    const body = 'Speaker • 0:00 \\\n Non, je préfère des chocs.\n Un truc de chocolat.\n\nSpeaker 2 • 0:32 \\\n Ouais. Ok.'
+    render(<ConversationView attrs="" body={body} source="s" />)
+    expect(screen.getByTestId('conversation')).toHaveAttribute('data-format', 'transcript')
+    expect(screen.getByTestId('conversation-msg-0')).toHaveTextContent('Non, je préfère des chocs.')
+    expect(screen.getByText('0:32')).toBeInTheDocument()
+    expect(screen.getByText('Speaker 2')).toBeInTheDocument()
+  })
+
+  it('WebVTT Teams : voix <v>, fusion des cues consécutives, identifiants ignorés', () => {
+    const body = [
+      'WEBVTT', '',
+      'a1b2/1-1', '00:00:03.400 --> 00:00:06.000', '<v Gaël>Bonjour à tous.</v>', '',
+      'a1b2/2-1', '00:00:06.100 --> 00:00:09.000', '<v Gaël>On commence ?</v>', '',
+      'a1b2/3-1', '00:01:09.000 --> 00:01:12.000', '<v Client>Oui.</v>',
+    ].join('\n')
+    render(<ConversationView attrs=' me="Gaël"' body={body} source="s" />)
+    expect(screen.getByTestId('conversation')).toHaveAttribute('data-format', 'vtt')
+    // Fusion : les deux cues de Gaël font UNE bulle.
+    expect(screen.getByTestId('conversation-msg-0')).toHaveTextContent('Bonjour à tous. On commence ?')
+    expect(screen.getByTestId('conversation-msg-1')).toHaveTextContent('Oui.')
+    expect(screen.getByText('0:03')).toBeInTheDocument()
+    expect(screen.getByText('1:09', { exact: false })).toBeInTheDocument()
+    // me= : bulle de Gaël à droite.
+    expect(screen.getByTestId('conversation-msg-0').parentElement?.className).toContain('items-end')
+  })
+
+  it('un « --> » dans un message pipe ne bascule pas en vtt', () => {
+    render(<ConversationView attrs="" body={'A | Scan --> Matching'} source="s" />)
+    expect(screen.getByTestId('conversation')).toHaveAttribute('data-format', 'records')
   })
 })
 

@@ -40,6 +40,10 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
     attrs: ' type="donut" title="Répartition" format="percent"',
     body: 'Fait | 60\nEn cours | 30\nÀ faire | 10',
   },
+  dfConversation: {
+    attrs: ' title="Point CRM" me="Alice"',
+    body: 'Alice | On livre vendredi ?\nBob | Oui, si la recette passe jeudi.',
+  },
 }
 
 describe('round-trip paramétré sur le registre', () => {

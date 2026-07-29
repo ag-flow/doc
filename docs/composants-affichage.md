@@ -51,6 +51,27 @@ Déploiement | Ouvrir au premier groupe d'utilisateurs.
 - **La numérotation est positionnelle** — ne jamais écrire de numéro dans le
   corps (l'insertion d'une étape renumérote automatiquement).
 
+## `df-conversation` — échange en bulles
+
+````markdown
+```df-conversation title="Point CRM" me="Alice"
+Alice | On livre vendredi ?
+Bob | Oui, si la recette passe jeudi.
+Alice | Je bloque ma journée de jeudi.
+```
+````
+
+- Attributs : `title`, `me` (ses messages s'alignent à droite),
+  `format` (`records` | `transcript` | `vtt` — défaut : détection automatique).
+- **Trois formats de corps acceptés** :
+  1. `records` (canonique) : `Interlocuteur | message`, une ligne par message ;
+  2. `transcript` : en-tête `Interlocuteur • 0:32 \` puis le texte sur les
+     lignes suivantes (exports d'outils de transcription) ;
+  3. `vtt` : contenu WebVTT (Teams) collé tel quel — voix `<v Nom>…</v>`,
+     cues consécutives du même interlocuteur fusionnées, identifiants ignorés.
+- L'horodatage (transcript/vtt) s'affiche à côté du nom ; les messages
+  consécutifs du même interlocuteur sont groupés sous un seul nom.
+
 ## `df-chart` — graphique
 
 ````markdown
