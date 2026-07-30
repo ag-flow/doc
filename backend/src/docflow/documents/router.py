@@ -5,10 +5,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from docflow.auth.deps import check_api_key_scope, require_authenticated
-from docflow.documents import service
+from docflow.documents import service, watch
 from docflow.references import service as ref_service
 from docflow.references.service import DocumentSearchResult
 from docflow.schemas.auth import AuthUser
@@ -146,6 +147,21 @@ async def get_document_version(
     check_api_key_scope(request, ws_slug)
     return await service.get_document_version(
         request.app.state.pool, ws_slug, doc_id, version_number
+    )
+
+
+@router.get(_DOC + "/watch")
+async def watch_document(
+    ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> StreamingResponse:
+    """Flux SSE : signal minimal `{document_id, version, updated_at, updated_by}`
+    à chaque écriture backend (journal document_event) — jamais le contenu."""
+    pool = request.app.state.pool
+    wk = await watch.ensure_document(pool, ws_slug, doc_id)
+    return StreamingResponse(
+        watch.stream_document(pool, wk, doc_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

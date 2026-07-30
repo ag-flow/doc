@@ -23,6 +23,8 @@ import { DocumentReader } from '../components/DocumentReader'
 import { DocumentShell } from '../components/DocumentShell'
 import { VersionHistoryDialog } from '../components/VersionHistoryDialog'
 import { relativeDate } from '../lib/relativeDate'
+import { watchDocument } from '../lib/docWatch'
+import { useToast } from '../components/Toast'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
@@ -35,6 +37,7 @@ interface ConflictData {
 
 export function DocumentEditor() {
   const { t } = useTranslation()
+  const { toast } = useToast()
   const { wsSlug: ws, blocSlug, docId } = useParams<{ wsSlug: string; blocSlug: string; docId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -93,6 +96,43 @@ export function DocumentEditor() {
     queryFn: () => docsApi.getDocument(ws!, docId!),
     enabled: Boolean(ws && docId),
   })
+
+  // ── Live-reload (phase A) : suivi SSE du document ouvert. En lecture, un
+  // changement backend re-fetch et re-rend ; en édition, on ne touche à rien —
+  // toast discret, la conciliation passe par le verrou optimiste (409 →
+  // ConflictResolver) à l'enregistrement. Refs miroirs : le flux vit plus
+  // longtemps qu'un rendu.
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const lastNotifiedVersionRef = useRef(0)
+  useEffect(() => {
+    if (!ws || !docId) return
+    lastNotifiedVersionRef.current = 0
+    const stop = watchDocument(ws, docId, {
+      onChange: (e) => {
+        if (e.version <= expectedVersion.current) return
+        if (modeRef.current === 'read') {
+          void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+          void queryClient.invalidateQueries({ queryKey: ['doc-values', ws, docId] })
+        } else if (e.version > lastNotifiedVersionRef.current) {
+          // Un toast par version distante (le poll serveur ~2 s coalesce déjà
+          // les rafales) — jamais de rechargement pendant la saisie.
+          lastNotifiedVersionRef.current = e.version
+          toast(
+            t('editor.remoteChanged', { who: e.updated_by ?? t('editor.remoteAgent') }),
+            'info',
+          )
+        }
+      },
+      onGone: () => {
+        if (modeRef.current === 'read') {
+          void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+        }
+        toast(t('editor.remoteDeleted'), 'error')
+      },
+    })
+    return stop
+  }, [ws, docId, queryClient, toast, t])
 
   const slugMutation = useMutation({
     mutationFn: (s: string | null) =>
@@ -257,6 +297,15 @@ export function DocumentEditor() {
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
   if (!doc || !ws || !docId || !blocSlug) return <div className="p-8">{t('error.notFound')}</div>
 
+  // Bascule vers l'édition : re-fetch d'abord (un agent a pu écrire pendant la
+  // lecture), puis remontage de l'éditeur pour charger cette base fraîche —
+  // sinon expectedVersion avancerait sur un contenu affiché périmé.
+  const enterEdit = async () => {
+    await queryClient.refetchQueries({ queryKey: ['document', ws, docId] })
+    setEditorEpoch((e) => e + 1)
+    setMode('edit')
+  }
+
   if (mode === 'read') {
     return (
       <DocumentReader
@@ -264,7 +313,7 @@ export function DocumentEditor() {
         blocSlug={blocSlug}
         docId={docId}
         doc={doc}
-        onEdit={() => setMode('edit')}
+        onEdit={() => void enterEdit()}
       />
     )
   }

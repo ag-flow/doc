@@ -133,6 +133,12 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** URL absolue d'un chemin API — pour les consommateurs hors `request`
+ *  (flux SSE fetch-streaming, qui gèrent eux-mêmes la lecture du corps). */
+export function apiUrl(path: string): string {
+  return `${BASE_URL}${path}`
+}
+
 export const api = {
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),

@@ -73,6 +73,13 @@ vi.mock('../lib/api', async () => {
 })
 
 import { docsApi, ApiError, type DocumentOut } from '../lib/api'
+// Le suivi SSE est mocké : on capture les handlers pour simuler les événements.
+vi.mock('../lib/docWatch', () => ({
+  watchDocument: vi.fn(() => () => {}),
+}))
+
+import { watchDocument } from '../lib/docWatch'
+import { ToastProvider } from '../components/Toast'
 import { DocumentEditor } from '../pages/DocumentEditor'
 
 function renderEditor() {
@@ -305,5 +312,63 @@ describe('lecture — pas de titre en double', () => {
     renderEditor()
     await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
     expect(screen.getByTestId('markdown-viewer-mock').textContent).toContain('# Autre chapeau')
+  })
+})
+
+// ── Live-reload (phase A) : suivi SSE branché sur les deux modes ──
+
+describe('DocumentEditor — live-reload (phase A)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  function lastHandlers() {
+    const calls = vi.mocked(watchDocument).mock.calls
+    return calls[calls.length - 1][2]
+  }
+
+  it('lecture : un change distant re-fetch le document (rendu auto)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(watchDocument).toHaveBeenCalledWith('ws', 'd1', expect.anything())
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 9, updated_at: '', updated_by: 'agent' })
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBeGreaterThan(before),
+    )
+  })
+
+  it('édition : un change distant NE recharge rien — toast « modifié par X »', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const router = createMemoryRouter(
+      [{ path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> }],
+      { initialEntries: ['/ws/ws/blocs/b1/documents/d1'] },
+    )
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider><RouterProvider router={router} /></ToastProvider>
+      </QueryClientProvider>,
+    )
+    await enterEditMode()
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 9, updated_at: '', updated_by: 'pocket' })
+    })
+    expect(await screen.findByText(/modifié par pocket/)).toBeInTheDocument()
+    // Aucun re-fetch pendant la saisie.
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
+  })
+
+  it('version distante ≤ locale (écho de sa propre écriture) : ignorée', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 3, updated_at: '', updated_by: 'moi' })
+    })
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
   })
 })

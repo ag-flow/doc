@@ -864,7 +864,7 @@ async def clear_runs(pool: asyncpg.Pool, ws_slug: str | None, automation_id: uui
 
 async def push_update_events(
     pool: asyncpg.Pool, selections: list[dict[str, Any]]
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Émet un event `docflow.document.refreshed.v1` pour chaque document des
     workspaces/blocs sélectionnés.
 
