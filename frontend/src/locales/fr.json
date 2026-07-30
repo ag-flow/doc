@@ -491,6 +491,22 @@
     "slashHint": "Échange en bulles, un interlocuteur par ligne",
     "skeletonTitle": "Échange"
   },
+  "display": {
+    "slashTitle": "Composition (display)",
+    "slashHint": "Interface composée : cartes, badges, colonnes… (JSON A2UI)",
+    "unknownComponents_one": "{{count}} composant inconnu",
+    "unknownComponents_other": "{{count}} composants inconnus",
+    "invalidEntries_one": "{{count}} entrée invalide ignorée",
+    "invalidEntries_other": "{{count}} entrées invalides ignorées",
+    "duplicates_one": "{{count}} id en doublon",
+    "duplicates_other": "{{count}} ids en doublon",
+    "orphans_one": "{{count}} composant non rattaché",
+    "orphans_other": "{{count}} composants non rattachés",
+    "brokenRefs_one": "{{count}} référence morte",
+    "brokenRefs_other": "{{count}} références mortes",
+    "cut_one": "{{count}} composant coupé (garde)",
+    "cut_other": "{{count}} composants coupés (garde)"
+  },
   "chart": {
     "slashTitle": "Graphique (chart)",
     "slashHint": "Camembert, barres ou courbe",

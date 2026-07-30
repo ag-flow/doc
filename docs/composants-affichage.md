@@ -111,6 +111,46 @@ Février | 8 | 7
 - Valeur non numérique → ligne ignorée + badge. Virgule décimale acceptée.
 - Rendu : SVG natif docflow (aucune dépendance), export SVG via l'en-tête du bloc.
 
+## `df-display` — composition libre (A2UI simplifié)
+
+`````markdown
+```df-display title="Comparatif"
+[
+  {"id": "root", "component": "Column", "children": ["title", "cards"]},
+  {"id": "title", "component": "Text", "text": "Comparatif", "hint": "h2"},
+  {"id": "cards", "component": "Row", "children": ["c1", "c2"]},
+  {"id": "c1", "component": "Card", "children": ["c1t", "c1b"]},
+  {"id": "c1t", "component": "Text", "text": "Option A", "hint": "h3"},
+  {"id": "c1b", "component": "Badge", "text": "Recommandé", "variant": "accent"},
+  {"id": "c2", "component": "Card", "children": ["c2t"]},
+  {"id": "c2t", "component": "Text", "text": "Option B", "hint": "h3"}
+]
+```
+`````
+
+- Corps : **tableau JSON plat** (adjacency list) — `id` unique, `component` du
+  catalogue, `children` = ids, autres clés = props à plat. Racine = `id "root"`
+  sinon le premier composant.
+- Fence canonique **`df-display`** ; alias `display` toléré en lecture,
+  revendiqué seulement si le corps est un tableau JSON (sinon bloc de code
+  ordinaire). La fence d'origine est préservée au round-trip.
+- **Catalogue** : Row, Column, Card, List (`ordered`), Divider · Text
+  (`hint: h1|h2|h3|body|caption`), Image (`src`, `alt`), Icon (`name`),
+  Badge/Chip (`text`, `variant: neutral|accent|alert`) · ProgressBar
+  (`value` 0–100, `label`).
+- **Image** : `https:` ou artefact docflow (`/api/…`) uniquement — le reste
+  rend « image non autorisée ». **Icon** : 30 noms kebab-case stables
+  (`check`, `x`, `warning`, `info`, `clock`, `calendar`, `user`, `users`,
+  `gear`, `lightning`, `flag`, `star`, `arrow-right`, `arrow-up`,
+  `arrow-down`, `link`, `file`, `folder`, `tag`, `chat`, `envelope`, `globe`,
+  `lock`, `shield`, `database`, `rocket`, `target`, `trend-up`, `trend-down`,
+  `circle`) — inconnu → cercle grisé.
+- **Gardes** : 500 composants max, profondeur 32, cycles coupés ; composant
+  inconnu → texte grisé (ses enfants rendent) ; doublons/orphelins/références
+  mortes → badges de diagnostic, rendu partiel — jamais d'échec.
+- Hors MVP (phases ultérieures) : data binding datasets, actions utilisateur,
+  Chart/Mermaid/DataTable au catalogue.
+
 ## Graphes orientés : utiliser `mermaid`
 
 Pas de composant `df-flowchart` : les fences ```` ```mermaid ```` sont rendues

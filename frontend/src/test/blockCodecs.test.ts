@@ -44,6 +44,11 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
     attrs: ' title="Point CRM" me="Alice"',
     body: 'Alice | On livre vendredi ?\nBob | Oui, si la recette passe jeudi.',
   },
+  dfDisplay: {
+    fence: 'df-display',
+    attrs: ' title="Comparatif"',
+    body: '[{"id": "root", "component": "Text", "text": "Hello", "hint": "h2"}]',
+  },
 }
 
 describe('round-trip paramétré sur le registre', () => {
@@ -108,6 +113,36 @@ describe('parsing', () => {
     const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
     const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
     expect(out).toBe(md)
+  })
+})
+
+describe('alias ```display (A2UI)', () => {
+  const JSON_BODY = '[{"id": "root", "component": "Text", "text": "Hi"}]'
+
+  it('corps JSON valide → revendiqué, fence d’origine préservée au round-trip', async () => {
+    const md = '```display\n' + JSON_BODY + '\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const block = blocks.find((b) => (b as { type?: string }).type === 'dfDisplay') as {
+      props: { fence: string; body: string }
+    }
+    expect(block).toBeDefined()
+    expect(block.props.fence).toBe('display')
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+
+  it('corps non-JSON → écarté : reste un bloc de code ordinaire, intact', async () => {
+    const md = '```display\nconst x = 1;\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfDisplay')).toBe(false)
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+
+  it('```df-display revendique même un JSON cassé (intention explicite, dégradation au rendu)', async () => {
+    const md = '```df-display\n{oops\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfDisplay')).toBe(true)
   })
 })
 

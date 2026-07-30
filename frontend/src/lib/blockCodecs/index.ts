@@ -23,6 +23,7 @@ import { datasetCodec } from './dataset'
 import { timelineCodec } from './timeline'
 import { chartCodec } from './chart'
 import { conversationCodec } from './conversation'
+import { displayCodec } from './display'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +77,7 @@ export const registry: BlockCodec[] = [
   timelineCodec as unknown as BlockCodec,
   chartCodec as unknown as BlockCodec,
   conversationCodec as unknown as BlockCodec,
+  displayCodec as unknown as BlockCodec,
 ]
 
 const byType = new Map(registry.map((c) => [c.type, c]))
