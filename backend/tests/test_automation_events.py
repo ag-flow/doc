@@ -662,13 +662,21 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     )
     assert r["events"] == 1
 
-    # Sélection workspace entier (blocs vides = tous) → 2 events de plus.
+    # Sélection workspace entier (blocs vides = tous) → 2 events de plus,
+    # ET le détail par sélection dit ce que chacune a émis.
     r = await auto_svc.push_update_events(db_pool, [{"workspace_slug": slug}])
+    assert r["events"] == 2
+    assert r["details"] == [{"workspace_slug": slug, "block_slugs": [], "events": 2}]
+
+    # Forme exacte envoyée par la fenêtre (block_slugs: []) : même contrat.
+    r = await auto_svc.push_update_events(
+        db_pool, [{"workspace_slug": slug, "block_slugs": []}]
+    )
     assert r["events"] == 2
 
     # Les events sont bien visibles par l'automate (pending) et portent le contrat.
     listed = await auto_svc.list_automations(db_pool, slug)
-    assert next(a for a in listed if a.id == auto.id).pending_count == 3
+    assert next(a for a in listed if a.id == auto.id).pending_count == 5
     # L'abonné updated N'EST PAS re-déclenché par un push manuel.
     assert next(a for a in listed if a.id == upd_only.id).pending_count == 0
     biz = await db_pool.fetchval(

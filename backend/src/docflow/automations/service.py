@@ -877,6 +877,7 @@ async def push_update_events(
     la base vers le workflow externe. `block_slugs` vide = tous les blocs.
     """
     total = 0
+    details: list[dict[str, Any]] = []
     async with pool.acquire() as conn, conn.transaction():
         for sel in selections:
             ws_slug = str(sel.get("workspace_slug", ""))
@@ -902,6 +903,12 @@ async def push_update_events(
                 ws_slug,
                 blocks,
             )
-            total += int(result.split()[-1])
-    log.info("automation_events_pushed", count=total)
-    return {"events": total}
+            emitted = int(result.split()[-1])
+            total += emitted
+            details.append(
+                {"workspace_slug": ws_slug, "block_slugs": blocks, "events": emitted}
+            )
+    # Le détail par sélection est journalisé ET retourné : un push qui émet 0
+    # sur une sélection doit se voir immédiatement (diagnostic).
+    log.info("automation_events_pushed", count=total, selections=details)
+    return {"events": total, "details": details}

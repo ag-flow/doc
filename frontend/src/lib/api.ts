@@ -1253,7 +1253,10 @@ export const automationsApi = {
   clearRuns: (id: string) => api.delete<{ deleted: number }>(`/automations/${id}/runs`),
   /** Émet des events de modification synthétiques (re-déclenchement d'automates). */
   pushEvents: (selections: { workspace_slug: string; block_slugs?: string[] }[]) =>
-    api.post<{ events: number }>('/automations/push-events', { selections }),
+    api.post<{
+      events: number
+      details: { workspace_slug: string; block_slugs: string[]; events: number }[]
+    }>('/automations/push-events', { selections }),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────

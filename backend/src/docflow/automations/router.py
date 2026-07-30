@@ -47,7 +47,7 @@ class PushEventsIn(BaseModel):
 @router.post("/automations/push-events")
 async def push_events(
     body: PushEventsIn, request: Request, _: AuthUser = _Auth
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Émet des events de modification synthétiques sur les documents des
     workspaces/blocs sélectionnés (re-déclenchement des automates)."""
     return await service.push_update_events(

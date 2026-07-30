@@ -149,7 +149,15 @@ export function AutomatesPage() {
     mutationFn: (selections: PushSelection[]) => automationsApi.pushEvents(selections),
     onSuccess: (res) => {
       setPushOpen(false)
-      toast(`${res.events} event${res.events > 1 ? 's' : ''} de modification émis`, 'success')
+      // Détail par sélection : une sélection qui émet 0 doit se voir tout de suite.
+      const detail = (res.details ?? [])
+        .map((d) => `${d.workspace_slug}${d.block_slugs.length ? ` (${d.block_slugs.join(', ')})` : ''} : ${d.events}`)
+        .join(' · ')
+      toast(
+        `${res.events} event${res.events > 1 ? 's' : ''} de modification émis`
+          + (detail ? `\n${detail}` : ''),
+        res.events === 0 ? 'error' : 'success',
+      )
       // Les compteurs « en attente » bougent immédiatement.
       void qc.invalidateQueries({ queryKey: ['automations'] })
     },
