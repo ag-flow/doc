@@ -457,37 +457,47 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                   <Plus size={12} weight="duotone" /> Ajouter
                 </button>
               </div>
+              {/* Proportions par WRAPPERS : `.input` (non-layered) impose
+                  width:100% et bat les utilitaires w-* posés sur le champ —
+                  la largeur se fixe donc sur un conteneur. Nom et préfixe
+                  fixes, la valeur (ou le choix du secret) prend le reste. */}
               {headers.map((h, i) => (
                 <div key={h.id} className="mb-2 flex items-center gap-2">
-                  <Input value={h.name} onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, name:e.target.value} : r))}
-                    placeholder="Nom" className="w-36" data-testid={`header-name-${i}`} />
-                  <Input value={h.valuePrefix}
-                    onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, valuePrefix:e.target.value} : r))}
-                    placeholder="préfixe" title="Préfixe de valeur (ex. « Bearer »)"
-                    className="w-24 font-mono text-xs" />
-                  <label className="flex items-center gap-1 whitespace-nowrap text-xs">
+                  <div className="w-44 shrink-0">
+                    <Input value={h.name} onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, name:e.target.value} : r))}
+                      placeholder="Nom" data-testid={`header-name-${i}`} />
+                  </div>
+                  <div className="w-28 shrink-0">
+                    <Input value={h.valuePrefix}
+                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, valuePrefix:e.target.value} : r))}
+                      placeholder="préfixe" title="Préfixe de valeur (ex. « Bearer »)"
+                      className="font-mono text-xs" />
+                  </div>
+                  <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs">
                     <input type="checkbox" checked={h.isSecret}
                       onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, isSecret:e.target.checked} : r))} />
                     Secret
                   </label>
-                  {h.isSecret ? (
-                    <select value={h.secretRef}
-                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
-                      className="input flex-1 text-[12px]"
-                      data-testid={`header-secret-${i}`}>
-                      <option value="">— choisir un secret —</option>
-                      {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
-                      {h.secretRef && !secrets.some((s) => `\${secret://${s.id}}` === h.secretRef) && (
-                        <option value={h.secretRef}>{h.secretRef} (existant)</option>
-                      )}
-                    </select>
-                  ) : (
-                    <Input value={h.value}
-                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
-                      placeholder="Valeur" className="flex-1" />
-                  )}
+                  <div className="min-w-0 flex-1">
+                    {h.isSecret ? (
+                      <select value={h.secretRef}
+                        onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
+                        className="input text-[12px]"
+                        data-testid={`header-secret-${i}`}>
+                        <option value="">— choisir un secret —</option>
+                        {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
+                        {h.secretRef && !secrets.some((s) => `\${secret://${s.id}}` === h.secretRef) && (
+                          <option value={h.secretRef}>{h.secretRef} (existant)</option>
+                        )}
+                      </select>
+                    ) : (
+                      <Input value={h.value}
+                        onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
+                        placeholder="Valeur" />
+                    )}
+                  </div>
                   <button type="button" onClick={() => setHeaders((arr) => arr.filter((_, j) => j !== i))}
-                    className="border-0 bg-transparent p-0 text-ink/[0.4] hover:text-accent-2-700"><Trash size={14} weight="duotone" /></button>
+                    className="shrink-0 border-0 bg-transparent p-0 text-ink/[0.4] hover:text-accent-2-700"><Trash size={14} weight="duotone" /></button>
                 </div>
               ))}
             </div>

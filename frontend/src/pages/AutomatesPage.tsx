@@ -29,7 +29,10 @@ export function AutomatesPage() {
   const { data: automations = [], isLoading: aLoading } = useQuery({
     queryKey: ['automations'],
     queryFn: () => automationsApi.list(),
-    staleTime: 15_000,
+    // Les compteurs « en attente » et la dernière exécution vivent au rythme
+    // du worker : la liste se rafraîchit seule (onglet au premier plan).
+    refetchInterval: 10_000,
+    staleTime: 5_000,
   })
 
   const createMut = useMutation({
