@@ -296,6 +296,7 @@
     "remoteChanged": "Ce document a été modifié par {{who}} en arrière-plan — la conciliation se fera à l'enregistrement.",
     "remoteAgent": "un agent",
     "remoteDeleted": "Ce document a été supprimé côté serveur.",
+    "autoMerged": "Modifications distantes fusionnées automatiquement (v{{version}}).",
     "copyPublicLink": "Copier le lien public",
     "savedAck": "Enregistré",
     "focusEnter": "Mode rédaction plein écran",

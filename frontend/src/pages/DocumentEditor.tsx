@@ -24,6 +24,7 @@ import { DocumentShell } from '../components/DocumentShell'
 import { VersionHistoryDialog } from '../components/VersionHistoryDialog'
 import { relativeDate } from '../lib/relativeDate'
 import { watchDocument } from '../lib/docWatch'
+import { threeWayMerge } from '../lib/merge3'
 import { useToast } from '../components/Toast'
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
@@ -191,11 +192,55 @@ export function DocumentEditor() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const serverDoc = (err.detail ?? {}) as Partial<DocumentOut>
+        const serverContent = serverDoc.content ?? ''
+        const serverVersion = serverDoc.version ?? expectedVersion.current + 1
+        // Phase B : fusion three-way AVANT tout dialogue — base commune (début
+        // d'édition) / ours (brouillon) / theirs (serveur). Zones disjointes →
+        // enregistrement direct du fusionné ; conflits réels → resolver avec un
+        // brouillon PRÉ-FUSIONNÉ (ours retenu en zone de conflit) : il ne reste
+        // à arbitrer que les vraies zones.
+        const { merged, conflicts } = threeWayMerge(
+          ancestorRef.current.content, content, serverContent,
+        )
+        if (conflicts === 0) {
+          try {
+            const updated = await docsApi.patchDocument(ws, docId, {
+              title,
+              content: merged,
+              expected_version: serverVersion,
+            })
+            expectedVersion.current = updated.version
+            ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
+            // FE-02 : publier le fusionné dans le cache puis remonter l'éditeur,
+            // sinon la sauvegarde suivante repartirait du brouillon pré-fusion.
+            queryClient.setQueryData(['document', ws, docId], updated)
+            setEditorEpoch((e) => e + 1)
+            setStatus('saved')
+            toast(t('editor.autoMerged', { version: updated.version }), 'success')
+            return true
+          } catch (retryErr) {
+            if (retryErr instanceof ApiError && retryErr.status === 409) {
+              // Nouvelle écriture entre-temps : on arbitre sur l'état frais.
+              const s2 = (retryErr.detail ?? {}) as Partial<DocumentOut>
+              setConflict({
+                baseVersion: expectedVersion.current,
+                server: s2.content ?? '',
+                serverVersion: s2.version ?? serverVersion + 1,
+                draft: merged,
+              })
+              setStatus('idle')
+              return false
+            }
+            setStatus('error')
+            setErrorMsg(retryErr instanceof ApiError ? retryErr.message : t('error.generic'))
+            return false
+          }
+        }
         setConflict({
           baseVersion: expectedVersion.current,
-          server: serverDoc.content ?? '',
-          serverVersion: serverDoc.version ?? expectedVersion.current + 1,
-          draft: content,
+          server: serverContent,
+          serverVersion,
+          draft: merged,
         })
         setStatus('idle')
       } else if (err instanceof ApiError && err.status === 422) {

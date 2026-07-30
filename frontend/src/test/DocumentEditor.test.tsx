@@ -372,3 +372,64 @@ describe('DocumentEditor — live-reload (phase A)', () => {
     expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
   })
 })
+
+// ── Live-reload phase B : fusion three-way au 409 ──
+
+describe('DocumentEditor — fusion automatique (phase B)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function makeDirtyAndSave() {
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Titre édité' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+  }
+
+  it('409 sans conflit réel : le fusionné est enregistré, pas de resolver', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    // Le serveur a ajouté un paragraphe (ours == base : l'éditeur mocké rend
+    // initialContent) → fusion = contenu serveur, zéro conflit.
+    const serverContent = '# Hello\n\nAjout agent.'
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { title: 'Mon document', content: serverContent, version: 7 }, 'conflit'),
+      )
+      .mockResolvedValueOnce({ ...doc, content: serverContent, version: 8 })
+
+    renderEditor()
+    await enterEditMode()
+    await makeDirtyAndSave()
+
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.patchDocument)).toHaveBeenLastCalledWith(
+        'ws', 'd1',
+        expect.objectContaining({ content: serverContent, expected_version: 7 }),
+      ),
+    )
+    expect(screen.queryByTestId('conflict-resolver')).not.toBeInTheDocument()
+  })
+
+  it('re-409 sur l’enregistrement du fusionné : resolver sur l’état frais', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { content: '# Hello\n\nAjout agent.', version: 7 }, 'conflit'),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(409, { content: '# Hello\n\nEncore bougé.', version: 9 }, 'conflit'),
+      )
+
+    renderEditor()
+    await enterEditMode()
+    await makeDirtyAndSave()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('conflict-resolver')).toBeInTheDocument(),
+    )
+  })
+})
