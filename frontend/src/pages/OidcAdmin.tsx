@@ -5,6 +5,8 @@ import { type AuthMethodsOut, oidcApi, setupApi, type OidcConfigOut } from '../l
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { SecretInput } from '../components/SecretInput'
+import { SectionHead } from '../components/SectionHead'
+import { ErrorLine, SheetSkeleton } from '../components/ui/states'
 
 export function OidcAdmin() {
   const { t } = useTranslation()
@@ -48,12 +50,22 @@ export function OidcAdmin() {
     },
   })
 
-  if (isLoading) return <div className="p-8 text-gray-500">{t('common.loading')}</div>
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+        <SheetSkeleton />
+      </div>
+    )
+  }
 
   if (isError) {
     const status = (error as { status?: number }).status
     if (status === 403) {
-      return <div className="p-8 text-red-600">{t('oidc.forbidden')}</div>
+      return (
+        <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+          <ErrorLine message={t('oidc.forbidden')} />
+        </div>
+      )
     }
   }
 
@@ -61,29 +73,33 @@ export function OidcAdmin() {
   const canSave = issuer.trim() && clientId.trim() && secretRef.trim()
 
   return (
-    <div className="p-8 max-w-2xl">
-      <h1 className="mb-1 text-2xl font-semibold text-gray-900">{t('oidc.title')}</h1>
-      <p className="mb-6 text-sm text-gray-500">{t('oidc.subtitle')}</p>
+    <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+      <SectionHead kicker="Administration" title={t('oidc.title')} />
+      <p className="mb-8 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        {t('oidc.subtitle')}
+      </p>
 
       <LocalLoginFlag />
 
-      <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-6">
+      <div className="max-w-[560px] space-y-6">
         {/* Issuer */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">{t('oidc.issuer')}</label>
+        <div className="field">
+          <label htmlFor="oidc-issuer">{t('oidc.issuer')}</label>
           <Input
+            id="oidc-issuer"
             value={issuer}
             onChange={(e) => { setIssuer(e.target.value); setSaveMsg(null) }}
             placeholder="https://security.yoops.org/realms/yoops"
             data-testid="oidc-issuer"
           />
-          <p className="mt-1 text-xs text-gray-400">{t('oidc.issuerHint')}</p>
+          <p className="field-hint m-0">{t('oidc.issuerHint')}</p>
         </div>
 
         {/* Client ID */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">{t('oidc.clientId')}</label>
+        <div className="field">
+          <label htmlFor="oidc-client-id">{t('oidc.clientId')}</label>
           <Input
+            id="oidc-client-id"
             value={clientId}
             onChange={(e) => { setClientId(e.target.value); setSaveMsg(null) }}
             placeholder="docflow"
@@ -92,72 +108,73 @@ export function OidcAdmin() {
         </div>
 
         {/* Secret ref */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">{t('oidc.secretRef')}</label>
+        <div className="field">
+          <label>{t('oidc.secretRef')}</label>
           <SecretInput
             value={secretRef}
             onChange={(v) => { setSecretRef(v); setSaveMsg(null) }}
             placeholder={t('oidc.secretRefPlaceholder')}
           />
           {hasExistingConfig && (
-            <p className="mt-1 text-xs text-gray-400">{t('oidc.secretRefMasked')}</p>
+            <p className="field-hint m-0">{t('oidc.secretRefMasked')}</p>
           )}
         </div>
 
         {/* Enabled toggle */}
         <div className="flex items-center gap-3">
           <button
+            type="button"
             role="switch"
             aria-checked={enabled}
             onClick={() => { setEnabled((v) => !v); setSaveMsg(null) }}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              enabled ? 'bg-indigo-600' : 'bg-gray-200'
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-0 transition-colors ${
+              enabled ? 'bg-accent' : 'bg-neutral-300'
             }`}
             data-testid="oidc-enabled-toggle"
           >
             <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                enabled ? 'translate-x-6' : 'translate-x-1'
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-paper shadow-sm transition-transform ${
+                enabled ? 'translate-x-[18px]' : 'translate-x-0.5'
               }`}
             />
           </button>
-          <span className="text-sm text-gray-700">
+          <span className="text-[14px]">
             {enabled ? t('oidc.enabledOn') : t('oidc.enabledOff')}
           </span>
         </div>
 
         {/* Mode OIDC-only */}
-        <label className="flex items-start gap-2 text-sm text-gray-700">
+        <label className="flex items-start gap-2 text-[14px]">
           <input
             type="checkbox"
-            className="mt-0.5"
+            className="mt-1"
             checked={disableLocal}
             onChange={(e) => { setDisableLocal(e.target.checked); setSaveMsg(null) }}
             data-testid="oidc-disable-local"
           />
           <span>
             Désactiver la connexion locale (mode OIDC-only).
-            <span className="block text-xs text-gray-500">
+            <span className="block text-[12px] leading-[1.6] text-ink/[0.55]">
               Sans effet tant que l'OIDC n'est pas activé — et désactiver l'OIDC
               réactive automatiquement la connexion locale. En cas de panne :
-              surcharge <span className="font-mono">LOCAL_LOGIN_ENABLED=true</span>{' '}
-              dans <span className="font-mono">/data/.env</span> + redémarrage.
+              surcharge <span className="[font-family:var(--font-mono)]">LOCAL_LOGIN_ENABLED=true</span>{' '}
+              dans <span className="[font-family:var(--font-mono)]">/data/.env</span> + redémarrage.
             </span>
           </span>
         </label>
 
-        {saveMsg && (
-          <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700"
-            data-testid="oidc-save-msg">
-            {saveMsg}
-          </p>
-        )}
-        {saveError && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
-            data-testid="oidc-save-error">
-            {saveError}
-          </p>
-        )}
+        <div aria-live="polite" className="empty:hidden">
+          {saveMsg && (
+            <p className="m-0 text-[14px] text-accent-700" data-testid="oidc-save-msg">
+              {saveMsg}
+            </p>
+          )}
+          {saveError && (
+            <p className="m-0 text-[14px] text-accent-2-700" data-testid="oidc-save-error">
+              {saveError}
+            </p>
+          )}
+        </div>
 
         <div className="flex items-center gap-3 pt-2">
           <Button
@@ -168,13 +185,13 @@ export function OidcAdmin() {
             {saveMutation.isPending ? t('common.loading') : t('common.save')}
           </Button>
           {!canSave && (
-            <span className="text-xs text-gray-400">{t('oidc.secretRequired')}</span>
+            <span className="text-[12px] text-ink/[0.5]">{t('oidc.secretRequired')}</span>
           )}
         </div>
       </div>
 
       {hasExistingConfig && config && (
-        <p className="mt-4 text-xs text-gray-400">
+        <p className="mt-4 text-[12px] text-ink/[0.5]">
           {t('oidc.lastUpdated', { date: new Date(config.updated_at).toLocaleString('fr-FR') })}
         </p>
       )}
@@ -187,12 +204,12 @@ export function OidcAdmin() {
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
     <div className="flex gap-4">
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-100 text-[12px] font-[600] text-accent-800">
         {n}
       </div>
       <div className="min-w-0">
-        <p className="mb-1 text-sm font-medium text-gray-800">{title}</p>
-        <div className="text-sm text-gray-600">{children}</div>
+        <p className="mb-1 text-[15px] font-[600] [font-family:var(--font-heading)]">{title}</p>
+        <div className="text-[14px] leading-[1.6] text-ink/[0.7]">{children}</div>
       </div>
     </div>
   )
@@ -200,7 +217,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 function Code({ children }: { children: string | ReactNode }) {
   return (
-    <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-800">
+    <code className="rounded-sm bg-neutral-100 px-1.5 py-0.5 text-[12px] [font-family:var(--font-mono)]">
       {children}
     </code>
   )
@@ -208,7 +225,7 @@ function Code({ children }: { children: string | ReactNode }) {
 
 function Block({ children }: { children: string }) {
   return (
-    <pre className="mt-1.5 overflow-x-auto rounded-md bg-gray-900 px-4 py-3 font-mono text-xs text-gray-100">
+    <pre className="mt-1.5 overflow-x-auto rounded-md bg-neutral-900 px-4 py-3 text-[12px] text-neutral-100 [font-family:var(--font-mono)]">
       {children}
     </pre>
   )
@@ -216,12 +233,12 @@ function Block({ children }: { children: string }) {
 
 function KeycloakGuide() {
   return (
-    <details className="mt-8 rounded-lg border border-gray-200 bg-white" open>
-      <summary className="cursor-pointer select-none px-6 py-4 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+    <details className="mt-14" open>
+      <summary className="cursor-pointer select-none text-[11px] font-[600] uppercase tracking-[0.08em] text-ink/[0.5] hover:text-accent-700">
         Procédure — Créer le client Keycloak
       </summary>
 
-      <div className="space-y-6 px-6 pb-6 pt-4">
+      <div className="mt-5 max-w-[720px] space-y-6 border-t border-[var(--color-divider)] pt-5">
         <Step n={1} title="Ouvrir la console d'administration Keycloak">
           <p>
             Connectez-vous sur{' '}
@@ -229,7 +246,7 @@ function KeycloakGuide() {
               href="https://security.yoops.org"
               target="_blank"
               rel="noreferrer"
-              className="text-indigo-600 underline"
+              className="text-accent-700 underline"
             >
               https://security.yoops.org
             </a>{' '}
@@ -257,11 +274,11 @@ function KeycloakGuide() {
           <ul className="mt-2 list-inside list-disc space-y-1">
             <li>
               <strong>Client authentication</strong> → <Code>On</Code>{' '}
-              <span className="text-gray-400">(génère un client secret)</span>
+              <span className="text-ink/[0.5]">(génère un client secret)</span>
             </li>
             <li>
               <strong>Direct access grants</strong> → <Code>Off</Code>{' '}
-              <span className="text-gray-400">(désactivé, on utilise le code flow)</span>
+              <span className="text-ink/[0.5]">(désactivé, on utilise le code flow)</span>
             </li>
           </ul>
           <p className="mt-2">Cliquez <strong>Next</strong>.</p>
@@ -318,7 +335,7 @@ function KeycloakGuide() {
           </ul>
         </Step>
 
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="border-l-2 border-accent pl-4 text-[14px] leading-[1.6] text-ink/[0.7]">
           <strong>Break-glass :</strong> le compte admin local reste opérationnel même avec
           l'OIDC activé. En cas de panne Keycloak, connectez-vous via{' '}
           <Code>POST /api/auth/login</Code> avec les identifiants bootstrap.
@@ -340,19 +357,19 @@ function LocalLoginFlag() {
   if (!data) return null
   return (
     <div
-      className={`mb-6 rounded border px-4 py-3 text-sm ${data.local
-        ? 'border-gray-200 bg-gray-50 text-gray-600'
-        : 'border-amber-200 bg-amber-50 text-amber-800'}`}
+      className={`mb-8 max-w-[560px] border-l-2 pl-4 text-[14px] ${data.local
+        ? 'border-[var(--color-divider)] text-ink/[0.65]'
+        : 'border-accent-2 text-accent-2-700'}`}
       data-testid="local-login-flag"
     >
-      <p className="font-medium">
+      <p className="m-0 font-[600] [font-family:var(--font-heading)]">
         Connexion locale : {data.local ? 'activée' : 'désactivée (mode OIDC-only)'}
       </p>
-      <p className="mt-1 text-xs">
+      <p className={`m-0 mt-1 text-[12px] leading-[1.6] ${data.local ? 'text-ink/[0.55]' : ''}`}>
         Piloté par la case « mode OIDC-only » ci-dessous (effective seulement
         quand l'OIDC est activé). Surcharge break-glass possible :{' '}
-        <span className="font-mono">LOCAL_LOGIN_ENABLED=true</span> dans{' '}
-        <span className="font-mono">/data/.env</span> + redémarrage force le
+        <span className="[font-family:var(--font-mono)]">LOCAL_LOGIN_ENABLED=true</span> dans{' '}
+        <span className="[font-family:var(--font-mono)]">/data/.env</span> + redémarrage force le
         retour de la connexion locale en cas de panne OIDC.
       </p>
     </div>

@@ -1,8 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Copy, Check, Trash2, Plus, Key, ShieldCheck, Plug } from 'lucide-react'
+import {
+  CaretDown, CaretRight, Copy, Check, Trash, Plus, Key, ShieldCheck, Plug,
+} from '@phosphor-icons/react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { SectionHead } from '../components/SectionHead'
+import { EmptyState, TableSkeleton } from '../components/ui/states'
 import { HmacSecretsTab } from '../components/HmacSecretsTab'
 import {
   api,
@@ -65,10 +70,8 @@ function ReadOnlyToggle({
     <button
       type="button"
       onClick={() => onChange(!value)}
-      className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-        value
-          ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-          : 'bg-green-100 text-green-700 hover:bg-green-200'
+      className={`tag cursor-pointer border-0 transition-opacity hover:opacity-75 ${
+        value ? 'tag-neutral' : 'tag-accent'
       }`}
     >
       {value ? 'Lecture seule' : 'Lect./Écriture'}
@@ -105,24 +108,22 @@ function WorkspaceScopeRow({
   }
 
   return (
-    <div className="rounded border border-gray-200 bg-white">
+    <div className="rounded-md border border-[var(--color-divider)] bg-surface">
       <div className="flex items-center gap-3 px-3 py-2">
-        <input
-          type="checkbox"
-          checked={wsEnabled}
-          onChange={toggleWs}
-          className="h-4 w-4 rounded border-gray-300 text-indigo-600"
-        />
+        <input type="checkbox" checked={wsEnabled} onChange={toggleWs} />
         <button
           type="button"
-          className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900"
+          className="flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0
+            text-left text-ink/[0.75] hover:text-ink"
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <span className="font-mono text-xs">{ws.slug}</span>
-          <span className="text-gray-500">{ws.label}</span>
+          {expanded
+            ? <CaretDown size={14} weight="duotone" />
+            : <CaretRight size={14} weight="duotone" />}
+          <span className="text-[12px] [font-family:var(--font-mono)]">{ws.slug}</span>
+          <span className="text-[13px] text-ink/[0.55]">{ws.label}</span>
         </button>
-        <span className="ml-auto text-xs text-gray-400">tout le workspace</span>
+        <span className="ml-auto text-[11px] text-ink/[0.45]">tout le workspace</span>
         {wsEnabled && (
           <ReadOnlyToggle
             value={wsReadOnly}
@@ -131,9 +132,9 @@ function WorkspaceScopeRow({
         )}
       </div>
       {expanded && (
-        <div className="border-t border-gray-100 bg-gray-50 px-6 py-2 space-y-1">
+        <div className="space-y-1 border-t border-[var(--color-divider)] bg-ink/[0.03] px-6 py-2">
           {blocks.length === 0 && (
-            <p className="text-xs text-gray-400">Aucun bloc dans ce workspace</p>
+            <p className="m-0 text-[12px] text-ink/[0.45]">Aucun bloc dans ce workspace</p>
           )}
           {blocks.map((b) => {
             const bKey = scopeKey(ws.slug, b.slug)
@@ -145,10 +146,11 @@ function WorkspaceScopeRow({
                   type="checkbox"
                   checked={bEnabled}
                   onChange={() => toggleBlock(b.slug, !bEnabled, bReadOnly)}
-                  className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                 />
-                <span className="font-mono text-xs text-gray-700">{b.slug}</span>
-                <span className="text-xs text-gray-500">{b.label}</span>
+                <span className="text-[12px] text-ink/[0.75] [font-family:var(--font-mono)]">
+                  {b.slug}
+                </span>
+                <span className="text-[12px] text-ink/[0.55]">{b.label}</span>
                 {bEnabled && (
                   <ReadOnlyToggle
                     value={bReadOnly}
@@ -244,41 +246,46 @@ function ProfileCard({
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div className="rounded-md border border-[var(--color-divider)] bg-surface">
       <div className="flex items-center gap-3 px-4 py-3">
         <button
           type="button"
-          className="flex items-center gap-2 flex-1 text-left"
+          className="flex flex-1 cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-left"
           onClick={() => { setExpanded((v) => !v); setScopesLoaded(false) }}
         >
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          <span className="font-medium text-gray-900">{profile.name}</span>
+          {expanded
+            ? <CaretDown size={16} weight="duotone" />
+            : <CaretRight size={16} weight="duotone" />}
+          <span className="text-[15px] font-[600] [font-family:var(--font-heading)]">
+            {profile.name}
+          </span>
           {profile.is_admin && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-              <ShieldCheck size={11} />
+            <span className="tag tag-accent gap-1">
+              <ShieldCheck size={11} weight="duotone" />
               Admin
             </span>
           )}
           {profile.description && (
-            <span className="text-sm text-gray-500">{profile.description}</span>
+            <span className="text-[13px] text-ink/[0.55]">{profile.description}</span>
           )}
-          <span className="ml-auto text-xs text-gray-400">
+          <span className="ml-auto text-[11px] text-ink/[0.45]">
             {profile.scope_count} scope{profile.scope_count !== 1 ? 's' : ''} ·{' '}
             {profile.key_count} clé{profile.key_count !== 1 ? 's' : ''} active{profile.key_count !== 1 ? 's' : ''}
           </span>
         </button>
         {!confirmDelete ? (
-          <button
-            type="button"
+          <Button
+            variant="icon"
+            size="sm"
+            className="text-accent-2-700"
             onClick={() => setConfirmDelete(true)}
-            className="p-1 text-gray-400 hover:text-red-500"
             title="Supprimer le profil"
           >
-            <Trash2 size={16} />
-          </button>
+            <Trash size={14} weight="duotone" />
+          </Button>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-red-600">Supprimer ?</span>
+            <span className="text-[12px] text-accent-2-700">Supprimer ?</span>
             <Button
               variant="danger"
               size="sm"
@@ -295,11 +302,12 @@ function ProfileCard({
       </div>
 
       {expanded && (
-        <div className="border-t border-gray-100 px-4 py-4 space-y-3">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Description</label>
+        <div className="space-y-3 border-t border-[var(--color-divider)] px-4 py-4">
+          <div className="field">
+            <label htmlFor={`desc-${profile.id}`}>Description</label>
             <div className="flex items-center gap-2">
               <Input
+                id={`desc-${profile.id}`}
                 value={desc}
                 onChange={(e) => setDesc(e.target.value)}
                 placeholder="Description optionnelle"
@@ -312,13 +320,13 @@ function ProfileCard({
               >
                 Enregistrer
               </Button>
-              {descMsg && <span className="text-xs text-green-600">{descMsg}</span>}
+              {descMsg && <span className="text-[12px] text-accent-700">{descMsg}</span>}
             </div>
           </div>
 
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Scopes</p>
+          <p className="m-0 text-[11px] uppercase tracking-[0.08em] text-ink/[0.6]">Scopes</p>
           {workspaces.length === 0 ? (
-            <p className="text-sm text-gray-400">Aucun workspace disponible</p>
+            <p className="m-0 text-[13px] text-ink/[0.45]">Aucun workspace disponible</p>
           ) : (
             <div className="space-y-2">
               {workspaces.map((ws) => (
@@ -335,23 +343,25 @@ function ProfileCard({
             <Button onClick={() => saveScopesMutation.mutate()} disabled={saveScopesMutation.isPending}>
               Enregistrer les scopes
             </Button>
-            {saveMsg && <span className="text-sm text-green-600">{saveMsg}</span>}
+            {saveMsg && <span className="text-[13px] text-accent-700">{saveMsg}</span>}
             {saveScopesMutation.isError && (
-              <span className="text-sm text-red-600">Erreur lors de l'enregistrement</span>
+              <span className="text-[13px] text-accent-2-700">Erreur lors de l'enregistrement</span>
             )}
           </div>
 
-          <div className="border-t border-gray-100 pt-3 flex items-center gap-2">
+          <div className="flex items-center gap-2 border-t border-[var(--color-divider)] pt-3">
             <input
               id={`admin-${profile.id}`}
               type="checkbox"
               checked={profile.is_admin}
               onChange={(e) => toggleAdminMutation.mutate(e.target.checked)}
               disabled={toggleAdminMutation.isPending}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600"
             />
-            <label htmlFor={`admin-${profile.id}`} className="text-sm font-medium text-gray-700 flex items-center gap-1 cursor-pointer">
-              <ShieldCheck size={14} className="text-indigo-500" />
+            <label
+              htmlFor={`admin-${profile.id}`}
+              className="flex cursor-pointer items-center gap-1.5 text-[14px]"
+            >
+              <ShieldCheck size={14} weight="duotone" className="text-accent-700" />
               Profil admin — accès complet (tous workspaces, create_workspace, import_template, create_block)
             </label>
           </div>
@@ -389,40 +399,40 @@ function ProfilesTab() {
     onError: (err: Error) => setCreateError(err.message),
   })
 
-  if (isLoading) return <p className="text-sm text-gray-500">Chargement…</p>
+  if (isLoading) return <TableSkeleton rows={3} columns={3} />
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => { setShowCreate((v) => !v); setCreateError(null) }}>
-          <Plus size={16} className="mr-1" />
+          <Plus size={15} weight="duotone" />
           Nouveau profil
         </Button>
       </div>
 
       {showCreate && (
         <form
-          className="rounded-lg border border-gray-200 bg-white p-4 space-y-3"
+          className="space-y-3 rounded-md border border-[var(--color-divider)] bg-surface p-4"
           onSubmit={(e) => { e.preventDefault(); createMutation.mutate() }}
         >
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Nom *</label>
+            <Field label="Nom *" htmlFor="new-profile-name">
               <Input
+                id="new-profile-name"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Mon profil API"
                 required
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Description</label>
+            </Field>
+            <Field label="Description" htmlFor="new-profile-desc">
               <Input
+                id="new-profile-desc"
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="Optionnel"
               />
-            </div>
+            </Field>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -430,14 +440,18 @@ function ProfilesTab() {
               type="checkbox"
               checked={newIsAdmin}
               onChange={(e) => setNewIsAdmin(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600"
             />
-            <label htmlFor="new-is-admin" className="text-sm font-medium text-gray-700 flex items-center gap-1">
-              <ShieldCheck size={14} className="text-indigo-500" />
+            <label
+              htmlFor="new-is-admin"
+              className="flex cursor-pointer items-center gap-1.5 text-[14px]"
+            >
+              <ShieldCheck size={14} weight="duotone" className="text-accent-700" />
               Profil admin — accès complet (tous workspaces, create_workspace, import_template, create_block)
             </label>
           </div>
-          {createError && <p className="text-sm text-red-600">{createError}</p>}
+          <div aria-live="polite" className="empty:hidden">
+            {createError && <p className="field-error m-0">{createError}</p>}
+          </div>
           <div className="flex gap-2">
             <Button type="submit" disabled={!newName || createMutation.isPending}>
               Créer
@@ -450,9 +464,7 @@ function ProfilesTab() {
       )}
 
       {profiles.length === 0 && !showCreate && (
-        <p className="text-sm text-gray-400 text-center py-8">
-          Aucun profil. Créez-en un pour commencer.
-        </p>
+        <EmptyState message="Aucun profil. Créez-en un pour commencer." />
       )}
 
       {profiles.map((p) => (
@@ -495,19 +507,19 @@ function GenerateKeyModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl space-y-4">
-        <h2 className="text-lg font-bold">Générer une clé API</h2>
+    <div className="dialog-backdrop z-50">
+      <div className="dialog" role="dialog" aria-modal="true">
+        <h4 className="dialog-title m-0">Générer une clé API</h4>
 
         {!generated ? (
           <form
             onSubmit={(e) => { e.preventDefault(); generateMutation.mutate() }}
-            className="space-y-4"
+            className="contents"
           >
-            <div>
-              <label className="mb-1 block text-sm font-medium">Profil *</label>
+            <Field label="Profil *" htmlFor="generate-profile">
               <select
-                className="block w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                id="generate-profile"
+                className="input"
                 value={profileId}
                 onChange={(e) => setProfileId(e.target.value)}
                 required
@@ -517,52 +529,50 @@ function GenerateKeyModal({ onClose }: { onClose: () => void }) {
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium">Label *</label>
+            </Field>
+            <Field label="Label *" htmlFor="generate-label">
               <Input
+                id="generate-label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="ex. script-ci, intégration-x"
                 required
               />
+            </Field>
+            <div aria-live="polite" className="empty:hidden">
+              {error && <p className="field-error m-0">{error}</p>}
             </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <div className="flex gap-2">
-              <Button type="submit" disabled={!profileId || !label || generateMutation.isPending}>
-                Générer
-              </Button>
+            <div className="dialog-actions">
               <Button variant="secondary" type="button" onClick={onClose}>
                 Annuler
+              </Button>
+              <Button type="submit" disabled={!profileId || !label || generateMutation.isPending}>
+                Générer
               </Button>
             </div>
           </form>
         ) : (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-green-200 bg-green-50 p-3">
-              <p className="text-sm font-medium text-green-800 mb-2">Clé générée avec succès !</p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={generated.key}
-                  className="flex-1 rounded border border-gray-300 bg-white px-3 py-2 font-mono text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={copyKey}
-                  className="flex items-center gap-1 rounded border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
-                >
-                  {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-                  {copied ? 'Copié' : 'Copier'}
-                </button>
-              </div>
+          <>
+            <p className="dialog-body m-0 text-accent-700">Clé générée avec succès !</p>
+            <div className="flex items-center gap-2">
+              <p className="m-0 min-w-0 flex-1 break-all rounded-md bg-neutral-100 p-3 text-[12px]
+                [font-family:var(--font-mono)] select-all">
+                {generated.key}
+              </p>
+              <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void copyKey()}>
+                {copied
+                  ? <Check size={14} weight="duotone" className="text-accent-700" />
+                  : <Copy size={14} weight="duotone" />}
+                {copied ? 'Copié' : 'Copier'}
+              </Button>
             </div>
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+            <p className="m-0 text-[13px] text-accent-2-700">
               ⚠ Cette clé ne sera plus affichée après fermeture de cette fenêtre.
             </p>
-            <Button onClick={onClose}>Fermer</Button>
-          </div>
+            <div className="dialog-actions">
+              <Button onClick={onClose}>Fermer</Button>
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -590,88 +600,81 @@ function KeysTab() {
     },
   })
 
-  if (isLoading) return <p className="text-sm text-gray-500">Chargement…</p>
+  if (isLoading) return <TableSkeleton rows={4} columns={6} />
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => setShowGenerate(true)}>
-          <Key size={16} className="mr-1" />
+          <Key size={15} weight="duotone" />
           Générer une clé
         </Button>
       </div>
 
       {keys.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-8">
-          Aucune clé. Créez un profil et générez une clé pour commencer.
-        </p>
+        <EmptyState message="Aucune clé. Créez un profil et générez une clé pour commencer." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Préfixe</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Label</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Profil</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Créée le</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Dernière utilisation</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {keys.map((k) => (
-                <tr key={k.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono text-xs text-gray-700">{k.key_prefix}…</td>
-                  <td className="px-4 py-3 text-gray-700">{k.label}</td>
-                  <td className="px-4 py-3 text-gray-500">{k.profile_name}</td>
-                  <td className="px-4 py-3 text-gray-500">{fmtDate(k.created_at)}</td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {k.last_used_at ? fmtDate(k.last_used_at) : '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                        k.revoked
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-green-100 text-green-700'
-                      }`}
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Préfixe</th>
+              <th>Label</th>
+              <th>Profil</th>
+              <th>Créée le</th>
+              <th>Dernière utilisation</th>
+              <th>Statut</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k.id}>
+                <td className="text-[12px] text-ink/[0.75] [font-family:var(--font-mono)]">
+                  {k.key_prefix}…
+                </td>
+                <td>{k.label}</td>
+                <td className="text-ink/[0.55]">{k.profile_name}</td>
+                <td className="text-ink/[0.55]">{fmtDate(k.created_at)}</td>
+                <td className="text-ink/[0.55]">
+                  {k.last_used_at ? fmtDate(k.last_used_at) : '—'}
+                </td>
+                <td>
+                  <span className={`tag ${k.revoked ? 'tag-accent-2' : 'tag-accent'}`}>
+                    {k.revoked ? 'Révoquée' : 'Active'}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap text-right">
+                  {!k.revoked && revokeTarget !== k.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-accent-2-700"
+                      onClick={() => setRevokeTarget(k.id)}
                     >
-                      {k.revoked ? 'Révoquée' : 'Active'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {!k.revoked && revokeTarget !== k.id && (
-                      <button
-                        type="button"
-                        onClick={() => setRevokeTarget(k.id)}
-                        className="text-xs text-red-500 hover:text-red-700"
+                      Révoquer
+                    </Button>
+                  )}
+                  {!k.revoked && revokeTarget === k.id && (
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="text-[12px] text-accent-2-700">Confirmer ?</span>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => revokeMutation.mutate(k.id)}
+                        disabled={revokeMutation.isPending}
                       >
-                        Révoquer
-                      </button>
-                    )}
-                    {!k.revoked && revokeTarget === k.id && (
-                      <div className="flex items-center gap-2 justify-end">
-                        <span className="text-xs text-red-600">Confirmer ?</span>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => revokeMutation.mutate(k.id)}
-                          disabled={revokeMutation.isPending}
-                        >
-                          Oui
-                        </Button>
-                        <Button variant="secondary" size="sm" onClick={() => setRevokeTarget(null)}>
-                          Non
-                        </Button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        Oui
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => setRevokeTarget(null)}>
+                        Non
+                      </Button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
 
       {showGenerate && <GenerateKeyModal onClose={() => setShowGenerate(false)} />}
@@ -692,29 +695,26 @@ function McpUrlBanner() {
   }
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 mb-6">
-      <Plug size={16} className="mt-0.5 shrink-0 text-indigo-500" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-indigo-900 mb-1">Serveur MCP</p>
-        <p className="text-xs text-indigo-700 mb-2">
-          Connectez vos outils IA (Claude Desktop, Cursor…) à cette instance docflow via le protocole MCP.
-        </p>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 min-w-0 truncate rounded border border-indigo-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-800 select-all">
-            {mcpUrl}
-          </code>
-          <span className="shrink-0 rounded border border-indigo-200 bg-indigo-100 px-2 py-1.5 font-mono text-xs font-medium text-indigo-700">
-            sse
-          </span>
-          <button
-            type="button"
-            onClick={copy}
-            className="shrink-0 flex items-center gap-1 rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-          >
-            {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
-            {copied ? 'Copié' : 'Copier'}
-          </button>
-        </div>
+    <div className="mb-8">
+      <p className="m-0 flex items-center gap-1.5 text-[15px] font-[600] [font-family:var(--font-heading)]">
+        <Plug size={16} weight="duotone" className="text-accent-700" />
+        Serveur MCP
+      </p>
+      <p className="mb-2 mt-1 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        Connectez vos outils IA (Claude Desktop, Cursor…) à cette instance docflow via le protocole MCP.
+      </p>
+      <div className="flex max-w-[640px] items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-md bg-neutral-100 px-3 py-2 text-[12px]
+          [font-family:var(--font-mono)] select-all">
+          {mcpUrl}
+        </code>
+        <span className="tag tag-neutral shrink-0 [font-family:var(--font-mono)]">sse</span>
+        <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void copy()}>
+          {copied
+            ? <Check size={13} weight="duotone" className="text-accent-700" />
+            : <Copy size={13} weight="duotone" />}
+          {copied ? 'Copié' : 'Copier'}
+        </Button>
       </div>
     </div>
   )
@@ -728,22 +728,24 @@ export function ApiKeysPage() {
   const [activeTab, setActiveTab] = useState<Tab>('profiles')
 
   return (
-    <div className="p-8 max-w-5xl">
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Clés API</h1>
+    <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+      <SectionHead kicker="Administration" title="Clés API" />
       <McpUrlBanner />
 
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
+      {/* Onglets à filet cyan */}
+      <div className="mb-6 flex gap-1 border-b border-[var(--color-divider)]">
         {([['profiles', 'Profils API'], ['keys', 'Clés API'], ['hmac', 'HMAC']] as [Tab, string][]).map(
           ([tab, label]) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
+              className={`border-0 border-b-2 bg-transparent px-4 py-2 text-[14px] font-[600]
+                [font-family:var(--font-heading)] [border-bottom-style:solid] transition-colors ${
+                  activeTab === tab
+                    ? 'border-b-accent text-accent-700'
+                    : 'border-b-transparent text-ink/[0.55] hover:text-ink'
+                }`}
               data-testid={`apikeys-tab-${tab}`}
             >
               {label}

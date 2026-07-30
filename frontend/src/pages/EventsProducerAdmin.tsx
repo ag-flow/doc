@@ -10,6 +10,9 @@ import {
 } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { SectionHead } from '../components/SectionHead'
+import { ErrorLine, TableSkeleton } from '../components/ui/states'
 
 export function EventsProducerAdmin() {
   const { t } = useTranslation()
@@ -88,9 +91,21 @@ export function EventsProducerAdmin() {
     },
   })
 
-  if (isLoading) return <div className="p-8 text-gray-500">{t('common.loading')}</div>
+  if (isLoading) {
+    return (
+      <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+        <SectionHead kicker="Administration" title={t('eventsProducer.title')} />
+        <TableSkeleton rows={4} columns={2} />
+      </div>
+    )
+  }
   if (isError && (error as { status?: number }).status === 403) {
-    return <div className="p-8 text-red-600">{t('eventsProducer.forbidden')}</div>
+    return (
+      <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+        <SectionHead kicker="Administration" title={t('eventsProducer.title')} />
+        <ErrorLine message={t('eventsProducer.forbidden')} />
+      </div>
+    )
   }
 
   function toggleEvent(code: string) {
@@ -102,14 +117,18 @@ export function EventsProducerAdmin() {
   const canTest = Boolean(ingestionUrl.trim() && secretConfigured)
 
   return (
-    <div className="p-8 max-w-2xl">
-      <h1 className="mb-1 text-2xl font-semibold text-gray-900">{t('eventsProducer.title')}</h1>
-      <p className="mb-6 text-sm text-gray-500">{t('eventsProducer.subtitle')}</p>
+    <div className="mx-auto max-w-[1100px] px-6 pt-11 pb-24">
+      <SectionHead kicker="Administration" title={t('eventsProducer.title')} />
+      <p className="mb-8 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        {t('eventsProducer.subtitle')}
+      </p>
 
-      <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-6">
+      <section className="max-w-[640px] space-y-5">
         {/* URL d'ingestion */}
-        <Field label={t('eventsProducer.ingestionUrl')} hint={t('eventsProducer.ingestionUrlHint')}>
+        <Field label={t('eventsProducer.ingestionUrl')} hint={t('eventsProducer.ingestionUrlHint')}
+          htmlFor="ep-ingestion-url">
           <Input
+            id="ep-ingestion-url"
             value={ingestionUrl}
             onChange={(e) => { setIngestionUrl(e.target.value); setSaveMsg(null) }}
             placeholder="https://workflow.yoops.org"
@@ -118,8 +137,10 @@ export function EventsProducerAdmin() {
         </Field>
 
         {/* source_uri */}
-        <Field label={t('eventsProducer.sourceUri')} hint={t('eventsProducer.sourceUriHint')}>
+        <Field label={t('eventsProducer.sourceUri')} hint={t('eventsProducer.sourceUriHint')}
+          htmlFor="ep-source-uri">
           <Input
+            id="ep-source-uri"
             value={sourceUri}
             onChange={(e) => { setSourceUri(e.target.value); setSaveMsg(null) }}
             placeholder="docflow"
@@ -128,15 +149,14 @@ export function EventsProducerAdmin() {
         </Field>
 
         {/* Secret HMAC — sélection parmi les secrets gérés (onglet HMAC des Clés API) */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            {t('eventsProducer.secretRef')}
-          </label>
+        <div className="field">
+          <label htmlFor="ep-secret-select">{t('eventsProducer.secretRef')}</label>
           <select
+            id="ep-secret-select"
             value={selectedSecretId}
             onChange={(e) => { setSelectedSecretId(e.target.value); setSaveMsg(null) }}
             data-testid="ep-secret-select"
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            className="input"
           >
             <option value="">
               {config?.secret_configured
@@ -147,37 +167,35 @@ export function EventsProducerAdmin() {
               <option key={s.id} value={s.id}>{s.label} ({s.slug})</option>
             ))}
           </select>
-          <p className={`mt-1 text-xs ${config?.secret_configured || selectedSecretId ? 'text-green-600' : 'text-amber-600'}`}>
+          <p className={`mt-1 text-[11px] ${config?.secret_configured || selectedSecretId ? 'text-accent-700' : 'text-accent-2-700'}`}>
             {config?.secret_configured || selectedSecretId
               ? t('eventsProducer.secretConfigured')
               : t('eventsProducer.secretMissing')}
           </p>
-          <a href="/api-keys" className="mt-1 inline-block text-xs text-indigo-600 hover:underline">
+          <a href="/api-keys" className="mt-1 inline-block text-[12px] text-accent-700 hover:underline">
             {t('eventsProducer.manageHmac')}
           </a>
         </div>
 
         {/* Events autorisés */}
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            {t('eventsProducer.allowedEvents')}
-          </label>
-          <p className="mb-2 text-xs text-gray-400">{t('eventsProducer.allowedEventsHint')}</p>
+        <div className="field">
+          <label>{t('eventsProducer.allowedEvents')}</label>
+          <p className="mb-2 text-[11px] text-ink/[0.55]">{t('eventsProducer.allowedEventsHint')}</p>
           {catalogError ? (
-            <p className="text-sm text-red-600">{t('eventsProducer.catalogError')}</p>
+            <p className="text-[14px] text-accent-2-700">{t('eventsProducer.catalogError')}</p>
           ) : (
             <>
-              <div className="mb-2 flex gap-3 text-xs">
+              <div className="mb-2 flex gap-3 text-[12px]">
                 <button
                   type="button"
-                  className="text-indigo-600 hover:underline"
+                  className="border-0 bg-transparent p-0 text-accent-700 hover:underline"
                   onClick={() => { setAllowed(events.map((e) => e.eventCode)); setSaveMsg(null) }}
                 >
                   {t('eventsProducer.selectAll')}
                 </button>
                 <button
                   type="button"
-                  className="text-indigo-600 hover:underline"
+                  className="border-0 bg-transparent p-0 text-accent-700 hover:underline"
                   onClick={() => { setAllowed([]); setSaveMsg(null) }}
                 >
                   {t('eventsProducer.selectNone')}
@@ -185,17 +203,19 @@ export function EventsProducerAdmin() {
               </div>
               <div className="space-y-1.5">
                 {events.map((ev) => (
-                  <label key={ev.eventCode} className="flex items-start gap-2 text-sm text-gray-700">
+                  <label key={ev.eventCode} className="flex items-start gap-2 text-[14px]">
                     <input
                       type="checkbox"
-                      className="mt-0.5"
+                      className="mt-0.5 accent-[var(--color-accent)]"
                       checked={allowed.includes(ev.eventCode)}
                       onChange={() => toggleEvent(ev.eventCode)}
                       data-testid={`ep-event-${ev.eventCode}`}
                     />
                     <span>
-                      <span className="font-mono text-xs text-gray-800">{ev.eventCode}</span>
-                      <span className="block text-xs text-gray-500">{ev.title}</span>
+                      <span className="text-[12px] text-ink/[0.85] [font-family:var(--font-mono)]">
+                        {ev.eventCode}
+                      </span>
+                      <span className="block text-[12px] text-ink/[0.55]">{ev.title}</span>
                     </span>
                   </label>
                 ))}
@@ -207,42 +227,43 @@ export function EventsProducerAdmin() {
         {/* Toggle activé */}
         <div className="flex items-center gap-3">
           <button
+            type="button"
             role="switch"
             aria-checked={enabled}
             onClick={() => { setEnabled((v) => !v); setSaveMsg(null) }}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              enabled ? 'bg-indigo-600' : 'bg-gray-200'
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-0 transition-colors ${
+              enabled ? 'bg-accent' : 'bg-neutral-300'
             }`}
             data-testid="ep-enabled-toggle"
           >
             <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                enabled ? 'translate-x-6' : 'translate-x-1'
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-paper shadow-sm transition-transform ${
+                enabled ? 'translate-x-[18px]' : 'translate-x-0.5'
               }`}
             />
           </button>
-          <span className="text-sm text-gray-700">
+          <span className="text-[14px] text-ink/[0.75]">
             {enabled ? t('eventsProducer.enabledOn') : t('eventsProducer.enabledOff')}
           </span>
         </div>
         {enabled && !secretConfigured && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <p className="m-0 text-[14px] text-accent-2-700">
             {t('eventsProducer.enabledWarnNoSecret')}
           </p>
         )}
 
-        {saveMsg && (
-          <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700"
-            data-testid="ep-save-msg">
-            {saveMsg}
-          </p>
-        )}
-        {saveError && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
-            data-testid="ep-save-error">
-            {saveError}
-          </p>
-        )}
+        <div aria-live="polite" className="empty:hidden">
+          {saveMsg && (
+            <p className="m-0 text-[14px] text-accent-700" data-testid="ep-save-msg">
+              {saveMsg}
+            </p>
+          )}
+          {saveError && (
+            <p className="m-0 text-[14px] text-accent-2-700" data-testid="ep-save-error">
+              {saveError}
+            </p>
+          )}
+        </div>
 
         <div className="pt-2">
           <Button
@@ -253,12 +274,12 @@ export function EventsProducerAdmin() {
             {saveMutation.isPending ? t('common.loading') : t('common.save')}
           </Button>
         </div>
-      </div>
+      </section>
 
       {/* Test de connexion */}
-      <div className="mt-6 space-y-3 rounded-lg border border-gray-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-gray-800">{t('eventsProducer.testTitle')}</h2>
-        <p className="text-xs text-gray-500">{t('eventsProducer.testHint')}</p>
+      <section className="mt-14 max-w-[640px] space-y-3">
+        <h6 className="mb-2 text-ink/[0.5]">{t('eventsProducer.testTitle')}</h6>
+        <p className="m-0 text-[12px] text-ink/[0.55]">{t('eventsProducer.testHint')}</p>
         <div className="flex items-center gap-3">
           <Button
             variant="secondary"
@@ -268,15 +289,13 @@ export function EventsProducerAdmin() {
           >
             {testMutation.isPending ? t('common.loading') : t('eventsProducer.testBtn')}
           </Button>
-          {!canTest && <span className="text-xs text-gray-400">{t('eventsProducer.testIncomplete')}</span>}
+          {!canTest && (
+            <span className="text-[12px] text-ink/[0.45]">{t('eventsProducer.testIncomplete')}</span>
+          )}
         </div>
         {testResult && (
           <p
-            className={`rounded-lg border px-4 py-2 text-sm ${
-              testResult.ok
-                ? 'border-green-200 bg-green-50 text-green-700'
-                : 'border-red-200 bg-red-50 text-red-700'
-            }`}
+            className={`m-0 text-[14px] ${testResult.ok ? 'text-accent-700' : 'text-accent-2-700'}`}
             data-testid="ep-test-result"
           >
             {testResult.ok
@@ -285,15 +304,14 @@ export function EventsProducerAdmin() {
           </p>
         )}
         {testError && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
-            data-testid="ep-test-error">
+          <p className="m-0 text-[14px] text-accent-2-700" data-testid="ep-test-error">
             {testError}
           </p>
         )}
-      </div>
+      </section>
 
       {config && (
-        <p className="mt-4 text-xs text-gray-400">
+        <p className="mt-4 text-[12px] text-ink/[0.45]">
           {t('eventsProducer.lastUpdated', { date: new Date().toLocaleString('fr-FR') })}
         </p>
       )}
@@ -303,25 +321,15 @@ export function EventsProducerAdmin() {
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint: string; children: ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      {children}
-      <p className="mt-1 text-xs text-gray-400">{hint}</p>
-    </div>
-  )
-}
-
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
     <div className="flex gap-4">
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-100 text-[11px] font-[700] text-accent-700">
         {n}
       </div>
       <div className="min-w-0">
-        <p className="mb-1 text-sm font-medium text-gray-800">{title}</p>
-        <div className="text-sm text-gray-600">{children}</div>
+        <p className="mb-1 text-[14px] font-[600] [font-family:var(--font-heading)]">{title}</p>
+        <div className="text-[14px] leading-[1.6] text-ink/[0.68]">{children}</div>
       </div>
     </div>
   )
@@ -329,7 +337,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 function Code({ children }: { children: ReactNode }) {
   return (
-    <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-800">
+    <code className="rounded bg-ink/[0.06] px-1.5 py-0.5 text-[12px] text-ink/[0.85] [font-family:var(--font-mono)]">
       {children}
     </code>
   )
@@ -338,11 +346,11 @@ function Code({ children }: { children: ReactNode }) {
 function WiringGuide() {
   const { t } = useTranslation()
   return (
-    <details className="mt-8 rounded-lg border border-gray-200 bg-white" open>
-      <summary className="cursor-pointer select-none px-6 py-4 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+    <details className="mt-14 border-t border-[var(--color-divider)]" open>
+      <summary className="cursor-pointer select-none py-4 text-[15px] font-[600] [font-family:var(--font-heading)] hover:text-accent-700">
         {t('eventsProducer.guideTitle')}
       </summary>
-      <div className="space-y-6 px-6 pb-6 pt-4">
+      <div className="max-w-[80ch] space-y-6 pb-6 pt-2">
         <Step n={1} title="Créer la source inbound côté workflow">
           <p>
             Dans ag.flow workflow, créez une source d'ingestion (inbound) qui accepte les events
@@ -366,7 +374,7 @@ function WiringGuide() {
               (métadonnées de contrat only) — laissez <Code>auth_ref</Code> vide.
             </li>
           </ul>
-          <p className="mt-2 text-xs text-gray-400">
+          <p className="mt-2 text-[12px] text-ink/[0.5]">
             Rappel du sens : ici workflow <em>lit</em> le contrat chez docflow. L'URL de workflow,
             elle, se met dans le champ « URL d'ingestion workflow » ci-dessus (émission docflow →
             workflow).
