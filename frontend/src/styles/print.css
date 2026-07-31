@@ -57,6 +57,32 @@
   color: var(--color-accent-2-700);
 }
 
+/* Remplissage d'aperçu (écran) : l'espace jusqu'au bas de page, pour que le
+   document suivant démarre visiblement en haut d'une nouvelle page — comme dans
+   le PDF. Masqué à l'impression (.no-print), où la coupure est portée par
+   .print-break. */
+.page-fill {
+  position: relative;
+  margin: 0 -18px;
+  border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 45%, transparent);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent, transparent 7px,
+    color-mix(in srgb, var(--color-ink) 3%, transparent) 7px,
+    color-mix(in srgb, var(--color-ink) 3%, transparent) 14px
+  );
+}
+.page-fill-label {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-2-700);
+}
+
 .print-signatures {
   margin-top: 44px;
   padding-top: 12px;
@@ -91,7 +117,7 @@
   .no-print { display: none !important; }
   .print-page { width: auto; max-width: none; padding: 0; }
   .print-toolbar { display: none !important; }
-  .print-break { page-break-before: always; }
+  .print-break { page-break-before: always; break-before: page; }
 
   /* Un composant ne se coupe JAMAIS entre deux pages : blocs custom
      (df-*, mermaid — via leur cadre [data-content-type]), tableaux, code,

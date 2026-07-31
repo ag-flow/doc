@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { Printer } from '@phosphor-icons/react'
@@ -68,6 +68,9 @@ export function PrintDocumentPage() {
   // l'impression peut décaler légèrement la coupure réelle.
   const pagesRef = useRef<HTMLDivElement>(null)
   const [markers, setMarkers] = useState<Record<string, number[]>>({})
+  // Remplissage (aperçu écran) poussant chaque document suivant en haut d'une
+  // nouvelle page — pour que l'aperçu reflète la coupure par document du PDF.
+  const [fills, setFills] = useState<Record<string, number>>({})
 
   useEffect(() => {
     const host = pagesRef.current
@@ -112,18 +115,27 @@ export function PrintDocumentPage() {
       observer?.disconnect()
       fitOversized()
       const next: Record<string, number[]> = {}
-      host.querySelectorAll<HTMLElement>('.print-sheet').forEach((section) => {
+      const nextFills: Record<string, number> = {}
+      // Hauteur cumulée depuis le haut du 1er document (origine des repères de
+      // page). Chaque document suivant est repoussé en haut de la page suivante.
+      let running = 0
+      host.querySelectorAll<HTMLElement>('.print-sheet').forEach((section, index) => {
         const id = section.dataset.docId
         if (!id) return
+        if (index > 0) {
+          const pad = (pageHeightPx - (running % pageHeightPx)) % pageHeightPx
+          nextFills[id] = Math.round(pad)
+          running += pad
+        }
         const tops: number[] = []
         for (let y = pageHeightPx; y < section.offsetHeight; y += pageHeightPx) {
           tops.push(y)
         }
         next[id] = tops
+        running += section.offsetHeight
       })
-      setMarkers((prev) =>
-        JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
-      )
+      setMarkers((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
+      setFills((prev) => (JSON.stringify(prev) === JSON.stringify(nextFills) ? prev : nextFills))
       observeSheets()
     }
 
@@ -161,8 +173,17 @@ export function PrintDocumentPage() {
       ) : (
         <div ref={pagesRef}>
           {docs.map((d, i) => (
+            <Fragment key={d.doc_technical_key}>
+              {i > 0 && (
+                <div
+                  className="page-fill no-print"
+                  style={{ height: fills[d.doc_technical_key] ?? 0 }}
+                  data-testid={`page-fill-${d.doc_technical_key}`}
+                >
+                  <span className="page-fill-label">page suivante</span>
+                </div>
+              )}
             <section
-              key={d.doc_technical_key}
               data-doc-id={d.doc_technical_key}
               className={`doc-sheet wiki-prose print-sheet${i > 0 ? ' print-break' : ''}`}
               data-testid={`print-doc-${d.doc_technical_key}`}
@@ -180,6 +201,7 @@ export function PrintDocumentPage() {
               <h1>{d.title}</h1>
               <MarkdownViewer content={stripTitleHeading(d.content ?? '', d.title)} bare />
             </section>
+            </Fragment>
           ))}
           {signed && (
             <section className="print-signatures" data-testid="print-signatures">

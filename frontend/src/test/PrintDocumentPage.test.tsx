@@ -76,6 +76,20 @@ describe('PrintDocumentPage', () => {
     expect(screen.queryByTestId('print-signatures')).not.toBeInTheDocument()
   })
 
+  it('chaque document suivant démarre sur une nouvelle page (repère de remplissage)', async () => {
+    renderAt('/ws/w/blocs/blk/documents/root/print?children=c2,c1')
+    await waitFor(() => expect(screen.getByTestId('print-doc-root')).toBeInTheDocument())
+    // Le premier document n'a pas de saut ; chaque suivant est précédé d'un
+    // remplissage « page suivante ».
+    expect(screen.queryByTestId('page-fill-root')).not.toBeInTheDocument()
+    expect(screen.getByTestId('page-fill-c2')).toBeInTheDocument()
+    expect(screen.getByTestId('page-fill-c1')).toBeInTheDocument()
+    // Le remplissage précède bien sa section dans l'ordre du document.
+    const fill = screen.getByTestId('page-fill-c2')
+    const section = screen.getByTestId('print-doc-c2')
+    expect(fill.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('signed=true ajoute le cadre de signatures ; le bouton lance window.print', async () => {
     const printSpy = vi.fn()
     vi.stubGlobal('print', printSpy)
