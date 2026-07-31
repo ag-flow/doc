@@ -217,6 +217,23 @@ select.input { cursor: pointer; }
 }
 .artifact-chip-actions .tag:disabled { opacity: 0.45; cursor: default; }
 
+/* Zone de collage (onglet « Coller » du panneau fichier de l'éditeur) */
+.artifact-paste-zone {
+  width: 100%;
+  min-height: 72px;
+  resize: none;
+  padding: var(--space-3);
+  border: 1px dashed var(--color-accent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-accent) 4%, transparent);
+  color: var(--color-ink);
+  font-size: 13px;
+  text-align: center;
+  cursor: text;
+}
+.artifact-paste-zone::placeholder { color: color-mix(in srgb, var(--color-ink) 55%, transparent); }
+.artifact-paste-zone:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
 /* ── Tables ─────────────────────────────────────────────────────────────
    En-tête en petites capitales, filets de ligne : aucune bordure extérieure. */
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }

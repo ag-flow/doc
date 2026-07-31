@@ -1,32 +1,38 @@
 import { describe, it, expect } from 'vitest'
-import { readClipboardFile } from '../components/editorFilePanel'
+import { fileFromClipboardData } from '../components/editorFilePanel'
 
-function clip(items: Array<{ types: string[]; blobs: Record<string, Blob> }>): Clipboard {
+/** Fabrique un DataTransfer-like : `files` prioritaire, sinon `items`. */
+function dt(opts: { files?: File[]; items?: Array<{ kind: string; file: File | null }> }): DataTransfer {
   return {
-    read: async () =>
-      items.map((it) => ({
-        types: it.types,
-        getType: async (t: string) => it.blobs[t],
-      })) as unknown as ClipboardItem[],
-  } as unknown as Clipboard
+    files: (opts.files ?? []) as unknown as FileList,
+    items: (opts.items ?? []).map((it) => ({
+      kind: it.kind,
+      getAsFile: () => it.file,
+    })) as unknown as DataTransferItemList,
+  } as unknown as DataTransfer
 }
 
-describe('readClipboardFile', () => {
-  it('extrait la première image du presse-papier en File', async () => {
-    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
-    const file = await readClipboardFile(clip([{ types: ['image/png'], blobs: { 'image/png': blob } }]))
-    expect(file).not.toBeNull()
-    expect(file!.type).toBe('image/png')
-    expect(file!.name).toBe('collage.png')
+describe('fileFromClipboardData', () => {
+  it('récupère un fichier collé depuis l’explorateur (files) avec son vrai nom', () => {
+    const f = new File([new Uint8Array([1])], 'rapport.pdf', { type: 'application/pdf' })
+    const got = fileFromClipboardData(dt({ files: [f] }))
+    expect(got).toBe(f)
+    expect(got!.name).toBe('rapport.pdf')
   })
 
-  it('sans image → null', async () => {
-    const blob = new Blob(['bonjour'], { type: 'text/plain' })
-    const file = await readClipboardFile(clip([{ types: ['text/plain'], blobs: { 'text/plain': blob } }]))
-    expect(file).toBeNull()
+  it('récupère une image collée exposée en items (kind=file)', () => {
+    const img = new File([new Uint8Array([2])], 'image.png', { type: 'image/png' })
+    const got = fileFromClipboardData(dt({ items: [{ kind: 'file', file: img }] }))
+    expect(got).toBe(img)
   })
 
-  it('presse-papier indisponible → null', async () => {
-    expect(await readClipboardFile(undefined)).toBeNull()
+  it('ignore le texte (kind=string) → null', () => {
+    const got = fileFromClipboardData(dt({ items: [{ kind: 'string', file: null }] }))
+    expect(got).toBeNull()
+  })
+
+  it('presse-papier vide → null', () => {
+    expect(fileFromClipboardData(null)).toBeNull()
+    expect(fileFromClipboardData(dt({}))).toBeNull()
   })
 })

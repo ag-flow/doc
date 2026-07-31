@@ -566,8 +566,8 @@
     "slashHint": "Téléverser un fichier et l'insérer en puce téléchargeable",
     "uploadError": "Échec du téléversement du fichier.",
     "pasteTab": "Coller",
-    "pasteButton": "Coller depuis le presse-papier",
-    "pasteEmpty": "Aucune image dans le presse-papier.",
+    "pasteHint": "Cliquez ici puis Ctrl+V pour coller un fichier ou une image",
+    "pasteEmpty": "Aucun fichier dans le presse-papier.",
     "pasteError": "Impossible de coller depuis le presse-papier."
   },
   "error": {
