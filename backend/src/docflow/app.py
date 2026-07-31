@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from docflow.admin.users.router import router as users_router
 from docflow.apikeys.router import router as apikeys_router
 from docflow.artifacts.router import router as artifacts_router
+from docflow.artifacts.types_router import admin_router as artifact_types_admin_router
+from docflow.artifacts.types_router import read_router as artifact_types_read_router
 from docflow.artifacts.worker import purge_loop as artifact_purge_loop
 from docflow.auth.invite import router as invite_router
 from docflow.auth.router import router as auth_router
@@ -161,6 +163,8 @@ app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
 app.include_router(documents_router, prefix=_API)
 app.include_router(artifacts_router, prefix=_API)
+app.include_router(artifact_types_read_router, prefix=_API)
+app.include_router(artifact_types_admin_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)

@@ -32,3 +32,28 @@ class ArtifactMetaOut(BaseModel):
     crc32: int
     refcount: int
     created_at: datetime
+
+
+class ArtifactTypeOut(BaseModel):
+    """Une entrée du registre des types d'artefact acceptés."""
+
+    extension: str
+    media_type: str
+    label: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ArtifactTypeCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    extension: str
+    media_type: str
+    label: str = ""
+
+
+class ArtifactTypeUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    media_type: str
+    label: str = ""

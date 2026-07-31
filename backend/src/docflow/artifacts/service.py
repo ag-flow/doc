@@ -7,41 +7,10 @@ import zlib
 import asyncpg
 from fastapi import HTTPException
 
+from docflow.artifacts.media_types import load_allowed_map
 from docflow.artifacts.parser import extract_artifact_ids
 from docflow.db.helpers import require_workspace
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
-
-# Whitelist images pour démarrer : la table est générique, on élargira
-# quand un besoin réel se présentera. SVG servi avec nosniff et affiché
-# via <img> (pas d'exécution de script dans ce contexte).
-# Whitelist stockage : extensions connues → media type. Historiquement
-# image-only ; ouverte aux binaires du cycle artefacts (fiche 46d3f95a) —
-# audio, vidéo, documents. text/html reste EXCLU (XSS servi depuis notre
-# origine) ; tout est servi avec nosniff.
-ALLOWED_MEDIA_TYPES: dict[str, str] = {
-    "png": "image/png",
-    "jpg": "image/jpeg",
-    "jpeg": "image/jpeg",
-    "gif": "image/gif",
-    "webp": "image/webp",
-    "svg": "image/svg+xml",
-    "pdf": "application/pdf",
-    "txt": "text/plain",
-    "md": "text/markdown",
-    "csv": "text/csv",
-    "json": "application/json",
-    "vtt": "text/vtt",
-    "mp3": "audio/mpeg",
-    "wav": "audio/wav",
-    "m4a": "audio/mp4",
-    "ogg": "audio/ogg",
-    "mp4": "video/mp4",
-    "webm": "video/webm",
-    "zip": "application/zip",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-}
 
 
 def artifact_url(ws_slug: str, artifact_id: uuid.UUID) -> str:
@@ -49,11 +18,11 @@ def artifact_url(ws_slug: str, artifact_id: uuid.UUID) -> str:
     return f"/api/workspaces/{ws_slug}/artifacts/{artifact_id}"
 
 
-def _validate_filename(filename: str) -> tuple[str, str, str]:
+def _validate_filename(filename: str, allowed: dict[str, str]) -> tuple[str, str, str]:
     """Nettoie le nom de fichier et retourne (nom, extension, media_type).
 
     Le nom est réduit à son basename (aucun composant de chemin) ; extension
-    obligatoire et dans la whitelist.
+    obligatoire et présente dans le registre `allowed` (extension → media_type).
     """
     name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
     if not name or len(name) > 255:
@@ -61,12 +30,12 @@ def _validate_filename(filename: str) -> tuple[str, str, str]:
     if "." not in name:
         raise HTTPException(status_code=422, detail="extension de fichier requise")
     ext = name.rsplit(".", 1)[1].lower()
-    media_type = ALLOWED_MEDIA_TYPES.get(ext)
+    media_type = allowed.get(ext)
     if media_type is None:
-        allowed = ", ".join(sorted(ALLOWED_MEDIA_TYPES))
+        allowed_list = ", ".join(sorted(allowed))
         raise HTTPException(
             status_code=422,
-            detail=f"extension '{ext}' non autorisée (autorisées : {allowed})",
+            detail=f"extension '{ext}' non autorisée (autorisées : {allowed_list})",
         )
     return name, ext, media_type
 
@@ -97,21 +66,24 @@ async def create_artifact(
             status_code=413,
             detail=f"fichier trop volumineux ({len(data)} octets, max {max_bytes})",
         )
-    name, ext, media_type = _validate_filename(filename)
-    if media_type_override is not None:
-        # L'override reste borné à la whitelist : jamais un type arbitraire
-        # (text/html servi depuis notre origine = XSS).
-        if media_type_override not in set(ALLOWED_MEDIA_TYPES.values()):
-            raise HTTPException(
-                status_code=422,
-                detail=f"media_type non autorisé : {media_type_override}",
-            )
-        media_type = media_type_override
     sha256 = hashlib.sha256(data).hexdigest()
     crc32 = zlib.crc32(data)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Whitelist chargée depuis le registre (table artifact_media_type),
+            # source de vérité administrable.
+            allowed = await load_allowed_map(conn)
+            name, ext, media_type = _validate_filename(filename, allowed)
+            if media_type_override is not None:
+                # L'override reste borné à la whitelist : jamais un type
+                # arbitraire (text/html servi depuis notre origine = XSS).
+                if media_type_override not in set(allowed.values()):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"media_type non autorisé : {media_type_override}",
+                    )
+                media_type = media_type_override
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
             inserted = await conn.fetchrow(
                 """
