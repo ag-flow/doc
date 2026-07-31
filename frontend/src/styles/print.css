@@ -140,7 +140,8 @@
      suit (son composant, un paragraphe…). Le moteur lève la contrainte quand
      titre + contenu ne tiennent pas ensemble sur une page — « sinon on ne fait
      rien ». Couvre aussi « garder le titre avec son composant graphique ». */
-  .print-sheet :is(h1, h2, h3, h4, h5, h6) {
+  .print-sheet :is(h1, h2, h3, h4, h5, h6),
+  .print-sheet [data-content-type="heading"] {
     break-after: avoid;
     page-break-after: avoid;
     break-inside: avoid;

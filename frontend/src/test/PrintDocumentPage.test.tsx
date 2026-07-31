@@ -21,7 +21,7 @@ vi.mock('../components/MarkdownViewer', () => ({
 
 import { docsApi, type DocumentOut } from '../lib/api'
 import { WorkspaceProvider } from '../contexts/WorkspaceContext'
-import { PrintDocumentPage, fitFactor } from '../pages/PrintDocumentPage'
+import { PrintDocumentPage, fitFactor, computeCuts, type FlowBlock } from '../pages/PrintDocumentPage'
 
 function doc(id: string, title: string, content: string): DocumentOut {
   return {
@@ -117,5 +117,47 @@ describe('fitFactor — réduction des composants plus hauts qu’une page', () 
   })
   it('borné à 35 % — jamais illisible', () => {
     expect(fitFactor(100000, 1000)).toBe(0.35)
+  })
+})
+
+describe('computeCuts — repères de coupure fidèles', () => {
+  const P = 1000
+
+  it('contenu sécable uniforme → coupures naïves tous les pageH', () => {
+    const blocks: FlowBlock[] = [{ top: 0, bottom: 2500, kind: 'break' }]
+    expect(computeCuts(blocks, P, 2500)).toEqual([1000, 2000])
+  })
+
+  it('coupure dans un composant → reculée avant le composant', () => {
+    const blocks: FlowBlock[] = [
+      { top: 0, bottom: 900, kind: 'break' },
+      { top: 900, bottom: 1400, kind: 'component' }, // 900<1000<1400 : la naïve tranche
+    ]
+    // Pas de titre : on recule juste avant le composant.
+    expect(computeCuts(blocks, P, 1400)).toEqual([900])
+  })
+
+  it('titre + composant (cas capture) → coupure reculée avant le TITRE', () => {
+    const blocks: FlowBlock[] = [
+      { top: 0, bottom: 900, kind: 'break' }, // corps page 1
+      { top: 900, bottom: 970, kind: 'heading' }, // « Ce que ça permet »
+      { top: 970, bottom: 1400, kind: 'component' }, // le tableau
+    ]
+    expect(computeCuts(blocks, P, 1400)).toEqual([900])
+  })
+
+  it('titre suivi d’un paragraphe (pas orphelin) → coupure naïve conservée', () => {
+    const blocks: FlowBlock[] = [
+      { top: 0, bottom: 940, kind: 'break' },
+      { top: 940, bottom: 990, kind: 'heading' },
+      { top: 990, bottom: 1600, kind: 'break' }, // paragraphe traversant la coupure
+    ]
+    // Le titre n’est pas dernier (le paragraphe le suit sur la page) → 1000.
+    expect(computeCuts(blocks, P, 1600)).toEqual([1000])
+  })
+
+  it('composant plus grand qu’une page en tête de page → repli naïf (pas de boucle)', () => {
+    const blocks: FlowBlock[] = [{ top: 0, bottom: 2500, kind: 'component' }]
+    expect(computeCuts(blocks, P, 2500)).toEqual([1000, 2000])
   })
 })

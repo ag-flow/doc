@@ -23,6 +23,102 @@ export function fitFactor(height: number, pageHeight: number): number {
   return Math.max(0.35, (pageHeight * 0.96) / height)
 }
 
+/** Un bloc de contenu en flux, projeté en 1D (positions en px depuis le haut du
+ *  document). `component` = insécable (table, image, code, df-*…) ; `heading` =
+ *  titre (jamais dernier sur une page) ; `break` = sécable (paragraphe, liste). */
+export interface FlowBlock {
+  top: number
+  bottom: number
+  kind: 'heading' | 'component' | 'break'
+}
+
+/** Types de blocs BlockNote sécables — un repère de coupure peut tomber dedans. */
+const BREAKABLE_CT = new Set([
+  'paragraph',
+  'bulletListItem',
+  'numberedListItem',
+  'checkListItem',
+])
+
+/**
+ * Positions des coupures de page pour l'APERÇU, en simulant la pagination réelle
+ * du PDF : une coupure ne tombe jamais dans un composant insécable (elle recule
+ * avant lui) ni juste après un titre (elle recule avant le titre). Reproduit,
+ * côté aperçu, ce que `break-inside/after: avoid` produit à l'impression.
+ */
+export function computeCuts(blocks: FlowBlock[], pageH: number, contentHeight: number): number[] {
+  if (pageH <= 0) return []
+  const cuts: number[] = []
+  let pageStart = 0
+  let guard = 0
+  while (pageStart + pageH < contentHeight - 1 && guard++ < 2000) {
+    let cut = pageStart + pageH
+    let changed = true
+    let iter = 0
+    while (changed && iter++ < 100) {
+      changed = false
+      // Règle A : ne pas trancher un composant qui commence sur cette page.
+      const comp = blocks.find(
+        (b) =>
+          b.kind === 'component' &&
+          b.top > pageStart + 0.5 &&
+          b.top < cut - 0.5 &&
+          b.bottom > cut + 0.5,
+      )
+      if (comp) {
+        cut = comp.top
+        changed = true
+        continue
+      }
+      // Règle B : un titre ne peut pas être le dernier bloc de la page. Si le
+      // bloc juste au-dessus de la coupure est un titre sans contenu entre lui
+      // et la coupure, on recule avant le titre.
+      const above = blocks
+        .filter((b) => b.bottom <= cut + 0.5 && b.top >= pageStart - 0.5)
+        .sort((a, b) => b.bottom - a.bottom)[0]
+      if (above && above.kind === 'heading' && above.top > pageStart + 0.5) {
+        const between = blocks.some(
+          (b) => b !== above && b.top >= above.bottom - 0.5 && b.top < cut - 0.5,
+        )
+        if (!between) {
+          cut = above.top
+          changed = true
+        }
+      }
+    }
+    // Sécurité : aucune coupure meilleure trouvée (ex. bloc plus haut qu'une
+    // page malgré le zoom) → coupure naïve, on avance.
+    if (cut <= pageStart + 0.5) cut = pageStart + pageH
+    cuts.push(cut)
+    pageStart = cut
+  }
+  return cuts
+}
+
+/** Extrait les blocs de flux d'une section (titre du document + blocs BlockNote
+ *  de premier niveau), classés et positionnés relativement au haut de section. */
+function collectFlowBlocks(section: HTMLElement): FlowBlock[] {
+  const sTop = section.getBoundingClientRect().top
+  const nodes: HTMLElement[] = []
+  section.querySelectorAll<HTMLElement>(':scope > h1').forEach((h) => nodes.push(h))
+  Array.from(section.querySelectorAll<HTMLElement>('.bn-block-outer'))
+    .filter((b) => !b.parentElement?.closest('.bn-block-outer'))
+    .forEach((b) => nodes.push(b))
+
+  const blocks = nodes.map((el) => {
+    const r = el.getBoundingClientRect()
+    const top = r.top - sTop
+    const ct = el.matches('h1,h2,h3,h4,h5,h6')
+      ? 'heading'
+      : (el.querySelector('.bn-block-content')?.getAttribute('data-content-type') ?? '')
+    let kind: FlowBlock['kind'] = 'component'
+    if (ct === 'heading') kind = 'heading'
+    else if (BREAKABLE_CT.has(ct)) kind = 'break'
+    return { top, bottom: top + r.height, kind }
+  })
+  return blocks.sort((a, b) => a.top - b.top)
+}
+
 /**
  * Vue d'impression (export PDF sans Chromium serveur) : la page rend le
  * document et les enfants choisis avec le VRAI moteur de l'application —
@@ -127,10 +223,16 @@ export function PrintDocumentPage() {
           nextFills[id] = Math.round(pad)
           running += pad
         }
-        const tops: number[] = []
-        for (let y = pageHeightPx; y < section.offsetHeight; y += pageHeightPx) {
-          tops.push(y)
-        }
+        // Repères fidèles : pagination simulée (composants insécables, titres
+        // non orphelins). Repli naïf si la structure de blocs est absente.
+        const flow = collectFlowBlocks(section)
+        const tops =
+          flow.length > 0
+            ? computeCuts(flow, pageHeightPx, section.offsetHeight)
+            : Array.from(
+                { length: Math.floor((section.offsetHeight - 1) / pageHeightPx) },
+                (_, k) => (k + 1) * pageHeightPx,
+              )
         next[id] = tops
         running += section.offsetHeight
       })
