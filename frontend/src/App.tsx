@@ -24,6 +24,7 @@ import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
 import { PrintDocumentPage } from './pages/PrintDocumentPage'
 import { UsersAdmin } from './pages/UsersAdmin'
+import { ArtifactTypesAdmin } from './pages/ArtifactTypesAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
 import { ContractsAdmin } from './pages/ContractsAdmin'
@@ -146,6 +147,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><UsersAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/admin/artifact-types',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ArtifactTypesAdmin /></AppLayout>
       </ProtectedRoute>
     ),
   },

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   NewspaperClipping, SquaresFour, Tag, Stack, FileText, WebhooksLogo, Lightning,
   UserCircle, FileCode, Password, Layout, UsersThree, Key, ShieldCheck, Broadcast,
-  PlugsConnected, SignOut, type Icon,
+  PlugsConnected, Paperclip, SignOut, type Icon,
 } from '@phosphor-icons/react'
 import { clearToken, isSuperAdmin } from '../lib/api'
 
@@ -101,6 +101,7 @@ export function AppRail() {
             <RailItem to="/automations" icon={Lightning} label="Automates" />
             <RailItem to="/templates" icon={Layout} label="Templates" />
             <RailItem to="/admin/users" icon={UsersThree} label="Utilisateurs" />
+            <RailItem to="/admin/artifact-types" icon={Paperclip} label="Types d'artefact" />
             <RailItem to="/admin/vault" icon={Key} label="Wallets Vault" />
             <RailItem to="/admin/oidc" icon={ShieldCheck} label="Config OIDC" />
             <RailItem to="/admin/events-producer" icon={Broadcast} label="Connexion workflow" />

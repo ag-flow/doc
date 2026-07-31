@@ -616,10 +616,32 @@ export interface ArtifactLinkOut {
   expires_in_seconds: number
 }
 
+export interface ArtifactTypeOut {
+  extension: string
+  media_type: string
+  label: string
+  created_at: string
+  updated_at: string
+}
+
+export const artifactTypesApi = {
+  /** Liste des types acceptés — lecture pour tout utilisateur authentifié. */
+  list: () => api.get<ArtifactTypeOut[]>('/artifact-types'),
+  adminList: () => api.get<ArtifactTypeOut[]>('/admin/artifact-types'),
+  create: (body: { extension: string; media_type: string; label: string }) =>
+    api.post<ArtifactTypeOut>('/admin/artifact-types', body),
+  update: (extension: string, body: { media_type: string; label: string }) =>
+    api.patch<ArtifactTypeOut>(`/admin/artifact-types/${extension}`, body),
+  delete: (extension: string) => api.delete<void>(`/admin/artifact-types/${extension}`),
+}
+
 export const artifactsApi = {
-  upload: (ws: string, file: File) => {
+  /** Upload multipart ; `filename`/`mediaType` surchargent le fichier (F3). */
+  upload: (ws: string, file: File, overrides?: { filename?: string; mediaType?: string }) => {
     const form = new FormData()
     form.append('file', file)
+    if (overrides?.filename) form.append('filename', overrides.filename)
+    if (overrides?.mediaType) form.append('media_type', overrides.mediaType)
     return requestForm<ArtifactCreatedOut>(`/workspaces/${ws}/artifacts`, form)
   },
   getMeta: (ws: string, id: string) =>
