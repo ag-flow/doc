@@ -189,6 +189,34 @@ async def get_artifact_meta(
     return ArtifactMetaOut(**dict(row))
 
 
+async def list_artifacts(
+    pool: asyncpg.Pool, ws_slug: str, *, limit: int, offset: int
+) -> tuple[list[dict[str, object]], int]:
+    """Liste paginée des artefacts d'un workspace (métadonnées, sans binaire),
+    du plus récent au plus ancien. Retourne (items, total)."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        total = await conn.fetchval(
+            "SELECT count(*)::int FROM artifact WHERE workspace_technical_key = $1", wk
+        )
+        rows = await conn.fetch(
+            """
+            SELECT a.id, a.filename, a.extension, a.media_type, a.size_bytes,
+                   a.created_at,
+                   (SELECT count(*) FROM artifact_reference r
+                    WHERE r.artifact_ref = a.id)::int AS refcount
+            FROM artifact a
+            WHERE a.workspace_technical_key = $1
+            ORDER BY a.created_at DESC, a.id
+            LIMIT $2 OFFSET $3
+            """,
+            wk,
+            limit,
+            offset,
+        )
+    return [dict(r) for r in rows], int(total or 0)
+
+
 async def fetch_artifact_content(
     pool: asyncpg.Pool, ws_slug: str, artifact_id: uuid.UUID
 ) -> tuple[bytes, str, str]:

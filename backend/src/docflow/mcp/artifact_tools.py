@@ -64,7 +64,8 @@ ARTIFACT_TOOLS: list[Tool] = [
     Tool(
         name="create_artifact",
         description=(
-            "Pousse une image dans un workspace. Fournir le binaire par EXACTEMENT "
+            "Pousse un fichier (image ou tout binaire) dans un workspace. "
+            "Fournir le binaire par EXACTEMENT "
             "l'une de ces deux voies : `data_base64` (contenu encodé base64, inline) "
             "OU `source_url` (URL http/https publique que LE SERVEUR télécharge "
             "lui-même — à privilégier pour une grosse image, car les octets ne "
@@ -72,11 +73,16 @@ ARTIFACT_TOOLS: list[Tool] = [
             "ÉCRITURE : l'artefact est stocké en base, dédupliqué par empreinte "
             "sha256 — pousser deux fois le même contenu retourne le même id "
             "(deduplicated=true). "
-            "Extensions autorisées : png, jpg, jpeg, gif, webp, svg. Taille max "
-            "bornée par la configuration de l'instance (artifact_max_bytes). "
-            "Retourne {id, url, deduplicated, sha256, size_bytes} ; url est le "
-            "chemin à insérer dans le markdown d'un document "
-            "(![nom](/api/workspaces/{ws}/artifacts/{id})). "
+            "Extensions autorisées : images (png, jpg, jpeg, gif, webp, svg), "
+            "documents (pdf, txt, md, csv, json, docx, xlsx, pptx), audio "
+            "(mp3, wav, m4a, ogg), vidéo (mp4, webm), archives (zip). Taille "
+            "max bornée par la configuration de l'instance (artifact_max_bytes). "
+            "Retourne {id, url, deduplicated, sha256, size_bytes}. "
+            "POUR INSÉRER l'artefact dans un document, deux formes selon le "
+            "type : une IMAGE s'affiche inline via `![nom](url)` (url = champ "
+            "retourné) ; TOUT AUTRE FICHIER (pdf, audio, archive…) se pose en "
+            "PUCE TÉLÉCHARGEABLE avec `[libellé](artifact://{id})` SEUL sur sa "
+            "ligne (libellé vide = nom de fichier). "
             "L'artefact doit être référencé par un document enregistré, sinon il "
             "sera purgé automatiquement après quelques heures."
         ),
@@ -150,6 +156,36 @@ ARTIFACT_TOOLS: list[Tool] = [
             "required": ["workspace_slug", "artifact_id"],
         },
     ),
+    Tool(
+        name="list_artifacts",
+        description=(
+            "Liste paginée des artefacts d'un workspace, du plus récent au plus "
+            "ancien. Retourne {items, total, limit, offset} ; chaque item porte "
+            "{id, filename, media_type, size_bytes, extension, created_at, "
+            "refcount} (refcount = nombre de documents qui le référencent). "
+            "Ne retourne PAS le binaire (utiliser get_artifact_link). Pagination "
+            "par limit (1..200, défaut 50) et offset (défaut 0). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Taille de page (1..200, défaut 50)",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Décalage de pagination (défaut 0)",
+                },
+            },
+            "required": ["workspace_slug"],
+        },
+    ),
 ]
 
 # Périmètre workspace des tools (fusionné dans _WS_TOOLS du serveur) : écriture ?
@@ -157,6 +193,7 @@ ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "create_artifact": True,
     "get_artifact": False,
     "get_artifact_link": False,
+    "list_artifacts": False,
 }
 
 
@@ -235,6 +272,27 @@ async def handle_get_artifact(pool: asyncpg.Pool, args: dict[str, object]) -> li
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(meta.model_dump(mode="json"))
+
+
+def _clamp_int(raw: object, *, default: int, lo: int, hi: int) -> int:
+    if not isinstance(raw, (int, str)) or isinstance(raw, bool):
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, value))
+
+
+async def handle_list_artifacts(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    ws_slug = str(args.get("workspace_slug", ""))
+    limit = _clamp_int(args.get("limit"), default=50, lo=1, hi=200)
+    offset = _clamp_int(args.get("offset"), default=0, lo=0, hi=2**31 - 1)
+    try:
+        items, total = await service.list_artifacts(pool, ws_slug, limit=limit, offset=offset)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text({"items": items, "total": total, "limit": limit, "offset": offset})
 
 
 async def handle_get_artifact_link(

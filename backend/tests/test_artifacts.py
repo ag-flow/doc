@@ -763,6 +763,71 @@ async def test_mcp_get_artifact_and_link(
     )
 
 
+async def test_mcp_list_artifacts_paginated(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+
+    from docflow.artifacts import service
+    from docflow.mcp import artifact_tools
+
+    # Trois artefacts distincts.
+    for i in range(3):
+        await service.create_artifact(
+            db_pool,
+            "test-ws",
+            filename=f"f{i}.png",
+            data=_PNG + bytes([i]),
+            created_by=None,
+            max_bytes=1024,
+        )
+
+    page = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "test-ws", "limit": 2, "offset": 0}
+            )
+        )[0].text
+    )
+    assert page["total"] == 3
+    assert page["limit"] == 2
+    assert len(page["items"]) == 2
+    first = page["items"][0]
+    assert {"id", "filename", "media_type", "size_bytes", "extension", "created_at", "refcount"} <= (
+        set(first)
+    )
+
+    page2 = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "test-ws", "limit": 2, "offset": 2}
+            )
+        )[0].text
+    )
+    assert len(page2["items"]) == 1
+    # Aucun recouvrement entre les pages.
+    ids1 = {it["id"] for it in page["items"]}
+    ids2 = {it["id"] for it in page2["items"]}
+    assert ids1.isdisjoint(ids2)
+
+
+async def test_mcp_list_artifacts_unknown_workspace(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+
+    from docflow.mcp import artifact_tools
+
+    result = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "ws-fantome"}
+            )
+        )[0].text
+    )
+    assert "error" in result
+
+
 async def test_mcp_get_artifact_link_unknown_404(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> None:

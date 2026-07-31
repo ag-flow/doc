@@ -123,7 +123,10 @@ _TOOLS: list[Tool] = [
             "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
             "Divider/Text/Image/Icon/Badge/Chip/ProgressBar, variants "
             "neutral|accent|alert) et ```mermaid (graphes). Attributs de fence entre "
-            "guillemets doubles ; grammaire détaillée : article « Composants "
+            "guillemets doubles. Un artefact non-image (pdf, audio, archive…) se "
+            "pose en puce téléchargeable avec `[libellé](artifact://<uuid>)` SEUL "
+            "sur sa ligne (libellé vide = nom de fichier) ; une image reste "
+            "`![nom](url)`. Grammaire détaillée : article « Composants "
             "d'affichage — grammaire (pour agents) » du bloc Documentation. "
         ),
         inputSchema={
@@ -189,7 +192,10 @@ _TOOLS: list[Tool] = [
             "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
             "Divider/Text/Image/Icon/Badge/Chip/ProgressBar, variants "
             "neutral|accent|alert) et ```mermaid (graphes). Attributs de fence entre "
-            "guillemets doubles ; grammaire détaillée : article « Composants "
+            "guillemets doubles. Un artefact non-image (pdf, audio, archive…) se "
+            "pose en puce téléchargeable avec `[libellé](artifact://<uuid>)` SEUL "
+            "sur sa ligne (libellé vide = nom de fichier) ; une image reste "
+            "`![nom](url)`. Grammaire détaillée : article « Composants "
             "d'affichage — grammaire (pour agents) » du bloc Documentation. "
             "Retourne {error: ...} si le document est introuvable dans le workspace."
         ),
@@ -1255,6 +1261,8 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
     if name == "get_artifact":
         return await artifact_tools.handle_get_artifact(pool, arguments)
+    if name == "list_artifacts":
+        return await artifact_tools.handle_list_artifacts(pool, arguments)
     if name == "get_artifact_link":
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
