@@ -154,9 +154,11 @@ export function PrintDocumentPage() {
       <div className="no-print print-toolbar">
         <p className="m-0 min-w-0 flex-1 text-[13px] text-ink/[0.6]">
           Aperçu avant impression — largeur réelle A4, traits magenta = coupures
-          de page (indicatives : un composant insécable peut décaler la coupure) ;
-          un composant plus haut qu'une page est réduit pour y tenir.
-          Vérifiez le rendu puis imprimez en choisissant « Enregistrer en PDF ».
+          de page (indicatives : à l'impression, un composant insécable est reporté
+          seul sur la page suivante et un titre n'est jamais laissé seul en bas de
+          page — il descend avec son contenu). Un composant plus haut qu'une page
+          est réduit pour y tenir. Vérifiez le rendu puis imprimez en choisissant
+          « Enregistrer en PDF ».
         </p>
         <Button onClick={() => window.print()} data-testid="print-btn">
           <Printer size={15} weight="duotone" /> Imprimer / PDF

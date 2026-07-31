@@ -121,13 +121,28 @@
 
   /* Un composant ne se coupe JAMAIS entre deux pages : blocs custom
      (df-*, mermaid — via leur cadre [data-content-type]), tableaux, code,
-     images, citations et cadre de signatures sont insécables. */
+     images, citations et cadre de signatures sont insécables. Un composant qui
+     ne rentre pas dans l'espace restant mais tient sur une page pleine est ainsi
+     reporté seul en haut de la page suivante (isolation) ; s'il est plus grand
+     qu'une page il est déjà réduit (zoom). */
   .print-sheet [data-content-type],
   .print-sheet table,
   .print-sheet pre,
   .print-sheet img,
   .print-sheet blockquote,
   .print-signatures {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Un titre (h1–h6) ne peut JAMAIS être la dernière chose sur une page : la
+     coupure est interdite juste après lui, donc il descend avec le bloc qui le
+     suit (son composant, un paragraphe…). Le moteur lève la contrainte quand
+     titre + contenu ne tiennent pas ensemble sur une page — « sinon on ne fait
+     rien ». Couvre aussi « garder le titre avec son composant graphique ». */
+  .print-sheet :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
+    page-break-after: avoid;
     break-inside: avoid;
     page-break-inside: avoid;
   }
