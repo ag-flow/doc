@@ -39,10 +39,16 @@ export function ConfirmDialog({
   const cancelRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
+  // Focus initial AU MONTAGE seulement : « Annuler » d'abord, pour qu'une
+  // touche Entrée réflexe ne déclenche pas la destruction. Surtout PAS à chaque
+  // rendu — sinon un champ de saisie du dialogue (garde de confirmation) perd
+  // le focus à chaque frappe, les closures onCancel/onConfirm changeant à chaque
+  // rendu du parent.
   useEffect(() => {
-    // Le focus va sur « Annuler » : sur une action destructrice, la touche
-    // Entrée réflexe ne doit pas déclencher la destruction.
     cancelRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onCancel()
