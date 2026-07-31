@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, FilePdf, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
+import { Check, Copy, FilePdf, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { stripTitleHeading } from '../lib/markdownTitle'
@@ -34,6 +34,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
+  const [copiedDoc, setCopiedDoc] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   // Sommaire à gauche : ouvert par défaut, le choix est retenu localement.
   const [tocOpen, setTocOpen] = useState(() => localStorage.getItem(TOC_STORAGE_KEY) !== '0')
@@ -95,6 +96,20 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
             <span>
               v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}{doc.updated_by ? ` par ${doc.updated_by}` : ''}
             </span>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(doc.content ?? '')
+                setCopiedDoc(true)
+                setTimeout(() => setCopiedDoc(false), 1500)
+              }}
+              title={t('editor.copyDocument')}
+              data-testid="copy-document-btn"
+              className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700"
+            >
+              {copiedDoc ? <Check size={14} weight="bold" /> : <Copy size={14} weight="duotone" />}
+              {copiedDoc ? t('editor.copyDocumentDone') : t('editor.copyLabel')}
+            </button>
             <span className="flex-1" />
             {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
           </>
