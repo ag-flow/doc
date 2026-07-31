@@ -214,6 +214,56 @@ async def test_update_document_wrong_version_409(
     assert refetched.title == "Doc"
 
 
+async def test_append_bottom_and_top_literal(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Append littéral : le fragment est posé au bord du contenu, séparé d'une
+    ligne vide, sans tenir compte du titre ni de la structure."""
+    doc = await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(title="Journal", content="# Journal\n\nLigne A.", block_id=test_block["id"]),
+    )
+    assert doc.version == 1
+
+    bottom = await doc_svc.append_to_document(
+        db_pool, _WS, doc.doc_technical_key, content="Ligne B.", position="bottom"
+    )
+    assert bottom.version == 2
+    assert bottom.content == "# Journal\n\nLigne A.\n\nLigne B."
+
+    top = await doc_svc.append_to_document(
+        db_pool, _WS, doc.doc_technical_key, content="EN-TÊTE", position="top"
+    )
+    assert top.version == 3
+    # Littéral : posé AVANT le « # Journal », pas après.
+    assert top.content == "EN-TÊTE\n\n# Journal\n\nLigne A.\n\nLigne B."
+
+
+async def test_append_on_empty_document(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Document sans contenu : l'append pose le fragment seul, sans séparateur."""
+    doc = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Vide", block_id=test_block["id"])
+    )
+    appended = await doc_svc.append_to_document(
+        db_pool, _WS, doc.doc_technical_key, content="Premier bloc.", position="bottom"
+    )
+    assert appended.content == "Premier bloc."
+    assert appended.version == 2
+
+
+async def test_append_unknown_document_404(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.append_to_document(
+            db_pool, _WS, uuid.uuid4(), content="x", position="bottom"
+        )
+    assert exc.value.status_code == 404
+
+
 async def test_update_document_content_requires_expected_version(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:

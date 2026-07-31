@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.documents import service, watch
@@ -184,6 +184,47 @@ async def update_document(
     check_api_key_scope(request, ws_slug, write=True)
     doc = await service.update_document(
         request.app.state.pool, ws_slug, doc_id, body, author=user.label
+    )
+    _fire(
+        request,
+        "document.updated",
+        ws_slug,
+        {
+            "id": str(doc.doc_technical_key),
+            "title": doc.title,
+            "type": doc.type,
+            "version": doc.version,
+        },
+    )
+    return doc
+
+
+class _AppendBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    content: str = Field(min_length=1)
+    position: Literal["top", "bottom"] = "bottom"
+
+
+@router.post(_DOC + "/append", response_model=DocumentOut)
+async def append_to_document(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    body: _AppendBody,
+    request: Request,
+    user: AuthUser = _Auth,
+) -> DocumentOut:
+    """Ajoute un fragment markdown en tête (`top`) ou en pied (`bottom`) du
+    document. Passe-plat atomique : positionnement LITTÉRAL au bord du contenu,
+    sans tenir compte de l'affichage (le titre vit hors du contenu). La
+    nouvelle révision est diffusée automatiquement (live-reload)."""
+    check_api_key_scope(request, ws_slug, write=True)
+    doc = await service.append_to_document(
+        request.app.state.pool,
+        ws_slug,
+        doc_id,
+        content=body.content,
+        position=body.position,
+        author=user.label,
     )
     _fire(
         request,

@@ -716,6 +716,90 @@ async def update_document(
     return await get_document(pool, ws_slug, doc_id)
 
 
+def _concat_append(existing: str | None, addition: str, position: str) -> str:
+    """Concatène `addition` en tête ou en pied du contenu, avec une ligne vide
+    de séparation. Positionnement LITTÉRAL : aucune lecture du titre ou de la
+    structure markdown — le fragment est posé tel quel au bord du document."""
+    body = (existing or "").strip("\n")
+    add = addition.strip("\n")
+    if not body:
+        return add
+    if position == "top":
+        return f"{add}\n\n{body}"
+    return f"{body}\n\n{add}"
+
+
+async def append_to_document(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    *,
+    content: str,
+    position: str,
+    author: str | None = None,
+) -> DocumentOut:
+    """Ajoute un fragment markdown en tête ou en pied du document, en une seule
+    transaction atomique (lecture + nouvelle révision sous verrou) — pas de
+    concurrence optimiste côté appelant, la lecture se fait sous FOR UPDATE.
+    Alimente le même cycle que update_document (références, change feed, outbox)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            head = await conn.fetchrow(
+                "SELECT version, title FROM document "
+                "WHERE doc_technical_key = $1 AND workspace_technical_key = $2 FOR UPDATE",
+                doc_id,
+                wk,
+            )
+            if head is None:
+                raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+
+            current_v = head["version"]
+            prev = await conn.fetchrow(
+                "SELECT content FROM document_version "
+                "WHERE document_ref = $1 AND version_number = $2",
+                doc_id,
+                current_v,
+            )
+            new_content = _concat_append(
+                prev["content"] if prev else None, content, position
+            )
+            new_v = current_v + 1
+            await conn.execute(
+                "INSERT INTO document_version (document_ref, version_number, title, content) "
+                "VALUES ($1, $2, $3, $4)",
+                doc_id,
+                new_v,
+                head["title"],
+                new_content,
+            )
+            await conn.execute(
+                "UPDATE document SET version = $1, updated_at = now(), "
+                "updated_by = coalesce($3, updated_by) "
+                "WHERE doc_technical_key = $2",
+                new_v,
+                doc_id,
+                author,
+            )
+            await log_change(conn, wk, doc_id, "U")
+            await refresh_references(conn, doc_id, wk, new_content)
+            await refresh_artifact_references(conn, doc_id, wk, new_content)
+            await refresh_dataset_references(conn, doc_id, wk, new_content)
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.updated.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(doc_id),
+                    "workspaceSlug": ws_slug,
+                    "version": new_v,
+                    "title": head["title"],
+                },
+                dedup_key=f"{doc_id}:{new_v}",
+            )
+    return await get_document(pool, ws_slug, doc_id)
+
+
 _COUNT_DOCUMENT_DESCENDANTS = """
 WITH RECURSIVE descendants AS (
     SELECT doc_technical_key FROM document WHERE doc_technical_key = $1
