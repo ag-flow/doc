@@ -1,10 +1,18 @@
 /* Vue d'impression (/…/print) : la feuille rend avec le moteur de l'app,
-   l'utilisateur imprime depuis le navigateur (destination « PDF »). */
+   l'utilisateur imprime depuis le navigateur (destination « PDF »).
+
+   L'aperçu est calé sur la géométrie d'impression (A4, marges 16 mm →
+   largeur utile 178 mm, hauteur utile 265 mm) : mêmes retours à la ligne
+   qu'à l'impression, et des repères de coupure de page fiables. */
 
 .print-page {
-  max-width: 860px;
+  width: 178mm;
+  max-width: calc(100% - 56px);
   margin: 0 auto;
-  padding: 18px 28px 60px;
+  padding: 18px 0 60px;
+  /* Les couleurs (SVG des charts, tags, filets) partent à l'impression. */
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }
 
 .print-toolbar {
@@ -15,17 +23,39 @@
   align-items: center;
   gap: 14px;
   padding: 10px 0;
+  margin-bottom: 22px;
   background: var(--color-paper);
   border-bottom: 1px solid var(--color-divider);
 }
 
-/* La feuille reprend la typo .doc-sheet mais sans le cadre d'écran. */
+/* La feuille reprend la typo .doc-sheet mais sans le cadre d'écran — et avec
+   les MÊMES retraits qu'à l'impression (repères de page exacts). */
 .print-sheet.doc-sheet {
+  position: relative; /* ancre des repères de coupure */
   border: 0;
   background: transparent;
-  padding: 28px 0;
+  padding: 0 0 24px;
 }
 .print-sheet h1:first-child { margin-top: 0; }
+
+/* ── Repère de coupure de page (aperçu seulement) ── */
+.page-marker {
+  position: absolute;
+  left: -18px;
+  right: -18px;
+  border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 60%, transparent);
+  pointer-events: none;
+}
+.page-marker-label {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: -8px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--color-accent-2-700);
+}
 
 .print-signatures {
   margin-top: 44px;
@@ -59,8 +89,22 @@
 
 @media print {
   .no-print { display: none !important; }
-  .print-page { max-width: none; padding: 0; }
+  .print-page { width: auto; max-width: none; padding: 0; }
+  .print-toolbar { display: none !important; }
   .print-break { page-break-before: always; }
-  .print-sheet.doc-sheet { padding: 0 0 24px; }
+
+  /* Un composant ne se coupe JAMAIS entre deux pages : blocs custom
+     (df-*, mermaid — via leur cadre [data-content-type]), tableaux, code,
+     images, citations et cadre de signatures sont insécables. */
+  .print-sheet [data-content-type],
+  .print-sheet table,
+  .print-sheet pre,
+  .print-sheet img,
+  .print-sheet blockquote,
+  .print-signatures {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   @page { margin: 16mm; }
 }
