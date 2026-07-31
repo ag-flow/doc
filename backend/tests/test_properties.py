@@ -74,6 +74,24 @@ async def test_update_property_label(db_pool: asyncpg.Pool, test_workspace: dict
     assert updated.label == "Title (renamed)"
 
 
+async def test_update_property_required_toggle(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Le caractère obligatoire d'une propriété se bascule dans les deux sens."""
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "title")
+
+    turned_on = await prop_svc.update_def(
+        db_pool, _WS, "epic", "title", PropertiesDefUpdate(required=True)
+    )
+    assert turned_on.required is True
+
+    turned_off = await prop_svc.update_def(
+        db_pool, _WS, "epic", "title", PropertiesDefUpdate(required=False)
+    )
+    assert turned_off.required is False
+
+
 async def test_delete_property_def(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     await _make_type(db_pool)
     await _make_prop(db_pool, "epic", "to-delete")
@@ -263,7 +281,8 @@ async def _seed_value(pool: asyncpg.Pool, prop_slug: str) -> None:
             type_id,
             wk,
         ) or await conn.fetchval(
-            "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = 'blk-type-change'",
+            "SELECT id FROM data_block "
+            "WHERE workspace_technical_key = $1 AND slug = 'blk-type-change'",
             wk,
         )
         doc_id = await conn.fetchval(

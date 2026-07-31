@@ -153,13 +153,16 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
   // modifient. Les règles de cohérence du type (transitions permises quand des
   // données existent) vivent au backend : un choix refusé revient en 422 avec
   // la liste des transitions possibles.
-  const [editProp, setEditProp] = useState<{ slug: string; label: string; type: string } | null>(null)
+  const [editProp, setEditProp] = useState<
+    { slug: string; label: string; type: string; required: boolean } | null
+  >(null)
   const [editError, setEditError] = useState<string | null>(null)
   const editPropMutation = useMutation({
-    mutationFn: (vars: { slug: string; label: string; type: string }) =>
+    mutationFn: (vars: { slug: string; label: string; type: string; required: boolean }) =>
       api.patch(`/workspaces/${ws}/types/${type.slug}/properties/${vars.slug}`, {
         label: vars.label,
         type: vars.type,
+        required: vars.required,
       }),
     onSuccess: () => {
       invalidate()
@@ -222,7 +225,7 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
               <span className="flex-1" />
               <Button variant="icon" size="sm"
                 title={t('common.edit')}
-                onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type }); setEditError(null) }}
+                onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type, required: prop.required }); setEditError(null) }}
                 data-testid={`edit-prop-${prop.slug}`}>
                 <PencilSimple size={13} weight="duotone" />
               </Button>
@@ -247,7 +250,7 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
             {prop.required && <span className="text-accent-2-700">*</span>}
             <Button variant="icon" size="sm"
               title={t('common.edit')}
-              onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type }); setEditError(null) }}
+              onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type, required: prop.required }); setEditError(null) }}
               data-testid={`edit-prop-${prop.slug}`}>
               <PencilSimple size={12} weight="duotone" />
             </Button>
@@ -505,6 +508,15 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
                 ))}
               </select>
             </Field>
+            <label className="mb-2 flex items-center gap-1.5 text-[14px]">
+              <input
+                type="checkbox"
+                checked={editProp.required}
+                onChange={(e) => setEditProp({ ...editProp, required: e.target.checked })}
+                data-testid="edit-prop-required"
+              />
+              {t('types.propRequired')}
+            </label>
             <div aria-live="polite" className="empty:hidden">
               {editError && <p className="field-error m-0" data-testid="edit-prop-error">{editError}</p>}
             </div>

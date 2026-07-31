@@ -212,7 +212,24 @@ describe('TypesAdmin — édition en place (Broadsheet)', () => {
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledWith(
         '/workspaces/my-ws/types/epic/properties/url-confluence',
-        { label: 'URL Confluence', type: 'text' },
+        { label: 'URL Confluence', type: 'text', required: false },
+      ),
+    )
+  })
+
+  it('édition : bascule « obligatoire » envoyée en PATCH', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    // La propriété n'est pas obligatoire au départ.
+    expect(screen.getByTestId('edit-prop-required')).not.toBeChecked()
+    fireEvent.click(screen.getByTestId('edit-prop-required'))
+    vi.mocked(api.patch).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence',
+        { label: 'url confluence', type: 'url', required: true },
       ),
     )
   })
