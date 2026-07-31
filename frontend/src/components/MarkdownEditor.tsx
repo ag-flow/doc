@@ -3,6 +3,7 @@ import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import {
   SuggestionMenuController,
+  FilePanelController,
   getDefaultReactSlashMenuItems,
   type DefaultReactSuggestionItem,
 } from '@blocknote/react'
@@ -20,6 +21,7 @@ import {
 import { type DocumentSearchResult } from '../lib/api'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
+import { EditorFilePanel } from './editorFilePanel'
 import { useToast } from './Toast'
 
 function filterItems<T extends { title: string; aliases?: string[] }>(
@@ -142,8 +144,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         <BlockNoteView
           editor={editor}
           slashMenu={false}
+          filePanel={false}
           onChange={() => { if (settledRef.current) onDirtyRef.current() }}
         >
+          <FilePanelController filePanel={EditorFilePanel} />
           {wsSlug && (
             <SuggestionMenuController
               triggerCharacter="/"

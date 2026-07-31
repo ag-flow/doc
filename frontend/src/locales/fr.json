@@ -564,7 +564,11 @@
   "artifact": {
     "slashTitle": "Fichier (artefact)",
     "slashHint": "Téléverser un fichier et l'insérer en puce téléchargeable",
-    "uploadError": "Échec du téléversement du fichier."
+    "uploadError": "Échec du téléversement du fichier.",
+    "pasteTab": "Coller",
+    "pasteButton": "Coller depuis le presse-papier",
+    "pasteEmpty": "Aucune image dans le presse-papier.",
+    "pasteError": "Impossible de coller depuis le presse-papier."
   },
   "error": {
     "generic": "Une erreur est survenue",
