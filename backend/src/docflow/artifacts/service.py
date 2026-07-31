@@ -14,6 +14,10 @@ from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
 # Whitelist images pour démarrer : la table est générique, on élargira
 # quand un besoin réel se présentera. SVG servi avec nosniff et affiché
 # via <img> (pas d'exécution de script dans ce contexte).
+# Whitelist stockage : extensions connues → media type. Historiquement
+# image-only ; ouverte aux binaires du cycle artefacts (fiche 46d3f95a) —
+# audio, vidéo, documents. text/html reste EXCLU (XSS servi depuis notre
+# origine) ; tout est servi avec nosniff.
 ALLOWED_MEDIA_TYPES: dict[str, str] = {
     "png": "image/png",
     "jpg": "image/jpeg",
@@ -21,6 +25,22 @@ ALLOWED_MEDIA_TYPES: dict[str, str] = {
     "gif": "image/gif",
     "webp": "image/webp",
     "svg": "image/svg+xml",
+    "pdf": "application/pdf",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "csv": "text/csv",
+    "json": "application/json",
+    "vtt": "text/vtt",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "m4a": "audio/mp4",
+    "ogg": "audio/ogg",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
+    "zip": "application/zip",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 
@@ -62,6 +82,7 @@ async def create_artifact(
     data: bytes,
     created_by: uuid.UUID | None,
     max_bytes: int,
+    media_type_override: str | None = None,
 ) -> ArtifactCreatedOut:
     """Enregistre un binaire dans le workspace, dédupliqué par sha256.
 
@@ -77,6 +98,15 @@ async def create_artifact(
             detail=f"fichier trop volumineux ({len(data)} octets, max {max_bytes})",
         )
     name, ext, media_type = _validate_filename(filename)
+    if media_type_override is not None:
+        # L'override reste borné à la whitelist : jamais un type arbitraire
+        # (text/html servi depuis notre origine = XSS).
+        if media_type_override not in set(ALLOWED_MEDIA_TYPES.values()):
+            raise HTTPException(
+                status_code=422,
+                detail=f"media_type non autorisé : {media_type_override}",
+            )
+        media_type = media_type_override
     sha256 = hashlib.sha256(data).hexdigest()
     crc32 = zlib.crc32(data)
 

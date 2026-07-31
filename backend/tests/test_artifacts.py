@@ -189,6 +189,54 @@ async def test_create_artifact_rejects_empty(
     assert exc.value.status_code == 422
 
 
+async def test_create_artifact_accepts_non_image_types(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """La whitelist couvre désormais les binaires du cycle artefacts (pdf,
+    audio, archives…), pas seulement les images."""
+    from docflow.artifacts import service
+
+    pdf = await service.create_artifact(
+        db_pool, "test-ws", filename="rapport.pdf", data=b"%PDF-1.7 fake",
+        created_by=None, max_bytes=1024,
+    )
+    assert pdf.media_type == "application/pdf"
+    assert pdf.extension == "pdf"
+
+    audio = await service.create_artifact(
+        db_pool, "test-ws", filename="voix.mp3", data=b"ID3 fake-audio",
+        created_by=None, max_bytes=1024,
+    )
+    assert audio.media_type == "audio/mpeg"
+
+
+async def test_create_artifact_media_type_override_within_whitelist(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """L'override force un media_type — mais seulement une valeur de la whitelist."""
+    from docflow.artifacts import service
+
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="data.txt", data=b"colonnes;valeurs",
+        created_by=None, max_bytes=1024, media_type_override="text/csv",
+    )
+    assert created.media_type == "text/csv"
+
+
+async def test_create_artifact_media_type_override_rejects_active_type(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Un media_type hors whitelist (ex. text/html = XSS servi) est refusé."""
+    from docflow.artifacts import service
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_artifact(
+            db_pool, "test-ws", filename="page.txt", data=b"<script>alert(1)</script>",
+            created_by=None, max_bytes=1024, media_type_override="text/html",
+        )
+    assert exc.value.status_code == 422
+
+
 async def test_same_content_different_workspaces_not_deduped(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> None:
