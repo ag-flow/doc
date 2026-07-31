@@ -5,7 +5,8 @@ import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import { docflowSchema, parseMarkdownWithCodecs, type CodecEditorApi } from '../lib/blockCodecs'
 import { resolveArtifactUrl } from '../lib/artifacts'
-import { referencesApi } from '../lib/api'
+import { referencesApi, artifactsApi } from '../lib/api'
+import { useWorkspaceSlugOrNull } from '../contexts/WorkspaceContext'
 
 interface MarkdownViewerProps {
   content: string
@@ -14,9 +15,11 @@ interface MarkdownViewerProps {
 }
 
 const DOC_LINK = /^docflow:\/\/doc\/([0-9a-fA-F-]{36})$/
+const ARTIFACT_LINK = /^artifact:\/\/([0-9a-fA-F-]{36})$/
 
 export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
   const navigate = useNavigate()
+  const wsSlug = useWorkspaceSlugOrNull()
   // Même schéma et même parsing que l'éditeur (registre de codecs) : le chemin
   // lecture (DocumentReader, PublicDocumentViewer) est couvert par transitivité.
   const editor = useCreateBlockNote({ schema: docflowSchema, resolveFileUrl: resolveArtifactUrl })
@@ -50,7 +53,23 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
   function onClickCapture(e: React.MouseEvent) {
     const a = (e.target as HTMLElement).closest?.('a')
     if (!a) return
-    const m = DOC_LINK.exec(a.getAttribute('href') ?? '')
+    const href = a.getAttribute('href') ?? ''
+
+    // Lien artefact au fil du texte (une puce a son propre codec) : ouvrir dans
+    // un nouvel onglet via un lien signé de courte durée.
+    const art = ARTIFACT_LINK.exec(href)
+    if (art) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!wsSlug) return
+      void artifactsApi
+        .getLink(wsSlug, art[1])
+        .then((link) => window.open(link.url, '_blank', 'noopener'))
+        .catch(() => undefined)
+      return
+    }
+
+    const m = DOC_LINK.exec(href)
     if (!m) return
     e.preventDefault()
     e.stopPropagation()

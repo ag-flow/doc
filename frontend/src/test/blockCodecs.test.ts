@@ -49,6 +49,7 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
     attrs: ' title="Comparatif"',
     body: '[{"id": "root", "component": "Text", "text": "Hello", "hint": "h2"}]',
   },
+  artifactChip: { id: UUID, label: 'Rapport.pdf' },
 }
 
 describe('round-trip paramétré sur le registre', () => {
@@ -160,6 +161,35 @@ describe('sérialisation — garde anti-perte', () => {
       { type: 'paragraph', content: [{ type: 'text', text: 'texte' }] } as never,
     ])
     await expect(serializeMarkdownWithCodecs(editor)).resolves.toBe('texte\n')
+  })
+})
+
+describe('puce artefact [](artifact://id)', () => {
+  it('lien seul sur sa ligne → bloc artifactChip', async () => {
+    const md = `Intro\n\n[Rapport.pdf](artifact://${UUID})\n\nSuite`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const chip = blocks.find((b) => (b as { type?: string }).type === 'artifactChip') as {
+      props: { id: string; label: string }
+    }
+    expect(chip).toBeDefined()
+    expect(chip.props.id).toBe(UUID)
+    expect(chip.props.label).toBe('Rapport.pdf')
+  })
+
+  it('label vide accepté (retombe sur le nom de fichier au rendu)', async () => {
+    const md = `[](artifact://${UUID})`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const chip = blocks.find((b) => (b as { type?: string }).type === 'artifactChip') as {
+      props: { label: string }
+    }
+    expect(chip).toBeDefined()
+    expect(chip.props.label).toBe('')
+  })
+
+  it('lien au fil du texte → PAS de puce (reste un lien inline)', async () => {
+    const md = `Voir [le fichier](artifact://${UUID}) pour la suite.`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'artifactChip')).toBe(false)
   })
 })
 

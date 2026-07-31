@@ -177,6 +177,46 @@ select.input { cursor: pointer; }
 .tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
 .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
 
+/* ── Puce artefact (fichier téléchargeable) ─────────────────────────────── */
+.artifact-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  max-width: 520px;
+}
+.artifact-chip-icon { flex: 0 0 auto; color: var(--color-accent); }
+.artifact-chip-body { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.artifact-chip-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-chip-meta {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+}
+.artifact-chip-actions { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+.artifact-chip-actions .tag {
+  gap: 4px;
+  cursor: pointer;
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  background: transparent;
+}
+.artifact-chip-actions .tag:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.artifact-chip-actions .tag:disabled { opacity: 0.45; cursor: default; }
+
 /* ── Tables ─────────────────────────────────────────────────────────────
    En-tête en petites capitales, filets de ligne : aucune bordure extérieure. */
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }

@@ -600,13 +600,38 @@ export interface ArtifactCreatedOut {
   crc32: number
 }
 
+export interface ArtifactMetaOut {
+  id: string
+  filename: string
+  extension: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  crc32: number
+  refcount: number
+}
+
+export interface ArtifactLinkOut {
+  url: string
+  expires_in_seconds: number
+}
+
 export const artifactsApi = {
   upload: (ws: string, file: File) => {
     const form = new FormData()
     form.append('file', file)
     return requestForm<ArtifactCreatedOut>(`/workspaces/${ws}/artifacts`, form)
   },
-  getBlob: (ws: string, id: string) => requestBlob(`/workspaces/${ws}/artifacts/${id}`),
+  getMeta: (ws: string, id: string) =>
+    api.get<ArtifactMetaOut>(`/workspaces/${ws}/artifacts/${id}/meta`),
+  /** Blob du contenu ; `attachment` demande une disposition de téléchargement. */
+  getBlob: (ws: string, id: string, attachment = false) =>
+    requestBlob(
+      `/workspaces/${ws}/artifacts/${id}${attachment ? '?disposition=attachment' : ''}`,
+    ),
+  /** Lien signé de courte durée (ouverture dans un nouvel onglet, sans Bearer). */
+  getLink: (ws: string, id: string) =>
+    api.get<ArtifactLinkOut>(`/workspaces/${ws}/artifacts/${id}/link`),
 }
 
 // ── API publique (sans authentification) ────────────────────────────────────

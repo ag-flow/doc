@@ -24,6 +24,7 @@ import { timelineCodec } from './timeline'
 import { chartCodec } from './chart'
 import { conversationCodec } from './conversation'
 import { displayCodec } from './display'
+import { artifactCodec } from './artifact'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ export const registry: BlockCodec[] = [
   chartCodec as unknown as BlockCodec,
   conversationCodec as unknown as BlockCodec,
   displayCodec as unknown as BlockCodec,
+  artifactCodec as unknown as BlockCodec,
 ]
 
 const byType = new Map(registry.map((c) => [c.type, c]))

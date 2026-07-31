@@ -158,6 +158,26 @@ nativement et couvrent le graphe orienté. Attention : dans mermaid, **l'identit
 d'un nœud est son libellé exact** (`Public ID` ≠ `Public ID (Clé)`) — utiliser
 la forme `id[Libellé]` pour un même nœud sous plusieurs libellés.
 
+## Puce artefact — fichier téléchargeable
+
+Un **artefact** (fichier binaire uploadé : PDF, audio, archive, image…) se
+référence dans un document par un lien de schéma `artifact://<uuid>`.
+
+- **Seule sur sa ligne**, la forme `[libellé](artifact://<uuid>)` devient une
+  **puce fichier** : icône selon le type, nom, extension, taille lisible, plus
+  **Télécharger** (téléchargement authentifié) et **Ouvrir** (lien signé de
+  courte durée dans un nouvel onglet). Un **libellé vide** retombe sur le nom
+  de fichier de l'artefact :
+
+  ```
+  [](artifact://550e8400-e29b-41d4-a716-446655440000)
+  ```
+
+- **Au fil du texte**, la même forme reste un **lien cliquable** (ouvre le
+  fichier via un lien signé) — elle n'est PAS transformée en puce.
+
+La distinction est purement positionnelle : ligne isolée = puce, inline = lien.
+
 ## Chrome commun
 
 Chaque bloc (timeline, chart, mermaid, dataset) porte un en-tête discret :
