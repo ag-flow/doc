@@ -178,6 +178,10 @@ référence dans un document par un lien de schéma `artifact://<uuid>`.
 
 La distinction est purement positionnelle : ligne isolée = puce, inline = lien.
 
+Dans l'éditeur, la commande **`/fichier`** ouvre le sélecteur, téléverse le
+fichier en artefact et insère la puce automatiquement (le nom de fichier sert
+de libellé). Un glisser-déposer d'**image** reste inséré en image inline.
+
 ## Chrome commun
 
 Chaque bloc (timeline, chart, mermaid, dataset) porte un en-tête discret :

@@ -45,6 +45,9 @@ Compte OIDC auto-provisionné → 403 PendingValidation tant que non validé. Bo
 ## [filter_engine] Renumérotation des placeholders $n : fragile
 `$1`→`$11` matche `$10`. Construire la liste de params en séquence, sans renumérotation.
 
+## [artifacts] Nouvelle forme de référence ⇒ mettre à jour le parser de refcount
+`extract_artifact_ids` (artifacts/parser.py) alimente le refcount ; un artefact à refcount 0 est purgé. En ajoutant le schéma `artifact://uuid` (puces), il a fallu l'ajouter au motif — sinon fichier attaché en puce purgé après quelques heures. Toute nouvelle syntaxe de référence se répercute dans le parser ET un test de refcount.
+
 ## [automations] Le contenu document vit dans document_version, pas document
 Contenu courant = `document_version.content` à `version_number = document.version` (JOIN).
 
