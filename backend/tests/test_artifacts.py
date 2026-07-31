@@ -33,6 +33,22 @@ def test_extract_multiple_and_dedup() -> None:
     assert extract_artifact_ids(md) == {a1, a2}
 
 
+def test_extract_artifact_scheme_chip() -> None:
+    aid = "550e8400-e29b-41d4-a716-446655440000"
+    md = f"[Rapport.pdf](artifact://{aid})"
+    assert extract_artifact_ids(md) == {aid}
+
+
+def test_extract_mixed_url_and_scheme_forms() -> None:
+    a1 = "00000000-0000-0000-0000-000000000001"
+    a2 = "00000000-0000-0000-0000-000000000002"
+    md = (
+        f"![img](/api/workspaces/ws/artifacts/{a1})\n\n"
+        f"[fichier](artifact://{a2})"
+    )
+    assert extract_artifact_ids(md) == {a1, a2}
+
+
 def test_extract_ignores_malformed_uuid() -> None:
     md = "![x](/api/workspaces/ws/artifacts/not-a-uuid)"
     assert extract_artifact_ids(md) == set()
@@ -280,6 +296,26 @@ async def test_get_artifact_meta_and_refcount(
             doc_id,
             test_workspace["workspace_technical_key"],  # type: ignore[arg-type]
             f"![m](/api/workspaces/test-ws/artifacts/{created.id})",
+        )
+    meta = await service.get_artifact_meta(db_pool, "test-ws", created.id)
+    assert meta.refcount == 1
+
+
+async def test_refcount_counts_chip_scheme_reference(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Une puce [](artifact://id) compte pour le refcount — sinon l'artefact
+    d'un fichier attaché en puce serait purgé comme orphelin."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="joint.pdf", data=_PNG, created_by=None, max_bytes=1024
+    )
+    doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc puce")
+    async with db_pool.acquire() as conn:
+        await service.refresh_artifact_references(
+            conn, doc_id, wk, f"[Le joint](artifact://{created.id})"
         )
     meta = await service.get_artifact_meta(db_pool, "test-ws", created.id)
     assert meta.refcount == 1
@@ -793,9 +829,10 @@ async def test_mcp_list_artifacts_paginated(
     assert page["limit"] == 2
     assert len(page["items"]) == 2
     first = page["items"][0]
-    assert {"id", "filename", "media_type", "size_bytes", "extension", "created_at", "refcount"} <= (
-        set(first)
-    )
+    expected_keys = {
+        "id", "filename", "media_type", "size_bytes", "extension", "created_at", "refcount"
+    }
+    assert expected_keys <= set(first)
 
     page2 = json.loads(
         (

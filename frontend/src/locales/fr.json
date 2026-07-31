@@ -558,6 +558,11 @@
       "url": "URL"
     }
   },
+  "artifact": {
+    "slashTitle": "Fichier (artefact)",
+    "slashHint": "Téléverser un fichier et l'insérer en puce téléchargeable",
+    "uploadError": "Échec du téléversement du fichier."
+  },
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"

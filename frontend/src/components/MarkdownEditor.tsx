@@ -20,6 +20,7 @@ import {
 import { type DocumentSearchResult } from '../lib/api'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
+import { useToast } from './Toast'
 
 function filterItems<T extends { title: string; aliases?: string[] }>(
   items: T[],
@@ -69,6 +70,7 @@ interface MarkdownEditorProps {
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   ({ initialContent, onDirty, wsSlug }, ref) => {
     const { t } = useTranslation()
+    const { toast } = useToast()
     // uploadFile : collage/drop d'une image → POST artefact, l'URL retournée est
     // stockée dans le bloc image et sérialisée en markdown ![nom](url).
     // resolveFileUrl : l'endpoint est authentifié Bearer, l'affichage passe par
@@ -131,6 +133,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
           editor: editor as unknown as SlashContext['editor'],
           wsSlug,
           t,
+          onError: (msg) => toast(msg, 'error'),
         })
       : []
 

@@ -37,6 +37,8 @@ export interface SlashContext {
   }
   wsSlug: string
   t: (key: string) => string
+  /** Remonte une erreur à l'utilisateur (toast) depuis une action de slash. */
+  onError?: (message: string) => void
 }
 
 export interface SlashItem {

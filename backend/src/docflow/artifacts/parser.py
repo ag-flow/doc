@@ -3,11 +3,15 @@ from __future__ import annotations
 import re
 import uuid
 
-# Motif : /api/workspaces/{slug}/artifacts/{uuid} — tel qu'inséré dans le
-# markdown par l'éditeur (![alt](url)). Le motif matche l'URL où qu'elle
-# apparaisse (image, lien simple) ; la validation stricte de forme UUID est
-# faite via uuid.UUID(...), miroir de references/parser.py.
-_ARTIFACT_URL = re.compile(r"/api/workspaces/[^/\s)]+/artifacts/([0-9a-fA-F-]{36})")
+# Deux formes d'insertion d'un artefact dans le markdown, toutes deux comptées
+# pour le refcount :
+#   - image inline : ![alt](/api/workspaces/{slug}/artifacts/{uuid}) ;
+#   - puce fichier : [libellé](artifact://{uuid}) (schéma df, codec artifactChip).
+# Le motif matche où que la référence apparaisse ; la validation stricte de
+# forme UUID est faite via uuid.UUID(...), miroir de references/parser.py.
+_ARTIFACT_URL = re.compile(
+    r"(?:/api/workspaces/[^/\s)]+/artifacts/|artifact://)([0-9a-fA-F-]{36})"
+)
 
 
 def extract_artifact_ids(markdown: str) -> set[str]:
