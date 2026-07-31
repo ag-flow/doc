@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Check, FilePdf, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
+import { stripTitleHeading } from '../lib/markdownTitle'
 import { MarkdownViewer } from './MarkdownViewer'
 import { DocumentChildrenPanel } from './DocumentChildrenPanel'
 import { BacklinksPanel } from './BacklinksPanel'
@@ -59,14 +60,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   // Beaucoup de documents commencent par « # <titre> » (modèles de contenu) :
   // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
   // (le contenu en base n'est jamais modifié ; l'édition montre tout).
-  const displayContent = (() => {
-    const raw = doc.content ?? ''
-    const m = /^\s*#\s+(.+?)\s*\n/.exec(raw)
-    if (m && m[1].trim() === doc.title.trim()) {
-      return raw.slice(m.index + m[0].length).replace(/^\s*\n/, '')
-    }
-    return raw
-  })()
+  const displayContent = stripTitleHeading(doc.content ?? '', doc.title)
   const hasContent = Boolean(displayContent.trim())
 
   return (
@@ -180,7 +174,6 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
           ws={ws}
           blocSlug={blocSlug}
           docId={docId}
-          filename={doc.slug || doc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'document'}
           onClose={() => setExportOpen(false)}
         />
       )}

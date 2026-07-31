@@ -358,7 +358,7 @@
     "moveUp": "Monter",
     "moveDown": "Descendre",
     "validate": "Valider",
-    "pending": "Génération…"
+    "previewHint": "Un onglet s'ouvre avec le rendu complet (diagrammes compris) — imprimez-le en choisissant « Enregistrer en PDF »."
   },
   "vault": {
     "title": "Gestionnaire de clés",

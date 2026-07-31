@@ -2,15 +2,13 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp } from '@phosphor-icons/react'
-import { api, docsApi, ApiError, type DocumentOut } from '../lib/api'
+import { docsApi, type DocumentOut } from '../lib/api'
 import { Button } from './ui/button'
 
 interface Props {
   ws: string
   blocSlug: string
   docId: string
-  /** Nom de fichier proposé (slug du document, repli titre). */
-  filename: string
   onClose: () => void
 }
 
@@ -25,13 +23,11 @@ interface ChildRow {
  * et ordonnable (l'ordre choisi est l'ordre du PDF). « Document signé » ajoute
  * un cadre de signatures en fin de document. Le PDF se télécharge directement.
  */
-export function ExportPdfDialog({ ws, blocSlug, docId, filename, onClose }: Props) {
+export function ExportPdfDialog({ ws, blocSlug, docId, onClose }: Props) {
   const { t } = useTranslation()
   const [scope, setScope] = useState<'doc' | 'children'>('doc')
   const [signed, setSigned] = useState(false)
   const [rows, setRows] = useState<ChildRow[]>([])
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   const { data: blockDocs = [] } = useQuery<DocumentOut[]>({
     queryKey: ['block-documents', ws, blocSlug],
@@ -62,9 +58,10 @@ export function ExportPdfDialog({ ws, blocSlug, docId, filename, onClose }: Prop
     })
   }
 
-  function download() {
-    setPending(true)
-    setError(null)
+  function openPreview() {
+    // Pas de Chromium serveur : la vue d'impression s'ouvre dans un onglet,
+    // rendue par le VRAI moteur de l'app (composants graphiques compris) —
+    // l'utilisateur vérifie puis imprime (destination « Enregistrer en PDF »).
     const childIds = scope === 'children'
       ? rows.filter((r) => r.checked).map((r) => r.id)
       : []
@@ -72,21 +69,12 @@ export function ExportPdfDialog({ ws, blocSlug, docId, filename, onClose }: Prop
     if (childIds.length > 0) params.set('children', childIds.join(','))
     if (signed) params.set('signed', 'true')
     const qs = params.toString()
-    void api
-      .getBlob(`/workspaces/${ws}/documents/${docId}/export/pdf${qs ? `?${qs}` : ''}`)
-      .then((blob) => {
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${filename}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
-        onClose()
-      })
-      .catch((e) => {
-        setError(e instanceof ApiError ? e.message : t('error.generic'))
-        setPending(false)
-      })
+    window.open(
+      `/ws/${ws}/blocs/${blocSlug}/documents/${docId}/print${qs ? `?${qs}` : ''}`,
+      '_blank',
+      'noopener',
+    )
+    onClose()
   }
 
   return (
@@ -151,14 +139,12 @@ export function ExportPdfDialog({ ws, blocSlug, docId, filename, onClose }: Prop
           {t('exportPdf.signed')}
         </label>
 
-        <div aria-live="polite" className="empty:hidden">
-          {error && <p className="field-error m-0">{error}</p>}
-        </div>
+        <p className="m-0 text-[12px] text-ink/[0.55]">{t('exportPdf.previewHint')}</p>
 
         <div className="dialog-actions">
           <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={download} disabled={pending} data-testid="pdf-validate">
-            {pending ? t('exportPdf.pending') : t('exportPdf.validate')}
+          <Button onClick={openPreview} data-testid="pdf-validate">
+            {t('exportPdf.validate')}
           </Button>
         </div>
       </div>

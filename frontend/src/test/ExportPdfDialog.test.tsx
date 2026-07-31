@@ -8,11 +8,10 @@ vi.mock('../lib/api', async () => {
   return {
     ...actual,
     docsApi: { ...actual.docsApi, getBlockDocuments: vi.fn() },
-    api: { ...actual.api, getBlob: vi.fn() },
   }
 })
 
-import { api, docsApi, type DocumentOut } from '../lib/api'
+import { docsApi, type DocumentOut } from '../lib/api'
 import { ExportPdfDialog } from '../components/ExportPdfDialog'
 
 function doc(id: string, title: string, parent: string | null): DocumentOut {
@@ -27,7 +26,7 @@ function renderDialog(onClose = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <ExportPdfDialog ws="w" blocSlug="blk" docId="root" filename="mon-doc" onClose={onClose} />
+      <ExportPdfDialog ws="w" blocSlug="blk" docId="root" onClose={onClose} />
     </QueryClientProvider>,
   )
   return onClose
@@ -41,17 +40,17 @@ beforeEach(() => {
     doc('c2', 'Enfant 2', 'root'),
     doc('autre', 'Autre racine', null),
   ])
-  vi.mocked(api.getBlob).mockResolvedValue(new Blob(['%PDF-'], { type: 'application/pdf' }))
-  globalThis.URL.createObjectURL = vi.fn(() => 'blob:x')
-  globalThis.URL.revokeObjectURL = vi.fn()
+  vi.stubGlobal('open', vi.fn())
 })
 
 describe('ExportPdfDialog', () => {
-  it('document seul : télécharge sans paramètre children', async () => {
+  it('document seul : ouvre l’aperçu sans paramètre children', async () => {
     const onClose = renderDialog()
     fireEvent.click(screen.getByTestId('pdf-validate'))
     await waitFor(() =>
-      expect(api.getBlob).toHaveBeenCalledWith('/workspaces/w/documents/root/export/pdf'),
+      expect(window.open).toHaveBeenCalledWith(
+        '/ws/w/blocs/blk/documents/root/print', '_blank', 'noopener',
+      ),
     )
     expect(onClose).toHaveBeenCalled()
   })
@@ -65,8 +64,9 @@ describe('ExportPdfDialog', () => {
     fireEvent.click(screen.getByTestId('pdf-signed'))
     fireEvent.click(screen.getByTestId('pdf-validate'))
     await waitFor(() =>
-      expect(api.getBlob).toHaveBeenCalledWith(
-        '/workspaces/w/documents/root/export/pdf?children=c2%2Cc1&signed=true',
+      expect(window.open).toHaveBeenCalledWith(
+        '/ws/w/blocs/blk/documents/root/print?children=c2%2Cc1&signed=true',
+        '_blank', 'noopener',
       ),
     )
   })
@@ -78,8 +78,9 @@ describe('ExportPdfDialog', () => {
     fireEvent.click(screen.getByTestId('pdf-child-check-c1'))
     fireEvent.click(screen.getByTestId('pdf-validate'))
     await waitFor(() =>
-      expect(api.getBlob).toHaveBeenCalledWith(
-        '/workspaces/w/documents/root/export/pdf?children=c2',
+      expect(window.open).toHaveBeenCalledWith(
+        '/ws/w/blocs/blk/documents/root/print?children=c2',
+        '_blank', 'noopener',
       ),
     )
   })

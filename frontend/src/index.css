@@ -11,6 +11,7 @@
 @import "./styles/components.css";
 @import "./styles/chrome.css";
 @import "./styles/document.css";
+@import "./styles/print.css";
 
 /* Lecture « wiki » : prose aérée pour le rendu lecture seule d'un document.
    BlockNote (mantine) rend le contenu sous .bn-editor ; on élargit l'interligne

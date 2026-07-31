@@ -22,6 +22,7 @@ import { OidcAdmin } from './pages/OidcAdmin'
 import { EventsProducerAdmin } from './pages/EventsProducerAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
+import { PrintDocumentPage } from './pages/PrintDocumentPage'
 import { UsersAdmin } from './pages/UsersAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
@@ -98,6 +99,15 @@ const router = createBrowserRouter([
       // Les automates ont quitté le workspace : redirection vers l'écran global.
       { path: 'automations', element: <Navigate to="/automations" replace /> },
     ],
+  },
+  {
+    // Vue d'impression : pas de chrome (rail/en-tête) — un onglet dédié.
+    path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId/print',
+    element: (
+      <ProtectedRoute>
+        <PrintDocumentPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/automations',

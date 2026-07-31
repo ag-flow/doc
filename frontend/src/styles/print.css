@@ -1,0 +1,66 @@
+/* Vue d'impression (/…/print) : la feuille rend avec le moteur de l'app,
+   l'utilisateur imprime depuis le navigateur (destination « PDF »). */
+
+.print-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 18px 28px 60px;
+}
+
+.print-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  background: var(--color-paper);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+/* La feuille reprend la typo .doc-sheet mais sans le cadre d'écran. */
+.print-sheet.doc-sheet {
+  border: 0;
+  background: transparent;
+  padding: 28px 0;
+}
+.print-sheet h1:first-child { margin-top: 0; }
+
+.print-signatures {
+  margin-top: 44px;
+  padding-top: 12px;
+  border-top: 2px solid var(--color-ink);
+  page-break-inside: avoid;
+}
+.print-signatures h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-heading);
+  font-size: 20px;
+}
+.print-signatures table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.print-signatures td {
+  height: 64px;
+  vertical-align: bottom;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink) 40%, transparent);
+}
+.print-signatures .sig-label {
+  height: auto;
+  border: none;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+}
+
+@media print {
+  .no-print { display: none !important; }
+  .print-page { max-width: none; padding: 0; }
+  .print-break { page-break-before: always; }
+  .print-sheet.doc-sheet { padding: 0 0 24px; }
+  @page { margin: 16mm; }
+}
