@@ -233,6 +233,9 @@ select.input { cursor: pointer; }
 }
 .artifact-paste-zone::placeholder { color: color-mix(in srgb, var(--color-ink) 55%, transparent); }
 .artifact-paste-zone:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.artifact-paste-form { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.artifact-paste-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: color-mix(in srgb, var(--color-ink) 65%, transparent); }
+.artifact-paste-form .btn { align-self: flex-end; }
 
 /* ── Tables ─────────────────────────────────────────────────────────────
    En-tête en petites capitales, filets de ligne : aucune bordure extérieure. */

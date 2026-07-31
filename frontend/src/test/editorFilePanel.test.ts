@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { fileFromClipboardData } from '../components/editorFilePanel'
+import {
+  fileFromClipboardData,
+  detectKnownExtension,
+  finalFilename,
+} from '../components/editorFilePanel'
 
 /** Fabrique un DataTransfer-like : `files` prioritaire, sinon `items`. */
 function dt(opts: { files?: File[]; items?: Array<{ kind: string; file: File | null }> }): DataTransfer {
@@ -34,5 +38,30 @@ describe('fileFromClipboardData', () => {
   it('presse-papier vide → null', () => {
     expect(fileFromClipboardData(null)).toBeNull()
     expect(fileFromClipboardData(dt({}))).toBeNull()
+  })
+})
+
+describe('detectKnownExtension', () => {
+  const known = ['pdf', 'png', 'jpg']
+  it('extension connue en fin de nom → renvoyée en minuscule', () => {
+    expect(detectKnownExtension('Rapport.PDF', known)).toBe('pdf')
+  })
+  it('extension inconnue → chaîne vide', () => {
+    expect(detectKnownExtension('archive.tar', known)).toBe('')
+  })
+  it('sans extension → chaîne vide', () => {
+    expect(detectKnownExtension('sans-extension', known)).toBe('')
+  })
+})
+
+describe('finalFilename', () => {
+  it('ajoute l’extension du type choisi si absente', () => {
+    expect(finalFilename('rapport', 'pdf')).toBe('rapport.pdf')
+  })
+  it('n’ajoute rien si déjà présente (insensible à la casse)', () => {
+    expect(finalFilename('rapport.PDF', 'pdf')).toBe('rapport.PDF')
+  })
+  it('sans type sélectionné → nom tel quel', () => {
+    expect(finalFilename('image.png', '')).toBe('image.png')
   })
 })

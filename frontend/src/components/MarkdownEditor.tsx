@@ -144,10 +144,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         <BlockNoteView
           editor={editor}
           slashMenu={false}
-          filePanel={false}
+          filePanel={wsSlug ? false : undefined}
           onChange={() => { if (settledRef.current) onDirtyRef.current() }}
         >
-          <FilePanelController filePanel={EditorFilePanel} />
+          {wsSlug && (
+            <FilePanelController
+              filePanel={(p) => <EditorFilePanel {...p} wsSlug={wsSlug} />}
+            />
+          )}
           {wsSlug && (
             <SuggestionMenuController
               triggerCharacter="/"

@@ -568,7 +568,11 @@
     "pasteTab": "Coller",
     "pasteHint": "Cliquez ici puis Ctrl+V pour coller un fichier ou une image",
     "pasteEmpty": "Aucun fichier dans le presse-papier.",
-    "pasteError": "Impossible de coller depuis le presse-papier."
+    "pasteError": "Impossible de coller depuis le presse-papier.",
+    "pasteName": "Nom du fichier",
+    "pasteType": "Type",
+    "pasteTypeAuto": "— d'après l'extension —",
+    "pasteInsert": "Insérer"
   },
   "error": {
     "generic": "Une erreur est survenue",
