@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Plus, X } from '@phosphor-icons/react'
+import { Plus, Trash, X } from '@phosphor-icons/react'
 import { api, type FunctionalTypeRich } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from './ui/button'
@@ -149,7 +149,23 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
     onError: (err: Error) => setPropError(err.message),
   })
 
+  const [deleteProp, setDeleteProp] = useState<{ slug: string; label: string } | null>(null)
+  const [deletePropError, setDeletePropError] = useState<string | null>(null)
+  const deletePropMutation = useMutation({
+    // La confirmation est portée par le dialogue (DOC-07) : confirm=true assume
+    // la cascade sur les valeurs saisies.
+    mutationFn: (slug: string) =>
+      api.delete(`/workspaces/${ws}/types/${type.slug}/properties/${slug}?confirm=true`),
+    onSuccess: () => {
+      invalidate()
+      setDeleteProp(null)
+      setDeletePropError(null)
+    },
+    onError: (err: Error) => setDeletePropError(err.message),
+  })
+
   const restricted = (type.properties ?? []).filter((p) => p.type === 'restricted_list')
+  const scalars = (type.properties ?? []).filter((p) => p.type !== 'restricted_list')
 
   function openAdd(slug: string) {
     setAddingFor(slug)
@@ -170,14 +186,45 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
         </Button>
       </div>
 
+      {/* Propriétés scalaires : elles n'ont pas de valeurs à éditer mais
+          doivent être VISIBLES (une propriété créée qui n'apparaît pas lit
+          comme un bug) — libellé, slug, type, suppression. */}
+      {scalars.length > 0 && (
+        <ul className="m-0 list-none p-0">
+          {scalars.map((prop) => (
+            <li key={prop.slug} className="flex items-center gap-2 border-b border-[var(--color-divider)] py-1.5 last:border-b-0"
+              data-testid={`prop-row-${prop.slug}`}>
+              <span className="text-[14px] font-[600] [font-family:var(--font-heading)]">{prop.label}</span>
+              <span className="text-[11px] text-accent-700 [font-family:var(--font-mono)]">{prop.slug}</span>
+              <span className="tag tag-neutral text-[10px]">{prop.type}</span>
+              {prop.behavior && <span className="tag tag-outline text-[10px]">{prop.behavior}</span>}
+              {prop.required && <span className="text-accent-2-700">*</span>}
+              <span className="flex-1" />
+              <Button variant="icon" size="sm" className="text-accent-2-700"
+                title={t('common.delete')}
+                onClick={() => { setDeleteProp({ slug: prop.slug, label: prop.label }); setDeletePropError(null) }}
+                data-testid={`delete-prop-${prop.slug}`}>
+                <Trash size={13} weight="duotone" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {restricted.map((prop) => (
         <div key={prop.slug}>
-          <p className="mb-2 text-[14px] font-[600] [font-family:var(--font-heading)]">
+          <p className="mb-2 flex items-center gap-1.5 text-[14px] font-[600] [font-family:var(--font-heading)]">
             {prop.label}{' '}
             <span className="text-[11px] font-normal text-accent-700 [font-family:var(--font-mono)]">
               {prop.slug}
             </span>
-            {prop.required && <span className="ml-1 text-accent-2-700">*</span>}
+            {prop.required && <span className="text-accent-2-700">*</span>}
+            <Button variant="icon" size="sm" className="text-accent-2-700"
+              title={t('common.delete')}
+              onClick={() => { setDeleteProp({ slug: prop.slug, label: prop.label }); setDeletePropError(null) }}
+              data-testid={`delete-prop-${prop.slug}`}>
+              <Trash size={12} weight="duotone" />
+            </Button>
           </p>
           <div className="flex flex-wrap items-center gap-2">
             {prop.allowed_values.map((av) => (
@@ -400,6 +447,19 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
             deleteMutation.mutate({ propSlug: deleteVal.propSlug, valSlug: deleteVal.slug })
           }
           onCancel={() => { setDeleteVal(null); setDeleteValError(null) }}
+        />
+      )}
+
+      {deleteProp && (
+        <ConfirmDialog
+          testId="delete-prop-dialog"
+          title={t('types.deletePropTitle')}
+          message={t('types.deletePropMsg', { label: deleteProp.label })}
+          confirmLabel={t('common.delete')}
+          pending={deletePropMutation.isPending}
+          error={deletePropError}
+          onConfirm={() => deletePropMutation.mutate(deleteProp.slug)}
+          onCancel={() => { setDeleteProp(null); setDeletePropError(null) }}
         />
       )}
     </div>

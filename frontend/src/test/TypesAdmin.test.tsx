@@ -160,6 +160,10 @@ const RICH_TYPE = {
       behavior: null, default_value: null,
       allowed_values: [{ slug: 'fait', label: 'Fait', color: null, position: 0 }],
     },
+    {
+      slug: 'url-confluence', label: 'url confluence', type: 'url', required: false,
+      behavior: null, default_value: null, allowed_values: [],
+    },
   ],
 }
 
@@ -173,6 +177,25 @@ describe('TypesAdmin — édition en place (Broadsheet)', () => {
     renderWithProviders()
     expect(await screen.findByTestId('props-summary-epic')).toHaveTextContent('Statut')
     expect(screen.getByTestId('docs-count-epic')).toHaveTextContent('5 docs')
+  })
+
+  it('le panneau liste AUSSI les propriétés scalaires (url, text…) et permet leur suppression', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    // La propriété scalaire est visible : libellé, slug, type.
+    const row = await screen.findByTestId('prop-row-url-confluence')
+    expect(row).toHaveTextContent('url confluence')
+    expect(row).toHaveTextContent('url')
+    // Suppression : dialogue de confirmation puis DELETE confirm=true.
+    vi.mocked(api.delete).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('delete-prop-url-confluence'))
+    expect(await screen.findByTestId('delete-prop-dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('delete-prop-dialog-confirm'))
+    await waitFor(() =>
+      expect(api.delete).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence?confirm=true',
+      ),
+    )
   })
 
   it('clic sur la ligne → panneau sous la ligne ; reclic, Échap et bouton ferment', async () => {
