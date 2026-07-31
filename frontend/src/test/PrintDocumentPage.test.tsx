@@ -21,7 +21,7 @@ vi.mock('../components/MarkdownViewer', () => ({
 
 import { docsApi, type DocumentOut } from '../lib/api'
 import { WorkspaceProvider } from '../contexts/WorkspaceContext'
-import { PrintDocumentPage } from '../pages/PrintDocumentPage'
+import { PrintDocumentPage, fitFactor } from '../pages/PrintDocumentPage'
 
 function doc(id: string, title: string, content: string): DocumentOut {
   return {
@@ -90,5 +90,18 @@ describe('PrintDocumentPage', () => {
     renderAt('/ws/w/blocs/blk/documents/root/print?children=fantome')
     await waitFor(() => expect(screen.getByTestId('print-error')).toBeInTheDocument())
     expect(screen.getByTestId('print-doc-root')).toBeInTheDocument()
+  })
+})
+
+describe('fitFactor — réduction des composants plus hauts qu’une page', () => {
+  it('tient sur la page → aucun zoom', () => {
+    expect(fitFactor(500, 1000)).toBe(1)
+    expect(fitFactor(1000, 1000)).toBe(1)
+  })
+  it('dépasse → réduit pour tenir avec 4 % de marge', () => {
+    expect(fitFactor(2000, 1000)).toBeCloseTo(0.48, 2)
+  })
+  it('borné à 35 % — jamais illisible', () => {
+    expect(fitFactor(100000, 1000)).toBe(0.35)
   })
 })

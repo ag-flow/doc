@@ -12,6 +12,17 @@ import { SheetSkeleton } from '../components/ui/states'
 /** Hauteur utile d'une page A4 avec marges 16 mm (297 − 2×16). */
 const PAGE_HEIGHT_MM = 265
 
+/** Blocs à ajuster : composants encadrés (df-*, mermaid…), tableaux, code,
+ *  images — les éléments nus déjà couverts par un cadre sont exclus. */
+const FIT_SELECTOR = '[data-content-type], table, pre, img'
+
+/** Facteur de réduction pour tenir sur une page (96 % de marge de sûreté),
+ *  borné à 35 % — en dessous, le composant deviendrait illisible. */
+export function fitFactor(height: number, pageHeight: number): number {
+  if (height <= pageHeight) return 1
+  return Math.max(0.35, (pageHeight * 0.96) / height)
+}
+
 /**
  * Vue d'impression (export PDF sans Chromium serveur) : la page rend le
  * document et les enfants choisis avec le VRAI moteur de l'application —
@@ -70,7 +81,36 @@ export function PrintDocumentPage() {
     probe.remove()
     if (pageHeightPx <= 0) return
 
+    // Un composant plus haut qu'une page ne PEUT pas tenir : on le réduit
+    // (zoom, qui contracte aussi la boîte de layout) pour qu'il rentre. Le
+    // reset préalable redonne la hauteur naturelle — la réduction reste
+    // idempotente entre deux passes.
+    const fitOversized = () => {
+      host.querySelectorAll<HTMLElement>(FIT_SELECTOR).forEach((el) => {
+        const frame = el.closest('[data-content-type]')
+        if (frame && frame !== el) return // le cadre parent porte l'ajustement
+        el.style.zoom = ''
+        const factor = fitFactor(el.offsetHeight, pageHeightPx)
+        if (factor < 1) {
+          el.style.zoom = factor.toFixed(3)
+          el.title = `Réduit à ${Math.round(factor * 100)} % pour tenir sur une page`
+          el.dataset.printZoomed = String(Math.round(factor * 100))
+        } else if (el.dataset.printZoomed) {
+          delete el.dataset.printZoomed
+          el.removeAttribute('title')
+        }
+      })
+    }
+
+    let observer: ResizeObserver | null = null
+    const observeSheets = () =>
+      host.querySelectorAll<HTMLElement>('.print-sheet').forEach((s) => observer?.observe(s))
+
     const measure = () => {
+      // L'ajustement modifie les hauteurs : suspendre l'observation pour ne
+      // pas boucler sur nos propres écritures.
+      observer?.disconnect()
+      fitOversized()
       const next: Record<string, number[]> = {}
       host.querySelectorAll<HTMLElement>('.print-sheet').forEach((section) => {
         const id = section.dataset.docId
@@ -84,16 +124,16 @@ export function PrintDocumentPage() {
       setMarkers((prev) =>
         JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
       )
+      observeSheets()
     }
 
+    observer = new ResizeObserver(measure)
     measure()
-    // Diagrammes asynchrones : re-mesures différées + observation des tailles.
+    // Diagrammes asynchrones : re-mesures différées en plus de l'observation.
     const timers = [500, 1500, 3500].map((ms) => setTimeout(measure, ms))
-    const observer = new ResizeObserver(measure)
-    host.querySelectorAll<HTMLElement>('.print-sheet').forEach((s) => observer.observe(s))
     return () => {
       timers.forEach(clearTimeout)
-      observer.disconnect()
+      observer?.disconnect()
     }
   }, [loading, docs.length])
 
@@ -102,7 +142,8 @@ export function PrintDocumentPage() {
       <div className="no-print print-toolbar">
         <p className="m-0 min-w-0 flex-1 text-[13px] text-ink/[0.6]">
           Aperçu avant impression — largeur réelle A4, traits magenta = coupures
-          de page (indicatifs : un composant insécable peut décaler la coupure).
+          de page (indicatives : un composant insécable peut décaler la coupure) ;
+          un composant plus haut qu'une page est réduit pour y tenir.
           Vérifiez le rendu puis imprimez en choisissant « Enregistrer en PDF ».
         </p>
         <Button onClick={() => window.print()} data-testid="print-btn">
