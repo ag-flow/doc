@@ -8,6 +8,7 @@ vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn(),
     post: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn(),
   },
   getToken: vi.fn(() => 'tok'),
@@ -196,6 +197,36 @@ describe('TypesAdmin — édition en place (Broadsheet)', () => {
         '/workspaces/my-ws/types/epic/properties/url-confluence?confirm=true',
       ),
     )
+  })
+
+  it('édition d’une propriété : slug figé, libellé + type envoyés en PATCH', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    // Le slug est affiché mais IMMUABLE.
+    expect(screen.getByTestId('edit-prop-slug')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('edit-prop-label'), { target: { value: 'URL Confluence' } })
+    fireEvent.change(screen.getByTestId('edit-prop-type'), { target: { value: 'text' } })
+    vi.mocked(api.patch).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence',
+        { label: 'URL Confluence', type: 'text' },
+      ),
+    )
+  })
+
+  it('transition de type refusée (données existantes) : le 422 du backend s’affiche', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    vi.mocked(api.patch).mockRejectedValue(
+      new Error("type non modifiable : 3 valeur(s) existante(s) — transitions permises depuis 'url' : restricted_list, text"),
+    )
+    fireEvent.change(screen.getByTestId('edit-prop-type'), { target: { value: 'int' } })
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    expect(await screen.findByTestId('edit-prop-error')).toHaveTextContent('transitions permises')
   })
 
   it('clic sur la ligne → panneau sous la ligne ; reclic, Échap et bouton ferment', async () => {

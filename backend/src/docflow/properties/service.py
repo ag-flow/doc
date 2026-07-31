@@ -201,6 +201,17 @@ async def create_def(
     return await get_def(pool, ws_slug, type_slug, data.slug)
 
 
+# Transitions de type permises quand des VALEURS existent en base : seules les
+# familles où les données restent cohérentes (règle utilisateur — ex. passer de
+# text à url ou restricted_list). Tout le reste exige une propriété vide.
+_TYPE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "text": frozenset({"url", "restricted_list"}),
+    "url": frozenset({"text", "restricted_list"}),
+    "restricted_list": frozenset({"text", "url"}),
+    "int": frozenset({"float"}),
+}
+
+
 async def update_def(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -212,12 +223,12 @@ async def update_def(
     # default_value peut être remis explicitement à NULL ; label/required (NOT NULL)
     # ne peuvent pas devenir null → on ignore un null envoyé sur ces champs.
     raw = data.model_dump(exclude_unset=True)
-    _ALLOWED = frozenset({"label", "default_value", "required", "behavior"})
+    _ALLOWED = frozenset({"label", "default_value", "required", "behavior", "type"})
     updates: dict[str, object | None] = {}
     for k, v in raw.items():
         if k not in _ALLOWED:
             raise ValueError(f"champ non modifiable : {k}")
-        if k in {"label", "required"} and v is None:
+        if k in {"label", "required", "type"} and v is None:
             continue
         updates[k] = v
     if not updates:
@@ -231,6 +242,33 @@ async def update_def(
                     status_code=422,
                     detail="behavior est réservé aux propriétés de type 'date'",
                 )
+            new_type = updates.get("type")
+            if new_type == prop_type:
+                updates.pop("type")
+                new_type = None
+            if new_type is not None:
+                current_behavior = await conn.fetchval(
+                    "SELECT behavior FROM properties_defs WHERE id = $1", prop_id
+                )
+                if current_behavior is not None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="type non modifiable : la propriété porte un "
+                        "comportement automatique (réservé au type 'date')",
+                    )
+                dependents: int = await conn.fetchval(
+                    "SELECT count(*) FROM properties_values WHERE property_def_ref = $1",
+                    prop_id,
+                )
+                allowed = _TYPE_TRANSITIONS.get(prop_type, frozenset())
+                if dependents > 0 and str(new_type) not in allowed:
+                    permitted = ", ".join(sorted(allowed)) or "aucune"
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"type non modifiable : {dependents} valeur(s) "
+                        f"existante(s) — transitions permises depuis "
+                        f"'{prop_type}' : {permitted}",
+                    )
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())

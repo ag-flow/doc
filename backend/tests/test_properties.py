@@ -236,3 +236,104 @@ async def test_types_rich_carries_documents_count(
         )
     rich = await type_svc.list_types_rich(db_pool, _WS)
     assert next(ty for ty in rich if ty.slug == "story").documents_count == 2
+
+
+# ── Changement de TYPE d'une propriété (slug immuable, cohérence des données) ─
+
+
+async def _seed_value(pool: asyncpg.Pool, prop_slug: str) -> None:
+    """Pose UNE valeur de la propriété sur un document (données existantes)."""
+    async with pool.acquire() as conn:
+        wk = await conn.fetchval(
+            "SELECT workspace_technical_key FROM workspace WHERE slug = $1", _WS
+        )
+        type_id = await conn.fetchval(
+            "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = 'epic'",
+            wk,
+        )
+        prop_id = await conn.fetchval(
+            "SELECT id FROM properties_defs WHERE functional_type_ref = $1 AND slug = $2",
+            type_id,
+            prop_slug,
+        )
+        block_id = await conn.fetchval(
+            "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+            "VALUES ('blk-type-change', 'B', $1, $2) "
+            "ON CONFLICT DO NOTHING RETURNING id",
+            type_id,
+            wk,
+        ) or await conn.fetchval(
+            "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug = 'blk-type-change'",
+            wk,
+        )
+        doc_id = await conn.fetchval(
+            "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+            "workspace_technical_key) VALUES ('Doc', $1, $2, $3) RETURNING doc_technical_key",
+            type_id,
+            block_id,
+            wk,
+        )
+        await conn.execute(
+            "INSERT INTO properties_values (document_ref, property_def_ref, "
+            "workspace_technical_key, version) VALUES ($1, $2, $3, 1)",
+            doc_id,
+            prop_id,
+            wk,
+        )
+
+
+async def test_type_change_free_without_data(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "champ")
+    # Sans donnée : transition libre, même hors famille (text → int).
+    updated = await prop_svc.update_def(
+        db_pool, _WS, "epic", "champ", PropertiesDefUpdate(type="int")
+    )
+    assert updated.type == "int"
+
+
+async def test_type_change_with_data_coherent_family(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "lien")
+    await _seed_value(db_pool, "lien")
+    # text → url : famille cohérente, permise malgré les données.
+    assert (await prop_svc.update_def(
+        db_pool, _WS, "epic", "lien", PropertiesDefUpdate(type="url")
+    )).type == "url"
+    # url → restricted_list : encore la famille.
+    assert (await prop_svc.update_def(
+        db_pool, _WS, "epic", "lien", PropertiesDefUpdate(type="restricted_list")
+    )).type == "restricted_list"
+
+
+async def test_type_change_with_data_incoherent_422(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "montant")
+    await _seed_value(db_pool, "montant")
+    with pytest.raises(HTTPException) as exc:
+        await prop_svc.update_def(
+            db_pool, _WS, "epic", "montant", PropertiesDefUpdate(type="int")
+        )
+    assert exc.value.status_code == 422
+    assert "transitions permises" in str(exc.value.detail)
+
+
+async def test_type_change_int_to_float_ok_reverse_refused(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _make_type(db_pool)
+    await _make_prop(db_pool, "epic", "score", "int")
+    await _seed_value(db_pool, "score")
+    assert (await prop_svc.update_def(
+        db_pool, _WS, "epic", "score", PropertiesDefUpdate(type="float")
+    )).type == "float"
+    # float → int avec données : perte possible, refusé.
+    with pytest.raises(HTTPException) as exc:
+        await prop_svc.update_def(
+            db_pool, _WS, "epic", "score", PropertiesDefUpdate(type="int")
+        )
+    assert exc.value.status_code == 422

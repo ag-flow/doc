@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Plus, Trash, X } from '@phosphor-icons/react'
+import { PencilSimple, Plus, Trash, X } from '@phosphor-icons/react'
 import { api, type FunctionalTypeRich } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
 import { Button } from './ui/button'
@@ -149,6 +149,26 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
     onError: (err: Error) => setPropError(err.message),
   })
 
+  // Édition d'une propriété : le SLUG est immuable — seuls libellé et type se
+  // modifient. Les règles de cohérence du type (transitions permises quand des
+  // données existent) vivent au backend : un choix refusé revient en 422 avec
+  // la liste des transitions possibles.
+  const [editProp, setEditProp] = useState<{ slug: string; label: string; type: string } | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+  const editPropMutation = useMutation({
+    mutationFn: (vars: { slug: string; label: string; type: string }) =>
+      api.patch(`/workspaces/${ws}/types/${type.slug}/properties/${vars.slug}`, {
+        label: vars.label,
+        type: vars.type,
+      }),
+    onSuccess: () => {
+      invalidate()
+      setEditProp(null)
+      setEditError(null)
+    },
+    onError: (err: Error) => setEditError(err.message),
+  })
+
   const [deleteProp, setDeleteProp] = useState<{ slug: string; label: string } | null>(null)
   const [deletePropError, setDeletePropError] = useState<string | null>(null)
   const deletePropMutation = useMutation({
@@ -200,6 +220,12 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
               {prop.behavior && <span className="tag tag-outline text-[10px]">{prop.behavior}</span>}
               {prop.required && <span className="text-accent-2-700">*</span>}
               <span className="flex-1" />
+              <Button variant="icon" size="sm"
+                title={t('common.edit')}
+                onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type }); setEditError(null) }}
+                data-testid={`edit-prop-${prop.slug}`}>
+                <PencilSimple size={13} weight="duotone" />
+              </Button>
               <Button variant="icon" size="sm" className="text-accent-2-700"
                 title={t('common.delete')}
                 onClick={() => { setDeleteProp({ slug: prop.slug, label: prop.label }); setDeletePropError(null) }}
@@ -219,6 +245,12 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
               {prop.slug}
             </span>
             {prop.required && <span className="text-accent-2-700">*</span>}
+            <Button variant="icon" size="sm"
+              title={t('common.edit')}
+              onClick={() => { setEditProp({ slug: prop.slug, label: prop.label, type: prop.type }); setEditError(null) }}
+              data-testid={`edit-prop-${prop.slug}`}>
+              <PencilSimple size={12} weight="duotone" />
+            </Button>
             <Button variant="icon" size="sm" className="text-accent-2-700"
               title={t('common.delete')}
               onClick={() => { setDeleteProp({ slug: prop.slug, label: prop.label }); setDeletePropError(null) }}
@@ -448,6 +480,45 @@ export function TypePropertiesPanel({ ws, type, onClose }: Props) {
           }
           onCancel={() => { setDeleteVal(null); setDeleteValError(null) }}
         />
+      )}
+
+      {editProp && (
+        <div className="dialog-backdrop z-50" onClick={() => setEditProp(null)}>
+          <div className="dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+            data-testid="edit-prop-dialog">
+            <h4 className="dialog-title">{t('types.editPropTitle')}</h4>
+            <Field label={t('types.slug')} htmlFor="edit-prop-slug" hint={t('types.slugImmutable')}>
+              <Input id="edit-prop-slug" value={editProp.slug} disabled
+                className="[font-family:var(--font-mono)]" data-testid="edit-prop-slug" />
+            </Field>
+            <Field label={t('types.propLabel')} htmlFor="edit-prop-label">
+              <Input id="edit-prop-label" value={editProp.label}
+                onChange={(e) => setEditProp({ ...editProp, label: e.target.value })}
+                data-testid="edit-prop-label" />
+            </Field>
+            <Field label={t('types.propType')} htmlFor="edit-prop-type" hint={t('types.typeChangeHint')}>
+              <select id="edit-prop-type" className="input" value={editProp.type}
+                onChange={(e) => setEditProp({ ...editProp, type: e.target.value })}
+                data-testid="edit-prop-type">
+                {SCALAR_TYPES.map((ty) => (
+                  <option key={ty} value={ty}>{ty}</option>
+                ))}
+              </select>
+            </Field>
+            <div aria-live="polite" className="empty:hidden">
+              {editError && <p className="field-error m-0" data-testid="edit-prop-error">{editError}</p>}
+            </div>
+            <div className="dialog-actions">
+              <Button variant="secondary" onClick={() => setEditProp(null)}>{t('common.cancel')}</Button>
+              <Button
+                onClick={() => editPropMutation.mutate(editProp)}
+                disabled={!editProp.label.trim() || editPropMutation.isPending}
+                data-testid="edit-prop-save">
+                {t('common.save')}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {deleteProp && (
