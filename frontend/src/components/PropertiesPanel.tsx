@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
@@ -43,6 +43,44 @@ function buildAllowedIndex(
   return index
 }
 
+/** Valeur texte longue plafonnée à `lines` lignes, dépliable si elle déborde.
+ *  Le débordement est mesuré après rendu (scrollHeight vs clientHeight). */
+function ClampText({ text, lines = 5 }: { text: string; lines?: number }) {
+  const { t } = useTranslation()
+  const ref = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setOverflows(el.scrollHeight - el.clientHeight > 1)
+  }, [text])
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        className={expanded ? undefined : 'doc-prop-clamp'}
+        style={expanded ? undefined : ({ '--clamp-lines': lines } as React.CSSProperties)}
+        data-testid="clamp-text"
+      >
+        {text}
+      </div>
+      {(overflows || expanded) && (
+        <button
+          type="button"
+          className="doc-prop-more"
+          onClick={() => setExpanded((v) => !v)}
+          data-testid="clamp-toggle"
+        >
+          {expanded ? t('properties.seeLess', 'voir moins') : t('properties.seeMore', 'voir plus')}
+        </button>
+      )}
+    </div>
+  )
+}
+
 /** Une valeur en texte : la lecture n'expose aucun contrôle de saisie. */
 function PropertyReadRow({
   prop,
@@ -67,13 +105,14 @@ function PropertyReadRow({
       </a>
     )
   } else if (prop.value != null && prop.value !== '') {
-    display = prop.value
+    // Texte libre potentiellement long : plafonné à 5 lignes, dépliable.
+    display = <ClampText text={prop.value} />
   }
   return (
     <div className="mb-3.5" data-testid={`property-read-${prop.prop_slug}`}>
       <div className="doc-prop-label">{prop.prop_label}</div>
-      <div className="flex items-center gap-2 text-[14px] text-ink/[0.85]">
-        <span className="min-w-0 break-words">{display}</span>
+      <div className="flex items-start gap-2 text-[14px] text-ink/[0.85]">
+        <div className="min-w-0 flex-1 break-words">{display}</div>
         {color && (
           <span
             className="h-2.5 w-2.5 shrink-0 rounded-full"

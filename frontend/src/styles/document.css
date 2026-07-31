@@ -206,6 +206,26 @@
   margin-bottom: 2px;
 }
 
+/* Valeur texte longue : plafonnée à N lignes (var --clamp-lines) puis dépliable.
+   -webkit-line-clamp reste la seule voie multi-navigateur pour l'ellipsis multi-lignes. */
+.doc-prop-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 5);
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+.doc-prop-more {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-accent);
+}
+.doc-prop-more:hover { text-decoration: underline; }
+
 /* Ligne méta sous le titre : slug, version, statut. */
 .doc-meta {
   display: flex;

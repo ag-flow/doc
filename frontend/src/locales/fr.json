@@ -322,6 +322,8 @@
     "save": "Enregistrer",
     "empty": "Aucune propriété",
     "none": "— aucune —",
+    "seeMore": "voir plus",
+    "seeLess": "voir moins",
     "conflict": {
       "title": "Conflit de valeur",
       "desc": "Valeur serveur : {{server}}. Choisissez la version à conserver.",

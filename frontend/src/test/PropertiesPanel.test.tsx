@@ -74,8 +74,76 @@ function renderPanel(functionalTypeSlug: string | null = 'epic') {
   )
 }
 
+function renderReadPanel() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" readOnly />
+    </QueryClientProvider>,
+  )
+}
+
 describe('PropertiesPanel', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('lecture : une valeur texte longue est plafonnée à 5 lignes et dépliable', async () => {
+    // jsdom ne calcule pas les hauteurs : on force un débordement mesurable,
+    // puis on retire la surcharge (jsdom n'a pas de descripteur propre à restaurer).
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, value: 400 })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 100 })
+    try {
+      vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+        {
+          prop_slug: 'transcription',
+          prop_label: 'Transcription',
+          type: 'text',
+          version: 1,
+          value: 'Ligne très longue répétée '.repeat(60),
+          allowed_value_slug: null,
+          allowed_value_label: null,
+          required: false,
+          behavior: null,
+        },
+      ])
+      vi.mocked(api.get).mockResolvedValue(richTypes)
+
+      renderReadPanel()
+      const clamp = await screen.findByTestId('clamp-text')
+      // Plafond visuel à 5 lignes.
+      expect(clamp).toHaveClass('doc-prop-clamp')
+      expect(clamp.style.getPropertyValue('--clamp-lines')).toBe('5')
+
+      // Débordement détecté → bouton « voir plus » ; clic → déplié, plus de clamp.
+      const toggle = screen.getByTestId('clamp-toggle')
+      expect(toggle).toHaveTextContent('voir plus')
+      fireEvent.click(toggle)
+      expect(screen.getByTestId('clamp-text')).not.toHaveClass('doc-prop-clamp')
+      expect(screen.getByTestId('clamp-toggle')).toHaveTextContent('voir moins')
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight
+    }
+  })
+
+  it('lecture : une valeur courte n’affiche pas de bouton « voir plus »', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'note',
+        prop_label: 'Note',
+        type: 'text',
+        version: 1,
+        value: 'court',
+        allowed_value_slug: null,
+        allowed_value_label: null,
+        required: false,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    renderReadPanel()
+    await screen.findByTestId('clamp-text')
+    expect(screen.queryByTestId('clamp-toggle')).not.toBeInTheDocument()
+  })
 
   // DoD 25.1 — rendu des champs
   it('renders fields for each property', async () => {
