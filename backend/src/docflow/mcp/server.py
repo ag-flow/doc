@@ -7,7 +7,7 @@ import uuid
 import asyncpg
 import structlog
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
@@ -1153,8 +1153,33 @@ async def _check_user_access(
     return None
 
 
+def _finalize_tool_result(result: list[TextContent]) -> list[TextContent] | CallToolResult:
+    """Marque `isError` sur une réponse d'échec métier.
+
+    Les handlers signalent une erreur en renvoyant un contenu `{"error": ...}`
+    (validation, introuvable, autorisation…). Sans marquage, le SDK MCP conclut
+    au succès et la gateway répond `ok:true / 200` pour un échec — trompeur. On
+    convertit donc ces réponses en `CallToolResult(isError=True)` : le contenu
+    (message d'erreur) est préservé, mais le statut reflète l'échec.
+    """
+    if len(result) == 1 and isinstance(result[0], TextContent):
+        try:
+            payload = json.loads(result[0].text)
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict) and len(payload) == 1 and "error" in payload:
+            return CallToolResult(content=list(result), isError=True)
+    return result
+
+
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
-async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
+async def _call_tool(
+    name: str, arguments: dict[str, object]
+) -> list[TextContent] | CallToolResult:
+    return _finalize_tool_result(await _dispatch_tool(name, arguments))
+
+
+async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
     pool = _get_pool()
     log.info("mcp_call_tool", tool=name)
 

@@ -139,7 +139,9 @@ async def test_call_tool_refuse_hors_scope(db_pool: asyncpg.Pool, test_workspace
     )
     try:
         result = await _call_tool("list_documents", {"workspace_slug": _WS})
-        payload = json.loads(result[0].text)
+        # Refus d'autorisation = échec → isError (jamais ok:true/200).
+        assert result.isError is True
+        payload = json.loads(result.content[0].text)
         assert "périmètre" in payload["error"]
     finally:
         reset_current_session(token)  # type: ignore[arg-type]

@@ -29,7 +29,7 @@ from docflow.types import service as type_svc
 
 
 def _json(result: list) -> object:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 @pytest.fixture()

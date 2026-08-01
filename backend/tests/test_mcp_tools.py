@@ -45,7 +45,7 @@ from docflow.mcp.server import (
 
 
 def _json(result: list) -> object:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +197,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "create_artifact",
         "get_artifact",
         "get_artifact_link",
+        "list_artifacts",
         "list_block_properties",
         "list_block_objects",
         "query_documents",

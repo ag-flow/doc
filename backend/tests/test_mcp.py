@@ -59,7 +59,8 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
         "export_dataset_csv",
     ):
         assert _t in tool_names
-    assert len(_TOOLS) == 48
+    assert "list_artifacts" in tool_names
+    assert len(_TOOLS) == 49
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
@@ -116,10 +117,26 @@ async def test_get_document_not_found(db_pool: asyncpg.Pool) -> None:
     assert "error" in data
 
 
+def test_finalize_marks_error_result_but_not_success() -> None:
+    """Une erreur métier ({"error": ...}) → CallToolResult(isError=True) ; jamais
+    ok:true/200 pour un échec. Un succès reste une liste de contenu inchangée."""
+    from docflow.mcp.server import CallToolResult, _finalize_tool_result, _text
+
+    ok = _text({"id": "abc", "url": "/x"})
+    assert _finalize_tool_result(ok) is ok
+
+    finalized = _finalize_tool_result(_text({"error": "propriété inconnue (I-2)"}))
+    assert isinstance(finalized, CallToolResult)
+    assert finalized.isError is True
+    assert json.loads(finalized.content[0].text)["error"] == "propriété inconnue (I-2)"
+
+
 async def test_call_tool_unknown_name(db_pool: asyncpg.Pool) -> None:
     configure(db_pool)
     result = await _call_tool("nonexistent_tool", {})
-    data = json.loads(result[0].text)
+    # Une erreur métier porte isError=True (CallToolResult) — jamais un succès.
+    assert result.isError is True
+    data = json.loads(result.content[0].text)
     assert "error" in data
 
 
