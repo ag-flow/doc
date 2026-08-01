@@ -277,7 +277,12 @@ function WorkspaceRow({ ws, index, onOpen, onArchive, archiving, onDelete }: {
         <span className="hidden truncate text-[14px] text-ink/[0.62] sm:block">
           {ws.description}
         </span>
-        <span className="hidden text-right text-[13px] text-ink/[0.5] sm:block">
+        {/* Volumétrie masquée au survol/focus : les actions absolues prennent
+            sa place à droite (plus de chevauchement texte / boutons). */}
+        <span
+          className="hidden text-right text-[13px] text-ink/[0.5] transition-opacity
+            group-hover:opacity-0 group-focus-within:opacity-0 sm:block"
+        >
           {counts}
           <span className="block text-[12px] text-ink/[0.4]">
             {ws.last_activity_at ? relativeDate(ws.last_activity_at) : t('ws.noActivity')}
