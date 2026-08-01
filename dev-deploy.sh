@@ -24,21 +24,9 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Affiche le diffstat des fichiers qui seront apportés par la synchro (entre
-# HEAD et la cible), pour garder le visuel d'un `git pull` avant le reset --hard.
-_print_incoming() {
-    local target="$1"
-    if git diff --quiet "HEAD..${target}" 2>/dev/null; then
-        echo "    (déjà à jour — aucun fichier modifié)"
-    else
-        echo "    Fichiers mis à jour :"
-        git diff --stat "HEAD..${target}" | sed 's/^/    /'
-    fi
-}
-
 # Tout le script vit dans main() : bash parse le fichier entier avant de
-# l'exécuter, ce qui rend le `git reset --hard` de l'étape 1 inoffensif
-# même quand il remplace ce fichier pendant l'exécution.
+# l'exécuter, ce qui rend la synchro git de l'étape 1 inoffensive même
+# quand elle remplace ce fichier pendant l'exécution.
 main() {
     local APP_DIR="${APP_DIR:-/opt/docflow}"
     local DATA_ROOT="${DATA_ROOT:-/data}"
@@ -125,23 +113,21 @@ main() {
     fi
 
     # ─── 1) Git sync ──────────────────────────────────────────────────────────
-    # reset --hard (et non pull --ff-only) : robuste quand le script se met à
-    # jour lui-même lors de la synchro — cf. main() ci-dessus. On imprime le
-    # diffstat des fichiers entrants AVANT le reset pour garder le visuel d'un
-    # pull tout en conservant la robustesse.
+    # git pull --ff-only : affiche le diffstat des fichiers mis à jour (visuel
+    # d'un pull). Le script vit entièrement dans main() — bash a déjà parsé le
+    # fichier, donc le remplacer pendant l'exécution reste sans effet. Le
+    # fast-forward échoue franchement si l'arbre a divergé (préférable à un
+    # écrasement silencieux).
     if [[ -n "$TARGET_BRANCH" ]]; then
         echo "==> [1/4] Sync vers ${TARGET_BRANCH}..."
         git fetch origin
         git checkout "$TARGET_BRANCH"
-        _print_incoming "origin/${TARGET_BRANCH}"
-        git reset --hard "origin/${TARGET_BRANCH}"
+        git pull --ff-only origin "${TARGET_BRANCH}"
     else
         local CURRENT
         CURRENT="$(git branch --show-current)"
         echo "==> [1/4] Sync (${CURRENT})..."
-        git fetch origin
-        _print_incoming "origin/${CURRENT}"
-        git reset --hard "origin/${CURRENT}"
+        git pull --ff-only origin "${CURRENT}"
     fi
 
     # ─── 2) Initialisation + réparation de /data ──────────────────────────────
