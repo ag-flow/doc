@@ -1,5 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   docsApi,
@@ -128,6 +128,20 @@ function PropertyReadRow({
 
 export function PropertiesPanel({ ws, docId, functionalTypeSlug, readOnly = false }: PropertiesPanelProps) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  // Après enregistrement d'une valeur, la liste du bloc (colonnes de propriétés,
+  // arbre, vues filtrées) est périmée : sans invalidation elle affichait
+  // l'ancienne valeur au retour jusqu'à un F5. On invalide par préfixe.
+  // Note : on n'invalide PAS doc-values (le panneau reflète déjà la valeur
+  // enregistrée via l'état local du champ, et un ré-entrée dans le document la
+  // recharge) — cela éviterait un refetch qui écraserait un autre champ en
+  // cours d'édition.
+  const onSaved = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['block-query', ws] })
+    void qc.invalidateQueries({ queryKey: ['block-documents', ws] })
+    void qc.invalidateQueries({ queryKey: ['block-tree', ws] })
+  }, [qc, ws])
 
   const { data: values = [], isLoading } = useQuery<PropertyValueOut[]>({
     queryKey: ['doc-values', ws, docId],
@@ -168,6 +182,7 @@ export function PropertiesPanel({ ws, docId, functionalTypeSlug, readOnly = fals
               docId={docId}
               prop={prop}
               allowedValues={allowedIndex.get(prop.prop_slug) ?? []}
+              onSaved={onSaved}
             />
           ),
         )

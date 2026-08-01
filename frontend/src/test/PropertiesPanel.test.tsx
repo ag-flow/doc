@@ -145,6 +145,39 @@ describe('PropertiesPanel', () => {
     expect(screen.queryByTestId('clamp-toggle')).not.toBeInTheDocument()
   })
 
+  it('après enregistrement d’une valeur, invalide la liste du bloc (fix cache périmé)', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue(baseValues)
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 2,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" />
+      </QueryClientProvider>,
+    )
+
+    const select = await screen.findByTestId('property-input-status')
+    fireEvent.change(select, { target: { value: 'done' } })
+
+    await waitFor(() => expect(docsApi.putDocumentValue).toHaveBeenCalled())
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey))
+    expect(keys).toContain(JSON.stringify(['block-query', 'ws']))
+    expect(keys).toContain(JSON.stringify(['block-documents', 'ws']))
+    expect(keys).toContain(JSON.stringify(['block-tree', 'ws']))
+  })
+
   // DoD 25.1 — rendu des champs
   it('renders fields for each property', async () => {
     vi.mocked(docsApi.getDocumentValues).mockResolvedValue(baseValues)
