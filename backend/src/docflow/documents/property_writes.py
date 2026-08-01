@@ -60,7 +60,8 @@ async def upsert_value(
         if prop_type == "int":
             await doc_svc._validate_int(value, prop_slug)
         elif prop_type == "date":
-            doc_svc._validate_date(value, prop_slug)
+            # Normalise un timestamp ISO en date (YYYY-MM-DD) avant stockage.
+            value = doc_svc._validate_date(value, prop_slug)
         elif prop_type == "bool":
             doc_svc._validate_bool(value, prop_slug)
         elif prop_type == "url":

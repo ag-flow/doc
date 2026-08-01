@@ -1073,15 +1073,34 @@ async def _validate_int(value: str, prop_slug: str) -> None:
         ) from exc
 
 
-def _validate_date(value: str, prop_slug: str) -> None:
+def _validate_date(value: str, prop_slug: str) -> str:
+    """Valide et NORMALISE une valeur de propriété date en `YYYY-MM-DD`.
+
+    Accepte une date pure OU un timestamp/datetime ISO (ex. envoyé par un
+    workflow : `2026-07-30 08:39:09.93267`) — seule la partie date est conservée.
+    Retourne la date normalisée à stocker.
+    """
+    v = value.strip()
+    # 1) déjà une date pure.
     try:
-        datetime.date.fromisoformat(value)
+        return datetime.date.fromisoformat(v).isoformat()
+    except ValueError:
+        pass
+    # 2) datetime/timestamp ISO complet → on garde la date.
+    try:
+        return datetime.datetime.fromisoformat(v.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+    # 3) dernier recours : préfixe date avant l'espace ou le « T » (gère des
+    # fractions de seconde de longueur inhabituelle que fromisoformat rejette).
+    try:
+        return datetime.date.fromisoformat(re.split(r"[ T]", v, maxsplit=1)[0]).isoformat()
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"propriété '{prop_slug}' de type date : "
-                f"'{value}' n'est pas une date ISO (YYYY-MM-DD)"
+                f"propriété '{prop_slug}' de type date : '{value}' n'est pas une "
+                "date (attendu YYYY-MM-DD, ou un timestamp ISO dont on garde la date)"
             ),
         ) from exc
 
@@ -1194,7 +1213,8 @@ async def set_property_value(
             if prop_type == "int" and data.value is not None:
                 await _validate_int(data.value, prop_slug)
             if prop_type == "date" and data.value is not None:
-                _validate_date(data.value, prop_slug)
+                # Normalise (un timestamp ISO est ramené à sa date) → stocké tel quel.
+                data.value = _validate_date(data.value, prop_slug)
             if prop_type == "bool" and data.value is not None:
                 _validate_bool(data.value, prop_slug)
             if prop_type == "url" and data.value is not None:

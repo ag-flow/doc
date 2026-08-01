@@ -16,7 +16,17 @@ from docflow.documents.service import (
 
 
 def test_date_valid() -> None:
-    _validate_date("2026-09-15", "date-prop")  # ne lève pas
+    assert _validate_date("2026-09-15", "date-prop") == "2026-09-15"
+
+
+def test_date_normalizes_postgres_timestamp() -> None:
+    # Cas ag.flow / Pocket : instant à la Postgres (espace, µs à 5 chiffres).
+    assert _validate_date("2026-07-30 08:39:09.93267", "date-prop") == "2026-07-30"
+
+
+def test_date_normalizes_iso_datetime() -> None:
+    assert _validate_date("2026-07-30T08:39:09.93267Z", "date-prop") == "2026-07-30"
+    assert _validate_date("2026-07-30T08:39:09+02:00", "date-prop") == "2026-07-30"
 
 
 def test_date_invalid_format() -> None:

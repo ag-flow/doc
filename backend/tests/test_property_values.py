@@ -89,6 +89,25 @@ async def test_set_int_value(db_pool: asyncpg.Pool, test_workspace: dict) -> Non
     assert result.version == 1
 
 
+async def test_set_date_value_normalizes_timestamp(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Cas ag.flow : une propriété date recevant un instant le stocke tronqué au jour."""
+    _, doc_id = await _setup(db_pool)
+    await prop_svc.create_def(
+        db_pool, _WS, "task", PropertiesDefCreate(slug="due", label="Due", type="date")
+    )
+    result = await doc_svc.set_property_value(
+        db_pool,
+        _WS,
+        doc_id,
+        "due",
+        PropertyValueSet(value="2026-07-30 08:39:09.93267", expected_version=0),
+    )
+    assert result.type == "date"
+    assert result.value == "2026-07-30"
+
+
 async def test_set_int_value_invalid(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
     _, doc_id = await _setup(db_pool)
     with pytest.raises(HTTPException) as exc:

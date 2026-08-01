@@ -163,7 +163,10 @@ _TOOLS: list[Tool] = [
                         "restricted_list, slug de la valeur autorisée). REQUIS pour "
                         "toute propriété obligatoire sans valeur par défaut : la "
                         "création est refusée (422) sinon, avec la liste des slugs "
-                        "manquants. Les propriétés à comportement automatique "
+                        "manquants. Une propriété de type 'date' accepte une date "
+                        "'YYYY-MM-DD' OU un instant ISO / timestamp (ex. "
+                        "'2026-07-30 08:39:09.93267') — seule la partie jour est "
+                        "conservée. Les propriétés à comportement automatique "
                         "(auto_now...) sont gérées par le serveur et refusées ici."
                     ),
                 },
@@ -434,7 +437,12 @@ _TOOLS: list[Tool] = [
                 },
                 "value": {
                     "type": "string",
-                    "description": "Valeur brute — pour propriétés text ou int uniquement",
+                    "description": (
+                        "Valeur brute — pour propriétés text / int / date / url / "
+                        "float / bool (omettre pour restricted_list). Une propriété "
+                        "'date' accepte 'YYYY-MM-DD' ou un instant ISO / timestamp "
+                        "(ex. '2026-07-30 08:39:09.93267') dont seule la date est gardée."
+                    ),
                 },
                 "allowed_value_slug": {
                     "type": "string",
