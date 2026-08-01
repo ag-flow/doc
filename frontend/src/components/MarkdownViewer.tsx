@@ -15,7 +15,27 @@ interface MarkdownViewerProps {
 }
 
 const DOC_LINK = /^docflow:\/\/doc\/([0-9a-fA-F-]{36})$/
-const ARTIFACT_LINK = /^artifact:\/\/([0-9a-fA-F-]{36})$/
+const UUID = '[0-9a-fA-F-]{36}'
+// Schéma df : artifact://<uuid> (le workspace est celui du contexte courant).
+const ARTIFACT_SCHEME = new RegExp(`^artifact://(${UUID})$`)
+// URL brute d'artefact telle qu'insérée historiquement (upload / agent) :
+// /api/workspaces/<ws>/artifacts/<uuid>, éventuellement absolue. On EXCLUT les
+// sous-chemins signés (/download) et métadonnées (/meta) — seule l'URL nue est
+// interceptée (le reste porte déjà sa propre authentification).
+const ARTIFACT_RAW = new RegExp(`/api/workspaces/([^/\\s]+)/artifacts/(${UUID})(?:$|[?#])`)
+
+/** Résout un href d'artefact (schéma df OU URL brute) en {ws, id}, sinon null.
+ *  Exporté pour test. `currentWs` sert au schéma artifact:// (sans workspace). */
+export function matchArtifactHref(
+  href: string,
+  currentWs: string | null,
+): { ws: string; id: string } | null {
+  const scheme = ARTIFACT_SCHEME.exec(href)
+  if (scheme) return currentWs ? { ws: currentWs, id: scheme[1] } : null
+  const raw = ARTIFACT_RAW.exec(href)
+  if (raw) return { ws: raw[1], id: raw[2] }
+  return null
+}
 
 export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
   const navigate = useNavigate()
@@ -55,15 +75,15 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
     if (!a) return
     const href = a.getAttribute('href') ?? ''
 
-    // Lien artefact au fil du texte (une puce a son propre codec) : ouvrir dans
-    // un nouvel onglet via un lien signé de courte durée.
-    const art = ARTIFACT_LINK.exec(href)
+    // Lien artefact (schéma artifact:// OU URL brute /api/.../artifacts/{id}) :
+    // le navigateur naviguerait sans Bearer → « token manquant ». On intercepte
+    // et on ouvre un lien signé de courte durée dans un nouvel onglet.
+    const art = matchArtifactHref(href, wsSlug)
     if (art) {
       e.preventDefault()
       e.stopPropagation()
-      if (!wsSlug) return
       void artifactsApi
-        .getLink(wsSlug, art[1])
+        .getLink(art.ws, art.id)
         .then((link) => window.open(link.url, '_blank', 'noopener'))
         .catch(() => undefined)
       return
