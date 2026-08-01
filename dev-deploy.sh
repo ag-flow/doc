@@ -124,7 +124,6 @@ main() {
         local CURRENT
         CURRENT="$(git branch --show-current)"
         echo "==> [1/4] Sync (${CURRENT})..."
-        git pull --ff-only "origin {CURRENT}"
         git fetch origin
         git reset --hard "origin/${CURRENT}"
     fi
