@@ -122,6 +122,38 @@ def test_link_unknown_artifact_404(
         assert r.status_code == 404
 
 
+def test_list_artifacts_rest_and_filters(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _bootstrap(client)
+        a = _upload(client, admin)  # logo.png (_PNG)
+        # Un second artefact, nom distinct.
+        r = client.post(
+            f"/api/workspaces/{_WS}/artifacts",
+            files={"file": ("rapport.png", _PNG + b"x", "image/png")},
+            headers=admin,
+        )
+        assert r.status_code == 201, r.text
+
+        base = f"/api/workspaces/{_WS}/artifacts"
+        # Liste complète : colonnes de table + refcount, pagination.
+        full = client.get(base, headers=admin).json()
+        assert full["total"] == 2 and len(full["items"]) == 2
+        assert {"sha256", "crc32", "created_by", "refcount"} <= set(full["items"][0])
+
+        # Filtre nom partiel.
+        by_name = client.get(base + "?filename=rapp", headers=admin).json()
+        assert by_name["total"] == 1 and by_name["items"][0]["filename"] == "rapport.png"
+
+        # Filtre sha256 exact.
+        by_sha = client.get(base + f"?sha256={a['sha256']}", headers=admin).json()
+        assert by_sha["total"] == 1 and by_sha["items"][0]["id"] == a["id"]
+
+        # sha256 mal formé → 422 (validation du pattern).
+        assert client.get(base + "?sha256=xyz", headers=admin).status_code == 422
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_ws(test_schema_url: str) -> object:
     yield None

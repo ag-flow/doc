@@ -57,3 +57,27 @@ class ArtifactTypeUpdate(BaseModel):
 
     media_type: str
     label: str = ""
+
+
+class ArtifactSummaryOut(BaseModel):
+    """Un artefact dans une liste : toutes les colonnes sauf le binaire, + refcount."""
+
+    id: uuid.UUID
+    filename: str
+    extension: str
+    media_type: str
+    size_bytes: int
+    sha256: str
+    crc32: int
+    created_by: uuid.UUID | None
+    created_at: datetime
+    refcount: int
+
+
+class ArtifactListOut(BaseModel):
+    """Réponse paginée de la liste/recherche d'artefacts."""
+
+    items: list[ArtifactSummaryOut]
+    total: int
+    limit: int
+    offset: int

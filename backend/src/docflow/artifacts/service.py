@@ -162,29 +162,60 @@ async def get_artifact_meta(
 
 
 async def list_artifacts(
-    pool: asyncpg.Pool, ws_slug: str, *, limit: int, offset: int
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    *,
+    limit: int,
+    offset: int,
+    filename: str | None = None,
+    sha256: str | None = None,
+    document_id: uuid.UUID | None = None,
 ) -> tuple[list[dict[str, object]], int]:
     """Liste paginée des artefacts d'un workspace, du plus récent au plus
     ancien. Renvoie toutes les colonnes de la table SAUF le binaire (`data`) et
     la clé technique interne (`workspace_technical_key`), plus le `refcount`
-    calculé. Retourne (items, total)."""
+    calculé. Retourne (items, total).
+
+    Filtres optionnels combinables : `filename` (correspondance partielle,
+    insensible à la casse), `sha256` (empreinte exacte), `document_id`
+    (artefacts référencés par ce document). Tous paramétrés ($n) — jamais
+    d'interpolation de valeur.
+    """
+    conditions = ["a.workspace_technical_key = $1"]
+    params: list[object] = [None]  # placeholder, remplacé par wk après résolution
+    if filename:
+        params.append(f"%{filename}%")
+        conditions.append(f"a.filename ILIKE ${len(params)}")
+    if sha256:
+        params.append(sha256.lower())
+        conditions.append(f"a.sha256 = ${len(params)}")
+    if document_id is not None:
+        params.append(document_id)
+        conditions.append(
+            "EXISTS (SELECT 1 FROM artifact_reference r "
+            f"WHERE r.artifact_ref = a.id AND r.document_ref = ${len(params)})"
+        )
+    where = " AND ".join(conditions)
+
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
+        params[0] = wk
         total = await conn.fetchval(
-            "SELECT count(*)::int FROM artifact WHERE workspace_technical_key = $1", wk
+            f"SELECT count(*)::int FROM artifact a WHERE {where}",  # noqa: S608 (placeholders $n)
+            *params,
         )
         rows = await conn.fetch(
-            """
+            f"""
             SELECT a.id, a.filename, a.extension, a.media_type, a.size_bytes,
                    a.sha256, a.crc32, a.created_by, a.created_at,
                    (SELECT count(*) FROM artifact_reference r
                     WHERE r.artifact_ref = a.id)::int AS refcount
             FROM artifact a
-            WHERE a.workspace_technical_key = $1
+            WHERE {where}
             ORDER BY a.created_at DESC, a.id
-            LIMIT $2 OFFSET $3
-            """,
-            wk,
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,  # noqa: S608 (placeholders $n uniquement, valeurs paramétrées)
+            *params,
             limit,
             offset,
         )

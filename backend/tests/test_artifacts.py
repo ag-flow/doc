@@ -853,6 +853,45 @@ async def test_mcp_list_artifacts_paginated(
     assert ids1.isdisjoint(ids2)
 
 
+async def test_list_artifacts_filters(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Filtres combinables : filename partiel, sha256 exact, document_id."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    rapport = await service.create_artifact(
+        db_pool, "test-ws", filename="Rapport-Q3.pdf", data=b"%PDF q3", created_by=None,
+        max_bytes=1024,
+    )
+    await service.create_artifact(
+        db_pool, "test-ws", filename="photo.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+
+    # filename partiel, insensible à la casse.
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, filename="rapport"
+    )
+    assert total == 1 and items[0]["filename"] == "Rapport-Q3.pdf"
+
+    # sha256 exact.
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, sha256=rapport.sha256
+    )
+    assert total == 1 and items[0]["id"] == rapport.id
+
+    # document_id : artefacts référencés par un document donné.
+    doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc réf")
+    async with db_pool.acquire() as conn:
+        await service.refresh_artifact_references(
+            conn, doc_id, wk, f"[r](artifact://{rapport.id})"
+        )
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, document_id=doc_id
+    )
+    assert total == 1 and items[0]["id"] == rapport.id
+
+
 async def test_mcp_list_artifacts_unknown_workspace(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> None:

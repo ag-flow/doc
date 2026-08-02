@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from docflow.artifacts import service
 from docflow.artifacts.links import build_download_query, verify_download_sig
 from docflow.auth.deps import check_api_key_scope, require_authenticated
-from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
+from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactListOut, ArtifactMetaOut
 from docflow.schemas.auth import AuthUser
 from docflow.workspaces.access import require_ws_access
 
@@ -58,6 +58,35 @@ async def upload_artifact(
         max_bytes=request.app.state.settings.artifact_max_bytes,
         media_type_override=media_type,
     )
+
+
+@router.get(_WS + "/artifacts", response_model=ArtifactListOut,
+            dependencies=[Depends(require_ws_access)])
+async def list_artifacts(
+    ws_slug: str,
+    request: Request,
+    _: AuthUser = _Auth,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    filename: str | None = Query(default=None, description="Nom partiel (insensible à la casse)"),
+    sha256: str | None = Query(default=None, pattern="^[0-9a-fA-F]{64}$"),
+    document_id: uuid.UUID | None = Query(default=None, description="Référencés par ce document"),
+) -> ArtifactListOut:
+    """Liste/recherche paginée des artefacts d'un workspace. Filtres optionnels
+    combinables : `filename` (partiel), `sha256` (exact), `document_id`
+    (référencés par ce document). Renvoie toutes les colonnes (sauf le binaire)
+    + refcount."""
+    check_api_key_scope(request, ws_slug)
+    items, total = await service.list_artifacts(
+        request.app.state.pool,
+        ws_slug,
+        limit=limit,
+        offset=offset,
+        filename=filename,
+        sha256=sha256,
+        document_id=document_id,
+    )
+    return ArtifactListOut(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get(_ART + "/meta", response_model=ArtifactMetaOut,

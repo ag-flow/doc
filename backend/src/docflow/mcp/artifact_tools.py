@@ -167,7 +167,10 @@ ARTIFACT_TOOLS: list[Tool] = [
             "sha256 = empreinte de déduplication ; created_by = id de l'auteur "
             "(null si inconnu). Ne retourne PAS le binaire (utiliser "
             "get_artifact_link). Pagination par limit (1..200, défaut 50) et "
-            "offset (défaut 0). Lecture seule — aucun effet de bord."
+            "offset (défaut 0). Filtres optionnels combinables : filename "
+            "(correspondance partielle, insensible à la casse), sha256 "
+            "(empreinte exacte — permet de retrouver un artefact par contenu), "
+            "document_id (artefacts référencés par ce document). Lecture seule."
         ),
         inputSchema={
             "type": "object",
@@ -183,6 +186,19 @@ ARTIFACT_TOOLS: list[Tool] = [
                     "type": "integer",
                     "minimum": 0,
                     "description": "Décalage de pagination (défaut 0)",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Filtre nom partiel (insensible à la casse)",
+                },
+                "sha256": {
+                    "type": "string",
+                    "description": "Filtre empreinte sha256 exacte (64 hex)",
+                },
+                "document_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Filtre : artefacts référencés par ce document",
                 },
             },
             "required": ["workspace_slug"],
@@ -290,8 +306,27 @@ async def handle_list_artifacts(pool: asyncpg.Pool, args: dict[str, object]) -> 
     ws_slug = str(args.get("workspace_slug", ""))
     limit = _clamp_int(args.get("limit"), default=50, lo=1, hi=200)
     offset = _clamp_int(args.get("offset"), default=0, lo=0, hi=2**31 - 1)
+
+    raw_fn = args.get("filename")
+    filename = str(raw_fn) if raw_fn not in (None, "") else None
+    raw_sha = args.get("sha256")
+    sha256 = str(raw_sha) if raw_sha not in (None, "") else None
+    document_id: uuid.UUID | None = None
+    if args.get("document_id") not in (None, ""):
+        document_id = _parse_artifact_id(args.get("document_id"))
+        if document_id is None:
+            return _text({"error": "document_id invalide : UUID attendu"})
+
     try:
-        items, total = await service.list_artifacts(pool, ws_slug, limit=limit, offset=offset)
+        items, total = await service.list_artifacts(
+            pool,
+            ws_slug,
+            limit=limit,
+            offset=offset,
+            filename=filename,
+            sha256=sha256,
+            document_id=document_id,
+        )
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text({"items": items, "total": total, "limit": limit, "offset": offset})
