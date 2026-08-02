@@ -161,11 +161,13 @@ ARTIFACT_TOOLS: list[Tool] = [
         description=(
             "Liste paginée des artefacts d'un workspace, du plus récent au plus "
             "ancien. Retourne {items, total, limit, offset} ; chaque item porte "
-            "{id, filename, media_type, size_bytes, extension, created_at, "
-            "refcount} (refcount = nombre de documents qui le référencent). "
-            "Ne retourne PAS le binaire (utiliser get_artifact_link). Pagination "
-            "par limit (1..200, défaut 50) et offset (défaut 0). "
-            "Lecture seule — aucun effet de bord."
+            "toutes les colonnes de la table (sauf le binaire) : {id, filename, "
+            "extension, media_type, size_bytes, sha256, crc32, created_by, "
+            "created_at} + refcount (nombre de documents qui le référencent). "
+            "sha256 = empreinte de déduplication ; created_by = id de l'auteur "
+            "(null si inconnu). Ne retourne PAS le binaire (utiliser "
+            "get_artifact_link). Pagination par limit (1..200, défaut 50) et "
+            "offset (défaut 0). Lecture seule — aucun effet de bord."
         ),
         inputSchema={
             "type": "object",

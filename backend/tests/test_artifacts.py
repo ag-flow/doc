@@ -829,10 +829,15 @@ async def test_mcp_list_artifacts_paginated(
     assert page["limit"] == 2
     assert len(page["items"]) == 2
     first = page["items"][0]
+    # La liste renvoie toutes les colonnes de la table (sauf le binaire) + refcount.
     expected_keys = {
-        "id", "filename", "media_type", "size_bytes", "extension", "created_at", "refcount"
+        "id", "filename", "extension", "media_type", "size_bytes",
+        "sha256", "crc32", "created_by", "created_at", "refcount",
     }
     assert expected_keys <= set(first)
+    # Jamais le binaire ni la clé technique interne.
+    assert "data" not in first
+    assert "workspace_technical_key" not in first
 
     page2 = json.loads(
         (
