@@ -181,3 +181,54 @@ async def test_create_and_get_document_via_mcp(db_pool: asyncpg.Pool) -> None:
     doc = json.loads(get_result[0].text)
     assert doc["title"] == "Doc créé via MCP"
     assert doc["contenu"] == "# Hello MCP"
+
+
+async def test_create_document_unknown_property_is_error_via_call_tool(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Cas ag.flow : create_document avec une propriété que le type ne déclare pas.
+    Un refus métier DOIT porter isError=True (jamais ok:true/200 pour la passerelle)."""
+    from docflow.mcp.server import CallToolResult
+
+    configure(db_pool)
+    wk = await db_pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) "
+        "ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug "
+        "RETURNING workspace_technical_key",
+        "mcp-err-ws",
+        "MCP Err WS",
+    )
+    ft = await db_pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id",
+        "capture",
+        "Capture",
+        wk,
+    ) or await db_pool.fetchval(
+        "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug = 'capture'",
+        wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        "captures",
+        "Captures",
+        ft,
+        wk,
+    )
+
+    # Passage par _call_tool (le point exact que voit la passerelle MCP).
+    result = await _call_tool(
+        "create_document",
+        {
+            "workspace_slug": "mcp-err-ws",
+            "block_slug": "captures",
+            "title": "Capture",
+            "functional_type_slug": "capture",
+            "properties": {"ingested_at": "2026-07-30"},  # non déclarée sur le type
+        },
+    )
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    payload = json.loads(result.content[0].text)
+    assert "ingested_at" in payload["error"]
