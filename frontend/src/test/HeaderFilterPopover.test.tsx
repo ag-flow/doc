@@ -91,6 +91,35 @@ describe('HeaderFilterPopover', () => {
     expect(onChange).toHaveBeenCalledWith({ op: 'eq', value: 'true' })
   })
 
+  it('bascule à droite (right-0) quand un popover à gauche déborderait du bord droit', () => {
+    // Déclencheur près du bord droit : left(1180) + 224 > innerWidth(1280) - 8.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 1180, right: 1200, top: 0, bottom: 16, width: 20, height: 16, x: 1180, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+    vi.stubGlobal('innerWidth', 1280)
+    renderPopover(restricted)
+    fireEvent.click(screen.getByTestId('filter-btn-statut'))
+    const pop = screen.getByTestId('filter-popover-statut')
+    expect(pop.className).toContain('right-0')
+    expect(pop.className).not.toContain('left-0')
+    vi.restoreAllMocks()
+  })
+
+  it('reste à gauche (left-0) quand il y a la place à droite', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 300, right: 320, top: 0, bottom: 16, width: 20, height: 16, x: 300, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+    vi.stubGlobal('innerWidth', 1280)
+    renderPopover(textCol)
+    fireEvent.click(screen.getByTestId('filter-btn-nom'))
+    const pop = screen.getByTestId('filter-popover-nom')
+    expect(pop.className).toContain('left-0')
+    expect(pop.className).not.toContain('right-0')
+    vi.restoreAllMocks()
+  })
+
   it('the Clear button always emits null', () => {
     const { onChange } = renderPopover(textCol, { prop: 'nom', op: 'contains', value: 'abc' })
     fireEvent.click(screen.getByTestId('filter-btn-nom'))

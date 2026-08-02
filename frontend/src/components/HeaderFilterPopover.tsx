@@ -44,6 +44,9 @@ function inputType(propType: string): 'number' | 'date' | 'text' {
 export function HeaderFilterPopover({ column, clause, onChange }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  // Aligne le popover à droite du déclencheur quand l'ouvrir à gauche le ferait
+  // déborder du bord droit (cas des colonnes de droite : STATUT…).
+  const [alignRight, setAlignRight] = useState(false)
   const rootRef = useRef<HTMLSpanElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -80,6 +83,10 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
   }, [open])
 
   function openPopover() {
+    // Bascule à droite si un popover ouvert à gauche (largeur w-56 = 224px)
+    // dépasserait le bord droit de la fenêtre.
+    const rect = triggerRef.current?.getBoundingClientRect()
+    setAlignRight(rect ? rect.left + 224 > window.innerWidth - 8 : false)
     // Rehydrate le brouillon depuis l'état courant avant d'afficher.
     setOp(clause?.op ?? ops[0])
     setV1(clause?.value ?? clause?.values?.[0] ?? '')
@@ -127,7 +134,9 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
 
       {open && (
         <div
-          className="dialog elev-lg absolute left-0 z-20 mt-1 w-56 gap-2 p-3 text-left"
+          className={`dialog elev-lg absolute z-20 mt-1 w-56 gap-2 p-3 text-left ${
+            alignRight ? 'right-0' : 'left-0'
+          }`}
           data-testid={`filter-popover-${column.slug}`}
         >
           {column.type === 'restricted_list' ? (
