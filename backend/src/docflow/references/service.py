@@ -297,6 +297,7 @@ class GlobalSearchResult(BaseModel):
     title: str
     type: str | None
     workspace_slug: str
+    workspace_label: str
     block_slug: str | None
 
 
@@ -307,10 +308,13 @@ async def search_documents_global(
     *,
     allowed_ws: set[str] | None,
 ) -> list[GlobalSearchResult]:
-    """Recherche par titre sur TOUS les workspaces accessibles.
+    """Recherche PLEIN-TEXTE (titre + contenu) sur TOUS les workspaces
+    accessibles à l'appelant. Le contenu recherché est la version courante du
+    document (document_version au version_number = document.version).
 
     ``allowed_ws=None`` = superadmin (aucun filtre) ; un ensemble vide renvoie
-    une liste vide sans toucher la base (fail closed).
+    une liste vide sans toucher la base (fail closed). Les correspondances de
+    titre remontent avant celles trouvées seulement dans le contenu.
     """
     if allowed_ws is not None and not allowed_ws:
         return []
@@ -321,14 +325,20 @@ async def search_documents_global(
                    d.title,
                    ft.slug AS type,
                    w.slug  AS workspace_slug,
+                   w.label AS workspace_label,
                    b.slug  AS block_slug
             FROM document d
             JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+            LEFT JOIN document_version dv
+                 ON dv.document_ref = d.doc_technical_key
+                AND dv.version_number = d.version
             LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
             LEFT JOIN data_block b ON b.id = d.data_block_ref
-            WHERE d.title ILIKE '%' || $1 || '%'
+            WHERE (d.title ILIKE '%' || $1 || '%'
+                   OR dv.content ILIKE '%' || $1 || '%')
               AND ($2::text[] IS NULL OR w.slug = ANY($2::text[]))
-            ORDER BY similarity(d.title, $1) DESC
+            ORDER BY (d.title ILIKE '%' || $1 || '%') DESC,
+                     similarity(d.title, $1) DESC
             LIMIT $3
             """,
             q,
@@ -341,6 +351,7 @@ async def search_documents_global(
             title=r["title"],
             type=r["type"],
             workspace_slug=r["workspace_slug"],
+            workspace_label=r["workspace_label"],
             block_slug=r["block_slug"],
         )
         for r in rows

@@ -208,6 +208,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "add_workspace_member",
         "remove_workspace_member",
         "find_referencing_documents",
+        "search_documents",
         "create_dataset",
         "list_datasets",
         "get_dataset",

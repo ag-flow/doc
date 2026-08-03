@@ -1023,6 +1023,38 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "doc_id"],
         },
     ),
+    Tool(
+        name="search_documents",
+        description=(
+            "Recherche PLEIN-TEXTE (titre + contenu) sur TOUS les workspaces "
+            "accessibles à l'appelant — pas de workspace_slug, le périmètre suit "
+            "les droits de l'identité courante. Complète query_documents (qui, "
+            "lui, filtre par propriétés dans UN bloc) : ici c'est une recherche "
+            "libre par mot-clé sur le titre et le corps markdown. "
+            "Chaque résultat : {id, title, type, workspace_slug, workspace_label, "
+            "block_slug} — les correspondances de titre remontent en premier. "
+            "Paramètres : q (1..200 car.), limit (1..50, défaut 10). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Terme recherché (titre + contenu)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Nombre de résultats (1..50, défaut 10)",
+                },
+            },
+            "required": ["q"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
     *dataset_tools.DATASET_TOOLS,
 ]
@@ -1284,6 +1316,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await _generate_api_key(pool, arguments)
     if name == "find_referencing_documents":
         return await _find_referencing_documents(pool, arguments)
+    if name == "search_documents":
+        return await _search_documents(pool, arguments)
     if name == "list_workspace_members":
         return await _list_workspace_members(pool, arguments)
     if name == "add_workspace_member":
@@ -2225,6 +2259,23 @@ async def _find_referencing_documents(
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(result)
+
+
+async def _search_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    """Recherche plein-texte cross-workspace, bornée aux droits de l'identité."""
+    from docflow.references import service as ref_svc
+
+    q = str(args.get("q", "")).strip()
+    if not q:
+        return _text({"error": "q requis (terme non vide)"})
+    raw_limit = args.get("limit", 10)
+    limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else 10
+    limit = max(1, min(50, limit))
+
+    user = require_identity()
+    allowed = await accessible_workspace_slugs(pool, user)
+    results = await ref_svc.search_documents_global(pool, q, limit, allowed_ws=allowed)
+    return _text([r.model_dump(mode="json") for r in results])
 
 
 async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:

@@ -78,7 +78,8 @@ async def search_documents_global(
     limit: int = Query(10, ge=1, le=50),
     user: AuthUser = _Auth,
 ) -> list[GlobalSearchResult]:
-    """Recherche par titre sur tous les workspaces accessibles à l'appelant."""
+    """Recherche PLEIN-TEXTE (titre + contenu) sur tous les workspaces
+    accessibles à l'appelant ; chaque résultat porte slug ET nom du workspace."""
     allowed = await accessible_workspace_slugs(request.app.state.pool, user)
     return await service.search_documents_global(
         request.app.state.pool, q, limit, allowed_ws=allowed

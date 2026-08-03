@@ -155,12 +155,13 @@ def test_global_search_scoped_to_accessible_workspaces(
 
         asyncio.run(_seed())
 
-        # Superadmin : trouve le document, avec workspace et bloc.
+        # Superadmin : trouve le document, avec workspace (slug ET nom) et bloc.
         r = client.get("/api/search/documents?q=rapport", headers=admin)
         assert r.status_code == 200
         hits = r.json()
         assert [h["title"] for h in hits] == ["Rapport annuel"]
         assert hits[0]["workspace_slug"] == _WS
+        assert hits[0]["workspace_label"]  # le NOM du workspace est présent
         assert hits[0]["block_slug"] == "blk"
 
         # Non-membre : rien (fail closed), pas d'erreur.

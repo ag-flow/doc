@@ -44,6 +44,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "add_workspace_member" in tool_names
     assert "remove_workspace_member" in tool_names
     assert "find_referencing_documents" in tool_names
+    assert "search_documents" in tool_names
     for _t in (
         "create_dataset",
         "list_datasets",
@@ -60,7 +61,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     ):
         assert _t in tool_names
     assert "list_artifacts" in tool_names
-    assert len(_TOOLS) == 49
+    assert len(_TOOLS) == 50
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
@@ -232,3 +233,52 @@ async def test_create_document_unknown_property_is_error_via_call_tool(
     assert result.isError is True
     payload = json.loads(result.content[0].text)
     assert "ingested_at" in payload["error"]
+
+
+async def test_search_documents_mcp_cross_workspace(db_pool: asyncpg.Pool) -> None:
+    """Le tool MCP search_documents cherche en plein-texte, borné aux droits de
+    l'identité, et renvoie le nom du workspace."""
+    import uuid
+
+    from docflow.mcp.server import _search_documents
+    from docflow.mcp.session import McpSession, reset_current_session, set_current_session
+    from docflow.schemas.auth import AuthUser
+
+    wk = await db_pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ('mcp-search-ws', 'Recherche WS') "
+        "ON CONFLICT (slug) DO UPDATE SET label = EXCLUDED.label RETURNING workspace_technical_key",
+    )
+    ft = await db_pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ('page', 'Page', $1) ON CONFLICT DO NOTHING RETURNING id", wk
+    ) or await db_pool.fetchval(
+        "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug='page'", wk
+    )
+    blk = await db_pool.fetchval(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ('blk', 'Bloc', $1, $2) ON CONFLICT DO NOTHING RETURNING id", ft, wk
+    ) or await db_pool.fetchval(
+        "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug='blk'", wk
+    )
+    doc_id = await db_pool.fetchval(
+        "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+        "workspace_technical_key, version) VALUES ('Divers', $1, $2, $3, 1) "
+        "RETURNING doc_technical_key", ft, blk, wk
+    )
+    await db_pool.execute(
+        "INSERT INTO document_version (document_ref, version_number, title, content) "
+        "VALUES ($1, 1, 'Divers', 'mot-cle-unique-xyz dans le corps')", doc_id
+    )
+
+    user = AuthUser(id=uuid.uuid4(), email="s@t.local", label="S", is_admin=True,
+                    validated=True, disabled=False)
+    token = set_current_session(McpSession(user=user))
+    try:
+        out = json.loads((await _search_documents(db_pool, {"q": "mot-cle-unique-xyz"}))[0].text)
+        assert any(
+            h["workspace_slug"] == "mcp-search-ws" and h["workspace_label"] == "Recherche WS"
+            for h in out
+        )
+    finally:
+        reset_current_session(token)
+        await db_pool.execute("DELETE FROM workspace WHERE slug = 'mcp-search-ws'")
