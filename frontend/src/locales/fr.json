@@ -82,6 +82,7 @@
   },
   "tpl": {
     "title": "Templates",
+    "export": "Exporter (JSON aplati)",
     "tabLocal": "Bibliothèque locale",
     "tabGallery": "Galerie en ligne",
     "emptyTitle": "Aucun template disponible",

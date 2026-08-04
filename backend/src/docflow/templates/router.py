@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import uuid as _uuid
@@ -7,7 +8,7 @@ import uuid as _uuid
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, HttpUrl, field_validator
 
 from docflow.auth.deps import require_api_key_admin_write, require_authenticated
@@ -361,6 +362,39 @@ async def get_template_yaml(
 ) -> str:
     yaml_file = _find_template_file(template_slug)
     return yaml_file.read_text()
+
+
+@router.get("/templates/{template_slug}/export")
+async def export_template(template_slug: str, _: None = _Auth) -> Response:
+    """Export APLATI du template (héritage résolu), en JSON téléchargeable.
+
+    Snapshot fidèle de l'état une fois l'héritage résolu — tel qu'il vit après
+    import : chaque type concret (les `abstract` exclus) porte toutes ses
+    propriétés directement, et son `parent` (hiérarchie). Ce n'est pas un
+    aller-retour mécanique : reconstruire l'héritage à partir de l'export est un
+    travail d'interprétation (cf. fiche 45d5da21).
+    """
+    yaml_file = _find_template_file(template_slug)
+    try:
+        tpl = Template.model_validate(yaml.safe_load(yaml_file.read_text()))
+        resolved = resolve(tpl)
+    except HTTPException:
+        raise
+    except Exception as e:  # YAML illisible / héritage incohérent → 422 explicite
+        raise HTTPException(status_code=422, detail=f"template non résolvable : {e}") from e
+
+    payload = {
+        "template": tpl.template,
+        "label": tpl.label,
+        "version": tpl.version,
+        "functional_types": [r.model_dump(mode="json") for r in resolved],
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{tpl.template}.json"'},
+    )
 
 
 @router.put("/templates/{template_slug}/yaml", response_model=TemplateInfo)

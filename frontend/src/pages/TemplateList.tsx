@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowClockwise, Plus, PencilSimple, Trash, X } from '@phosphor-icons/react'
+import { ArrowClockwise, DownloadSimple, Plus, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { api, galleryApi, templatesApi } from '../lib/api'
 import type { GalleryPullDiff, GallerySourceOut, RemoteTemplateInfo, TemplateInfo } from '../lib/api'
 import { Button } from '../components/ui/button'
@@ -67,6 +67,20 @@ function InstalledSection() {
       if (editRequestRef.current !== requestId) return
       setYamlLoadError((e as Error).message)
     }
+  }
+
+  /** Télécharge l'export aplati (JSON) du template — appel authentifié puis
+   *  déclenchement du download côté navigateur. */
+  async function exportTemplate(slug: string) {
+    const blob = await templatesApi.exportBlob(slug)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${slug}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
   }
 
   function closeEdit() {
@@ -151,6 +165,12 @@ function InstalledSection() {
                   {t('tpl.blocksCount', { count: tpl.blocks_count ?? 0 })}
                 </td>
                 <td className="whitespace-nowrap text-right">
+                  <Button variant="icon" size="sm" title={t('tpl.export')}
+                    aria-label={`${t('tpl.export')} ${tpl.template}`}
+                    onClick={() => void exportTemplate(tpl.template)}
+                    data-testid={`export-btn-${tpl.template}`}>
+                    <DownloadSimple size={14} weight="duotone" />
+                  </Button>
                   <Button variant="icon" size="sm" title={t('common.edit')}
                     aria-label={`${t('common.edit')} ${tpl.template}`}
                     onClick={() => void openEdit(tpl)} data-testid={`edit-btn-${tpl.template}`}>

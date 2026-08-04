@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
@@ -11,7 +11,7 @@ vi.mock('../lib/api', async () => {
   return {
     ...actual,
     api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
-    templatesApi: { getYaml: vi.fn(), saveYaml: vi.fn(), delete: vi.fn() },
+    templatesApi: { getYaml: vi.fn(), saveYaml: vi.fn(), exportBlob: vi.fn(), delete: vi.fn() },
     galleryApi: {
       listSources: vi.fn(),
       addSource: vi.fn(),
@@ -62,6 +62,27 @@ describe('TemplateList', () => {
     expect(screen.getByText('story')).toBeInTheDocument()
   })
 
+  it('exporte le template : appel authentifié + déclenchement du download', async () => {
+    vi.mocked(api.get).mockResolvedValue(mockTemplates)
+    vi.mocked(templatesApi.exportBlob).mockResolvedValue(
+      new Blob(['{"template":"agile-basic"}'], { type: 'application/json' }),
+    )
+    const createUrl = vi.fn().mockReturnValue('blob:x')
+    vi.stubGlobal('URL', { createObjectURL: createUrl, revokeObjectURL: vi.fn() })
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+
+    render(wrapper(<TemplateList />))
+    const btn = await screen.findByTestId('export-btn-agile-basic')
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(templatesApi.exportBlob).toHaveBeenCalledWith('agile-basic'))
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled())
+    clickSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
   it("affiche l'état vide si aucun template", async () => {
     vi.mocked(api.get).mockResolvedValue([])
     render(wrapper(<TemplateList />))
@@ -109,8 +130,6 @@ describe('normalizeSourceUrl', () => {
 })
 
 // ── Écran Templates Broadsheet : DoD ─────────────────────────────────────────
-
-import { fireEvent } from '@testing-library/react'
 
 describe('TemplateList — DoD Broadsheet', () => {
   beforeEach(() => {
