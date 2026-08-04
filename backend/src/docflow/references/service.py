@@ -295,6 +295,9 @@ async def broken_links_detail(
 class GlobalSearchResult(BaseModel):
     id: uuid.UUID
     title: str
+    slug: str | None
+    version: int
+    url: str
     type: str | None
     workspace_slug: str
     workspace_label: str
@@ -323,6 +326,8 @@ async def search_documents_global(
             """
             SELECT d.doc_technical_key AS id,
                    d.title,
+                   d.slug    AS slug,
+                   d.version AS version,
                    ft.slug AS type,
                    w.slug  AS workspace_slug,
                    w.label AS workspace_label,
@@ -349,6 +354,10 @@ async def search_documents_global(
         GlobalSearchResult(
             id=r["id"],
             title=r["title"],
+            slug=r["slug"],
+            version=r["version"],
+            # URL de ressource API canonique du document (miroir d'artifact_url).
+            url=f"/api/workspaces/{r['workspace_slug']}/documents/{r['id']}",
             type=r["type"],
             workspace_slug=r["workspace_slug"],
             workspace_label=r["workspace_label"],

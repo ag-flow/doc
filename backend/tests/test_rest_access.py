@@ -163,6 +163,10 @@ def test_global_search_scoped_to_accessible_workspaces(
         assert hits[0]["workspace_slug"] == _WS
         assert hits[0]["workspace_label"]  # le NOM du workspace est présent
         assert hits[0]["block_slug"] == "blk"
+        # url, slug et révision présents.
+        assert hits[0]["url"] == f"/api/workspaces/{_WS}/documents/{hits[0]['id']}"
+        assert "slug" in hits[0]
+        assert hits[0]["version"] >= 1
 
         # Non-membre : rien (fail closed), pas d'erreur.
         r = client.get("/api/search/documents?q=rapport", headers=user)

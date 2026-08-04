@@ -275,10 +275,11 @@ async def test_search_documents_mcp_cross_workspace(db_pool: asyncpg.Pool) -> No
     token = set_current_session(McpSession(user=user))
     try:
         out = json.loads((await _search_documents(db_pool, {"q": "mot-cle-unique-xyz"}))[0].text)
-        assert any(
-            h["workspace_slug"] == "mcp-search-ws" and h["workspace_label"] == "Recherche WS"
-            for h in out
-        )
+        hit = next(h for h in out if h["workspace_slug"] == "mcp-search-ws")
+        assert hit["workspace_label"] == "Recherche WS"
+        assert hit["url"] == f"/api/workspaces/mcp-search-ws/documents/{hit['id']}"
+        assert hit["version"] == 1
+        assert "slug" in hit
     finally:
         reset_current_session(token)
         await db_pool.execute("DELETE FROM workspace WHERE slug = 'mcp-search-ws'")
