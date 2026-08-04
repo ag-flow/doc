@@ -278,6 +278,7 @@ async def test_search_documents_mcp_cross_workspace(db_pool: asyncpg.Pool) -> No
         hit = next(h for h in out if h["workspace_slug"] == "mcp-search-ws")
         assert hit["workspace_label"] == "Recherche WS"
         assert hit["url"] == f"/api/workspaces/mcp-search-ws/documents/{hit['id']}"
+        assert hit["app_url"] == f"/ws/mcp-search-ws/blocs/blk/documents/{hit['id']}"
         assert hit["version"] == 1
         assert "slug" in hit
     finally:

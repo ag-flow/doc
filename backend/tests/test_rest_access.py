@@ -165,6 +165,7 @@ def test_global_search_scoped_to_accessible_workspaces(
         assert hits[0]["block_slug"] == "blk"
         # url, slug et révision présents.
         assert hits[0]["url"] == f"/api/workspaces/{_WS}/documents/{hits[0]['id']}"
+        assert hits[0]["app_url"] == f"/ws/{_WS}/blocs/blk/documents/{hits[0]['id']}"
         assert "slug" in hits[0]
         assert hits[0]["version"] >= 1
 

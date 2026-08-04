@@ -297,7 +297,8 @@ class GlobalSearchResult(BaseModel):
     title: str
     slug: str | None
     version: int
-    url: str
+    url: str  # ressource API : /api/workspaces/{ws}/documents/{id}
+    app_url: str  # lien d'ouverture IHM : /ws/{ws}/blocs/{bloc}/documents/{id}
     type: str | None
     workspace_slug: str
     workspace_label: str
@@ -358,6 +359,13 @@ async def search_documents_global(
             version=r["version"],
             # URL de ressource API canonique du document (miroir d'artifact_url).
             url=f"/api/workspaces/{r['workspace_slug']}/documents/{r['id']}",
+            # Lien d'ouverture dans l'IHM (route front). Repli sur la racine du
+            # workspace si le bloc est indéterminé (ne devrait pas arriver).
+            app_url=(
+                f"/ws/{r['workspace_slug']}/blocs/{r['block_slug']}/documents/{r['id']}"
+                if r["block_slug"]
+                else f"/ws/{r['workspace_slug']}"
+            ),
             type=r["type"],
             workspace_slug=r["workspace_slug"],
             workspace_label=r["workspace_label"],

@@ -69,6 +69,7 @@ async def test_fulltext_matches_content_and_returns_workspace_name(
         assert hits[0].workspace_label == "Espace A"  # le NOM du workspace
         # url (ressource API), slug et révision.
         assert hits[0].url == f"/api/workspaces/ft-ws-a/documents/{hits[0].id}"
+        assert hits[0].app_url == f"/ws/ft-ws-a/blocs/blk/documents/{hits[0].id}"
         assert hits[0].version == 1
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = 'ft-ws-a'")

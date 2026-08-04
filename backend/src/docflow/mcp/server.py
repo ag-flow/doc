@@ -1032,8 +1032,9 @@ _TOOLS: list[Tool] = [
             "lui, filtre par propriétés dans UN bloc) : ici c'est une recherche "
             "libre par mot-clé sur le titre et le corps markdown. "
             "Chaque résultat : {id, title, slug, version (révision courante), url "
-            "(ressource API du document), type, workspace_slug, workspace_label, "
-            "block_slug} — les correspondances de titre remontent en premier. "
+            "(ressource API du document), app_url (lien d'ouverture IHM), type, "
+            "workspace_slug, workspace_label, block_slug} — les correspondances "
+            "de titre remontent en premier. "
             "Paramètres : q (1..200 car.), limit (1..50, défaut 10). "
             "Lecture seule — aucun effet de bord."
         ),
