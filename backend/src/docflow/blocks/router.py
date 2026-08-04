@@ -168,6 +168,15 @@ async def get_allowed_types(
     return await doc_svc.allowed_types(request.app.state.pool, ws_slug, block_slug, parent_id)
 
 
+@router.get(_BLOCK + "/type-slugs", response_model=list[str])
+async def list_present_type_slugs(
+    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+) -> list[str]:
+    """Types fonctionnels présents dans le bloc (léger — pour les colonnes)."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await service.list_present_type_slugs(request.app.state.pool, ws_slug, block_slug)
+
+
 @router.post(_BLOCK + "/documents", response_model=DocumentOut, status_code=201)
 async def create_document_in_block(
     ws_slug: str,
