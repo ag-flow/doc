@@ -498,6 +498,10 @@ export const docsApi = {
   getBlockValues: (ws: string, block: string) =>
     api.get<Record<string, DocPropValue[]>>(`/workspaces/${ws}/blocks/${block}/values`),
 
+  /** Slugs des types fonctionnels présents dans le bloc (léger — colonnes). */
+  getPresentTypeSlugs: (ws: string, block: string) =>
+    api.get<string[]>(`/workspaces/${ws}/blocks/${block}/type-slugs`),
+
   getAllowedTypes: (ws: string, block: string, parentId?: string) => {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''
     return api.get<AllowedTypeOut[]>(`/workspaces/${ws}/blocks/${block}/allowed-types${qs}`)

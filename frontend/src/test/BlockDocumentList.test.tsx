@@ -11,6 +11,7 @@ vi.mock('../lib/api', async () => {
     docsApi: {
       ...actual.docsApi,
       getBlockDocuments: vi.fn(),
+      getPresentTypeSlugs: vi.fn(),
       getTypesRich: vi.fn(),
       getBlockTree: vi.fn(),
       getAllowedTypes: vi.fn(),
@@ -86,7 +87,7 @@ const emptyTypesRich: FunctionalTypeRich[] = []
 const emptyTreePage: BlockTreePage = {
   block_slug: 'b1',
   page: 1,
-  page_size: 100,
+  page_size: 25,
   total: 0,
   has_next: false,
   roots: [],
@@ -113,6 +114,13 @@ describe('BlockDocumentList', () => {
     vi.clearAllMocks()
     vi.mocked(docsApi.getTypesRich).mockResolvedValue(emptyTypesRich)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(emptyTreePage)
+    // Les colonnes de propriétés dérivent des types PRÉSENTS : on les dérive des
+    // documents encore mockés via getBlockDocuments (source d'intention des tests).
+    vi.mocked(docsApi.getPresentTypeSlugs).mockImplementation(async () => {
+      const docs = await vi.mocked(docsApi.getBlockDocuments)('ws', 'b1').catch(() => [])
+      return [...new Set(docs.map((d) => d.functional_type_slug).filter(Boolean) as string[])]
+    })
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([])
     vi.mocked(viewsApi.list).mockResolvedValue([])
     vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
     vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
@@ -139,6 +147,21 @@ describe('BlockDocumentList', () => {
     await waitFor(() => expect(screen.getByTestId('documents-table')).toBeInTheDocument())
     expect(screen.getByText('Parent')).toBeInTheDocument()
     expect(screen.getByTestId('add-root-btn')).toBeInTheDocument()
+  })
+
+  it('la taille de page est configurable et mémorisée en préférence', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    renderList()
+    // Chargement initial avec la taille par défaut (25).
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25))
+    const select = await screen.findByTestId('page-size-select')
+
+    fireEvent.change(select, { target: { value: '50' } })
+    // Persistée en préférence + re-fetch avec la nouvelle taille.
+    await waitFor(() => expect(prefsApi.set).toHaveBeenCalledWith('doc-page-size', 50))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 50))
   })
 
   // DoD 26.3 — colonnes dynamiques : budget_jours présent sur epic, absent sur feature
@@ -316,7 +339,7 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [
@@ -344,7 +367,7 @@ describe('BlockDocumentList', () => {
         sort: [],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       })
     })
     await waitFor(() => expect(screen.getByText('ATDD done')).toBeInTheDocument())
@@ -352,10 +375,11 @@ describe('BlockDocumentList', () => {
     expect(screen.queryByText('Feature 1')).not.toBeInTheDocument()
     expect(screen.queryByText('Epic 1')).not.toBeInTheDocument()
     expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
-    // Le mode requête masque le bouton arbre/liste (flat forcé) et affiche la pagination.
+    // Le mode requête masque le bouton arbre/liste (flat forcé) et affiche la
+    // barre (avec le bouton d'effacement de requête).
     expect(screen.queryByTestId('toggle-view-btn')).not.toBeInTheDocument()
-    expect(screen.getByTestId('query-pagination')).toBeInTheDocument()
-    expect(screen.queryByTestId('browse-pagination')).not.toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.getByTestId('query-clear-btn')).toBeInTheDocument()
 
     // Effacer la requête revient en mode browse (arbre paginé, sans appel serveur
     // supplémentaire). Les statuts n'étant pas renseignés ici, l'arbre démarre
@@ -363,8 +387,8 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('query-clear-btn'))
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
     expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
-    expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
   })
 
   it('in query mode, clicking the title header cycles server sort (asc → desc)', async () => {
@@ -375,7 +399,7 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
@@ -395,7 +419,7 @@ describe('BlockDocumentList', () => {
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
@@ -407,12 +431,12 @@ describe('BlockDocumentList', () => {
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
 
-  it('paginates in query mode via the top prev/next controls', async () => {
+  it('charge la page suivante en mode requête via « Charger plus »', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
@@ -420,7 +444,7 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 250,
       has_next: true,
       objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
@@ -430,18 +454,17 @@ describe('BlockDocumentList', () => {
     // Entrer en mode requête via un filtre.
     await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
     await applyRestrictedFilter('statut', ['done'])
-    // Attendre la résolution (has_next=true → bouton suivant actif) avant de paginer.
-    await waitFor(() => expect(screen.getByTestId('query-page-next')).not.toBeDisabled())
-    expect(screen.getByTestId('query-page-prev')).toBeDisabled()
+    // has_next=true → bouton « Charger plus » présent.
+    await waitFor(() => expect(screen.getByTestId('load-more-btn')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByTestId('query-page-next'))
+    fireEvent.click(screen.getByTestId('load-more-btn'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
         page: 2,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
@@ -473,8 +496,8 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText('Titre'))
     // Reste en mode browse : aucun appel serveur, pagination browse conservée.
     expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
-    expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
-    expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
 
     // Tri asc hiérarchique : racines A avant B ; sous A, X avant Z ; enfants sous leur parent.
     await waitFor(() =>
@@ -503,7 +526,7 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [
@@ -532,7 +555,7 @@ describe('BlockDocumentList', () => {
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
@@ -548,7 +571,7 @@ describe('BlockDocumentList', () => {
         ],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
@@ -595,7 +618,7 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [statut('done')] }],
@@ -707,14 +730,14 @@ describe('BlockDocumentList', () => {
     )
   })
 
-  // US Barre de pagination en haut (≤100 par page) — mode browse (racines).
-  it('paginates in browse mode via the top prev/next controls, calling list_block_tree', async () => {
+  // « Charger plus » en mode browse : la page suivante de racines s'ajoute.
+  it('charge la page suivante en mode browse via « Charger plus » (list_block_tree)', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 250,
       has_next: true,
       roots: docs.map((d) => ({
@@ -731,13 +754,12 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('browse-pagination')).toBeInTheDocument())
-    expect(screen.getByTestId('browse-page-prev')).toBeDisabled()
-    expect(screen.getByTestId('browse-page-next')).not.toBeDisabled()
+    // Première page chargée avec la taille par défaut (25), has_next → « Charger plus ».
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25))
+    await waitFor(() => expect(screen.getByTestId('load-more-btn')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByTestId('browse-page-next'))
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 100))
-    expect(screen.getByTestId('browse-page-prev')).not.toBeDisabled()
+    fireEvent.click(screen.getByTestId('load-more-btn'))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 25))
   })
 
   // Applique un filtre restricted_list via le popover d'entête (op `in`).

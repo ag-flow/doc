@@ -241,6 +241,10 @@
     "prev": "Précédent",
     "next": "Suivant",
     "pageIndicator": "Page {{page}} · {{total}} résultat(s)",
+    "perPage": "Par page",
+    "loadMore": "Charger plus",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
     "clearQuery": "Effacer la requête",
     "filter": {
       "title": "Filtrer",

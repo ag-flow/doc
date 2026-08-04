@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query'
+import {
+  useQuery,
+  useInfiniteQuery,
+  useQueryClient,
+  useMutation,
+  keepPreviousData,
+} from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   flexRender,
@@ -20,7 +26,6 @@ import {
   type BlockTreeNode,
   type BlockTreePage,
   type DataBlockOut,
-  type DocumentOut,
   type FunctionalTypeRich,
   type PropertyDefRich,
   type ViewOut,
@@ -166,8 +171,10 @@ interface PropColDef {
   allowedValues: { slug: string; label: string; color: string | null }[]
 }
 
-/** Plafond serveur de `list_block_tree` (racines par page, mode browse). */
-const BROWSE_PAGE_SIZE = 100
+/** Tailles de page proposées à l'utilisateur (mémorisée en préférence). */
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const
+const DEFAULT_PAGE_SIZE = 25
+const PAGE_SIZE_PREF = 'doc-page-size'
 
 export function BlockDocumentList() {
   const { t } = useTranslation()
@@ -212,6 +219,23 @@ export function BlockDocumentList() {
       return next
     })
   }
+  // ── Taille de page : choix utilisateur mémorisé (préférence serveur) ──────
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  useEffect(() => {
+    let cancelled = false
+    prefsApi.get<number>(PAGE_SIZE_PREF)
+      .then((res) => {
+        if (!cancelled && res.value && (PAGE_SIZE_OPTIONS as readonly number[]).includes(res.value))
+          setPageSize(res.value)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+  function changePageSize(size: number) {
+    setPageSize(size)
+    void prefsApi.set(PAGE_SIZE_PREF, size).catch(() => {})
+  }
+
   const [showColMenu, setShowColMenu] = useState(false)
   const [dialogParent, setDialogParent] = useState<string | null | undefined>(undefined)
   // Drag & drop de re-parentage : doc glissé + destination (null = racine)
@@ -220,11 +244,10 @@ export function BlockDocumentList() {
   >(null)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
-  const { spec, mode, setFilter, toggleSort, setProjection, setPage, loadSpec, reset } =
+  const { spec, mode, setFilter, toggleSort, setProjection, loadSpec, reset } =
     useQuerySpecState()
 
-  // Pagination + tri hiérarchique du mode browse (racines, ≤100/page).
-  const [browsePage, setBrowsePage] = useState(1)
+  // Tri hiérarchique du mode browse (la pagination est gérée par useInfiniteQuery).
   const [browseSort, setBrowseSort] = useState<BrowseSort | null>(null)
 
   // ── Tri et filtres dans l'URL ────────────────────────────────────────────
@@ -249,16 +272,14 @@ export function BlockDocumentList() {
         filters: url.spec.filters,
         sort: url.spec.sort,
         projection: null,
-        page: url.spec.page,
-        page_size: BROWSE_PAGE_SIZE,
+        page: 1,
+        page_size: DEFAULT_PAGE_SIZE,
       })
       setBrowseSort(null)
-      setBrowsePage(1)
     } else {
       // Sans filtre on reste en navigation : le tri est celui de l'arbre.
       reset()
       setBrowseSort(url.spec.sort[0] ? { key: url.spec.sort[0].key, dir: url.spec.sort[0].dir } : null)
-      setBrowsePage(url.spec.page)
     }
     // `searchParams` volontairement hors dépendances : l'hydratation est un
     // événement d'entrée de route, pas un abonnement aux changements d'URL.
@@ -271,14 +292,14 @@ export function BlockDocumentList() {
       spec: {
         filters: spec.filters,
         sort: mode === 'query' ? spec.sort : browseSort ? [browseSort] : [],
-        page: mode === 'query' ? spec.page : browsePage,
+        page: 1, // « Charger plus » : la page n'est plus dans l'URL (accumulation).
       },
       treeMode,
     })
     // Remplacement (et non push) : trier ne doit pas empiler des entrées
     // d'historique que le bouton « retour » devrait dépiler une par une.
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true })
-  }, [spec, mode, browseSort, browsePage, treeMode, ws, block, searchParams, setSearchParams])
+  }, [spec, mode, browseSort, treeMode, ws, block, searchParams, setSearchParams])
 
   // Clic d'entête en mode browse : cycle asc → desc → aucun, appliqué à l'arbre
   // (ne bascule pas en mode requête, contrairement à `toggleSort` du QuerySpec).
@@ -292,9 +313,11 @@ export function BlockDocumentList() {
     )
   }
 
-  const { data: documents = [], isLoading } = useQuery<DocumentOut[]>({
-    queryKey: ['block-documents', ws, block],
-    queryFn: () => docsApi.getBlockDocuments(ws!, block!),
+  // Types présents dans le bloc (léger) : sert à dériver les colonnes de
+  // propriétés SANS charger tous les documents — préalable à la pagination.
+  const { data: presentTypeSlugs = [], isLoading } = useQuery<string[]>({
+    queryKey: ['block-type-slugs', ws, block],
+    queryFn: () => docsApi.getPresentTypeSlugs(ws!, block!),
     enabled: Boolean(ws && block),
   })
 
@@ -319,20 +342,28 @@ export function BlockDocumentList() {
     enabled: Boolean(ws),
   })
 
-  // Mode browse : racines paginées + sous-arbres + valeurs (list_block_tree).
-  const { data: treePage } = useQuery<BlockTreePage>({
-    queryKey: ['block-tree', ws, block, browsePage],
-    queryFn: () => docsApi.getBlockTree(ws!, block!, browsePage, BROWSE_PAGE_SIZE),
+  // Mode browse : racines paginées + sous-arbres + valeurs, ACCUMULÉES par
+  // « Charger plus » (useInfiniteQuery). Changer le tri ou la taille de page
+  // change la clé → repart de la page 1.
+  const browseInfinite = useInfiniteQuery<BlockTreePage>({
+    queryKey: ['block-tree', ws, block, pageSize],
+    queryFn: ({ pageParam }) => docsApi.getBlockTree(ws!, block!, pageParam as number, pageSize),
     enabled: Boolean(ws && block) && mode === 'browse',
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.has_next ? last.page + 1 : undefined),
     placeholderData: keepPreviousData,
   })
+  const browseRoots = useMemo(
+    () => (browseInfinite.data?.pages ?? []).flatMap((p) => p.roots),
+    [browseInfinite.data],
+  )
+  const browseTotal = browseInfinite.data?.pages[0]?.total ?? 0
 
-  // Collapse par défaut : recalcule l'état d'expansion à chaque (re)chargement de
-  // l'arbre (changement de page/bloc, invalidation). Les toggles manuels de
-  // l'utilisateur tiennent jusqu'au prochain rechargement.
+  // Collapse par défaut : recalculé quand les racines chargées changent (bloc,
+  // tri, « Charger plus », invalidation). Les toggles manuels tiennent jusque-là.
   useEffect(() => {
-    if (treePage) setExpanded(computeDefaultExpanded(treePage.roots))
-  }, [treePage])
+    if (browseRoots.length > 0) setExpanded(computeDefaultExpanded(browseRoots))
+  }, [browseRoots])
 
   // ── Vues enregistrées ────────────────────────────────────────────────────
   const [showSaveView, setShowSaveView] = useState(false)
@@ -381,7 +412,7 @@ export function BlockDocumentList() {
         sort: view.sort,
         projection: null,
         page: 1,
-        page_size: BROWSE_PAGE_SIZE,
+        page_size: DEFAULT_PAGE_SIZE,
       })
       setBrowseSort(null)
     } else {
@@ -396,14 +427,26 @@ export function BlockDocumentList() {
     enabled: Boolean(ws && block),
   })
 
-  // Mode requête : dès qu'un filtre/tri est actif, bascule automatique vers
-  // une liste plate paginée serveur (≤100 lignes) pilotée par `spec`.
-  const { data: queryPage, isFetching: queryFetching } = useQuery<BlockObjectsPage>({
-    queryKey: ['block-query', ws, block, spec],
-    queryFn: () => docsApi.queryBlockDocuments(ws!, block!, spec),
+  // Mode requête (filtre/tri actif) : liste plate paginée serveur, ACCUMULÉE
+  // par « Charger plus ». La clé exclut la page (gérée par l'infinite query) ;
+  // filtres/tri/projection/taille de page la font repartir de la page 1.
+  const querySpecKey = { filters: spec.filters, sort: spec.sort, projection: spec.projection }
+  const queryInfinite = useInfiniteQuery<BlockObjectsPage>({
+    queryKey: ['block-query', ws, block, querySpecKey, pageSize],
+    queryFn: ({ pageParam }) =>
+      docsApi.queryBlockDocuments(ws!, block!, {
+        ...spec,
+        page: pageParam as number,
+        page_size: pageSize,
+      }),
     enabled: Boolean(ws && block) && mode === 'query',
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.has_next ? last.page + 1 : undefined),
     placeholderData: keepPreviousData,
   })
+  const queryFetching = queryInfinite.isFetching
+  const queryTotal = queryInfinite.data?.pages[0]?.total ?? 0
+  const queryEmpty = (queryInfinite.data?.pages[0]?.objects.length ?? 0) === 0
 
   const childTypesByParent = useMemo(() => {
     const map = new Map<string, FunctionalTypeRich[]>()
@@ -417,11 +460,8 @@ export function BlockDocumentList() {
     return map
   }, [types])
 
-  // Union des propriétés des types présents dans les docs du bloc
-  const typeSlugSet = useMemo(
-    () => new Set(documents.map((d) => d.functional_type_slug).filter(Boolean) as string[]),
-    [documents],
-  )
+  // Union des propriétés des types présents dans le bloc (endpoint léger).
+  const typeSlugSet = useMemo(() => new Set(presentTypeSlugs), [presentTypeSlugs])
 
   const propColumns = useMemo<PropColDef[]>(() => {
     const seen = new Set<string>()
@@ -481,12 +521,13 @@ export function BlockDocumentList() {
   useEffect(() => setProjection(projection), [projection, setProjection])
 
   const rows = useMemo<TreeRow[]>(() => {
-    if (mode === 'query') return queryPage ? flatRows(queryPage) : []
-    if (!treePage) return []
-    const treeRows = treePage.roots.map(treeNodeToRow)
+    if (mode === 'query') {
+      return (queryInfinite.data?.pages ?? []).flatMap((p) => flatRows(p))
+    }
+    const treeRows = browseRoots.map(treeNodeToRow)
     const sorted = browseSort ? sortTreeRows(treeRows, browseSort) : treeRows
     return treeMode ? sorted : flattenRows(sorted)
-  }, [mode, queryPage, treeMode, treePage, browseSort])
+  }, [mode, queryInfinite.data, browseRoots, treeMode, browseSort])
 
   // Clé de tri QuerySpec d'une colonne, ou null si non triable dans le mode courant.
   // `title` est triable dans les deux modes ; les colonnes de propriété ne le sont
@@ -644,8 +685,10 @@ export function BlockDocumentList() {
 
   function handleCreated(docId: string) {
     setDialogParent(undefined)
-    void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, block] })
+    // Un nouveau document peut introduire un nouveau type → rafraîchir aussi les colonnes.
+    void queryClient.invalidateQueries({ queryKey: ['block-type-slugs', ws, block] })
     void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, block] })
+    void queryClient.invalidateQueries({ queryKey: ['block-query', ws, block] })
     void navigate(`/ws/${ws}/blocs/${block}/documents/${docId}`)
   }
 
@@ -657,8 +700,7 @@ export function BlockDocumentList() {
     )
   }
 
-  const isEmpty =
-    mode === 'query' ? (queryPage?.objects.length ?? 0) === 0 : (treePage?.roots.length ?? 0) === 0
+  const isEmpty = mode === 'query' ? queryEmpty : browseRoots.length === 0
 
   const propLabelOf = (prop: string) =>
     propColumns.find((p) => p.slug === prop)?.label ?? prop
@@ -766,66 +808,34 @@ export function BlockDocumentList() {
         onSaveView={() => setShowSaveView(true)}
       />
 
-      {/* Pagination en haut, mode browse : racines paginées (list_block_tree, ≤100/page). */}
-      {mode === 'browse' && (
-        <div className="mb-4 flex items-center gap-3 text-[13px] text-ink/[0.55]" data-testid="browse-pagination">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={browsePage <= 1}
-            onClick={() => setBrowsePage((p) => p - 1)}
-            data-testid="browse-page-prev"
+      {/* Barre : taille de page (mémorisée) + total ; la navigation se fait par
+          « Charger plus » sous la table (accumulation). */}
+      <div
+        className="mb-4 flex items-center gap-3 text-[13px] text-ink/[0.55]"
+        data-testid="docs-toolbar"
+      >
+        <label className="flex items-center gap-1.5">
+          <span>{t('documents.perPage')}</span>
+          <select
+            className="input !w-auto"
+            value={pageSize}
+            onChange={(e) => changePageSize(Number(e.target.value))}
+            data-testid="page-size-select"
           >
-            {t('documents.prev')}
-          </Button>
-          <span data-testid="browse-page-indicator">
-            {treePage
-              ? t('documents.pageIndicator', { page: treePage.page, total: treePage.total })
-              : t('common.loading')}
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!treePage?.has_next}
-            onClick={() => setBrowsePage((p) => p + 1)}
-            data-testid="browse-page-next"
-          >
-            {t('documents.next')}
-          </Button>
-        </div>
-      )}
-
-      {/* Pagination en haut, mode requête : liste plate paginée serveur (≤100/page). */}
-      {mode === 'query' && (
-        <div className="mb-4 flex items-center gap-3 text-[13px] text-ink/[0.55]" data-testid="query-pagination">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={spec.page <= 1}
-            onClick={() => setPage(spec.page - 1)}
-            data-testid="query-page-prev"
-          >
-            {t('documents.prev')}
-          </Button>
-          <span data-testid="query-page-indicator">
-            {queryPage
-              ? t('documents.pageIndicator', { page: queryPage.page, total: queryPage.total })
-              : t('common.loading')}
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!queryPage?.has_next}
-            onClick={() => setPage(spec.page + 1)}
-            data-testid="query-page-next"
-          >
-            {t('documents.next')}
-          </Button>
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        <span data-testid="docs-count">
+          {t('documents.count', { count: mode === 'query' ? queryTotal : browseTotal })}
+        </span>
+        {mode === 'query' && (
           <Button variant="secondary" size="sm" onClick={reset} data-testid="query-clear-btn">
             {t('documents.clearQuery')}
           </Button>
-        </div>
-      )}
+        )}
+      </div>
 
       {isEmpty ? (
         /* État vide explicite : un filtre trop restrictif ne rend pas une table
@@ -940,6 +950,30 @@ export function BlockDocumentList() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {/* « Charger plus » : ajoute la page suivante à la suite (accumulation). */}
+      {!isEmpty && (mode === 'query' ? queryInfinite.hasNextPage : browseInfinite.hasNextPage) && (
+        <div className="mt-3 flex justify-center">
+          <Button
+            variant="secondary"
+            onClick={() =>
+              mode === 'query' ? queryInfinite.fetchNextPage() : browseInfinite.fetchNextPage()
+            }
+            disabled={
+              mode === 'query'
+                ? queryInfinite.isFetchingNextPage
+                : browseInfinite.isFetchingNextPage
+            }
+            data-testid="load-more-btn"
+          >
+            {(mode === 'query'
+              ? queryInfinite.isFetchingNextPage
+              : browseInfinite.isFetchingNextPage)
+              ? t('common.loading')
+              : t('documents.loadMore')}
+          </Button>
+        </div>
       )}
 
       <div
