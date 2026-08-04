@@ -799,6 +799,98 @@ async def test_mcp_get_artifact_and_link(
     )
 
 
+async def test_mcp_get_artifact_data_text_and_binary(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Texte → contenu UTF-8 en clair ; binaire → base64 (agent sans réseau)."""
+    import base64
+    import json
+
+    from docflow.artifacts import service
+    from docflow.mcp import artifact_tools
+
+    txt = await service.create_artifact(
+        db_pool, "test-ws", filename="note.txt", data="Bonjour agent éàê".encode(),
+        created_by=None, max_bytes=1024,
+    )
+    png = await service.create_artifact(
+        db_pool, "test-ws", filename="img.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+    settings = _fake_settings()
+
+    text_res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, settings, {"workspace_slug": "test-ws", "artifact_id": str(txt.id)}
+            )  # type: ignore[arg-type]
+        )[0].text
+    )
+    assert text_res["encoding"] == "utf-8"
+    assert text_res["content"] == "Bonjour agent éàê"
+    assert text_res["media_type"] == "text/plain"
+
+    bin_res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, settings, {"workspace_slug": "test-ws", "artifact_id": str(png.id)}
+            )  # type: ignore[arg-type]
+        )[0].text
+    )
+    assert bin_res["encoding"] == "base64"
+    assert base64.b64decode(bin_res["content"]) == _PNG
+
+
+async def test_mcp_get_artifact_data_too_large_redirects(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Au-delà de la limite inline : {too_large} au lieu du contenu."""
+    import json
+
+    from docflow.artifacts import service
+    from docflow.config.settings import Settings
+    from docflow.mcp import artifact_tools
+
+    big = await service.create_artifact(
+        db_pool, "test-ws", filename="gros.txt", data=b"x" * 500, created_by=None, max_bytes=4096
+    )
+    tiny_settings = Settings(
+        database_url="postgresql://unused/unused",
+        jwt_secret="s",  # type: ignore[arg-type]
+        artifact_inline_max_bytes=100,
+    )
+    res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, tiny_settings, {"workspace_slug": "test-ws", "artifact_id": str(big.id)}
+            )
+        )[0].text
+    )
+    assert res["too_large"] is True
+    assert res["size_bytes"] == 500
+    assert res["max_inline_bytes"] == 100
+    assert "content" not in res
+
+
+async def test_mcp_get_artifact_data_unknown_404(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+    import uuid as _uuid
+
+    from docflow.mcp import artifact_tools
+
+    res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool,
+                _fake_settings(),  # type: ignore[arg-type]
+                {"workspace_slug": "test-ws", "artifact_id": str(_uuid.uuid4())},
+            )
+        )[0].text
+    )
+    assert "error" in res
+
+
 async def test_mcp_list_artifacts_paginated(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> None:

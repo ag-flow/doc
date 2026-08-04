@@ -33,6 +33,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "create_artifact" in tool_names
     assert "get_artifact" in tool_names
     assert "get_artifact_link" in tool_names
+    assert "get_artifact_data" in tool_names
     assert "list_block_properties" in tool_names
     assert "list_block_objects" in tool_names
     assert "query_documents" in tool_names
@@ -61,7 +62,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     ):
         assert _t in tool_names
     assert "list_artifacts" in tool_names
-    assert len(_TOOLS) == 50
+    assert len(_TOOLS) == 51
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:

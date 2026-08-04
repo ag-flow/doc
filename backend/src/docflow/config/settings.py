@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     artifact_max_bytes: int = 10 * 1024 * 1024
     # Durée de validité des liens de téléchargement signés (MCP get_artifact_link)
     artifact_link_ttl_seconds: int = 900
+    # Taille max d'un artefact retourné INLINE dans la réponse MCP get_artifact_data
+    # (au-delà : rediriger vers get_artifact_link). base64 gonfle ~1,33x.
+    artifact_inline_max_bytes: int = 1024 * 1024
     # Purge des artefacts jamais référencés (brouillons abandonnés)
     artifact_purge_after_hours: int = 24
     # Purge des datasets jamais référencés (brouillons abandonnés)

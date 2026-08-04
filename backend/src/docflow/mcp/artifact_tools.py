@@ -117,8 +117,9 @@ ARTIFACT_TOOLS: list[Tool] = [
             "Lit les métadonnées d'un artefact : filename, extension, media_type, "
             "size_bytes, sha256, crc32, refcount (nombre de documents qui le "
             "référencent), created_at. "
-            "Ne retourne PAS le binaire — utiliser get_artifact_link pour le "
-            "télécharger. "
+            "Ne retourne PAS le binaire — utiliser get_artifact_data pour lire le "
+            "contenu inline (petit fichier texte), ou get_artifact_link pour un "
+            "lien de téléchargement (gros binaire). "
             "Lecture seule — aucun effet de bord."
         ),
         inputSchema={
@@ -135,13 +136,43 @@ ARTIFACT_TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="get_artifact_data",
+        description=(
+            "Retourne le CONTENU d'un artefact DIRECTEMENT dans la réponse (aucun "
+            "lien HTTP à suivre séparément) — pour un agent sans accès réseau "
+            "sortant qui doit lire un fichier texte (.vtt, .md, .txt, .csv, .json…). "
+            "Contenu texte (media_type text/*, application/json, *+xml/+json) → "
+            "champ content en clair, encoding='utf-8' ; sinon → content encodé en "
+            "base64, encoding='base64'. Réponse : {content, encoding, media_type, "
+            "size_bytes, filename, truncated:false}. "
+            "Si l'artefact dépasse la limite inline (artifact_inline_max_bytes, "
+            "~1 Mio) : retourne {too_large:true, size_bytes, max_inline_bytes, "
+            "media_type, hint} SANS le contenu — utiliser get_artifact_link pour "
+            "un gros binaire (PDF, vidéo…). Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de l'artefact",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id"],
+        },
+    ),
+    Tool(
         name="get_artifact_link",
         description=(
             "Émet un lien de téléchargement signé (HMAC, durée limitée) vers le "
             "binaire d'un artefact. Le lien est utilisable sans authentification "
             "jusqu'à expiration — le contrôle d'accès est appliqué maintenant, à "
             "l'émission. "
-            "Retourne {url, expires_at}. Lecture seule — aucun effet de bord."
+            "Retourne {url, expires_at}. Pour LIRE le contenu d'un petit fichier "
+            "texte sans suivre de lien (agent sans réseau), préférer "
+            "get_artifact_data. Lecture seule — aucun effet de bord."
         ),
         inputSchema={
             "type": "object",
@@ -210,6 +241,7 @@ ARTIFACT_TOOLS: list[Tool] = [
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "create_artifact": True,
     "get_artifact": False,
+    "get_artifact_data": False,
     "get_artifact_link": False,
     "list_artifacts": False,
 }
@@ -290,6 +322,79 @@ async def handle_get_artifact(pool: asyncpg.Pool, args: dict[str, object]) -> li
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(meta.model_dump(mode="json"))
+
+
+def _is_text_media_type(media_type: str) -> bool:
+    """Un media type textuel (décodable en clair) selon sa déclaration."""
+    mt = media_type.lower()
+    if mt.startswith("text/"):
+        return True
+    if mt in {"application/json", "application/xml", "application/x-ndjson"}:
+        return True
+    return mt.endswith("+json") or mt.endswith("+xml")
+
+
+async def handle_get_artifact_data(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Contenu de l'artefact INLINE (texte brut ou base64), pour un agent sans
+    accès réseau. Au-delà de la limite inline, redirige vers get_artifact_link."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    try:
+        meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    max_inline = settings.artifact_inline_max_bytes
+    if meta.size_bytes > max_inline:
+        # Trop gros pour l'inline : ce n'est PAS une erreur, on oriente l'agent.
+        return _text(
+            {
+                "too_large": True,
+                "size_bytes": meta.size_bytes,
+                "max_inline_bytes": max_inline,
+                "media_type": meta.media_type,
+                "filename": meta.filename,
+                "hint": "contenu trop volumineux pour l'inline — utiliser get_artifact_link",
+            }
+        )
+
+    try:
+        data, media_type, filename = await service.fetch_artifact_content(
+            pool, ws_slug, artifact_id
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    if _is_text_media_type(media_type):
+        try:
+            return _text(
+                {
+                    "content": data.decode("utf-8"),
+                    "encoding": "utf-8",
+                    "media_type": media_type,
+                    "size_bytes": meta.size_bytes,
+                    "filename": filename,
+                    "truncated": False,
+                }
+            )
+        except UnicodeDecodeError:
+            pass  # media type textuel mais octets non-UTF-8 → repli base64
+    return _text(
+        {
+            "content": base64.b64encode(data).decode("ascii"),
+            "encoding": "base64",
+            "media_type": media_type,
+            "size_bytes": meta.size_bytes,
+            "filename": filename,
+            "truncated": False,
+        }
+    )
 
 
 def _clamp_int(raw: object, *, default: int, lo: int, hi: int) -> int:
