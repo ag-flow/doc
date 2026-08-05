@@ -204,6 +204,24 @@ async def test_sort_int_and_title(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert desc == ["T4", "T2", "T3", "T1"]
 
 
+async def test_sort_by_updated_at(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Le moteur trie par updated_at (clé transverse, comme title/created_at)."""
+    await _setup(db_pool)
+    for title, ts in {
+        "T1": "2026-01-01T00:00:00Z",
+        "T2": "2026-04-01T00:00:00Z",
+        "T3": "2026-02-01T00:00:00Z",
+        "T4": "2026-03-01T00:00:00Z",
+    }.items():
+        await db_pool.execute(
+            "UPDATE document SET updated_at = $1::text::timestamptz WHERE title = $2", ts, title
+        )
+    desc = await _titles(db_pool, type_slugs=["task"], sort=[SortKey(key="updated_at", dir="desc")])
+    assert desc == ["T2", "T4", "T3", "T1"]
+    asc = await _titles(db_pool, type_slugs=["task"], sort=[SortKey(key="updated_at", dir="asc")])
+    assert asc == ["T1", "T3", "T4", "T2"]
+
+
 async def test_sort_restricted_list_by_pipeline(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:

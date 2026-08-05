@@ -292,6 +292,8 @@ def _order_sql(sort: list[SortKey], ptypes: dict[str, str], p: _Params) -> str:
             terms.append(f"d.title {direction}")
         elif s.key == "created_at":
             terms.append(f"d.created_at {direction}")
+        elif s.key == "updated_at":
+            terms.append(f"d.updated_at {direction} NULLS LAST")
         else:
             expr = _sort_expr(ptypes[s.key])
             key_ph = p.add(s.key)
@@ -315,7 +317,9 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
 
         # Résolution des types + validation op↔type.
         referenced = {f.prop for f in spec.filters}
-        referenced |= {s.key for s in spec.sort if s.key not in ("title", "created_at")}
+        referenced |= {
+            s.key for s in spec.sort if s.key not in ("title", "created_at", "updated_at")
+        }
         ptypes = await _resolve_prop_types(conn, wk, spec.block_slug, sorted(referenced))
         for f in spec.filters:
             allowed = OPS_BY_TYPE.get(ptypes[f.prop], frozenset())

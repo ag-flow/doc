@@ -126,20 +126,6 @@ interface BrowseSort {
   dir: 'asc' | 'desc'
 }
 
-/** Tri hiérarchique : ordonne chaque niveau (racines, puis récursivement les
- *  enfants dans chaque parent) par la clé/direction. Un enfant reste toujours
- *  sous son parent — on ne trie jamais à plat entre niveaux. Seul `title` est
- *  triable côté arbre (cohérent avec l'unique colonne triable de l'entête). */
-function sortTreeRows(rows: TreeRow[], sort: BrowseSort): TreeRow[] {
-  const cmp = (a: TreeRow, b: TreeRow): number => {
-    const r = a.title.localeCompare(b.title)
-    return sort.dir === 'asc' ? r : -r
-  }
-  const sortLevel = (list: TreeRow[]): TreeRow[] =>
-    [...list].sort(cmp).map((r) => ({ ...r, subRows: sortLevel(r.subRows) }))
-  return sortLevel(rows)
-}
-
 function flatRows(page: BlockObjectsPage): TreeRow[] {
   return page.objects.map((o) => ({
     id: o.id,
@@ -345,9 +331,16 @@ export function BlockDocumentList() {
   // Mode browse : racines paginées + sous-arbres + valeurs, ACCUMULÉES par
   // « Charger plus » (useInfiniteQuery). Changer le tri ou la taille de page
   // change la clé → repart de la page 1.
+  // Le tri browse est appliqué CÔTÉ SERVEUR (racines + enfants), donc inclus dans
+  // la clé : le changer repart de la page 1 et réordonne tout le jeu, pas seulement
+  // les pages déjà chargées. Seule la colonne « Modifié » et le titre sont triables.
+  const browseSortKey: 'title' | 'updated_at' =
+    browseSort?.key === 'updated_at' ? 'updated_at' : 'title'
+  const browseSortDir: 'asc' | 'desc' = browseSort?.dir ?? 'asc'
   const browseInfinite = useInfiniteQuery<BlockTreePage>({
-    queryKey: ['block-tree', ws, block, pageSize],
-    queryFn: ({ pageParam }) => docsApi.getBlockTree(ws!, block!, pageParam as number, pageSize),
+    queryKey: ['block-tree', ws, block, pageSize, browseSortKey, browseSortDir],
+    queryFn: ({ pageParam }) =>
+      docsApi.getBlockTree(ws!, block!, pageParam as number, pageSize, browseSortKey, browseSortDir),
     enabled: Boolean(ws && block) && mode === 'browse',
     initialPageParam: 1,
     getNextPageParam: (last) => (last.has_next ? last.page + 1 : undefined),
@@ -524,16 +517,18 @@ export function BlockDocumentList() {
     if (mode === 'query') {
       return (queryInfinite.data?.pages ?? []).flatMap((p) => flatRows(p))
     }
+    // L'ordre vient du serveur (racines + enfants triés par la clé browse) ;
+    // en mode liste plate on aplatit sans réordonner.
     const treeRows = browseRoots.map(treeNodeToRow)
-    const sorted = browseSort ? sortTreeRows(treeRows, browseSort) : treeRows
-    return treeMode ? sorted : flattenRows(sorted)
-  }, [mode, queryInfinite.data, browseRoots, treeMode, browseSort])
+    return treeMode ? treeRows : flattenRows(treeRows)
+  }, [mode, queryInfinite.data, browseRoots, treeMode])
 
-  // Clé de tri QuerySpec d'une colonne, ou null si non triable dans le mode courant.
-  // `title` est triable dans les deux modes ; les colonnes de propriété ne le sont
-  // qu'en mode requête (le tri arbre reste title-only, cf. feature browse).
+  // Clé de tri d'une colonne, ou null si non triable dans le mode courant.
+  // `title` et `updated_at` (colonne « Modifié ») sont triables dans les deux modes
+  // (serveur) ; les colonnes de propriété ne le sont qu'en mode requête.
   function headerSortKey(columnId: string): string | null {
     if (columnId === 'title') return 'title'
+    if (columnId === 'updated') return 'updated_at'
     if (mode === 'query' && columnId.startsWith('prop_')) return columnId.slice('prop_'.length)
     return null
   }

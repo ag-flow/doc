@@ -67,7 +67,7 @@ class FilterClause(BaseModel):
 class SortKey(BaseModel):
     model_config = {"extra": "forbid"}
 
-    # key = slug de propriété | 'title' | 'created_at'
+    # key = slug de propriété | 'title' | 'created_at' | 'updated_at'
     key: str
     dir: Literal["asc", "desc"] = "asc"
 

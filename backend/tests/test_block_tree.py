@@ -122,6 +122,66 @@ async def test_roots_ordered_by_title(db_pool: asyncpg.Pool, test_workspace: dic
     assert [n.title for n in page.roots] == ["R1", "R2", "R3", "R4", "R5"]
 
 
+async def test_roots_sorted_by_title_desc(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    await _setup(db_pool)
+    page = await list_block_tree(
+        db_pool, _WS, "tree", page=1, page_size=100, sort_key="title", sort_dir="desc"
+    )
+    assert [n.title for n in page.roots] == ["R5", "R4", "R3", "R2", "R1"]
+
+
+async def _stamp_updated_at(pool: asyncpg.Pool, title: str, ts: str) -> None:
+    """Force updated_at d'une racine pour un tri déterministe."""
+    await pool.execute(
+        "UPDATE document SET updated_at = $1::text::timestamptz WHERE title = $2", ts, title
+    )
+
+
+async def test_roots_sorted_by_updated_at(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    await _setup(db_pool)
+    # Empreinte temporelle contrôlée : R3 le plus récent, R1 le plus ancien.
+    stamps = {
+        "R1": "2026-01-01T00:00:00Z",
+        "R2": "2026-03-01T00:00:00Z",
+        "R3": "2026-06-01T00:00:00Z",
+        "R4": "2026-02-01T00:00:00Z",
+        "R5": "2026-05-01T00:00:00Z",
+    }
+    for title, ts in stamps.items():
+        await _stamp_updated_at(db_pool, title, ts)
+
+    desc = await list_block_tree(
+        db_pool, _WS, "tree", page=1, page_size=100, sort_key="updated_at", sort_dir="desc"
+    )
+    assert [n.title for n in desc.roots] == ["R3", "R5", "R2", "R4", "R1"]
+
+    asc = await list_block_tree(
+        db_pool, _WS, "tree", page=1, page_size=100, sort_key="updated_at", sort_dir="asc"
+    )
+    assert [n.title for n in asc.roots] == ["R1", "R4", "R2", "R5", "R3"]
+
+
+async def test_updated_at_sort_paginates_across_whole_set(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Le tri updated_at s'applique au jeu ENTIER, pas à la page : la page 1
+    (taille 2) porte bien les 2 racines les plus récentes, pas les 2 premières."""
+    await _setup(db_pool)
+    for title, ts in {
+        "R1": "2026-01-01T00:00:00Z",
+        "R2": "2026-03-01T00:00:00Z",
+        "R3": "2026-06-01T00:00:00Z",
+        "R4": "2026-02-01T00:00:00Z",
+        "R5": "2026-05-01T00:00:00Z",
+    }.items():
+        await _stamp_updated_at(db_pool, title, ts)
+    p1 = await list_block_tree(
+        db_pool, _WS, "tree", page=1, page_size=2, sort_key="updated_at", sort_dir="desc"
+    )
+    assert [n.title for n in p1.roots] == ["R3", "R5"]
+    assert p1.has_next is True
+
+
 # ── Bornes & erreurs ──────────────────────────────────────────────────────────
 
 
@@ -196,6 +256,26 @@ async def test_rest_tree_endpoint(
     assert body["total"] == 5
     r1 = next(n for n in body["roots"] if n["title"] == "R1")
     assert r1["children"][0]["children"][0]["title"] == "G1"
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login", json={"email": "boot@example.com", "password": "boot_pw_123"}
+        )
+        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        # Tri title desc via l'API.
+        ordered = client.get(
+            f"/api/workspaces/{_WS}/blocks/tree/tree",
+            headers=hdrs,
+            params={"page": 1, "page_size": 100, "sort": "updated_at", "dir": "desc"},
+        )
+        assert ordered.status_code == 200, ordered.text
+        # Clé de tri hors whitelist → 422 (Literal).
+        rejected = client.get(
+            f"/api/workspaces/{_WS}/blocks/tree/tree",
+            headers=hdrs,
+            params={"sort": "note"},
+        )
+    assert rejected.status_code == 422
 
 
 # ── Dispatch MCP ──────────────────────────────────────────────────────────────

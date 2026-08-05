@@ -511,10 +511,19 @@ export const docsApi = {
   queryBlockDocuments: (ws: string, block: string, body: BlockQueryBody) =>
     api.post<BlockObjectsPage>(`/workspaces/${ws}/blocks/${block}/query`, body),
 
-  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs. */
-  getBlockTree: (ws: string, block: string, page: number, pageSize: number) =>
+  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs.
+   *  `sort`/`dir` ordonnent côté serveur (tri correct à travers la pagination). */
+  getBlockTree: (
+    ws: string,
+    block: string,
+    page: number,
+    pageSize: number,
+    sort: 'title' | 'updated_at' = 'title',
+    dir: 'asc' | 'desc' = 'asc',
+  ) =>
     api.get<BlockTreePage>(
-      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}`,
+      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}` +
+        `&sort=${sort}&dir=${dir}`,
     ),
 
   createDocument: (

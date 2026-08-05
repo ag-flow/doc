@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -100,11 +101,15 @@ async def list_block_tree(
     _: AuthUser = _Auth,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
+    sort: Literal["title", "updated_at"] = Query(default="title"),
+    dir: Literal["asc", "desc"] = Query(default="asc"),
 ) -> BlockTreePage:
-    """Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs."""
+    """Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs.
+
+    `sort`/`dir` ordonnent côté serveur (tri correct à travers la pagination)."""
     check_api_key_scope(request, ws_slug, block_slug)
     return await block_tree.list_block_tree(
-        request.app.state.pool, ws_slug, block_slug, page, page_size
+        request.app.state.pool, ws_slug, block_slug, page, page_size, sort, dir
     )
 
 

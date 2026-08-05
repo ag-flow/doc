@@ -155,13 +155,13 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
     renderList()
     // Chargement initial avec la taille par défaut (25).
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25, 'title', 'asc'))
     const select = await screen.findByTestId('page-size-select')
 
     fireEvent.change(select, { target: { value: '50' } })
     // Persistée en préférence + re-fetch avec la nouvelle taille.
     await waitFor(() => expect(prefsApi.set).toHaveBeenCalledWith('doc-page-size', 50))
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 50))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 50, 'title', 'asc'))
   })
 
   // DoD 26.3 — colonnes dynamiques : budget_jours présent sur epic, absent sur feature
@@ -470,8 +470,7 @@ describe('BlockDocumentList', () => {
   })
 
   // US Tri hiérarchique sur la page courante (parents puis enfants).
-  it('sorts the tree hierarchically on header click, staying in browse mode', async () => {
-    // Ordre serveur volontairement non trié : racines [ea, eb], enfants de ea [fz, fx].
+  it('sorts the tree server-side on header click, staying in browse mode', async () => {
     const docs = [
       makeDoc({ doc_technical_key: 'ea', title: 'Epic A', functional_type_slug: 'epic', parent_id: null }),
       makeDoc({ doc_technical_key: 'eb', title: 'Epic B', functional_type_slug: 'epic', parent_id: null }),
@@ -479,9 +478,15 @@ describe('BlockDocumentList', () => {
       makeDoc({ doc_technical_key: 'fx', title: 'Feat X', functional_type_slug: 'feature', parent_id: 'ea' }),
     ]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
-    // ea a des enfants au statut divergent → déplié d'emblée (enfants visibles).
-    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
-      makeTreePage(docs, { fz: [statut('done')], fx: [statut('en_cours')] }),
+    // Le tri est CÔTÉ SERVEUR : le mock ordonne racines + enfants selon (sort, dir).
+    vi.mocked(docsApi.getBlockTree).mockImplementation(
+      async (_ws, _b, _page, _size, _sort = 'title', dir = 'asc') => {
+        const ordered = [...docs].sort((a, b) => {
+          const r = a.title.localeCompare(b.title)
+          return dir === 'desc' ? -r : r
+        })
+        return makeTreePage(ordered, { fz: [statut('done')], fx: [statut('en_cours')] })
+      },
     )
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
 
@@ -490,31 +495,49 @@ describe('BlockDocumentList', () => {
 
     renderList()
     await waitFor(() => expect(screen.getByText('Feat X')).toBeInTheDocument())
-    // Ordre serveur par défaut (insertion, non trié).
-    expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb'])
+    // Défaut serveur = title asc : racines A avant B ; sous A, X avant Z.
+    expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb'])
 
+    // 1er clic : asc (déjà le défaut) — reste en mode browse, pas de bascule requête.
     fireEvent.click(screen.getByText('Titre'))
-    // Reste en mode browse : aucun appel serveur, pagination browse conservée.
     expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
     expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
     expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
 
-    // Tri asc hiérarchique : racines A avant B ; sous A, X avant Z ; enfants sous leur parent.
-    await waitFor(() =>
-      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb']),
-    )
-
-    // Deuxième clic : desc → B avant A ; sous A, Z avant X.
+    // 2e clic : desc → refetch serveur avec dir=desc ; B avant A, Z avant X.
     fireEvent.click(screen.getByText(/Titre/))
+    await waitFor(() =>
+      expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 1, 25, 'title', 'desc'),
+    )
     await waitFor(() =>
       expect(rowOrder()).toEqual(['doc-row-eb', 'doc-row-ea', 'doc-row-fz', 'doc-row-fx']),
     )
 
-    // Troisième clic : retour à l'ordre serveur (tri annulé).
+    // 3e clic : tri annulé → retour au défaut serveur (title asc).
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
-      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb']),
+      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb']),
     )
+  })
+
+  it('sorts browse by the "Modifié" column server-side (updated_at)', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'ea', title: 'Epic A', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'eb', title: 'Epic B', functional_type_slug: 'epic', parent_id: null }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic A')).toBeInTheDocument())
+
+    // Clic sur l'entête « Modifié » → tri serveur par updated_at (reste en browse).
+    fireEvent.click(screen.getByTestId('sort-header-updated_at'))
+    await waitFor(() =>
+      expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 1, 25, 'updated_at', 'asc'),
+    )
+    expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
   })
 
   // US Tri par clic d'entête branché au moteur serveur (+ multi-clé Maj-clic).
@@ -755,11 +778,11 @@ describe('BlockDocumentList', () => {
 
     renderList()
     // Première page chargée avec la taille par défaut (25), has_next → « Charger plus ».
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25, 'title', 'asc'))
     await waitFor(() => expect(screen.getByTestId('load-more-btn')).toBeInTheDocument())
 
     fireEvent.click(screen.getByTestId('load-more-btn'))
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 25))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 25, 'title', 'asc'))
   })
 
   // Applique un filtre restricted_list via le popover d'entête (op `in`).
