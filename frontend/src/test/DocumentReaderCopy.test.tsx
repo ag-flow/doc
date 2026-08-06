@@ -1,11 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { forwardRef, useImperativeHandle } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 
+// Spy de copie riche exposé par le viewer mocké (ref impératif).
+const copyRichSpy = vi.fn().mockResolvedValue(undefined)
+
 // Enfants lourds (BlockNote, panneaux, requêtes) mockés : le test cible la
-// barre de méta et le bouton copier.
-vi.mock('../components/MarkdownViewer', () => ({ MarkdownViewer: () => <div /> }))
+// barre de méta et les boutons copier. Le viewer expose copyRich via ref.
+vi.mock('../components/MarkdownViewer', () => ({
+  MarkdownViewer: forwardRef((_props, ref) => {
+    useImperativeHandle(ref, () => ({ copyRich: copyRichSpy }))
+    return <div />
+  }),
+}))
 vi.mock('../components/PropertiesPanel', () => ({ PropertiesPanel: () => <div /> }))
 vi.mock('../components/BacklinksPanel', () => ({ BacklinksPanel: () => <div /> }))
 vi.mock('../components/DocumentChildrenPanel', () => ({ DocumentChildrenPanel: () => <div /> }))
@@ -65,5 +74,12 @@ describe('DocumentReader — bouton copier le document', () => {
     fireEvent.click(btn)
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('# Résumé\n\nCorps du document.')
     await waitFor(() => expect(screen.getByText('Document copié')).toBeInTheDocument())
+  })
+
+  it('déclenche la copie riche (texte + composants en images) via le viewer', async () => {
+    renderReader()
+    fireEvent.click(screen.getByTestId('copy-rich-btn'))
+    expect(copyRichSpy).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.getByText('Copié')).toBeInTheDocument())
   })
 })

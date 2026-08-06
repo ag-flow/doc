@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
@@ -7,11 +7,21 @@ import { docflowSchema, parseMarkdownWithCodecs, type CodecEditorApi } from '../
 import { resolveArtifactUrl } from '../lib/artifacts'
 import { referencesApi, artifactsApi } from '../lib/api'
 import { useWorkspaceSlugOrNull } from '../contexts/WorkspaceContext'
+import {
+  documentToRichHtml,
+  writeRichClipboard,
+  type RichCopyEditor,
+} from '../lib/richClipboard'
 
 interface MarkdownViewerProps {
   content: string
   /** Rendu sans cadre (bordure / fond) — pour la lecture prose « wiki ». */
   bare?: boolean
+}
+
+/** Handle impératif : copie riche (texte HTML + composants en images). */
+export interface MarkdownViewerHandle {
+  copyRich: () => Promise<void>
 }
 
 const DOC_LINK = /^docflow:\/\/doc\/([0-9a-fA-F-]{36})$/
@@ -37,12 +47,29 @@ export function matchArtifactHref(
   return null
 }
 
-export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
+export const MarkdownViewer = forwardRef<MarkdownViewerHandle, MarkdownViewerProps>(
+  function MarkdownViewer({ content, bare = false }, ref) {
   const navigate = useNavigate()
   const wsSlug = useWorkspaceSlugOrNull()
+  const rootRef = useRef<HTMLDivElement>(null)
   // Même schéma et même parsing que l'éditeur (registre de codecs) : le chemin
   // lecture (DocumentReader, PublicDocumentViewer) est couvert par transitivité.
   const editor = useCreateBlockNote({ schema: docflowSchema, resolveFileUrl: resolveArtifactUrl })
+
+  // Copie riche : le DocumentReader déclenche cette action via le ref. Le HTML
+  // sémantique du texte + les images rasterisées des composants graphiques sont
+  // écrits dans le presse-papier (repli plein texte = le markdown source).
+  useImperativeHandle(
+    ref,
+    () => ({
+      async copyRich() {
+        if (!rootRef.current) return
+        const html = await documentToRichHtml(editor as unknown as RichCopyEditor, rootRef.current)
+        await writeRichClipboard(html, content ?? '')
+      },
+    }),
+    [editor, content],
+  )
   // Dernier contenu parsé : naviguer entre documents SANS remonter le
   // composant (sommaire, Précédent/Suivant, doc déjà en cache) doit re-parser
   // — un simple « déjà chargé » laissait l'article figé sur le premier doc.
@@ -104,10 +131,11 @@ export function MarkdownViewer({ content, bare = false }: MarkdownViewerProps) {
 
   return (
     <div
+      ref={rootRef}
       className={bare ? 'wiki-prose' : 'rounded border border-gray-100 bg-white'}
       onClickCapture={onClickCapture}
     >
       <BlockNoteView editor={editor} editable={false} />
     </div>
   )
-}
+})

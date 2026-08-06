@@ -1,11 +1,20 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, FilePdf, LinkSimple, ListBullets, PencilSimple } from '@phosphor-icons/react'
+import {
+  Check,
+  Copy,
+  FilePdf,
+  Images,
+  LinkSimple,
+  ListBullets,
+  PencilSimple,
+  SpinnerGap,
+} from '@phosphor-icons/react'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { stripTitleHeading } from '../lib/markdownTitle'
-import { MarkdownViewer } from './MarkdownViewer'
+import { MarkdownViewer, type MarkdownViewerHandle } from './MarkdownViewer'
 import { DocumentChildrenPanel } from './DocumentChildrenPanel'
 import { BacklinksPanel } from './BacklinksPanel'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -35,7 +44,23 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
   const [copiedDoc, setCopiedDoc] = useState(false)
+  const [richState, setRichState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [exportOpen, setExportOpen] = useState(false)
+  const viewerRef = useRef<MarkdownViewerHandle>(null)
+
+  // Copie riche (texte + composants en images) : la rasterisation prend un
+  // court instant, on montre un état d'attente puis un accusé.
+  async function copyRich() {
+    setRichState('busy')
+    try {
+      await viewerRef.current?.copyRich()
+      setRichState('done')
+      setTimeout(() => setRichState('idle'), 1500)
+    } catch {
+      setRichState('error')
+      setTimeout(() => setRichState('idle'), 2500)
+    }
+  }
   // Sommaire à gauche : ouvert par défaut, le choix est retenu localement.
   const [tocOpen, setTocOpen] = useState(() => localStorage.getItem(TOC_STORAGE_KEY) !== '0')
   function toggleToc() {
@@ -110,6 +135,27 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
               {copiedDoc ? <Check size={14} weight="bold" /> : <Copy size={14} weight="duotone" />}
               {copiedDoc ? t('editor.copyDocumentDone') : t('editor.copyLabel')}
             </button>
+            <button
+              type="button"
+              onClick={() => void copyRich()}
+              disabled={richState === 'busy'}
+              title={t('editor.copyRichHint')}
+              data-testid="copy-rich-btn"
+              className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700 disabled:cursor-wait"
+            >
+              {richState === 'busy' ? (
+                <SpinnerGap size={14} weight="bold" className="animate-spin" />
+              ) : richState === 'done' ? (
+                <Check size={14} weight="bold" />
+              ) : (
+                <Images size={14} weight="duotone" />
+              )}
+              {richState === 'done'
+                ? t('editor.copyRichDone')
+                : richState === 'error'
+                  ? t('editor.copyRichError')
+                  : t('editor.copyRich')}
+            </button>
             <span className="flex-1" />
             {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
           </>
@@ -178,7 +224,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
       >
         {hasContent ? (
-          <MarkdownViewer content={displayContent} bare />
+          <MarkdownViewer ref={viewerRef} content={displayContent} bare />
         ) : (
           <p className="text-muted italic">{t('editor.readEmpty')}</p>
         )}
