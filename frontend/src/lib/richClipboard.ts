@@ -29,22 +29,27 @@ export type Rasterize = (node: HTMLElement) => Promise<string>
 const defaultRasterize: Rasterize = (node) =>
   domToPng(node, { scale: 2, backgroundColor: '#ffffff' })
 
-function cssEscape(value: string): string {
-  // CSS.escape existe dans les navigateurs modernes et jsdom ; repli défensif.
-  return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value.replace(/"/g, '\\"')
-}
-
 /**
- * Construit le HTML riche du document : runs de texte consécutifs exportés via
- * l'exporteur BlockNote (HTML propre), composants graphiques remplacés par une
- * image PNG rasterisée depuis leur rendu DOM réel. Un composant dont le nœud
- * DOM est introuvable retombe sur l'export texte (jamais d'image vide).
+ * Construit le HTML riche du document : les runs de texte consécutifs sont
+ * exportés via l'exporteur BlockNote (HTML propre), et chaque composant
+ * graphique est remplacé par une image PNG rasterisée depuis son cadre rendu.
+ *
+ * Les cadres graphiques sont repérés par le marqueur explicite `data-df-component`
+ * posé par `BlockFrame` (indépendant des classes internes de BlockNote) et
+ * appariés aux blocs graphiques du document DANS L'ORDRE — chaque bloc graphique
+ * rend exactement un cadre. Un composant n'est JAMAIS perdu : si la rasterisation
+ * échoue (image cross-origin taintée…), on retombe sur son HTML rendu.
  */
 export async function documentToRichHtml(
   editor: RichCopyEditor,
   container: HTMLElement,
   rasterize: Rasterize = defaultRasterize,
 ): Promise<string> {
+  const componentNodes = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-df-component]'),
+  )
+  let componentIndex = 0
+
   const parts: string[] = []
   let run: unknown[] = []
   const flushRun = async () => {
@@ -55,15 +60,20 @@ export async function documentToRichHtml(
   }
 
   for (const block of editor.document) {
-    const node = GRAPHICAL_BLOCK_TYPES.has(block.type)
-      ? container.querySelector<HTMLElement>(`[data-id="${cssEscape(block.id)}"] .bn-block-content`)
-      : null
-    if (node) {
-      await flushRun()
+    if (!GRAPHICAL_BLOCK_TYPES.has(block.type)) {
+      run.push(block)
+      continue
+    }
+    await flushRun()
+    const node = componentNodes[componentIndex++]
+    if (!node) continue // pas de cadre rendu (rare) : rien à rasteriser
+    try {
       const png = await rasterize(node)
       parts.push(`<p><img src="${png}" alt="${block.type}" style="max-width:100%" /></p>`)
-    } else {
-      run.push(block)
+    } catch {
+      // Rasterisation impossible → conserver le rendu HTML du composant plutôt
+      // que de le perdre silencieusement.
+      parts.push(`<div>${node.innerHTML}</div>`)
     }
   }
   await flushRun()

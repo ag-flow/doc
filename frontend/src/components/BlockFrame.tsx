@@ -117,7 +117,11 @@ export function BlockFrame({ title, typeLabel, source, svg, edit, children }: Bl
   }
 
   return (
-    <div className="group/frame my-2 w-full rounded-lg border border-gray-200" data-content-type={typeLabel}>
+    <div
+      className="group/frame my-2 w-full rounded-lg border border-gray-200"
+      data-content-type={typeLabel}
+      data-df-component={typeLabel}
+    >
       <div className="flex items-center gap-2 rounded-t-lg border-b border-gray-100 bg-gray-50 px-3 py-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{typeLabel}</span>
         {title && <span className="truncate text-xs font-medium text-gray-700">{title}</span>}

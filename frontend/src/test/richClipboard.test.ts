@@ -17,16 +17,15 @@ function fakeEditor(blocks: Array<{ id: string; type: string }>): RichCopyEditor
   }
 }
 
-/** Conteneur DOM avec un nœud .bn-block-content par bloc graphique. */
-function container(ids: string[]): HTMLElement {
+/** Conteneur DOM avec un cadre [data-df-component] par composant graphique,
+ *  dans l'ordre du document (le marqueur posé par BlockFrame). */
+function container(typeLabels: string[]): HTMLElement {
   const root = document.createElement('div')
-  for (const id of ids) {
-    const outer = document.createElement('div')
-    outer.setAttribute('data-id', id)
-    const content = document.createElement('div')
-    content.className = 'bn-block-content'
-    outer.appendChild(content)
-    root.appendChild(outer)
+  for (const label of typeLabels) {
+    const frame = document.createElement('div')
+    frame.setAttribute('data-df-component', label)
+    frame.innerHTML = `<span>rendu-${label}</span>`
+    root.appendChild(frame)
   }
   return root
 }
@@ -40,9 +39,12 @@ describe('documentToRichHtml', () => {
       { id: 'p2', type: 'paragraph' },
       { id: 'm1', type: 'mermaid' },
     ]
-    const rasterize = vi.fn(async (node: HTMLElement) => `data:image/png;base64,${node.className}`)
+    const rasterize = vi.fn(
+      async (node: HTMLElement) => `data:image/png;base64,${node.getAttribute('data-df-component')}`,
+    )
 
-    const html = await documentToRichHtml(fakeEditor(blocks), container(['c1', 'm1']), rasterize)
+    // Deux cadres graphiques dans l'ordre du document : chart puis mermaid.
+    const html = await documentToRichHtml(fakeEditor(blocks), container(['chart', 'mermaid']), rasterize)
 
     // Deux composants rasterisés (chart + mermaid), deux images produites.
     expect(rasterize).toHaveBeenCalledTimes(2)
@@ -53,16 +55,23 @@ describe('documentToRichHtml', () => {
     expect(html.indexOf('p1,h1')).toBeLessThan(html.indexOf('alt="dfChart"'))
     expect(html.indexOf('alt="dfChart"')).toBeLessThan(html.indexOf('p2'))
     expect(html.indexOf('p2')).toBeLessThan(html.indexOf('alt="mermaid"'))
-    expect(html).toContain('<img src="data:image/png;base64,bn-block-content"')
+    // Le bon cadre est apparié au bon bloc, dans l'ordre.
+    expect(html).toContain('<img src="data:image/png;base64,chart"')
+    expect(html).toContain('<img src="data:image/png;base64,mermaid"')
   })
 
-  it('retombe sur l’export texte si le nœud DOM du composant est introuvable', async () => {
-    const blocks = [{ id: 'c1', type: 'dfChart' }]
-    const rasterize = vi.fn(async () => 'data:image/png;base64,x')
-    // Conteneur vide : aucun [data-id="c1"] → pas de rasterisation.
-    const html = await documentToRichHtml(fakeEditor(blocks), container([]), rasterize)
-    expect(rasterize).not.toHaveBeenCalled()
-    expect(html).toContain('<p>c1</p>')
+  it('conserve le rendu HTML du composant si la rasterisation échoue', async () => {
+    const blocks = [
+      { id: 'p1', type: 'paragraph' },
+      { id: 'd1', type: 'dfDisplay' },
+    ]
+    const rasterize = vi.fn(async () => {
+      throw new Error('canvas taintée')
+    })
+    const html = await documentToRichHtml(fakeEditor(blocks), container(['display']), rasterize)
+    // Jamais de perte : le rendu DOM du composant est conservé en repli.
+    expect(html).toContain('rendu-display')
+    expect(html).not.toContain('<img')
   })
 
   it('couvre les six types de composants graphiques', () => {
