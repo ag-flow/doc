@@ -1,0 +1,57 @@
+/* Diagrammes — couche d'alias de tokens (Lot 0 du chantier diagram-design).
+   Traduit les tokens du skill externe cathrynlavery/diagram-design vers les
+   tokens du design system docflow (styles/tokens.css), pour que les diagrammes
+   HÉRITENT du thème du document au lieu d'un skin isolé.
+
+   Un composant de diagramme (Lots 1-5) ne référence QUE les `--diagram-*`
+   ci-dessous ; il ne touche jamais un hex ni un nom de police en dur, et ne
+   ré-importe aucun token diagram-design d'origine. Ce fichier est le seul point
+   de correspondance.
+
+   Contrastes WCAG (mesurés sur ink/paper) — voir l'article de doc associé :
+     ink / paper      14.86:1  (AAA)
+     ink / paper-2    13.70:1  (AAA)
+     muted / paper     5.83:1  (AA texte)
+     accent / paper    3.65:1  (AA large/UI UNIQUEMENT — voir garde-fou) */
+
+:root {
+  /* ── Couleurs ─────────────────────────────────────────────────────────── */
+  --diagram-paper: var(--color-paper); /* fond du canvas (diagram-design: paper) */
+  --diagram-paper-2: var(--color-surface); /* aplat surélevé (diagram-design: paper-2) */
+  --diagram-ink: var(--color-ink); /* traits, texte principal (diagram-design: ink) */
+  --diagram-muted: var(--color-neutral-700); /* sublabels / secondaire (diagram-design: muted) */
+
+  /* accent : réservé à 1-2 éléments focaux. GARDE-FOU CONTRASTE — 3.65:1 sur
+     papier : autorisé en APLAT, BORDURE ou GROS élément focal ; INTERDIT en
+     petit texte (< 4.5:1 AA). Pour un libellé focal lisible, poser le texte en
+     --diagram-ink sur un aplat --diagram-accent, jamais l'inverse en petit. */
+  --diagram-accent: var(--color-accent);
+
+  /* ── Filets ───────────────────────────────────────────────────────────────
+     Hairline 1px encre à 16 % — jamais un gris opaque. */
+  --diagram-hairline-color: var(--color-divider);
+  --diagram-hairline-width: 1px;
+
+  /* ── Typographie ──────────────────────────────────────────────────────────
+     diagram-design utilise Instrument Serif / Geist Sans / Geist Mono. docflow
+     est mono-famille sérif, self-hosted, sans CDN : on hérite du chrome plutôt
+     que d'importer trois nouvelles polices.
+       titres + annotations italiques  → Source Serif 4 (vraie italique)
+       noms de nœuds (Geist Sans)      → Source Serif 4 (« le sérif EST le chrome »)
+       sublabels techniques (Geist Mono) → pile mono système */
+  --diagram-font-title: var(--font-heading);
+  --diagram-font-node: var(--font-body);
+  --diagram-font-mono: var(--font-mono);
+
+  /* ── Géométrie ──────────────────────────────────────────────────────────── */
+  /* Grille 4px non-négociable de diagram-design : unité INTERNE du viewBox SVG,
+     indépendante du --spacing:5px de l'app (niveaux distincts, pas de conflit). */
+  --diagram-grid: 4px;
+
+  /* Rayon : plafonné aux rayons docflow (≤4px), plus serré que le max 10px de
+     diagram-design — cohérent avec le reste du chrome. */
+  --diagram-radius: var(--radius-lg);
+
+  /* Pas d'ombres : les diagrammes n'utilisent AUCUN --shadow-* (règle
+     diagram-design « no shadows »). Aucun token d'élévation n'est aliasé ici. */
+}
