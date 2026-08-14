@@ -25,7 +25,15 @@ describe('menu slash — un item par type', () => {
     }
     const keys = slashItemsFromRegistry(ctx).map((i) => i.key)
     expect(keys).toEqual(
-      expect.arrayContaining(['df-diagram-layers', 'df-diagram-pyramid', 'df-diagram-nested', 'df-diagram-tree']),
+      expect.arrayContaining([
+        'df-diagram-layers',
+        'df-diagram-pyramid',
+        'df-diagram-nested',
+        'df-diagram-tree',
+        'df-diagram-graph',
+        'df-diagram-swimlane',
+        'df-diagram-org',
+      ]),
     )
   })
 })
@@ -53,6 +61,30 @@ describe('DiagramView — dispatch par type', () => {
 
   it('tree → nœuds + arêtes orthogonales', () => {
     const { container } = renderView(' type="tree"', 'Racine\n  C1\n  C2')
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(3)
+    expect(container.querySelectorAll('g[data-diagram="edge"]')).toHaveLength(2)
+  })
+
+  it('graph → nœuds + arêtes fléchées', () => {
+    const { container } = renderView(' type="graph"', 'A | Alpha\nB | Beta\nA -> B')
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(2)
+    expect(container.querySelectorAll('g[data-diagram="edge"]')).toHaveLength(1)
+    expect(container.querySelector('[data-diagram="arrow"]')).not.toBeNull()
+  })
+
+  it('alias sémantique medallion → moteur graph', () => {
+    const { container } = renderView(' type="medallion"', 'r | Raw | Bronze\nc | Clean | Silver\nr -> c')
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(2)
+  })
+
+  it('swimlane → couloirs + étapes', () => {
+    const { container } = renderView(' type="swimlane"', 'Vente | Devis\nVente | Validation\nLivraison | Envoi')
+    expect(container.querySelectorAll('g[data-diagram="lane"]')).toHaveLength(2)
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(3)
+  })
+
+  it('org → réutilise le moteur tree (nœuds + arêtes)', () => {
+    const { container } = renderView(' type="org"', 'Dir\n  A\n  B')
     expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(3)
     expect(container.querySelectorAll('g[data-diagram="edge"]')).toHaveLength(2)
   })

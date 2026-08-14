@@ -8,14 +8,30 @@ import { LayersDiagram } from './diagram/renderers/layers'
 import { PyramidDiagram } from './diagram/renderers/pyramid'
 import { NestedDiagram } from './diagram/renderers/nested'
 import { TreeDiagram } from './diagram/renderers/tree'
+import { GraphDiagram } from './diagram/renderers/graph'
+import { SwimlaneDiagram } from './diagram/renderers/swimlane'
 
-/** Types de `df-diagram` couverts par le Lot 1 (dispatch par attribut `type`).
- *  Les Lots 2-5 ajoutent des entrées ici — le codec et la vue ne changent pas. */
+/** Types de `df-diagram` (dispatch par attribut `type`). Les Lots 2-5 ajoutent
+ *  des entrées ici — le codec et la vue ne changent pas.
+ *  Lot 1 : layers, pyramid, nested, tree.
+ *  Lot 2 : graph (+ alias sémantiques), swimlane/process, org (= tree). */
 const RENDERERS = {
   layers: LayersDiagram,
   pyramid: PyramidDiagram,
   nested: NestedDiagram,
   tree: TreeDiagram,
+  // Lot 2 — moteur graphe et ses presets sémantiques.
+  graph: GraphDiagram,
+  architecture: GraphDiagram,
+  dataflow: GraphDiagram,
+  'dp-integration': GraphDiagram,
+  'high-level': GraphDiagram,
+  'it-current-state': GraphDiagram,
+  medallion: GraphDiagram,
+  // Lot 2 — swimlane / process ; org réutilise l'arbre du Lot 1.
+  swimlane: SwimlaneDiagram,
+  process: SwimlaneDiagram,
+  org: TreeDiagram,
 } as const
 
 type DiagramType = keyof typeof RENDERERS

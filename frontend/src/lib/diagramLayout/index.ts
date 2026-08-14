@@ -20,3 +20,6 @@ export { quadrantGrid } from './quadrant'
 
 export type { LanesOptions, Lanes } from './lanes'
 export { lanes } from './lanes'
+
+export type { GraphNode, GraphEdge, LayeredOptions, LayeredGraph } from './graphLayout'
+export { layeredGraph } from './graphLayout'

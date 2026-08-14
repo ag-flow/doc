@@ -2,7 +2,7 @@
  *  Discrimine le type de diagramme via l'attribut `type="…"` (modèle df-chart).
  *  Lot 1 : layers, pyramid, nested, tree. Les Lots 2-5 ajoutent des types dans
  *  le dispatcher (components/DiagramBlock.tsx) sans nouveau codec. */
-import { Boxes, Layers, Network, Triangle } from 'lucide-react'
+import { Boxes, Building2, Layers, Network, Rows3, Share2, Triangle } from 'lucide-react'
 import { DiagramBlock } from '../../components/DiagramBlock'
 import type { SlashContext, SlashItem } from './index'
 
@@ -16,6 +16,15 @@ const SKELETONS: Record<string, { attrs: string; body: string }> = {
   pyramid: { attrs: ' type="pyramid"', body: 'Vision\nStratégie\nExécution' },
   nested: { attrs: ' type="nested"', body: 'Système\n  Module A\n    Fonction 1\n  Module B' },
   tree: { attrs: ' type="tree"', body: 'Racine\n  Enfant 1\n    Petit-enfant\n  Enfant 2' },
+  graph: {
+    attrs: ' type="graph"',
+    body: 'Web | Frontend\nAPI | Backend\nDB | Base\nWeb -> API\nAPI -> DB | requêtes',
+  },
+  swimlane: {
+    attrs: ' type="swimlane"',
+    body: 'Client | Commande\nVente | Devis\nVente | Validation\nLivraison | Expédition',
+  },
+  org: { attrs: ' type="org"', body: 'Direction\n  Pôle Produit\n    Équipe A\n  Pôle Tech' },
 }
 
 function insertSkeleton(ctx: SlashContext, kind: keyof typeof SKELETONS): void {
@@ -73,6 +82,33 @@ export const diagramCodec = {
       group: 'Insérer',
       icon: <Network size={18} />,
       key: 'df-diagram-tree',
+    },
+    {
+      title: ctx.t('diagram.graphSlashTitle'),
+      subtext: ctx.t('diagram.graphSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'graph'),
+      aliases: ['graph', 'graphe', 'architecture', 'flux', 'dataflow', 'medallion'],
+      group: 'Insérer',
+      icon: <Share2 size={18} />,
+      key: 'df-diagram-graph',
+    },
+    {
+      title: ctx.t('diagram.swimlaneSlashTitle'),
+      subtext: ctx.t('diagram.swimlaneSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'swimlane'),
+      aliases: ['swimlane', 'process', 'processus', 'couloirs', 'lanes'],
+      group: 'Insérer',
+      icon: <Rows3 size={18} />,
+      key: 'df-diagram-swimlane',
+    },
+    {
+      title: ctx.t('diagram.orgSlashTitle'),
+      subtext: ctx.t('diagram.orgSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'org'),
+      aliases: ['org', 'organigramme', 'ownership', 'équipe'],
+      group: 'Insérer',
+      icon: <Building2 size={18} />,
+      key: 'df-diagram-org',
     },
   ],
 }

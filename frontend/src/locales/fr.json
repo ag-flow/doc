@@ -520,7 +520,13 @@
     "nestedSlashTitle": "Imbriqué (nested)",
     "nestedSlashHint": "Hiérarchie par containment, indentation du corps",
     "treeSlashTitle": "Arbre (tree)",
-    "treeSlashHint": "Parent → enfants, indentation du corps"
+    "treeSlashHint": "Parent → enfants, indentation du corps",
+    "graphSlashTitle": "Graphe / architecture",
+    "graphSlashHint": "Nœuds + connexions, layout en couches (A -> B)",
+    "swimlaneSlashTitle": "Swimlane / process",
+    "swimlaneSlashHint": "Rôles en couloirs, étapes séquentielles",
+    "orgSlashTitle": "Organigramme",
+    "orgSlashHint": "Hiérarchie d'ownership, indentation du corps"
   },
   "conversation": {
     "slashTitle": "Conversation",
