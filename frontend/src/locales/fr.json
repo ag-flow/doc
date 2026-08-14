@@ -534,7 +534,11 @@
     "vennSlashTitle": "Venn (ensembles)",
     "vennSlashHint": "Recouvrement de 2-3 ensembles (A | Label, A&B | Label)",
     "matrixSlashTitle": "Matrice (rôles × colonnes)",
-    "matrixSlashHint": "Grille de permissions ✓/✗ (en-tête + Ligne | v1 | v2)"
+    "matrixSlashHint": "Grille de permissions ✓/✗ (en-tête + Ligne | v1 | v2)",
+    "scatterSlashTitle": "Nuage de points (scatter)",
+    "scatterSlashHint": "Distribution / corrélation (label | x | y)",
+    "ganttSlashTitle": "Gantt (planning)",
+    "ganttSlashHint": "Tâches sur une timeline (Tâche | début | fin)"
   },
   "conversation": {
     "slashTitle": "Conversation",

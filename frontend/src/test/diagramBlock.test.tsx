@@ -37,6 +37,8 @@ describe('menu slash — un item par type', () => {
         'df-diagram-radar',
         'df-diagram-venn',
         'df-diagram-matrix',
+        'df-diagram-scatter',
+        'df-diagram-gantt',
       ]),
     )
   })
@@ -118,6 +120,22 @@ describe('DiagramView — dispatch par type', () => {
     // 1 ligne × 2 colonnes = 2 cellules.
     expect(container.querySelectorAll('svg[role="img"] rect')).toHaveLength(2)
     expect(getByText('Admin')).toBeInTheDocument()
+  })
+
+  it('scatter → un point par ligne, axes via Grid', () => {
+    const { container } = renderView(' type="scatter"', 'A | 2 | 8\nB | 5 | 5\nC | 8 | 9')
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(3)
+    expect(container.querySelector('[data-diagram="axis-x"]')).not.toBeNull()
+  })
+
+  it('gantt (dates) → une barre par tâche + axe temporel', () => {
+    const { container, getByText } = renderView(
+      ' type="gantt"',
+      'Cadrage | 2026-01-01 | 2026-01-10\nDév | 2026-01-08 | 2026-02-05',
+    )
+    // 2 barres (rect) dans le svg du diagramme.
+    expect(container.querySelectorAll('svg[role="img"] rect')).toHaveLength(2)
+    expect(getByText('Cadrage')).toBeInTheDocument()
   })
 
   it('type inconnu → repli + diagnostic, pas de svg', () => {

@@ -2,7 +2,7 @@
  *  Discrimine le type de diagramme via l'attribut `type="…"` (modèle df-chart).
  *  Lot 1 : layers, pyramid, nested, tree. Les Lots 2-5 ajoutent des types dans
  *  le dispatcher (components/DiagramBlock.tsx) sans nouveau codec. */
-import { Boxes, Building2, Circle, Grid2x2, Grid3x3, Hexagon, Layers, Network, Rows3, Share2, Triangle } from 'lucide-react'
+import { Boxes, Building2, Circle, GanttChart, Grid2x2, Grid3x3, Hexagon, Layers, Network, Rows3, ScatterChart, Share2, Triangle } from 'lucide-react'
 import { DiagramBlock } from '../../components/DiagramBlock'
 import type { SlashContext, SlashItem } from './index'
 
@@ -37,6 +37,14 @@ const SKELETONS: Record<string, { attrs: string; body: string }> = {
   matrix: {
     attrs: ' type="matrix"',
     body: ' | Lire | Écrire | Supprimer\nAdmin | ✓ | ✓ | ✓\nÉditeur | ✓ | ✓ | ✗\nLecteur | ✓ | ✗ | ✗',
+  },
+  scatter: {
+    attrs: ' type="scatter" xlabel="Coût" ylabel="Valeur"',
+    body: 'A | 2 | 8\nB | 5 | 5\nC | 8 | 9\nD | 4 | 3',
+  },
+  gantt: {
+    attrs: ' type="gantt"',
+    body: 'Cadrage | 2026-01-01 | 2026-01-10\nDév | 2026-01-08 | 2026-02-05\nRecette | 2026-02-05 | 2026-02-15',
   },
 }
 
@@ -158,6 +166,24 @@ export const diagramCodec = {
       group: 'Insérer',
       icon: <Grid3x3 size={18} />,
       key: 'df-diagram-matrix',
+    },
+    {
+      title: ctx.t('diagram.scatterSlashTitle'),
+      subtext: ctx.t('diagram.scatterSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'scatter'),
+      aliases: ['scatter', 'nuage', 'points', 'corrélation'],
+      group: 'Insérer',
+      icon: <ScatterChart size={18} />,
+      key: 'df-diagram-scatter',
+    },
+    {
+      title: ctx.t('diagram.ganttSlashTitle'),
+      subtext: ctx.t('diagram.ganttSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'gantt'),
+      aliases: ['gantt', 'planning', 'phases', 'timeline projet'],
+      group: 'Insérer',
+      icon: <GanttChart size={18} />,
+      key: 'df-diagram-gantt',
     },
   ],
 }

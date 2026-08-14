@@ -14,6 +14,8 @@ import { QuadrantDiagram } from './diagram/renderers/quadrant'
 import { RadarDiagram } from './diagram/renderers/radar'
 import { VennDiagram } from './diagram/renderers/venn'
 import { MatrixDiagram } from './diagram/renderers/matrix'
+import { ScatterDiagram } from './diagram/renderers/scatter'
+import { GanttDiagram } from './diagram/renderers/gantt'
 
 /** Types de `df-diagram` (dispatch par attribut `type`). Les Lots 2-5 ajoutent
  *  des entrées ici — le codec et la vue ne changent pas.
@@ -45,6 +47,9 @@ const RENDERERS = {
   matrix: MatrixDiagram,
   'security-matrix': MatrixDiagram,
   'dp-security-matrix': MatrixDiagram,
+  // Lot 4 — séries quantitatives (scatter/gantt ; bar/line restent en df-chart).
+  scatter: ScatterDiagram,
+  gantt: GanttDiagram,
 } as const
 
 type DiagramType = keyof typeof RENDERERS
