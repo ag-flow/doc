@@ -57,6 +57,8 @@ function assignLayers(nodes: GraphNode[], edges: GraphEdge[]): Map<string, numbe
   for (let pass = 0; pass < nodes.length; pass++) {
     let changed = false
     for (const e of edges) {
+      // Un self-loop (A→A) ne définit pas de niveau : il gonflerait la couche.
+      if (e.from === e.to) continue
       if (!layer.has(e.from) || !layer.has(e.to)) continue
       const want = (layer.get(e.from) ?? 0) + 1
       if (want > (layer.get(e.to) ?? 0)) {

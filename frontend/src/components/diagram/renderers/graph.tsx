@@ -9,6 +9,7 @@ import { DiagnosticBadge } from '../../TimelineBlock'
 import { Edge } from '../Edge'
 import { Label } from '../Label'
 import { Node } from '../Node'
+import { DIAGRAM } from '../svgTokens'
 import type { RendererProps } from './types'
 
 /** Extrémités d'une arête selon le sens (sortie source → entrée cible). */
@@ -40,6 +41,24 @@ export function GraphDiagram({ body, conf, svgRef }: RendererProps) {
     const from = placed.get(e.from)
     const to = placed.get(e.to)
     if (!from || !to) return null
+    // Self-loop (A→A, ex. state machine) : petit arc au-dessus du nœud.
+    if (e.from === e.to) {
+      const x1 = from.x + from.width * 0.35
+      const x2 = from.x + from.width * 0.65
+      const yTop = from.y
+      const d = `M${x1} ${yTop} C ${x1} ${yTop - 22} ${x2} ${yTop - 22} ${x2} ${yTop}`
+      return (
+        <g key={`e${i}`} data-diagram="self-loop">
+          <path d={d} fill="none" stroke={DIAGRAM.ink} strokeWidth={DIAGRAM.hairlineWidth} />
+          <path d={`M${x2} ${yTop} l-3 -4 l5 1 Z`} fill={DIAGRAM.ink} />
+          {e.label && (
+            <Label x={(x1 + x2) / 2} y={yTop - 26} anchor="middle" variant="muted" size={9}>
+              {e.label}
+            </Label>
+          )}
+        </g>
+      )
+    }
     const { a, b } = endpoints(from, to, lr)
     return (
       <g key={`e${i}`}>

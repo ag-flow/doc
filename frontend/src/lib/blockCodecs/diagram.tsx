@@ -2,7 +2,7 @@
  *  Discrimine le type de diagramme via l'attribut `type="…"` (modèle df-chart).
  *  Lot 1 : layers, pyramid, nested, tree. Les Lots 2-5 ajoutent des types dans
  *  le dispatcher (components/DiagramBlock.tsx) sans nouveau codec. */
-import { Boxes, Building2, Circle, GanttChart, Grid2x2, Grid3x3, Hexagon, Layers, Network, Rows3, ScatterChart, Share2, Triangle } from 'lucide-react'
+import { Boxes, Building2, Circle, Database, GanttChart, Grid2x2, Grid3x3, Hexagon, Layers, MessagesSquare, Network, RefreshCw, Rows3, ScatterChart, Share2, Triangle, Workflow } from 'lucide-react'
 import { DiagramBlock } from '../../components/DiagramBlock'
 import type { SlashContext, SlashItem } from './index'
 
@@ -45,6 +45,22 @@ const SKELETONS: Record<string, { attrs: string; body: string }> = {
   gantt: {
     attrs: ' type="gantt"',
     body: 'Cadrage | 2026-01-01 | 2026-01-10\nDév | 2026-01-08 | 2026-02-05\nRecette | 2026-02-05 | 2026-02-15',
+  },
+  sequence: {
+    attrs: ' type="sequence"',
+    body: 'Client -> API | requête\nAPI -> DB | lecture\nDB -> API | résultat\nAPI -> Client | réponse',
+  },
+  statemachine: {
+    attrs: ' type="statemachine"',
+    body: 'draft -> review | soumettre\nreview -> published | valider\nreview -> draft | rejeter\npublished -> published | mettre à jour',
+  },
+  er: {
+    attrs: ' type="er"',
+    body: 'User\n  id\n  email\nOrder\n  id\n  user_id\n  total\nUser -> Order',
+  },
+  loop: {
+    attrs: ' type="loop" hub="Données"',
+    body: 'Collecte\nNettoyage\nAnalyse\nDécision\nAction',
   },
 }
 
@@ -184,6 +200,42 @@ export const diagramCodec = {
       group: 'Insérer',
       icon: <GanttChart size={18} />,
       key: 'df-diagram-gantt',
+    },
+    {
+      title: ctx.t('diagram.sequenceSlashTitle'),
+      subtext: ctx.t('diagram.sequenceSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'sequence'),
+      aliases: ['sequence', 'séquence', 'messages', 'interactions'],
+      group: 'Insérer',
+      icon: <MessagesSquare size={18} />,
+      key: 'df-diagram-sequence',
+    },
+    {
+      title: ctx.t('diagram.stateSlashTitle'),
+      subtext: ctx.t('diagram.stateSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'statemachine'),
+      aliases: ['state', 'états', 'machine à états', 'transitions'],
+      group: 'Insérer',
+      icon: <Workflow size={18} />,
+      key: 'df-diagram-statemachine',
+    },
+    {
+      title: ctx.t('diagram.erSlashTitle'),
+      subtext: ctx.t('diagram.erSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'er'),
+      aliases: ['er', 'entités', 'modèle de données', 'schéma'],
+      group: 'Insérer',
+      icon: <Database size={18} />,
+      key: 'df-diagram-er',
+    },
+    {
+      title: ctx.t('diagram.loopSlashTitle'),
+      subtext: ctx.t('diagram.loopSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'loop'),
+      aliases: ['loop', 'boucle', 'flywheel', 'cycle'],
+      group: 'Insérer',
+      icon: <RefreshCw size={18} />,
+      key: 'df-diagram-loop',
     },
   ],
 }

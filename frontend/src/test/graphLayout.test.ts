@@ -56,6 +56,17 @@ describe('layeredGraph — robustesse cycle', () => {
     const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'A']]), {})
     expect(g.placed.size).toBe(2)
   })
+
+  it('un self-loop B→B ne gonfle pas la couche de B', () => {
+    const nodes: GraphNode[] = [
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+    ]
+    const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'B']]), {})
+    // B reste en couche 1 (self-loop ignoré), pas propulsé plus loin.
+    expect(g.layers.length).toBe(2)
+    expect(g.layers[1]).toEqual(['B'])
+  })
 })
 
 function edges2(pairs: Array<[string, string]>): GraphEdge[] {

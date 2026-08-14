@@ -16,6 +16,9 @@ import { VennDiagram } from './diagram/renderers/venn'
 import { MatrixDiagram } from './diagram/renderers/matrix'
 import { ScatterDiagram } from './diagram/renderers/scatter'
 import { GanttDiagram } from './diagram/renderers/gantt'
+import { SequenceDiagram } from './diagram/renderers/sequence'
+import { ErDiagram } from './diagram/renderers/er'
+import { LoopDiagram } from './diagram/renderers/loop'
 
 /** Types de `df-diagram` (dispatch par attribut `type`). Les Lots 2-5 ajoutent
  *  des entrées ici — le codec et la vue ne changent pas.
@@ -50,6 +53,12 @@ const RENDERERS = {
   // Lot 4 — séries quantitatives (scatter/gantt ; bar/line restent en df-chart).
   scatter: ScatterDiagram,
   gantt: GanttDiagram,
+  // Lot 5 — structurés (statemachine réutilise le moteur graph + self-loops).
+  sequence: SequenceDiagram,
+  statemachine: GraphDiagram,
+  state: GraphDiagram,
+  er: ErDiagram,
+  loop: LoopDiagram,
 } as const
 
 type DiagramType = keyof typeof RENDERERS

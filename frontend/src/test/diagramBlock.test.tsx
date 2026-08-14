@@ -39,6 +39,10 @@ describe('menu slash — un item par type', () => {
         'df-diagram-matrix',
         'df-diagram-scatter',
         'df-diagram-gantt',
+        'df-diagram-sequence',
+        'df-diagram-statemachine',
+        'df-diagram-er',
+        'df-diagram-loop',
       ]),
     )
   })
@@ -136,6 +140,31 @@ describe('DiagramView — dispatch par type', () => {
     // 2 barres (rect) dans le svg du diagramme.
     expect(container.querySelectorAll('svg[role="img"] rect')).toHaveLength(2)
     expect(getByText('Cadrage')).toBeInTheDocument()
+  })
+
+  it('sequence → lifelines + messages fléchés', () => {
+    const { container, getByText } = renderView(' type="sequence"', 'A -> B | ping\nB -> A | pong')
+    expect(container.querySelectorAll('g[data-diagram="message"]')).toHaveLength(2)
+    expect(getByText('ping')).toBeInTheDocument()
+  })
+
+  it('statemachine → moteur graph avec self-loop', () => {
+    const { container } = renderView(' type="statemachine"', 'a -> b | go\nb -> b | tick')
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(2)
+    expect(container.querySelector('[data-diagram="self-loop"]')).not.toBeNull()
+  })
+
+  it('er → entités multi-champs + relation', () => {
+    const { container, getByText } = renderView(' type="er"', 'User\n  id\n  email\nOrder\n  id\nUser -> Order')
+    expect(container.querySelectorAll('g[data-diagram="entity"]')).toHaveLength(2)
+    expect(getByText('email')).toBeInTheDocument()
+  })
+
+  it('loop → stations en anneau + hub focal', () => {
+    const { container } = renderView(' type="loop" hub="H"', 'A\nB\nC')
+    // 3 stations + 1 hub = 4 nœuds.
+    expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(4)
+    expect(container.querySelector('g[data-variant="focal"]')).not.toBeNull()
   })
 
   it('type inconnu → repli + diagnostic, pas de svg', () => {

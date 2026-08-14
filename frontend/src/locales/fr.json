@@ -538,7 +538,15 @@
     "scatterSlashTitle": "Nuage de points (scatter)",
     "scatterSlashHint": "Distribution / corrélation (label | x | y)",
     "ganttSlashTitle": "Gantt (planning)",
-    "ganttSlashHint": "Tâches sur une timeline (Tâche | début | fin)"
+    "ganttSlashHint": "Tâches sur une timeline (Tâche | début | fin)",
+    "sequenceSlashTitle": "Séquence",
+    "sequenceSlashHint": "Messages entre acteurs (A -> B | message)",
+    "stateSlashTitle": "Machine à états",
+    "stateSlashHint": "États + transitions, self-loops (A -> B | événement)",
+    "erSlashTitle": "Modèle de données (ER)",
+    "erSlashHint": "Entités + champs (indentés) + relations (A -> B)",
+    "loopSlashTitle": "Boucle / flywheel",
+    "loopSlashHint": "Stations en cycle autour d'un hub (hub=\"…\")"
   },
   "conversation": {
     "slashTitle": "Conversation",
