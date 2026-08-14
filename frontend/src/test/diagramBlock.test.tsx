@@ -33,6 +33,10 @@ describe('menu slash — un item par type', () => {
         'df-diagram-graph',
         'df-diagram-swimlane',
         'df-diagram-org',
+        'df-diagram-quadrant',
+        'df-diagram-radar',
+        'df-diagram-venn',
+        'df-diagram-matrix',
       ]),
     )
   })
@@ -87,6 +91,33 @@ describe('DiagramView — dispatch par type', () => {
     const { container } = renderView(' type="org"', 'Dir\n  A\n  B')
     expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(3)
     expect(container.querySelectorAll('g[data-diagram="edge"]')).toHaveLength(2)
+  })
+
+  it('quadrant → un point par item + cellules nommées', () => {
+    const { container } = renderView(' type="quadrant" quadrants="A,B,C,D"', 'X | 8 | 9\nY | 2 | 3')
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(2)
+  })
+
+  it('consultant → alias du moteur quadrant', () => {
+    const { container } = renderView(' type="consultant"', 'P1 | 5 | 5')
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(1)
+  })
+
+  it('radar → 4 anneaux + une série (polygones)', () => {
+    const { container } = renderView(' type="radar"', 'A | 5\nB | 8\nC | 3\nD | 6')
+    expect(container.querySelectorAll('svg[role="img"] polygon')).toHaveLength(5)
+  })
+
+  it('venn → un cercle par ensemble', () => {
+    const { container } = renderView(' type="venn"', 'A | Front\nB | Back\nA&B | Full')
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(2)
+  })
+
+  it('matrix (dp-security-matrix) → cellules de permission', () => {
+    const { container, getByText } = renderView(' type="dp-security-matrix"', ' | Lire | Écrire\nAdmin | ✓ | ✗')
+    // 1 ligne × 2 colonnes = 2 cellules.
+    expect(container.querySelectorAll('svg[role="img"] rect')).toHaveLength(2)
+    expect(getByText('Admin')).toBeInTheDocument()
   })
 
   it('type inconnu → repli + diagnostic, pas de svg', () => {

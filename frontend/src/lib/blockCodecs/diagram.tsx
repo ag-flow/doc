@@ -2,7 +2,7 @@
  *  Discrimine le type de diagramme via l'attribut `type="…"` (modèle df-chart).
  *  Lot 1 : layers, pyramid, nested, tree. Les Lots 2-5 ajoutent des types dans
  *  le dispatcher (components/DiagramBlock.tsx) sans nouveau codec. */
-import { Boxes, Building2, Layers, Network, Rows3, Share2, Triangle } from 'lucide-react'
+import { Boxes, Building2, Circle, Grid2x2, Grid3x3, Hexagon, Layers, Network, Rows3, Share2, Triangle } from 'lucide-react'
 import { DiagramBlock } from '../../components/DiagramBlock'
 import type { SlashContext, SlashItem } from './index'
 
@@ -25,6 +25,19 @@ const SKELETONS: Record<string, { attrs: string; body: string }> = {
     body: 'Client | Commande\nVente | Devis\nVente | Validation\nLivraison | Expédition',
   },
   org: { attrs: ' type="org"', body: 'Direction\n  Pôle Produit\n    Équipe A\n  Pôle Tech' },
+  quadrant: {
+    attrs: ' type="quadrant" xlabel="Effort" ylabel="Impact" quadrants="Quick wins,Gros projets,À éviter,Bouche-trous"',
+    body: 'Refonte | 8 | 9\nDoc | 2 | 4\nCache | 3 | 7',
+  },
+  radar: {
+    attrs: ' type="radar"',
+    body: 'Perf | 8\nCoût | 5\nSécurité | 9\nUX | 6\nMaturité | 7',
+  },
+  venn: { attrs: ' type="venn"', body: 'A | Frontend\nB | Backend\nA&B | Fullstack' },
+  matrix: {
+    attrs: ' type="matrix"',
+    body: ' | Lire | Écrire | Supprimer\nAdmin | ✓ | ✓ | ✓\nÉditeur | ✓ | ✓ | ✗\nLecteur | ✓ | ✗ | ✗',
+  },
 }
 
 function insertSkeleton(ctx: SlashContext, kind: keyof typeof SKELETONS): void {
@@ -109,6 +122,42 @@ export const diagramCodec = {
       group: 'Insérer',
       icon: <Building2 size={18} />,
       key: 'df-diagram-org',
+    },
+    {
+      title: ctx.t('diagram.quadrantSlashTitle'),
+      subtext: ctx.t('diagram.quadrantSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'quadrant'),
+      aliases: ['quadrant', 'matrice 2x2', 'consultant', 'bcg'],
+      group: 'Insérer',
+      icon: <Grid2x2 size={18} />,
+      key: 'df-diagram-quadrant',
+    },
+    {
+      title: ctx.t('diagram.radarSlashTitle'),
+      subtext: ctx.t('diagram.radarSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'radar'),
+      aliases: ['radar', 'spider', 'toile', 'multi-axes'],
+      group: 'Insérer',
+      icon: <Hexagon size={18} />,
+      key: 'df-diagram-radar',
+    },
+    {
+      title: ctx.t('diagram.vennSlashTitle'),
+      subtext: ctx.t('diagram.vennSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'venn'),
+      aliases: ['venn', 'ensembles', 'recouvrement', 'intersection'],
+      group: 'Insérer',
+      icon: <Circle size={18} />,
+      key: 'df-diagram-venn',
+    },
+    {
+      title: ctx.t('diagram.matrixSlashTitle'),
+      subtext: ctx.t('diagram.matrixSlashHint'),
+      onItemClick: () => insertSkeleton(ctx, 'matrix'),
+      aliases: ['matrix', 'matrice', 'permissions', 'security matrix'],
+      group: 'Insérer',
+      icon: <Grid3x3 size={18} />,
+      key: 'df-diagram-matrix',
     },
   ],
 }

@@ -526,7 +526,15 @@
     "swimlaneSlashTitle": "Swimlane / process",
     "swimlaneSlashHint": "Rôles en couloirs, étapes séquentielles",
     "orgSlashTitle": "Organigramme",
-    "orgSlashHint": "Hiérarchie d'ownership, indentation du corps"
+    "orgSlashHint": "Hiérarchie d'ownership, indentation du corps",
+    "quadrantSlashTitle": "Quadrant (2 axes)",
+    "quadrantSlashHint": "Positionnement deux axes, cellules nommées (label | x | y)",
+    "radarSlashTitle": "Radar / spider",
+    "radarSlashHint": "Comparaison multi-axes (Axe | valeur)",
+    "vennSlashTitle": "Venn (ensembles)",
+    "vennSlashHint": "Recouvrement de 2-3 ensembles (A | Label, A&B | Label)",
+    "matrixSlashTitle": "Matrice (rôles × colonnes)",
+    "matrixSlashHint": "Grille de permissions ✓/✗ (en-tête + Ligne | v1 | v2)"
   },
   "conversation": {
     "slashTitle": "Conversation",

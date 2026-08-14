@@ -10,6 +10,10 @@ import { NestedDiagram } from './diagram/renderers/nested'
 import { TreeDiagram } from './diagram/renderers/tree'
 import { GraphDiagram } from './diagram/renderers/graph'
 import { SwimlaneDiagram } from './diagram/renderers/swimlane'
+import { QuadrantDiagram } from './diagram/renderers/quadrant'
+import { RadarDiagram } from './diagram/renderers/radar'
+import { VennDiagram } from './diagram/renderers/venn'
+import { MatrixDiagram } from './diagram/renderers/matrix'
 
 /** Types de `df-diagram` (dispatch par attribut `type`). Les Lots 2-5 ajoutent
  *  des entrées ici — le codec et la vue ne changent pas.
@@ -32,6 +36,15 @@ const RENDERERS = {
   swimlane: SwimlaneDiagram,
   process: SwimlaneDiagram,
   org: TreeDiagram,
+  // Lot 3 — deux axes / ensemblistes.
+  quadrant: QuadrantDiagram,
+  consultant: QuadrantDiagram,
+  radar: RadarDiagram,
+  spider: RadarDiagram,
+  venn: VennDiagram,
+  matrix: MatrixDiagram,
+  'security-matrix': MatrixDiagram,
+  'dp-security-matrix': MatrixDiagram,
 } as const
 
 type DiagramType = keyof typeof RENDERERS
