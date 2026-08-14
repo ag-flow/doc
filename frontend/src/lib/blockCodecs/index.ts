@@ -25,6 +25,7 @@ import { chartCodec } from './chart'
 import { conversationCodec } from './conversation'
 import { displayCodec } from './display'
 import { artifactCodec } from './artifact'
+import { diagramCodec } from './diagram'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,8 @@ export interface BlockCodec<P extends Record<string, unknown> = Record<string, u
   spec: () => unknown
   /** Entrée du menu `/`. Absente pour un codec legacy. */
   slashItem?: (ctx: SlashContext) => SlashItem
+  /** Plusieurs entrées de menu `/` (codec multi-types, ex. df-diagram). */
+  slashItems?: (ctx: SlashContext) => SlashItem[]
   /** Reconnu en lecture/écriture mais non proposé à l'insertion. */
   legacy?: boolean
 }
@@ -82,6 +85,7 @@ export const registry: BlockCodec[] = [
   conversationCodec as unknown as BlockCodec,
   displayCodec as unknown as BlockCodec,
   artifactCodec as unknown as BlockCodec,
+  diagramCodec as unknown as BlockCodec,
 ]
 
 const byType = new Map(registry.map((c) => [c.type, c]))
@@ -95,9 +99,12 @@ export const docflowSchema = BlockNoteSchema.create({
   blockSpecs: { ...defaultBlockSpecs, ...(customSpecs as any) },
 })
 
-/** Items de menu slash dérivés du registre (codecs non-legacy avec item). */
+/** Items de menu slash dérivés du registre (codecs non-legacy). Un codec peut
+ *  exposer une entrée unique (`slashItem`) ou plusieurs (`slashItems`). */
 export function slashItemsFromRegistry(ctx: SlashContext): SlashItem[] {
-  return registry.filter((c) => c.slashItem && !c.legacy).map((c) => c.slashItem!(ctx))
+  return registry
+    .filter((c) => !c.legacy)
+    .flatMap((c) => [...(c.slashItem ? [c.slashItem(ctx)] : []), ...(c.slashItems ? c.slashItems(ctx) : [])])
 }
 
 // ── API éditeur minimale ─────────────────────────────────────────────────────

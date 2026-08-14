@@ -511,6 +511,17 @@
     "skeletonTitle": "Plan d'action",
     "defaultLabel": "Étape"
   },
+  "diagram": {
+    "unknownType": "type de diagramme « {{type}} » inconnu",
+    "layersSlashTitle": "Couches (layers)",
+    "layersSlashHint": "Pile de couches pleine largeur, haut → bas",
+    "pyramidSlashTitle": "Pyramide / entonnoir",
+    "pyramidSlashHint": "Niveaux empilés, largeur décroissante ou proportionnelle",
+    "nestedSlashTitle": "Imbriqué (nested)",
+    "nestedSlashHint": "Hiérarchie par containment, indentation du corps",
+    "treeSlashTitle": "Arbre (tree)",
+    "treeSlashHint": "Parent → enfants, indentation du corps"
+  },
   "conversation": {
     "slashTitle": "Conversation",
     "slashHint": "Échange en bulles, un interlocuteur par ligne",
