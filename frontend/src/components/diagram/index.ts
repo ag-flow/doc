@@ -18,3 +18,14 @@ export type { GridProps } from './Grid'
 
 export { Annotation } from './Annotation'
 export type { AnnotationProps } from './Annotation'
+
+export { Icon } from './icons/Icon'
+export type { IconProps } from './icons/Icon'
+export { ICON_NAMES } from './icons/iconPaths'
+export type { IconName } from './icons/iconPaths'
+
+export { SketchyDefs, sketchy, SKETCHY_FILTER_ID } from './Sketchy'
+export type { SketchyDefsProps } from './Sketchy'
+
+export { TerminalFrame } from './Terminal'
+export type { TerminalFrameProps } from './Terminal'

@@ -13,4 +13,7 @@ export const DIAGRAM = {
   fontNode: 'var(--diagram-font-node)',
   fontMono: 'var(--diagram-font-mono)',
   radius: 'var(--diagram-radius)',
+  terminalBg: 'var(--diagram-terminal-bg)',
+  terminalFg: 'var(--diagram-terminal-fg)',
+  terminalDot: 'var(--diagram-terminal-dot)',
 } as const

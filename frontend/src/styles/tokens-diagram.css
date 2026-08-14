@@ -54,4 +54,12 @@
 
   /* Pas d'ombres : les diagrammes n'utilisent AUCUN --shadow-* (règle
      diagram-design « no shadows »). Aucun token d'élévation n'est aliasé ici. */
+
+  /* ── Variante terminal ──────────────────────────────────────────────────────
+     Habillage fenêtre CLI : fond charcoal assumé (îlot sombre volontaire, quel
+     que soit le thème), texte clair, mono. bg/fg dérivent des rôles docflow
+     (aucun hex en dur). Contraste fg/bg ≈ 12:1. */
+  --diagram-terminal-bg: var(--color-neutral-900);
+  --diagram-terminal-fg: var(--color-paper);
+  --diagram-terminal-dot: var(--color-neutral-500);
 }
