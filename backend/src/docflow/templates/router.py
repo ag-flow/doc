@@ -59,6 +59,12 @@ class ImportTemplateIn(BaseModel):
     dry_run: bool = False
 
 
+class TemplateUploadIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    yaml_content: str
+
+
 class ImportResultOut(BaseModel):
     applied: bool
     no_op: bool
@@ -394,6 +400,70 @@ async def export_template(template_slug: str, _: None = _Auth) -> Response:
         content=body,
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{tpl.template}.json"'},
+    )
+
+
+@router.post("/templates", response_model=TemplateInfo, status_code=201)
+async def create_template_from_upload(
+    body: TemplateUploadIn,
+    _: None = _Auth,
+) -> TemplateInfo:
+    """Installe un nouveau template global depuis un payload YAML uploadé.
+
+    Le payload est le modèle NATIF (héritage non résolu, tel qu'il vit dans un
+    repo source). Il est validé, puis résolu pour vérifier la cohérence de
+    l'héritage, puis persisté dans le répertoire des templates globaux — il
+    devient dès lors importable comme les autres (list_templates, galerie,
+    import_template). Création seule : si un template porte déjà ce slug, le
+    mettre à jour via PUT /templates/{slug}/yaml (409 sinon).
+    """
+    try:
+        raw = yaml.safe_load(body.yaml_content)
+        tpl = Template.model_validate(raw)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"YAML invalide : {e}") from e
+    if not _SLUG_RE.match(tpl.template):
+        raise HTTPException(
+            status_code=422,
+            detail="slug de template invalide : minuscules, chiffres, tirets, 2-80 chars",
+        )
+    try:
+        resolved = resolve(tpl)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"héritage non résolvable : {e}") from e
+
+    # Création uniquement : ni un template de même slug (repéré par contenu), ni un
+    # fichier de même nom ne doivent être écrasés en douce par un upload.
+    for existing in _TEMPLATES_DIR.glob("*.yaml"):
+        try:
+            other = Template.model_validate(yaml.safe_load(existing.read_text()))
+        except Exception:
+            continue
+        if other.template == tpl.template:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"un template '{tpl.template}' est déjà installé ; "
+                    "utiliser PUT /templates/{slug}/yaml pour le mettre à jour"
+                ),
+            )
+
+    yaml_file = _TEMPLATES_DIR / f"{tpl.template}.yaml"
+    if yaml_file.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"un fichier de template '{yaml_file.name}' existe déjà",
+        )
+    _TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+    yaml_file.write_text(body.yaml_content)
+    log.info("template_installed_from_upload", template=tpl.template, version=tpl.version)
+    return TemplateInfo(
+        template=tpl.template,
+        label=tpl.label,
+        version=tpl.version,
+        path=yaml_file.name,
+        concrete_types=len(resolved),
+        type_slugs=[r.slug for r in resolved],
     )
 
 

@@ -711,6 +711,9 @@ export const templatesApi = {
   getYaml: (slug: string) => requestText(`/templates/${slug}/yaml`),
   saveYaml: (slug: string, content: string) =>
     api.put<TemplateInfo>(`/templates/${slug}/yaml`, { yaml_content: content }),
+  /** Installe un nouveau template global depuis un YAML natif uploadé (création seule). */
+  create: (content: string) =>
+    api.post<TemplateInfo>('/templates', { yaml_content: content }),
   /** Export aplati (héritage résolu) en JSON téléchargeable, appel authentifié. */
   exportBlob: (slug: string) => requestBlob(`/templates/${slug}/export`),
   delete: (slug: string) => api.delete(`/templates/${slug}`),

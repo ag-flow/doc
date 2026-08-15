@@ -7,12 +7,15 @@ Couverture : chemin nominal, erreur métier, idempotence, guard admin.
 from __future__ import annotations
 
 import json
+import pathlib
 import uuid
 from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
+import yaml
 
+import docflow.mcp.server as mcp_server_mod
 from docflow.mcp.server import (
     _TOOLS,
     _block_exists,
@@ -22,9 +25,11 @@ from docflow.mcp.server import (
     _create_workspace,
     _delete_block,
     _delete_document,
+    _export_template,
     _get_block_type,
     _get_document,
     _get_property_value,
+    _get_template_yaml,
     _import_template,
     _list_blocks,
     _list_documents,
@@ -683,6 +688,66 @@ async def test_list_templates_retourne_liste(db_pool: asyncpg.Pool) -> None:
         assert "template" in tpl
         assert "version" in tpl
         assert isinstance(tpl["type_slugs"], list)
+
+
+# ---------------------------------------------------------------------------
+# 11bis. export_template / get_template_yaml (lecture pour agents)
+# ---------------------------------------------------------------------------
+
+_MCP_TPL = {
+    "version": 2,
+    "template": "mcp-tpl",
+    "label": "Modèle MCP",
+    "functional_types": [
+        {
+            "slug": "base",
+            "label": "Base",
+            "abstract": True,
+            "properties": [{"slug": "statut", "label": "Statut", "type": "text"}],
+        },
+        {
+            "slug": "epic",
+            "label": "Epic",
+            "inherit": "base",
+            "properties": [{"slug": "titre", "label": "Titre", "type": "text"}],
+        },
+    ],
+}
+
+
+@pytest.fixture()
+def mcp_templates_dir(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    (tmp_path / "mcp-tpl.yaml").write_text(yaml.dump(_MCP_TPL, allow_unicode=True))
+    monkeypatch.setattr(mcp_server_mod, "_TEMPLATES_DIR", tmp_path)
+    return tmp_path
+
+
+async def test_export_template_mcp_flattens(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _export_template("mcp-tpl"))
+    assert data["template"] == "mcp-tpl"  # type: ignore[index]
+    assert data["version"] == 2  # type: ignore[index]
+    types = {t["slug"]: t for t in data["functional_types"]}  # type: ignore[index]
+    # Type abstract exclu ; propriété héritée aplatie sur le concret.
+    assert set(types) == {"epic"}
+    prop_slugs = [p["slug"] for p in types["epic"]["properties"]]
+    assert "statut" in prop_slugs and "titre" in prop_slugs
+
+
+async def test_export_template_mcp_unknown(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _export_template("inconnu"))
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_get_template_yaml_mcp(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _get_template_yaml("mcp-tpl"))
+    assert data["template"] == "mcp-tpl"  # type: ignore[index]
+    # Source native : l'héritage (inherit/abstract) est présent, non résolu.
+    assert "inherit" in data["yaml_content"]  # type: ignore[index]
+
+
+async def test_get_template_yaml_mcp_unknown(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _get_template_yaml("inconnu"))
+    assert "error" in data  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------

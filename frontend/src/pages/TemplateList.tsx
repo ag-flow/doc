@@ -48,6 +48,10 @@ function InstalledSection() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+
   const { data, isLoading, isError } = useQuery<TemplateInfo[]>({
     queryKey: ['templates'],
     queryFn: () => api.get<TemplateInfo[]>('/templates'),
@@ -81,6 +85,22 @@ function InstalledSection() {
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
+  }
+
+  /** Lit le fichier YAML choisi et l'installe comme nouveau template global. */
+  async function importFile(file: File) {
+    setImporting(true)
+    setImportError(null)
+    try {
+      const content = await file.text()
+      await templatesApi.create(content)
+      void qc.invalidateQueries({ queryKey: ['templates'] })
+    } catch (e) {
+      // 409 : slug déjà installé — 422 : YAML / héritage invalide.
+      setImportError((e as Error).message)
+    } finally {
+      setImporting(false)
+    }
   }
 
   function closeEdit() {
@@ -124,7 +144,36 @@ function InstalledSection() {
   }
 
   return (
-    <SubSection title={t('tpl.installedTitle')}>
+    <SubSection
+      title={t('tpl.installedTitle')}
+      actions={
+        <>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept=".yaml,.yml,text/yaml,application/x-yaml"
+            className="hidden"
+            data-testid="tpl-import-input"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void importFile(file)
+              e.target.value = '' // ré-import du même fichier possible
+            }}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={importing}
+            onClick={() => uploadInputRef.current?.click()}
+            data-testid="tpl-import-btn"
+          >
+            <Plus size={13} weight="duotone" />
+            {importing ? t('tpl.importingFile') : t('tpl.importFile')}
+          </Button>
+        </>
+      }
+    >
+      {importError && <ErrorLine message={importError} testId="tpl-import-error" />}
       {isLoading ? (
         <TableSkeleton rows={3} columns={4} testId="loading" />
       ) : isError ? (

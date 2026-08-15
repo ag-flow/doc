@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
+from typing import cast
 
 import asyncpg
 import structlog
@@ -117,7 +118,7 @@ _TOOLS: list[Tool] = [
             "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
             "description », jamais de numéro), ```df-chart (« libellé | valeur », "
             "attributs type=pie|donut|bar|line, format=count|percent, "
-            "source=\"dataset://<uuid>\"), ```df-conversation (« Interlocuteur | "
+            'source="dataset://<uuid>"), ```df-conversation (« Interlocuteur | '
             "message », ou transcript/WebVTT collé tel quel), ```df-display "
             "(composition libre A2UI simplifié : tableau JSON plat "
             "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
@@ -189,7 +190,7 @@ _TOOLS: list[Tool] = [
             "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
             "description », jamais de numéro), ```df-chart (« libellé | valeur », "
             "attributs type=pie|donut|bar|line, format=count|percent, "
-            "source=\"dataset://<uuid>\"), ```df-conversation (« Interlocuteur | "
+            'source="dataset://<uuid>"), ```df-conversation (« Interlocuteur | '
             "message », ou transcript/WebVTT collé tel quel), ```df-display "
             "(composition libre A2UI simplifié : tableau JSON plat "
             "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
@@ -472,6 +473,50 @@ _TOOLS: list[Tool] = [
             "Lecture seule — aucun effet de bord."
         ),
         inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="export_template",
+        description=(
+            "Exporte la structure APLATIE d'un template global (héritage résolu) : "
+            "chaque type concret porte toutes ses propriétés directement, avec son "
+            "parent hiérarchique. Retourne {template, label, version, functional_types} "
+            "où chaque type liste slug, label, parent et properties (slug, label, "
+            "type, required, default, allowed_values...). "
+            "Miroir de l'export REST — utile pour analyser un modèle ou le "
+            "réintégrer dans un repo source (la reconstruction de l'héritage reste "
+            "un travail d'interprétation). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "template_slug": {
+                    "type": "string",
+                    "description": "Slug du template (issu de list_templates)",
+                },
+            },
+            "required": ["template_slug"],
+        },
+    ),
+    Tool(
+        name="get_template_yaml",
+        description=(
+            "Retourne la définition YAML SOURCE d'un template global — le modèle "
+            "natif, héritage NON résolu (types abstract, inherit, parent tels "
+            "quels). Complément de export_template (qui, lui, aplatit l'héritage). "
+            "Retourne {template, yaml_content}. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "template_slug": {
+                    "type": "string",
+                    "description": "Slug du template (issu de list_templates)",
+                },
+            },
+            "required": ["template_slug"],
+        },
     ),
     Tool(
         name="create_workspace",
@@ -1215,9 +1260,7 @@ def _finalize_tool_result(result: list[TextContent]) -> list[TextContent] | Call
 
 
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
-async def _call_tool(
-    name: str, arguments: dict[str, object]
-) -> list[TextContent] | CallToolResult:
+async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent] | CallToolResult:
     return _finalize_tool_result(await _dispatch_tool(name, arguments))
 
 
@@ -1290,6 +1333,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await _set_property_value(pool, arguments)
     if name == "list_templates":
         return await _list_templates()
+    if name == "export_template":
+        return await _export_template(str(arguments.get("template_slug", "")))
+    if name == "get_template_yaml":
+        return await _get_template_yaml(str(arguments.get("template_slug", "")))
     if name == "create_workspace":
         return await _create_workspace(pool, arguments)
     if name == "import_template":
@@ -1878,6 +1925,47 @@ def _find_template(template_slug: str) -> object:
         except Exception:
             continue
     raise ValueError(f"template '{template_slug}' introuvable")
+
+
+async def _export_template(template_slug: str) -> list[TextContent]:
+    """Export aplati (héritage résolu) d'un template global — miroir du REST."""
+    from docflow.templates.inheritance import resolve
+    from docflow.templates.models import Template
+
+    try:
+        tpl = cast(Template, _find_template(template_slug))
+        resolved = resolve(tpl)
+    except ValueError as e:
+        return _text({"error": str(e)})
+    except Exception as e:  # héritage incohérent → message explicite
+        return _text({"error": f"template non résolvable : {e}"})
+
+    return _text(
+        {
+            "template": tpl.template,
+            "label": tpl.label,
+            "version": tpl.version,
+            "functional_types": [r.model_dump(mode="json") for r in resolved],
+        }
+    )
+
+
+async def _get_template_yaml(template_slug: str) -> list[TextContent]:
+    """Définition YAML source (héritage non résolu) d'un template global."""
+    import yaml
+
+    from docflow.templates.models import Template
+
+    if _TEMPLATES_DIR.exists():
+        for yaml_file in sorted(_TEMPLATES_DIR.glob("*.yaml")):
+            try:
+                raw = yaml.safe_load(yaml_file.read_text())
+                tpl = Template.model_validate(raw)
+            except Exception:
+                continue
+            if tpl.template == template_slug:
+                return _text({"template": tpl.template, "yaml_content": yaml_file.read_text()})
+    return _text({"error": f"template '{template_slug}' introuvable"})
 
 
 async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
