@@ -74,7 +74,10 @@ async def test_list_present_type_slugs(db_pool: asyncpg.Pool, test_workspace: di
         _WS,
         "agile-board",
         DocumentCreateInBlock(
-            title="F", slug="doc-f", parent_id=epic.doc_technical_key, functional_type_slug="feature"
+            title="F",
+            slug="doc-f",
+            parent_id=epic.doc_technical_key,
+            functional_type_slug="feature",
         ),
     )
     slugs = await block_svc.list_present_type_slugs(db_pool, _WS, "agile-board")
