@@ -126,9 +126,38 @@ describe('DiagramView — dispatch par type', () => {
     expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(1)
   })
 
+  it('quadrant — valeur négative → point clampé au bord du domaine, visible dans le viewBox', () => {
+    const { container } = renderView(' type="quadrant" xmax="10" ymax="10"', 'Dette | -5 | 3')
+    const svg = container.querySelector('svg[role="img"]')!
+    const [vbX, vbY, vbW, vbH] = (svg.getAttribute('viewBox') ?? '').split(' ').map(Number)
+    const circle = container.querySelector('svg[role="img"] circle')!
+    const cx = Number(circle.getAttribute('cx'))
+    const cy = Number(circle.getAttribute('cy'))
+    expect(cx).toBeGreaterThanOrEqual(vbX)
+    expect(cx).toBeLessThanOrEqual(vbX + vbW)
+    expect(cy).toBeGreaterThanOrEqual(vbY)
+    expect(cy).toBeLessThanOrEqual(vbY + vbH)
+  })
+
   it('radar → 4 anneaux + une série (polygones)', () => {
     const { container } = renderView(' type="radar"', 'A | 5\nB | 8\nC | 3\nD | 6')
     expect(container.querySelectorAll('svg[role="img"] polygon')).toHaveLength(5)
+  })
+
+  it('radar — valeur négative → rayon clampé à 0, pas de point reflété de l’autre côté du centre', () => {
+    const { container } = renderView(' type="radar"', 'A | -5\nB | 8\nC | 3\nD | 6')
+    const polygons = Array.from(container.querySelectorAll('svg[role="img"] polygon'))
+    // Le dernier polygone est la série de données (les 4 premiers sont les anneaux).
+    const series = polygons[polygons.length - 1]
+    const points = (series.getAttribute('points') ?? '')
+      .split(' ')
+      .filter((p) => p.length > 0)
+      .map((p) => p.split(',').map(Number))
+    const cx = 320 / 2
+    const cy = 300 / 2
+    // Le point de l'axe A (valeur -5, rayon clampé à 0) doit coïncider avec le centre.
+    const [ax, ay] = points[0]
+    expect(Math.hypot(ax - cx, ay - cy)).toBeCloseTo(0, 5)
   })
 
   it('venn → un cercle par ensemble', () => {
@@ -183,10 +212,35 @@ describe('DiagramView — dispatch par type', () => {
     expect(getByText('ping')).toBeInTheDocument()
   })
 
+  it('sequence — 22+ acteurs → boîtes de largeur positive (SVG valide)', () => {
+    const actorCount = 24
+    const body = Array.from({ length: actorCount - 1 }, (_, i) => `A${i} -> A${i + 1} | m${i}`).join('\n')
+    const { container } = renderView(' type="sequence"', body)
+    const rects = Array.from(container.querySelectorAll('svg[role="img"] rect'))
+    expect(rects.length).toBeGreaterThan(0)
+    for (const r of rects) {
+      expect(Number(r.getAttribute('width'))).toBeGreaterThan(0)
+    }
+  })
+
   it('statemachine → moteur graph avec self-loop', () => {
     const { container } = renderView(' type="statemachine"', 'a -> b | go\nb -> b | tick')
     expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(2)
     expect(container.querySelector('[data-diagram="self-loop"]')).not.toBeNull()
+  })
+
+  it('statemachine → self-loop sur un nœud unique (rangée du haut) reste dans le viewBox', () => {
+    const { container } = renderView(' type="statemachine"', 'idle -> idle | tick')
+    const svg = container.querySelector('svg[role="img"]')!
+    const [, viewBoxY] = (svg.getAttribute('viewBox') ?? '').split(' ').map(Number)
+
+    const path = container.querySelector('[data-diagram="self-loop"] path')!
+    const coords = Array.from((path.getAttribute('d') ?? '').matchAll(/-?\d+(\.\d+)?/g)).map((m) => Number(m[0]))
+    const ys = coords.filter((_, i) => i % 2 === 1)
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(viewBoxY)
+
+    const label = container.querySelector('[data-diagram="self-loop"] text[data-diagram="label"]')!
+    expect(Number(label.getAttribute('y'))).toBeGreaterThanOrEqual(viewBoxY)
   })
 
   it('er → entités multi-champs + relation', () => {
@@ -195,11 +249,26 @@ describe('DiagramView — dispatch par type', () => {
     expect(getByText('email')).toBeInTheDocument()
   })
 
+  it('er — relation vers une entité non déclarée (typo) → diagnostic avec le bon compte', () => {
+    const { getByTestId } = renderView(' type="er"', 'User\n  id\nOrder\n  id\nUser -> Ordre')
+    expect(getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
+  })
+
+  it('matrix — ligne sans libellé (malformée) → diagnostic avec le bon compte', () => {
+    const { getByTestId } = renderView(' type="matrix"', ' | Lire | Écrire\nAdmin | ✓ | ✓\n | ✓ | ✗')
+    expect(getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
+  })
+
   it('loop → stations en anneau + hub focal', () => {
     const { container } = renderView(' type="loop" hub="H"', 'A\nB\nC')
     // 3 stations + 1 hub = 4 nœuds.
     expect(container.querySelectorAll('g[data-diagram="node"]')).toHaveLength(4)
     expect(container.querySelector('g[data-variant="focal"]')).not.toBeNull()
+  })
+
+  it('loop — ligne malformée (pipe en trop) → diagnostic avec le bon compte', () => {
+    const { getByTestId } = renderView(' type="loop"', 'A\nB | extra\nC\nD')
+    expect(getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
   })
 
   it('type inconnu → repli + diagnostic, pas de svg', () => {

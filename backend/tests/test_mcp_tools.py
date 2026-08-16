@@ -300,6 +300,14 @@ async def test_get_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
     assert "error" in data  # type: ignore[operator]
 
 
+async def test_get_document_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un doc_id qui n'est pas un UUID doit renvoyer {"error": ...}, pas lever ValueError."""
+    data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], "pas-un-uuid"))  # type: ignore[arg-type]
+    assert "error" in data  # type: ignore[operator]
+
+
 async def test_get_document_warns_required_unset(
     db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
 ) -> None:
@@ -512,6 +520,22 @@ async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, 
     assert "error" in data  # type: ignore[operator]
 
 
+async def test_update_document_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": "pas-un-uuid",
+                "title": "Ghost",
+            },
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
 # Bug MCO : omission d'un champ (title ou contenu) ne doit PAS écraser l'autre à NULL.
 # Les deux cas d'omission sont testés dans la même suite (symétrie).
 
@@ -596,6 +620,19 @@ async def test_list_property_values_retourne_prop(
     assert priority["required"] is False
 
 
+async def test_list_property_values_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _list_property_values(
+            db_pool,
+            mcp_ws["ws_slug"],  # type: ignore[arg-type]
+            "pas-un-uuid",
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
 # ---------------------------------------------------------------------------
 # 9. get_property_value
 # ---------------------------------------------------------------------------
@@ -623,6 +660,20 @@ async def test_get_property_value_introuvable(
             mcp_ws["ws_slug"],
             mcp_ws["doc_id"],
             "inexistant",  # type: ignore[arg-type]
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_get_property_value_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _get_property_value(
+            db_pool,
+            mcp_ws["ws_slug"],  # type: ignore[arg-type]
+            "pas-un-uuid",
+            "priority",
         )
     )
     assert "error" in data  # type: ignore[operator]

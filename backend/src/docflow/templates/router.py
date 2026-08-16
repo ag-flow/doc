@@ -19,8 +19,13 @@ from docflow.templates.gallery import (
     fetch_template,
     pull_template,
 )
-from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
-from docflow.templates.inheritance import resolve
+from docflow.templates.importer import (
+    ImportConflictError,
+    UnresolvedTargetTypeError,
+    VersionConflictError,
+    run_import,
+)
+from docflow.templates.inheritance import InheritanceCycleError, resolve
 from docflow.templates.models import Template
 from docflow.workspaces.access import require_ws_access
 
@@ -559,6 +564,10 @@ async def import_template(
             status_code=422,
             detail={"message": "conflits bloquants", "conflicts": conflicts},
         ) from e
+    except InheritanceCycleError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except UnresolvedTargetTypeError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return ImportResultOut(

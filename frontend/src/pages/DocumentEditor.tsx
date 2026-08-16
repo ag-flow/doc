@@ -45,6 +45,8 @@ export function DocumentEditor() {
 
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const expectedVersion = useRef<number>(0)
+  // Garde de réentrance de `doSave` (bug double Cmd+S) — cf. commentaire sur `doSave`.
+  const savingRef = useRef(false)
   const ancestorRef = useRef<{ title: string; content: string }>({ title: '', content: '' })
   // Identifiant du document actuellement chargé dans l'état local (titre / version).
   // Sert à distinguer un changement de document (resync obligatoire) d'un simple
@@ -173,6 +175,11 @@ export function DocumentEditor() {
   const doSave = useCallback(async (): Promise<boolean> => {
     if (!ws || !docId || !editorRef.current) return false
     if (status !== 'dirty' && status !== 'error') return true
+    // Garde de réentrance sur ref (et non sur `status`, qui n'est pas encore
+    // re-rendu entre deux appels rapprochés — double Cmd+S) : sérialise les
+    // appels concurrents à `doSave` sans dépendre d'un re-rendu React.
+    if (savingRef.current) return false
+    savingRef.current = true
     const content = await editorRef.current.getMarkdown()
     setStatus('saving')
     setErrorMsg(null)
@@ -251,6 +258,8 @@ export function DocumentEditor() {
         setErrorMsg(err instanceof ApiError ? err.message : t('error.generic'))
       }
       return false
+    } finally {
+      savingRef.current = false
     }
   }, [ws, docId, title, status, queryClient, t])
 
@@ -330,6 +339,11 @@ export function DocumentEditor() {
     setDeleting(true)
     try {
       await docsApi.deleteDocument(ws, docId)
+      // Mêmes clés que `handleCreated` de BlockDocumentList — la liste (mode
+      // browse ET mode requête) doit perdre le document supprimé aussitôt.
+      void queryClient.invalidateQueries({ queryKey: ['block-type-slugs', ws, blocSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, blocSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['block-query', ws, blocSlug] })
       void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, blocSlug] })
       void navigate(`/ws/${ws}/blocs/${blocSlug}/documents`)
     } catch (err) {

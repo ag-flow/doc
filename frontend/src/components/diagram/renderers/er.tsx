@@ -2,7 +2,9 @@
  *  Corps : une ligne non indentée = entité ; lignes indentées = ses champs ;
  *  une ligne avec `->` = relation entre entités. */
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Rect } from '../../../lib/diagramLayout'
+import { DiagnosticBadge } from '../../TimelineBlock'
 import { Label } from '../Label'
 import { Node } from '../Node'
 import { DIAGRAM } from '../svgTokens'
@@ -20,15 +22,17 @@ interface Entity {
   fields: string[]
 }
 
-function parseEr(body: string): { entities: Entity[]; relations: Array<[string, string]> } {
+function parseEr(body: string): { entities: Entity[]; relations: Array<[string, string]>; malformed: number } {
   const entities: Entity[] = []
   const relations: Array<[string, string]> = []
+  let malformed = 0
   let current: Entity | null = null
   for (const raw of body.split('\n')) {
     if (raw.trim().length === 0) continue
     if (raw.includes('->')) {
       const [a, b] = raw.split('->').map((s) => s.trim())
       if (a && b) relations.push([a, b])
+      else malformed++
       continue
     }
     const indented = /^[ \t]/.test(raw)
@@ -39,11 +43,12 @@ function parseEr(body: string): { entities: Entity[]; relations: Array<[string, 
       entities.push(current)
     }
   }
-  return { entities, relations }
+  return { entities, relations, malformed }
 }
 
 export function ErDiagram({ body, svgRef }: RendererProps) {
-  const { entities, relations } = parseEr(body)
+  const { t } = useTranslation()
+  const { entities, relations, malformed } = parseEr(body)
   if (entities.length === 0) {
     return <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body}</pre>
   }
@@ -61,6 +66,8 @@ export function ErDiagram({ body, svgRef }: RendererProps) {
   const byId = new Map(entities.map((e, i) => [e.id, i]))
   const W = PAD + cols * (EW + HGAP) - HGAP + PAD
   const H = PAD + rows * (maxH + VGAP) - VGAP + PAD
+  const orphanRelations = relations.filter(([a, b]) => !byId.has(a) || !byId.has(b)).length
+  const ignored = malformed + orphanRelations
 
   const relEls: ReactNode[] = relations.map(([a, b], i) => {
     const ia = byId.get(a)
@@ -101,9 +108,12 @@ export function ErDiagram({ body, svgRef }: RendererProps) {
   })
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 460 }} role="img">
-      {relEls}
-      {entEls}
-    </svg>
+    <>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 460 }} role="img">
+        {relEls}
+        {entEls}
+      </svg>
+      {ignored > 0 && <DiagnosticBadge>{t('records.ignoredLines', { count: ignored })}</DiagnosticBadge>}
+    </>
   )
 }

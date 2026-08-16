@@ -75,7 +75,7 @@ function insertSkeleton(ctx: SlashContext, kind: keyof typeof SKELETONS): void {
 
 export const diagramCodec = {
   type: 'dfDiagram',
-  pattern: /```df-diagram([^\n]*)\n([\s\S]*?)```/g,
+  pattern: /```df-diagram(?=\s|$)([^\n]*)\n([\s\S]*?)```/g,
   toBlock: (match: RegExpExecArray): DiagramProps => ({
     attrs: match[1] ?? '',
     body: match[2].replace(/\n$/, ''),

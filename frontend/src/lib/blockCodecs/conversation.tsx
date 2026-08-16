@@ -15,7 +15,7 @@ const SKELETON_BODY =
 
 export const conversationCodec = {
   type: 'dfConversation',
-  pattern: /```df-conversation([^\n]*)\n([\s\S]*?)```/g,
+  pattern: /```df-conversation(?=\s|$)([^\n]*)\n([\s\S]*?)```/g,
   toBlock: (match: RegExpExecArray): ConversationProps => ({
     attrs: match[1] ?? '',
     body: match[2].replace(/\n$/, ''),

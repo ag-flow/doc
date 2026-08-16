@@ -3,7 +3,9 @@
  *  en-tête des colonnes avec un coin vide (`| Col1 | Col2`), puis
  *  `Ligne | v1 | v2` par ligne. Cellule : ✓/✗ (permission) ou texte libre. */
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { parseRecords } from '../../../lib/blockCodecs/records'
+import { DiagnosticBadge } from '../../TimelineBlock'
 import { Label } from '../Label'
 import { DIAGRAM } from '../svgTokens'
 import type { RendererProps } from './types'
@@ -27,9 +29,11 @@ function classify(raw: string): Cell {
 }
 
 export function MatrixDiagram({ body, svgRef }: RendererProps) {
+  const { t } = useTranslation()
   const parsed = parseRecords(body, { header: true })
   const cols = (parsed.header ?? []).slice(1)
   const rows = parsed.rows.filter((r) => r[0].length > 0)
+  const ignored = parsed.rows.length - rows.length
   if (cols.length === 0 || rows.length === 0) {
     return <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body}</pre>
   }
@@ -92,6 +96,7 @@ export function MatrixDiagram({ body, svgRef }: RendererProps) {
         {headEls}
         {rowEls}
       </svg>
+      {ignored > 0 && <DiagnosticBadge>{t('records.ignoredLines', { count: ignored })}</DiagnosticBadge>}
     </>
   )
 }

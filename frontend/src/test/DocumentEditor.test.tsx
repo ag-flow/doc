@@ -68,6 +68,7 @@ vi.mock('../lib/api', async () => {
       ...actual.docsApi,
       getDocument: vi.fn(),
       patchDocument: vi.fn(),
+      deleteDocument: vi.fn(),
     },
   }
 })
@@ -88,11 +89,14 @@ function renderEditor() {
     [{ path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> }],
     { initialEntries: ['/ws/ws/blocs/b1/documents/d1'] },
   )
-  return render(
-    <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  )
+  return {
+    ...render(
+      <QueryClientProvider client={qc}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    qc,
+  }
 }
 
 // Le mode lecture « wiki » est celui par défaut : on bascule en édition pour
@@ -431,5 +435,72 @@ describe('DocumentEditor — fusion automatique (phase B)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('conflict-resolver')).toBeInTheDocument(),
     )
+  })
+})
+
+// ── Double Cmd+S / double clic « Enregistrer » : un seul PATCH en vol ──
+
+describe('DocumentEditor — garde de réentrance de la sauvegarde', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('deux Cmd+S rapprochés (avant le re-rendu) n’émettent qu’un seul PATCH', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
+    renderEditor()
+    await enterEditMode()
+
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    expect(screen.getByTestId('document-dirty')).toBeInTheDocument()
+
+    // Les deux raccourcis sont dispatchés dans le même tick, avant que React
+    // n'ait eu l'occasion de re-rendre avec status='saving' — c'est exactement
+    // le scénario du double Cmd+S qui déclenchait deux PATCH concurrents.
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    })
+
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(1))
+  })
+})
+
+// ── Suppression depuis l'éditeur : la liste (browse + requête) doit se
+//    rafraîchir aussitôt, pas seulement l'ancienne clé `block-documents` ──
+
+describe('DocumentEditor — invalidation du cache à la suppression', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('supprimer un document invalide les mêmes clés que la création (handleCreated)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.deleteDocument).mockResolvedValue(undefined)
+
+    const { qc } = renderEditor()
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
+    await enterEditMode()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-delete-btn'))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-delete-confirm-btn'))
+    })
+
+    await waitFor(() => expect(docsApi.deleteDocument).toHaveBeenCalledWith('ws', 'd1'))
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey,
+    )
+    // Même liste que `handleCreated` de BlockDocumentList (block-type-slugs,
+    // block-tree, block-query), plus l'ancienne clé `block-documents`.
+    for (const key of [
+      ['block-type-slugs', 'ws', 'b1'],
+      ['block-tree', 'ws', 'b1'],
+      ['block-query', 'ws', 'b1'],
+      ['block-documents', 'ws', 'b1'],
+    ]) {
+      expect(invalidatedKeys).toContainEqual(key)
+    }
   })
 })

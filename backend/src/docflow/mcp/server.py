@@ -1480,8 +1480,15 @@ async def _list_documents(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]
 
 
 async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text({"error": str(e)})
         row = await conn.fetchrow(
             """
             SELECT d.doc_technical_key::text AS id, d.title,
@@ -1496,11 +1503,11 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
               AND d.doc_technical_key = $2
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
         if row is None:
             return _text({"error": f"document '{doc_id}' introuvable"})
-        unset = await _required_unset_slugs(conn, wk, uuid.UUID(doc_id))
+        unset = await _required_unset_slugs(conn, wk, doc_uuid)
     result = dict(row)
     if unset:
         result["warnings"] = [
@@ -1576,11 +1583,17 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     if not title and contenu is None:
         return _text({"error": "au moins title ou contenu requis"})
 
-    doc_id = uuid.UUID(doc_id_str)
+    try:
+        doc_id = uuid.UUID(doc_id_str)
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
 
     # Lecture de la version courante pour la concurrence optimiste transparente
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text({"error": str(e)})
         current_version: int | None = await conn.fetchval(
             "SELECT version FROM document "
             "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
@@ -1777,8 +1790,15 @@ async def _get_block_type(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> 
 
 
 async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text({"error": str(e)})
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -1798,7 +1818,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             ORDER BY pd.slug
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
         # Ensemble COMPLET des valeurs autorisées par propriété restricted_list du
         # type du document (pas seulement la valeur courante) : un agent peut ainsi
@@ -1816,7 +1836,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             ORDER BY pd.slug, pav.position, pav.created_at
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
     allowed_by_prop: dict[str, list[dict[str, str]]] = {}
     for r in av_rows:
@@ -1835,8 +1855,15 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
 async def _get_property_value(
     pool: asyncpg.Pool, ws_slug: str, doc_id: str, prop_slug: str
 ) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text({"error": str(e)})
         row = await conn.fetchrow(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -1856,7 +1883,7 @@ async def _get_property_value(
             WHERE pd.slug = $3
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
             prop_slug,
         )
     if row is None:
@@ -2185,7 +2212,10 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
     from docflow.documents.block_query import list_block_objects
 
-    page, page_size = _pagination_args(args)
+    try:
+        page, page_size = _pagination_args(args)
+    except ValueError:
+        return _text({"error": "page / page_size : entier invalide"})
     try:
         out = await list_block_objects(
             pool,
@@ -2228,7 +2258,10 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
 
     ws = str(args.get("workspace_slug", ""))
     block = str(args.get("block_slug", ""))
-    page, page_size = _pagination_args(args)
+    try:
+        page, page_size = _pagination_args(args)
+    except ValueError:
+        return _text({"error": "page / page_size : entier invalide"})
 
     clauses: list[FilterClause] = []
     try:

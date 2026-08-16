@@ -389,3 +389,50 @@ async def test_delete_def_with_values_needs_confirm(
 
     await prop_svc.delete_def(db_pool, _WS, "task", "title", confirm=True)
     assert not any(d.slug == "title" for d in await prop_svc.list_defs(db_pool, _WS, "task"))
+
+
+# ── Bug : écritures sans entrée de change feed ───────────────────────────────
+
+
+async def test_delete_property_value_logs_change(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Supprimer une valeur de propriété doit journaliser une entrée dans
+    document_change_log (nature 'P'), comme toute autre mutation de document."""
+    _, doc_id = await _setup(db_pool)
+    await doc_svc.set_property_value(
+        db_pool, _WS, doc_id, "title", PropertyValueSet(value="Hello", expected_version=0)
+    )
+    before = await db_pool.fetchval(
+        "SELECT count(*) FROM document_change_log WHERE document_ref = $1", doc_id
+    )
+
+    await doc_svc.delete_property_value(db_pool, _WS, doc_id, "title")
+
+    after = await db_pool.fetchval(
+        "SELECT count(*) FROM document_change_log WHERE document_ref = $1", doc_id
+    )
+    assert after > before
+    row = await db_pool.fetchrow(
+        "SELECT nature FROM document_change_log WHERE document_ref = $1 ORDER BY seq DESC LIMIT 1",
+        doc_id,
+    )
+    assert row["nature"] == "P"
+
+
+async def test_set_document_exposed_logs_change(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Basculer exposed sur un document doit journaliser une entrée dans
+    document_change_log pour le document racine du changement."""
+    _, doc_id = await _setup(db_pool)
+    before = await db_pool.fetchval(
+        "SELECT count(*) FROM document_change_log WHERE document_ref = $1", doc_id
+    )
+
+    await doc_svc.set_document_exposed(db_pool, _WS, doc_id, True)
+
+    after = await db_pool.fetchval(
+        "SELECT count(*) FROM document_change_log WHERE document_ref = $1", doc_id
+    )
+    assert after > before

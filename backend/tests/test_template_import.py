@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import pathlib
+from types import SimpleNamespace
+from typing import Any
 
 import asyncpg
 import pytest
 import yaml
+from fastapi import HTTPException
 
+import docflow.templates.router as tr
 from docflow.schemas.workspace import WorkspaceCreate
 from docflow.templates.importer import (
     ImportConflictError,
@@ -22,6 +26,15 @@ from docflow.templates.models import (
 from docflow.workspaces import service as ws_svc
 
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"
+
+
+class _FakeRequest:
+    """Substitut minimal de `Request` : ce que lisent `import_template` et
+    `require_api_key_admin_write` (app.state.pool, state.api_key_*)."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(pool=pool))
+        self.state = SimpleNamespace()
 
 
 def _load(path: pathlib.Path) -> Template:
@@ -499,3 +512,80 @@ async def test_import_target_type_change_conflicts(db_pool: asyncpg.Pool) -> Non
         assert version == 1  # inchangé
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-ref-chg")
+
+
+# ── Route import_template : mapping des erreurs (bug 500/404 trompeur) ──────
+
+
+def _write_template(tmp_path: pathlib.Path, raw: dict[str, Any]) -> None:
+    (tmp_path / f"{raw['template']}.yaml").write_text(yaml.dump(raw, allow_unicode=True))
+
+
+async def test_import_template_route_cycle_returns_422(
+    db_pool: asyncpg.Pool, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un héritage cyclique doit être un 422 explicite, jamais un 500 brut."""
+    monkeypatch.setattr(tr, "_TEMPLATES_DIR", tmp_path)
+    _write_template(
+        tmp_path,
+        {
+            "version": 1,
+            "template": "route-cycle",
+            "label": "Cycle",
+            "functional_types": [
+                {"slug": "a", "label": "A", "inherit": "b"},
+                {"slug": "b", "label": "B", "inherit": "a"},
+            ],
+        },
+    )
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-route-cycle", label="Route Cycle"), None
+    )
+    try:
+        request = _FakeRequest(db_pool)
+        body = tr.ImportTemplateIn(template="route-cycle")
+        with pytest.raises(HTTPException) as exc:
+            await tr.import_template("tpl-route-cycle", body, request)  # type: ignore[arg-type]
+        assert exc.value.status_code == 422
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-route-cycle")
+
+
+async def test_import_template_route_unresolved_target_type_returns_422(
+    db_pool: asyncpg.Pool, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un target_type introuvable est une erreur de validation (422), pas un 404."""
+    monkeypatch.setattr(tr, "_TEMPLATES_DIR", tmp_path)
+    _write_template(
+        tmp_path,
+        {
+            "version": 1,
+            "template": "route-badref",
+            "label": "Bad ref",
+            "functional_types": [
+                {
+                    "slug": "feature",
+                    "label": "Feature",
+                    "properties": [
+                        {
+                            "slug": "assignee",
+                            "label": "Assigné à",
+                            "type": "reference",
+                            "target_type": "ghost",
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-route-badref", label="Route Bad Ref"), None
+    )
+    try:
+        request = _FakeRequest(db_pool)
+        body = tr.ImportTemplateIn(template="route-badref")
+        with pytest.raises(HTTPException) as exc:
+            await tr.import_template("tpl-route-badref", body, request)  # type: ignore[arg-type]
+        assert exc.value.status_code == 422
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-route-badref")

@@ -16,6 +16,7 @@ const PAD = 8
 const HEADER_H = 26
 const MSG_TOP = 16
 const MSG_GAP = 30
+const MIN_BOX_W = 20
 
 export function SequenceDiagram({ body, svgRef }: RendererProps) {
   const { t } = useTranslation()
@@ -27,7 +28,7 @@ export function SequenceDiagram({ body, svgRef }: RendererProps) {
   const area: Rect = { x: PAD, y: PAD, width: W - 2 * PAD, height: 0 }
   const { bands, centers } = lanes({ area, count: actors.length, orientation: 'vertical', gap: 12 })
   const actorX = (id: string) => centers[actors.findIndex((a) => a.id === id)]
-  const boxW = Math.min(96, bands[0].width - 4)
+  const boxW = Math.max(MIN_BOX_W, Math.min(96, bands[0].width - 4))
 
   const msgTop = PAD + HEADER_H + MSG_TOP
   const H = msgTop + messages.length * MSG_GAP + PAD

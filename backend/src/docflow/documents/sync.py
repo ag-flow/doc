@@ -78,11 +78,15 @@ async def _resolve_context(
 
 
 def _item_properties(item: dict[str, object]) -> dict[str, str]:
-    """Extrait les propriétés d'un item en {slug: str} ; {} si absent ou mal typé."""
+    """Extrait les propriétés d'un item en {slug: str} ; {} si absent ou mal typé.
+
+    Une valeur JSON `null` est filtrée (elle ne doit pas devenir la chaîne
+    littérale "None") plutôt que d'être stringifiée.
+    """
     raw = item.get("properties")
     if not isinstance(raw, dict):
         return {}
-    return {str(k): str(v) for k, v in raw.items()}
+    return {str(k): str(v) for k, v in raw.items() if v is not None}
 
 
 def _pv_set(prop_type: str, value: str, expected_version: int) -> PropertyValueSet:

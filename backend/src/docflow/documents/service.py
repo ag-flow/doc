@@ -352,8 +352,15 @@ async def _insert_document(
     if data.slug is not None:
         try:
             row = await conn.fetchrow(
-                _DOC_INSERT_SQL, data.title, data.slug, data.parent_id,
-                ft_id, wk, data.block_id, parent_exposed, author,
+                _DOC_INSERT_SQL,
+                data.title,
+                data.slug,
+                data.parent_id,
+                ft_id,
+                wk,
+                data.block_id,
+                parent_exposed,
+                author,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -370,8 +377,15 @@ async def _insert_document(
         try:
             async with conn.transaction():  # savepoint : rejeu sûr sur collision
                 row = await conn.fetchrow(
-                    _DOC_INSERT_SQL, data.title, candidate, data.parent_id,
-                    ft_id, wk, data.block_id, parent_exposed, author,
+                    _DOC_INSERT_SQL,
+                    data.title,
+                    candidate,
+                    data.parent_id,
+                    ft_id,
+                    wk,
+                    data.block_id,
+                    parent_exposed,
+                    author,
                 )
         except asyncpg.UniqueViolationError:
             i = 2 if i == 0 else i + 1
@@ -761,9 +775,7 @@ async def append_to_document(
                 doc_id,
                 current_v,
             )
-            new_content = _concat_append(
-                prev["content"] if prev else None, content, position
-            )
+            new_content = _concat_append(prev["content"] if prev else None, content, position)
             new_v = current_v + 1
             await conn.execute(
                 "INSERT INTO document_version (document_ref, version_number, title, content) "
@@ -905,6 +917,7 @@ async def set_document_exposed(
                 doc_id,
                 value,
             )
+            await log_change(conn, wk, doc_id, "U")
     return await get_document(pool, ws_slug, doc_id)
 
 
@@ -1433,6 +1446,7 @@ async def delete_property_value(
                     status_code=404,
                     detail=f"aucune valeur pour la propriété '{prop_slug}' sur ce document",
                 )
+            await log_change(conn, wk, doc_id, "P")
 
 
 async def list_document_versions(
@@ -1442,8 +1456,7 @@ async def list_document_versions(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         exists = await conn.fetchval(
-            "SELECT 1 FROM document WHERE doc_technical_key = $1 "
-            "AND workspace_technical_key = $2",
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
             doc_id,
             wk,
         )

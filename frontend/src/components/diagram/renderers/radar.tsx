@@ -70,7 +70,9 @@ export function RadarDiagram({ body, conf, svgRef }: RendererProps) {
 
   const polys: ReactNode[] = Array.from({ length: seriesCount }, (_, s) => {
     const color = SERIES_COLOR[s % SERIES_COLOR.length]
-    const pts = axes.map((_, i) => radialPoint(cx, cy, scale(values[i][s]), angle(i)))
+    // Une valeur négative donnerait un rayon négatif — reflété de l'autre côté
+    // du centre en SVG, ce qui mentirait visuellement sur la série.
+    const pts = axes.map((_, i) => radialPoint(cx, cy, Math.max(0, scale(values[i][s])), angle(i)))
     return (
       <polygon
         key={`s${s}`}

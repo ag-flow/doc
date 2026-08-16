@@ -14,7 +14,7 @@ import asyncpg
 import pytest
 
 from docflow.documents import service as doc_svc
-from docflow.documents.sync import sync_child_documents
+from docflow.documents.sync import _item_properties, sync_child_documents
 from docflow.properties import service as prop_svc
 from docflow.schemas.document import DocumentCreate
 from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
@@ -22,6 +22,18 @@ from docflow.schemas.types import FunctionalTypeCreate
 from docflow.types import service as type_svc
 
 _WS = "test-ws"
+
+
+# ── Bug : une valeur JSON null devenait la chaîne littérale "None" ──────────
+
+
+def test_item_properties_filters_out_none_values() -> None:
+    """Une propriété à null dans l'item ne doit pas apparaître (ni a fortiori
+    être stringifiée en 'None') — elle doit simplement être absente."""
+    item = {"properties": {"assignee": None, "priority": "high"}}
+    result = _item_properties(item)
+    assert result == {"priority": "high"}
+    assert "assignee" not in result
 
 
 async def _setup(pool: asyncpg.Pool) -> dict[str, object]:

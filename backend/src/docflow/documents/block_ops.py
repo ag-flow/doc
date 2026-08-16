@@ -14,6 +14,7 @@ from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
 from docflow.documents.template_apply import compute_initial_content
 from docflow.events import outbox
+from docflow.references.service import refresh_references
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
 _SELECT_BLOCK_HEAD = """
@@ -376,8 +377,10 @@ async def create_document_in_block(
                 body.title,
                 initial_content,
             )
-            # Un template de contenu peut porter des références d'artefacts :
-            # les tracer dès la création pour que le refcount soit juste.
+            # Un template de contenu peut porter des références d'artefacts ou de
+            # documents ([[doc]]) : les tracer dès la création pour que le
+            # refcount et document_reference soient justes immédiatement.
+            await refresh_references(conn, doc_id, wk, initial_content)
             await refresh_artifact_references(conn, doc_id, wk, initial_content)
             await refresh_dataset_references(conn, doc_id, wk, initial_content)
 

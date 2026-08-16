@@ -17,6 +17,10 @@ function keysForKind(kind: ChangeEntityKind, ws: string): unknown[][] {
         ['block-values', ws],
         ['backlinks', ws],
         ['broken-links', ws],
+        ['block-tree', ws],
+        ['block-query', ws],
+        ['block-reading-order', ws],
+        ['block-type-slugs', ws],
       ]
     case 'type':
       return [

@@ -12,6 +12,10 @@ import { Node } from '../Node'
 import { DIAGRAM } from '../svgTokens'
 import type { RendererProps } from './types'
 
+/** Marge réservée en haut du viewBox quand un self-loop est sur la rangée du
+ *  haut (son arc/label montent à `y - 26` : sans marge, ils seraient clippés). */
+const SELF_LOOP_TOP_MARGIN = 30
+
 /** Extrémités d'une arête selon le sens (sortie source → entrée cible). */
 function endpoints(from: Rect, to: Rect, lr: boolean) {
   if (lr) {
@@ -36,6 +40,13 @@ export function GraphDiagram({ body, conf, svgRef }: RendererProps) {
   const dir = conf.dir === 'TB' ? 'TB' : 'LR'
   const lr = dir === 'LR'
   const { placed, width, height } = layeredGraph(nodes, edges, { dir })
+
+  // Un self-loop sur un nœud de la rangée du haut monte au-dessus de y=0 :
+  // on décale l'origine du viewBox pour ne pas le clipper, sans déplacer
+  // les éléments eux-mêmes.
+  const minY = Math.min(...Array.from(placed.values()).map((r) => r.y))
+  const hasTopSelfLoop = edges.some((e) => e.from === e.to && placed.get(e.from)?.y === minY)
+  const topMargin = hasTopSelfLoop ? SELF_LOOP_TOP_MARGIN : 0
 
   const edgeEls: ReactNode[] = edges.map((e, i) => {
     const from = placed.get(e.from)
@@ -79,7 +90,13 @@ export function GraphDiagram({ body, conf, svgRef }: RendererProps) {
 
   return (
     <>
-      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: 480 }} role="img">
+      <svg
+        ref={svgRef}
+        viewBox={`0 ${-topMargin} ${width} ${height + topMargin}`}
+        className="w-full"
+        style={{ maxHeight: 480 }}
+        role="img"
+      >
         {edgeEls}
         {nodeEls}
       </svg>

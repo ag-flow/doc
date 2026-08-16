@@ -72,9 +72,9 @@ export function QuadrantDiagram({ body, conf, svgRef }: RendererProps) {
             {conf.ylabel}
           </Label>
         )}
-        {/* Points. */}
+        {/* Points. Hors domaine : clampé au bord plutôt que projeté hors du viewBox. */}
         {valid.map((it, i) => {
-          const p = grid.place({ x: it.x, y: it.y })
+          const p = grid.place({ x: Math.max(0, Math.min(xmax, it.x)), y: Math.max(0, Math.min(ymax, it.y)) })
           return (
             <g key={i}>
               <circle cx={p.x} cy={p.y} r={3.5} fill={DIAGRAM.accent} />

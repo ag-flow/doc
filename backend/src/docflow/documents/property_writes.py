@@ -69,7 +69,16 @@ async def upsert_value(
         elif prop_type == "float":
             doc_svc._validate_float(value, prop_slug)
         elif prop_type == "reference":
-            ref_id = uuid.UUID(value)
+            try:
+                ref_id = uuid.UUID(value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"propriété '{prop_slug}' de type reference : "
+                        f"'{value}' n'est pas un UUID valide"
+                    ),
+                ) from exc
             exists = await conn.fetchval(
                 "SELECT 1 FROM document "
                 "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",

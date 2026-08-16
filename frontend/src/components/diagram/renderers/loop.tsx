@@ -2,7 +2,10 @@
  *  cycle, avec un hub central optionnel (write-backs en pointillés).
  *  Corps : une station par ligne. Attribut `hub="Nom"` pour le hub partagé. */
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { parseRecords } from '../../../lib/blockCodecs/records'
 import { radialPoints, type Point } from '../../../lib/diagramLayout'
+import { DiagnosticBadge } from '../../TimelineBlock'
 import { Edge } from '../Edge'
 import { Node } from '../Node'
 import type { RendererProps } from './types'
@@ -14,10 +17,13 @@ const NODE_W = 84
 const NODE_H = 28
 
 export function LoopDiagram({ body, conf, svgRef }: RendererProps) {
-  const stations = body
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
+  const { t } = useTranslation()
+  // Une station attendue par ligne (fields: 1) : une ligne avec un `|` en trop
+  // (syntaxe records mal appliquée ici) est tronquée et comptée en diagnostic.
+  const parsed = parseRecords(body, { fields: 1 })
+  const stationRows = parsed.rows.filter((r) => r[0].length > 0)
+  const stations = stationRows.map((r) => r[0])
+  const ignored = parsed.diagnostics.length + (parsed.rows.length - stationRows.length)
   if (stations.length < 2) {
     return <pre className="overflow-auto rounded bg-gray-50 p-2 text-xs text-gray-600">{body}</pre>
   }
@@ -49,6 +55,7 @@ export function LoopDiagram({ body, conf, svgRef }: RendererProps) {
         {hub && <Node rect={rectAt({ x: cx, y: cy })} label={hub} variant="focal" />}
         {stationEls}
       </svg>
+      {ignored > 0 && <DiagnosticBadge>{t('records.ignoredLines', { count: ignored })}</DiagnosticBadge>}
     </>
   )
 }

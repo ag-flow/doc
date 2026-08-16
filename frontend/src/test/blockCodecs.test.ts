@@ -121,6 +121,20 @@ describe('parsing', () => {
   })
 })
 
+describe('frontière après le nom de fence df-* (pas de préfixe partiel)', () => {
+  it.each([
+    ['```df-diagramme\nRacine\n```\n', 'dfDiagram'],
+    ['```df-chart2\nA | 1\n```\n', 'dfChart'],
+    ['```df-timelinex\nA | b\n```\n', 'dfTimeline'],
+    ['```df-conversationnel\nA | b\n```\n', 'dfConversation'],
+  ])('une fence dont le nom continue après le codec (%s) reste un bloc de code intact', async (md, type) => {
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === type)).toBe(false)
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+})
+
 describe('alias ```display (A2UI)', () => {
   const JSON_BODY = '[{"id": "root", "component": "Text", "text": "Hi"}]'
 
