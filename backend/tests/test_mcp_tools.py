@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 import yaml
+from mcp.types import CallToolResult
 
 import docflow.mcp.server as mcp_server_mod
 from docflow.mcp.server import (
@@ -26,6 +27,7 @@ from docflow.mcp.server import (
     _delete_block,
     _delete_document,
     _export_template,
+    _finalize_tool_result,
     _get_block_type,
     _get_document,
     _get_property_value,
@@ -186,6 +188,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "get_property_value",
         "set_property_value",
         "list_templates",
+        "export_template",
+        "get_template_yaml",
         "create_workspace",
         "import_template",
         "create_block",
@@ -659,10 +663,9 @@ async def test_set_then_get_property_value(
 async def test_set_property_value_double_field_interdit(
     db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
 ) -> None:
-    """Fournir value ET allowed_value_slug en même temps doit lever une erreur."""
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException):
+    """Fournir value ET allowed_value_slug en même temps doit renvoyer un refus
+    JSON structuré {"error": ...} — jamais une HTTPException qui remonte au SDK."""
+    data = _json(
         await _set_property_value(
             db_pool,
             {
@@ -673,6 +676,64 @@ async def test_set_property_value_double_field_interdit(
                 "allowed_value_slug": "haute",
             },
         )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_set_property_value_uuid_invalide(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """doc_id malformé → refus JSON propre, pas une exception qui remonte au SDK."""
+    data = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": "pas-un-uuid",
+                "prop_slug": "priority",
+                "value": "haute",
+            },
+        )
+    )
+    assert data == {"error": "doc_id : UUID invalide"}
+
+
+async def test_set_property_value_conflit_de_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Deux écritures concurrentes avec un expected_version périmée : le conflit
+    409 (detail structuré côté service) doit ressortir en JSON exploitable,
+    jamais en str(dict) façon repr Python."""
+    first = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "prop_slug": "priority",
+                "value": "haute",
+                "expected_version": 0,
+            },
+        )
+    )
+    assert first["updated"] is True  # type: ignore[index]
+
+    stale = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "prop_slug": "priority",
+                "value": "basse",
+                "expected_version": 0,
+            },
+        )
+    )
+    assert isinstance(stale, dict)
+    assert isinstance(stale["error"], dict)  # type: ignore[index]
+    assert stale["error"]["version"] == 1  # type: ignore[index]
+    assert stale["error"]["value"] == "haute"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +996,41 @@ async def test_delete_document_avec_descendants_refuse_sans_confirm(
     # Cascade DB : l'enfant a disparu avec le parent
     child_gone = _json(await _get_document(db_pool, ws, str(child["id"])))
     assert "error" in child_gone  # type: ignore[operator]
+
+
+async def test_delete_document_avec_descendants_finalize_is_error(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le refus à clés multiples ({"error": ..., "dependents": N}) doit porter
+    isError=True une fois passé par _finalize_tool_result (bug isError manquant
+    dès que le payload d'erreur a plus d'une clé)."""
+    ws = str(mcp_ws["ws_slug"])
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('story', 'Story', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    child = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Story 1",
+                "functional_type_slug": "story",
+                "parent_id": str(mcp_ws["doc_id"]),
+            },
+        )
+    )
+    assert child.get("created") is True, child
+
+    result = await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
+    finalized = _finalize_tool_result(result)
+    assert isinstance(finalized, CallToolResult)
+    assert finalized.isError is True
+    payload = json.loads(finalized.content[0].text)
+    assert payload["dependents"] == 1
 
 
 async def test_delete_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:

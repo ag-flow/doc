@@ -17,6 +17,11 @@ from docflow.backup.schemas import BackupJobRunOut
 
 RUN_RETENTION = 15  # nombre de runs conservés par job — les plus anciens sont purgés
 
+# Référence forte sur les tasks de run déclenchées manuellement : asyncio ne
+# garde qu'une référence faible sur les tasks créées par create_task, un objet
+# non référencé ailleurs peut être ramassé par le GC avant son exécution.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def _run_row(row: asyncpg.Record) -> BackupJobRunOut:
     return BackupJobRunOut(**dict(row))
@@ -163,7 +168,9 @@ async def trigger_run_now(pool: asyncpg.Pool, settings: object, job_slug: str) -
     async with pool.acquire() as conn:
         run_id = await start_run(conn, job["id"])
 
-    asyncio.create_task(run_job(pool, job, settings, run_id=run_id))
+    task = asyncio.create_task(run_job(pool, job, settings, run_id=run_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     run_row = await pool.fetchrow(
         """

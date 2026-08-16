@@ -15,7 +15,9 @@ const GAP = 2
 const MIN_W = 40
 
 function toNumber(raw: string): number {
-  const n = Number(raw.replace(',', '.'))
+  const trimmed = raw.trim()
+  if (trimmed === '') return NaN
+  const n = Number(trimmed.replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
 }
 

@@ -192,7 +192,9 @@ async def _fetch_spec(url: str) -> dict[str, Any]:
     except SSRFError as exc:
         raise HTTPException(422, f"URL de source refusée : {exc}") from exc
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        # follow_redirects=False : une redirection pourrait viser un hôte interne
+        # non revalidé par validate_public_url (cf. net/ssrf.py).
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             resp = await client.get(url)
         resp.raise_for_status()
         spec = resp.json()

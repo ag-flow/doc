@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
+from docflow.backup import worker
 from docflow.backup.worker import _is_due
 
 
@@ -117,3 +122,29 @@ def test_is_due_no_schedule() -> None:
     """Sans schedule, jamais dû."""
     now = datetime.now(tz=UTC)
     assert _is_due(_job(), now) is False
+
+
+# ── Référence forte sur les tasks de fond ──────────────────────────────────────
+
+
+async def test_spawn_job_keeps_strong_reference_until_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_spawn_job` doit garder la task dans `_background_tasks` (référence
+    forte, sinon GC possible en plein vol) et la retirer une fois terminée."""
+    release = asyncio.Event()
+
+    async def _fake_run_job(
+        pool: object, job: dict[str, Any], settings: object, *, run_id: object = None
+    ) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(worker, "run_job", _fake_run_job)
+
+    task = worker._spawn_job(pool=object(), job={"slug": "job-x"}, settings=object())
+    assert task in worker._background_tasks
+
+    release.set()
+    await task
+    await asyncio.sleep(0)  # laisse le done_callback s'exécuter
+    assert task not in worker._background_tasks

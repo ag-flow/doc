@@ -335,6 +335,36 @@ async def test_trigger_run_now_starts_background_run(
     assert calls["run_id"] == run.id
 
 
+async def test_trigger_run_now_task_tracked_and_released(
+    db_pool: asyncpg.Pool, remote_point: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`trigger_run_now` doit garder une référence forte sur la task de run
+    (sinon GC possible en plein vol) et la relâcher une fois terminée."""
+    await svc.create_job(db_pool, _job_body("job-tracked", remote_point))
+    release = asyncio.Event()
+
+    async def _fake_run_job(
+        pool: asyncpg.Pool,
+        job: dict[str, object],
+        settings: object,
+        *,
+        run_id: uuid.UUID | None = None,
+    ) -> None:
+        await release.wait()
+
+    monkeypatch.setattr("docflow.backup.worker.run_job", _fake_run_job)
+    await runs_svc.trigger_run_now(db_pool, object(), "job-tracked")
+    await asyncio.sleep(0)  # laisse trigger_run_now créer la task de fond
+
+    assert len(runs_svc._background_tasks) == 1
+    task = next(iter(runs_svc._background_tasks))
+
+    release.set()
+    await task
+    await asyncio.sleep(0)  # laisse le done_callback s'exécuter
+    assert runs_svc._background_tasks == set()
+
+
 async def test_trigger_run_now_job_not_found(db_pool: asyncpg.Pool) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await runs_svc.trigger_run_now(db_pool, object(), "missing")

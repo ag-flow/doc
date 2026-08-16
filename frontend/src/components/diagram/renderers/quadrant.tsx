@@ -15,7 +15,9 @@ const H = 300
 const PAD = 30
 
 function num(raw: string, fallback: number): number {
-  const n = Number((raw ?? '').replace(',', '.'))
+  const trimmed = (raw ?? '').trim()
+  if (trimmed === '') return fallback
+  const n = Number(trimmed.replace(',', '.'))
   return Number.isFinite(n) ? n : fallback
 }
 

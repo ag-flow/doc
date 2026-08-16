@@ -64,6 +64,16 @@ describe('DiagramView — dispatch par type', () => {
     expect(container.querySelectorAll('svg[role="img"] path')).toHaveLength(2)
   })
 
+  it('pyramid sans valeurs → silhouette géométrique (largeurs de niveau distinctes)', () => {
+    const { container } = renderView(' type="pyramid"', 'A\nB\nC')
+    const paths = Array.from(container.querySelectorAll('svg[role="img"] path'))
+    const topWidths = paths.map((p) => {
+      const nums = Array.from((p.getAttribute('d') ?? '').matchAll(/-?\d+(\.\d+)?/g)).map((m) => Number(m[0]))
+      return Math.round(nums[2] - nums[0])
+    })
+    expect(new Set(topWidths).size).toBeGreaterThan(1)
+  })
+
   it('nested → boîtes imbriquées', () => {
     const { container } = renderView(' type="nested"', 'Système\n  Module\n    Fonction')
     expect(container.querySelectorAll('g[data-diagram="nested-node"]').length).toBe(3)
@@ -104,6 +114,13 @@ describe('DiagramView — dispatch par type', () => {
     expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(2)
   })
 
+  it('quadrant sans xmax/ymax → domaine par défaut, points non empilés', () => {
+    const { container } = renderView(' type="quadrant"', 'A | 2 | 3\nB | 8 | 9')
+    const circles = Array.from(container.querySelectorAll('svg[role="img"] circle'))
+    const positions = circles.map((c) => `${c.getAttribute('cx')},${c.getAttribute('cy')}`)
+    expect(new Set(positions).size).toBe(2)
+  })
+
   it('consultant → alias du moteur quadrant', () => {
     const { container } = renderView(' type="consultant"', 'P1 | 5 | 5')
     expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(1)
@@ -126,10 +143,28 @@ describe('DiagramView — dispatch par type', () => {
     expect(getByText('Admin')).toBeInTheDocument()
   })
 
+  it('matrix — cellule "x" affichée en texte brut, pas interprétée comme allow', () => {
+    const { getByText, queryByText } = renderView(' type="matrix"', ' | Col\nRow | x')
+    expect(getByText('x')).toBeInTheDocument()
+    expect(queryByText('✓')).toBeNull()
+  })
+
+  it('matrix — "✓" reste allow et "✗" reste deny', () => {
+    const { container } = renderView(' type="matrix"', ' | Col\nRow | ✓\nRow2 | ✗')
+    const filledCells = container.querySelectorAll('svg[role="img"] rect[fill-opacity]')
+    expect(filledCells).toHaveLength(1)
+  })
+
   it('scatter → un point par ligne, axes via Grid', () => {
     const { container } = renderView(' type="scatter"', 'A | 2 | 8\nB | 5 | 5\nC | 8 | 9')
     expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(3)
     expect(container.querySelector('[data-diagram="axis-x"]')).not.toBeNull()
+  })
+
+  it('scatter — champ numérique vide → ligne ignorée, pas de point fantôme à 0', () => {
+    const { container, getByTestId } = renderView(' type="scatter"', 'A |  | 8\nB | 5 | 5\nC | 8 | 9')
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(2)
+    expect(getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
   })
 
   it('gantt (dates) → une barre par tâche + axe temporel', () => {

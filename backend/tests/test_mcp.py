@@ -18,7 +18,7 @@ from docflow.mcp.server import (
 
 
 async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
-    """list_tools retourne bien les 25 outils définis (liste exhaustive : test_mcp_tools.py)."""
+    """list_tools retourne bien les outils définis (liste exhaustive : test_mcp_tools.py)."""
     tool_names = {t.name for t in _TOOLS}
     assert "list_workspaces" in tool_names
     assert "list_types" in tool_names
@@ -62,7 +62,7 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     ):
         assert _t in tool_names
     assert "list_artifacts" in tool_names
-    assert len(_TOOLS) == 51
+    assert len(_TOOLS) == 53
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
@@ -251,28 +251,36 @@ async def test_search_documents_mcp_cross_workspace(db_pool: asyncpg.Pool) -> No
     )
     ft = await db_pool.fetchval(
         "INSERT INTO functional_type (slug, label, workspace_technical_key) "
-        "VALUES ('page', 'Page', $1) ON CONFLICT DO NOTHING RETURNING id", wk
+        "VALUES ('page', 'Page', $1) ON CONFLICT DO NOTHING RETURNING id",
+        wk,
     ) or await db_pool.fetchval(
         "SELECT id FROM functional_type WHERE workspace_technical_key = $1 AND slug='page'", wk
     )
     blk = await db_pool.fetchval(
         "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
-        "VALUES ('blk', 'Bloc', $1, $2) ON CONFLICT DO NOTHING RETURNING id", ft, wk
+        "VALUES ('blk', 'Bloc', $1, $2) ON CONFLICT DO NOTHING RETURNING id",
+        ft,
+        wk,
     ) or await db_pool.fetchval(
         "SELECT id FROM data_block WHERE workspace_technical_key = $1 AND slug='blk'", wk
     )
     doc_id = await db_pool.fetchval(
         "INSERT INTO document (title, functional_type_ref, data_block_ref, "
         "workspace_technical_key, version) VALUES ('Divers', $1, $2, $3, 1) "
-        "RETURNING doc_technical_key", ft, blk, wk
+        "RETURNING doc_technical_key",
+        ft,
+        blk,
+        wk,
     )
     await db_pool.execute(
         "INSERT INTO document_version (document_ref, version_number, title, content) "
-        "VALUES ($1, 1, 'Divers', 'mot-cle-unique-xyz dans le corps')", doc_id
+        "VALUES ($1, 1, 'Divers', 'mot-cle-unique-xyz dans le corps')",
+        doc_id,
     )
 
-    user = AuthUser(id=uuid.uuid4(), email="s@t.local", label="S", is_admin=True,
-                    validated=True, disabled=False)
+    user = AuthUser(
+        id=uuid.uuid4(), email="s@t.local", label="S", is_admin=True, validated=True, disabled=False
+    )
     token = set_current_session(McpSession(user=user))
     try:
         out = json.loads((await _search_documents(db_pool, {"q": "mot-cle-unique-xyz"}))[0].text)

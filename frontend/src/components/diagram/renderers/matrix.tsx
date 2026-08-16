@@ -14,7 +14,7 @@ const COL_W = 66
 const HEAD_H = 28
 const ROW_H = 28
 
-const ALLOW = /^(✓|v|x|yes|oui|y|o|1|true|allow|rw|r|w)$/i
+const ALLOW = /^(✓|v|yes|oui|y|o|1|true|allow|rw|r|w)$/i
 const DENY = /^(✗|no|non|n|0|false|deny|-|—|)$/i
 
 type Cell = { kind: 'allow' } | { kind: 'deny' } | { kind: 'text'; text: string }

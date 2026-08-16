@@ -119,9 +119,7 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
     return _row(row)
 
 
-async def list_present_type_slugs(
-    pool: asyncpg.Pool, ws_slug: str, block_slug: str
-) -> list[str]:
+async def list_present_type_slugs(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> list[str]:
     """Slugs distincts des types fonctionnels réellement présents parmi les
     documents d'un bloc — pour dériver les colonnes de propriétés SANS charger
     tous les documents. Requête légère (DISTINCT indexé par bloc)."""
@@ -242,6 +240,19 @@ async def update_block(
                         new_parent_slug,
                     )
                 else:
+                    # Détachement à la racine : même contrainte miroir qu'à la
+                    # création (I-5) — le type du bloc doit être racine.
+                    type_parent_id = await conn.fetchval(
+                        "SELECT parent FROM functional_type WHERE id = $1", block_type_id
+                    )
+                    if type_parent_id is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "contrainte miroir (I-5) : un bloc racine (sans parent) "
+                                "doit avoir un type racine"
+                            ),
+                        )
                     db_updates["parent"] = None
 
             if not db_updates:

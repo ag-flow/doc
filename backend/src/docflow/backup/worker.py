@@ -17,6 +17,11 @@ log = structlog.get_logger(__name__)
 _REPOS_ROOT = pathlib.Path("/data/backup-repos")
 _TICK = 30  # secondes entre deux balayages du scheduler
 
+# Référence forte sur les tasks de run en cours : asyncio ne garde qu'une
+# référence faible sur les tasks créées par create_task, un objet non
+# référencé ailleurs peut être ramassé par le GC avant son exécution.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def _is_due(job: dict[str, Any], now: datetime) -> bool:
     """Vérifie si un job doit être exécuté maintenant.
@@ -234,6 +239,14 @@ async def _due_jobs(pool: asyncpg.Pool, now: datetime) -> list[dict[str, Any]]:
     return [dict(r) for r in rows if r["running_count"] == 0 and _is_due(dict(r), now)]
 
 
+def _spawn_job(pool: asyncpg.Pool, job: dict[str, Any], settings: object) -> asyncio.Task[None]:
+    """Lance `run_job` en tâche de fond, en gardant une référence forte."""
+    task = asyncio.create_task(run_job(pool, job, settings))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
     _REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     _DUMPS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -246,7 +259,7 @@ async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
             now = datetime.now(tz=UTC)
             jobs = await _due_jobs(pool, now)
             for job in jobs:
-                asyncio.create_task(run_job(pool, job, settings))
+                _spawn_job(pool, job, settings)
         except Exception:
             log.exception("backup_worker_tick_error")
         await asyncio.sleep(_TICK)

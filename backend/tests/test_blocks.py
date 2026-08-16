@@ -122,6 +122,30 @@ async def test_update_block_label(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert updated.label == "New Label"
 
 
+async def test_update_block_detach_root_i5_wrong_type_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """I-5 : détacher un bloc (parent_slug -> null) doit vérifier que son type
+    est racine, comme à la création — aujourd'hui update_block l'omettait."""
+    await _make_types(db_pool)
+    await block_svc.create_block(
+        db_pool, _WS, DataBlockCreate(slug="epic-d", label="Epic D", functional_type_slug="epic")
+    )
+    await block_svc.create_block(
+        db_pool,
+        _WS,
+        DataBlockCreate(
+            slug="feat-d", label="Feat D", functional_type_slug="feature", parent_slug="epic-d"
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await block_svc.update_block(db_pool, _WS, "feat-d", DataBlockUpdate(parent_slug=None))
+    assert exc.value.status_code == 422
+    assert "I-5" in exc.value.detail
+    # Rien n'a été modifié : le bloc reste attaché à son parent.
+    assert (await block_svc.get_block(db_pool, _WS, "feat-d")).parent_slug == "epic-d"
+
+
 async def test_delete_block_with_children_needs_confirm(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:

@@ -49,6 +49,31 @@ async def _noop(url: str) -> None:
     return None
 
 
+class _RedirectCapturingClient(_Client):
+    """Comme `_Client`, mais garde les kwargs de construction du client.
+
+    Sert à vérifier que `_fetch_spec` ne suit pas de redirection (SSRF) :
+    une redirection non revalidée pourrait viser un hôte interne.
+    """
+
+    captured_kwargs: dict[str, Any] = {}
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        _RedirectCapturingClient.captured_kwargs = k
+
+
+async def test_fetch_spec_does_not_follow_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service, "validate_public_url", _noop)
+    monkeypatch.setattr(service.httpx, "AsyncClient", _RedirectCapturingClient)
+
+    await service._fetch_spec("https://rag.example/openapi")
+
+    assert _RedirectCapturingClient.captured_kwargs.get("follow_redirects") is False
+
+
 async def test_import_by_url_fetches_spec_and_exposes_operations(
     db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -103,7 +128,9 @@ _SECURED_SPEC: dict[str, Any] = {
 
 
 def test_server_urls_extracted() -> None:
-    assert service._server_urls({"servers": [{"url": "http://rag.example"}]}) == ["http://rag.example"]
+    assert service._server_urls({"servers": [{"url": "http://rag.example"}]}) == [
+        "http://rag.example"
+    ]
     assert service._server_urls({"servers": [{"url": "  "}, {"nope": 1}, "x"]}) == []
     assert service._server_urls({}) == []
 

@@ -1254,7 +1254,7 @@ def _finalize_tool_result(result: list[TextContent]) -> list[TextContent] | Call
             payload = json.loads(result[0].text)
         except (ValueError, TypeError):
             payload = None
-        if isinstance(payload, dict) and len(payload) == 1 and "error" in payload:
+        if isinstance(payload, dict) and payload.get("error"):
             return CallToolResult(content=list(result), isError=True)
     return result
 
@@ -1865,6 +1865,8 @@ async def _get_property_value(
 
 
 async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
     from docflow.documents import service as doc_svc
     from docflow.schemas.property_value import PropertyValueSet
 
@@ -1875,10 +1877,18 @@ async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> li
     allowed_value_slug = str(args["allowed_value_slug"]) if "allowed_value_slug" in args else None
     expected_version = int(str(args.get("expected_version", 0)))
 
+    try:
+        doc_id = uuid.UUID(doc_id_str)
+    except ValueError:
+        return _text({"error": "doc_id : UUID invalide"})
+
     data = PropertyValueSet(
         value=value, allowed_value_slug=allowed_value_slug, expected_version=expected_version
     )
-    out = await doc_svc.set_property_value(pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data)
+    try:
+        out = await doc_svc.set_property_value(pool, ws_slug, doc_id, prop_slug, data)
+    except HTTPException as e:
+        return _text({"error": e.detail})
     return _text({"updated": True, "prop_slug": out.prop_slug})
 
 

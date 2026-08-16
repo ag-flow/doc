@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from docflow.db.helpers import validate_slug
 
 
 class ConstraintDef(BaseModel):
@@ -20,6 +22,11 @@ class AllowedValueDef(BaseModel):
     label: str
     position: int = 0
     color: str | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
 
 
 class PropDef(BaseModel):
@@ -39,6 +46,11 @@ class PropDef(BaseModel):
     target_type: str | None = None
     max_occurrences: int | None = None
 
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
+
     @model_validator(mode="after")
     def _behavior_date_only(self) -> PropDef:
         if self.behavior is not None and self.type != "date":
@@ -56,6 +68,11 @@ class TypeDef(BaseModel):
     parent: str | None = None
     properties: list[PropDef] = Field(default_factory=list)
     content_template: str | None = None  # spec MEXP
+
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
 
 
 class Template(BaseModel):

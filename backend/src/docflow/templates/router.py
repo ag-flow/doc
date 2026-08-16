@@ -487,9 +487,12 @@ async def update_template_yaml(
             ),
         )
     yaml_file = _find_template_file(template_slug)
+    try:
+        resolved = resolve(tpl)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"héritage non résolvable : {e}") from e
     yaml_file.write_text(body.yaml_content)
     log.info("template_updated", template=template_slug, version=tpl.version)
-    resolved = resolve(tpl)
     return TemplateInfo(
         template=tpl.template,
         label=tpl.label,

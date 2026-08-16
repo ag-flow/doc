@@ -15,7 +15,9 @@ const H = 280
 const PADDING = { left: 34, right: 14, top: 14, bottom: 28 }
 
 function num(raw: string): number {
-  const n = Number((raw ?? '').replace(',', '.'))
+  const trimmed = (raw ?? '').trim()
+  if (trimmed === '') return NaN
+  const n = Number(trimmed.replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
 }
 
