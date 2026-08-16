@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from docflow.db.helpers import require_prop_def, require_type, require_workspace
 from docflow.documents.changelog import log_structure_change
+from docflow.documents.service import validate_scalar_value
 from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
@@ -143,6 +144,64 @@ async def _log_property_change(
     await log_structure_change(conn, wk, "property", nature, entity_ref)
 
 
+async def _check_default_value(
+    conn: asyncpg.Connection,
+    prop_id: uuid.UUID | None,
+    prop_type: str,
+    default_value: str | None,
+    prop_slug: str,
+) -> None:
+    """Refuse (422) un ``default_value`` incompatible avec le type déclaré.
+
+    Sans ce contrôle, le défaut est matérialisé tel quel sur chaque document créé
+    et casse tout tri/filtre du bloc (Postgres caste ``pvv.value::numeric``).
+
+    ``restricted_list`` : le défaut est un slug de valeur autorisée, or le
+    vocabulaire se déclare APRÈS la définition (``create_def`` n'a donc rien à
+    vérifier, ``prop_id`` est None). On ne contrôle que si le vocabulaire est
+    déjà peuplé ; sinon le filet reste l'instanciation, qui ignore un défaut
+    hors vocabulaire.
+
+    ``reference`` : seul le format UUID est vérifiable ici — l'existence de la
+    cible est contrôlée à l'écriture (la cible peut être créée après la def).
+    """
+    if default_value is None:
+        return
+    if prop_type == "restricted_list":
+        if prop_id is None:
+            return
+        rows = await conn.fetch(
+            "SELECT slug FROM properties_allowed_values WHERE property_def_ref = $1 "
+            "ORDER BY position, created_at",
+            prop_id,
+        )
+        if not rows:
+            return
+        slugs = [r["slug"] for r in rows]
+        if default_value not in slugs:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"default_value '{default_value}' n'est pas une valeur autorisée de la "
+                    f"propriété '{prop_slug}' ; valeurs autorisées : {', '.join(slugs)}"
+                ),
+            )
+        return
+    if prop_type == "reference":
+        try:
+            uuid.UUID(default_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"default_value de la propriété '{prop_slug}' de type reference : "
+                    f"'{default_value}' n'est pas un UUID valide"
+                ),
+            ) from exc
+        return
+    await validate_scalar_value(prop_type, default_value, prop_slug)
+
+
 async def list_defs(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> list[PropertiesDefOut]:
     async with pool.acquire() as conn:
         type_id = await _resolve_type_id(conn, ws_slug, type_slug)
@@ -178,6 +237,8 @@ async def create_def(
                     )
                 target_ft_id = await require_type(conn, wk, data.target_functional_type_slug)
 
+            await _check_default_value(conn, None, data.type, data.default_value, data.slug)
+
             try:
                 row = await conn.fetchrow(
                     _INSERT_DEF,
@@ -210,6 +271,42 @@ _TYPE_TRANSITIONS: dict[str, frozenset[str]] = {
     "restricted_list": frozenset({"text", "url"}),
     "int": frozenset({"float"}),
 }
+
+
+async def _check_updated_default(
+    conn: asyncpg.Connection,
+    prop_id: uuid.UUID,
+    prop_slug: str,
+    prop_type: str,
+    updates: dict[str, object | None],
+) -> None:
+    """Valide le couple (type, défaut) résultant de la mise à jour.
+
+    Un changement de type peut invalider un défaut déjà stocké : la transition
+    est alors refusée plutôt que d'effacer silencieusement le défaut — l'appelant
+    ajuste ou efface ``default_value`` dans la même requête.
+    """
+    effective_type = str(updates["type"]) if "type" in updates else prop_type
+    default_in_request = "default_value" in updates
+    if default_in_request:
+        raw = updates["default_value"]
+        effective_default = raw if isinstance(raw, str) else None
+    else:
+        effective_default = await conn.fetchval(
+            "SELECT default_value FROM properties_defs WHERE id = $1", prop_id
+        )
+    try:
+        await _check_default_value(conn, prop_id, effective_type, effective_default, prop_slug)
+    except HTTPException as exc:
+        if default_in_request:
+            raise
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"changement de type refusé : {exc.detail} — ajuster ou effacer "
+                "default_value dans la même requête"
+            ),
+        ) from exc
 
 
 async def update_def(
@@ -269,6 +366,12 @@ async def update_def(
                         f"existante(s) — transitions permises depuis "
                         f"'{prop_type}' : {permitted}",
                     )
+            # Le défaut n'est revalidé que si la requête touche le défaut ou le
+            # type : un PATCH sur le seul label ne doit pas buter sur un défaut
+            # hérité (ex. slug de restricted_list déclaré avant son vocabulaire).
+            if "default_value" in updates or "type" in updates:
+                await _check_updated_default(conn, prop_id, prop_slug, prop_type, updates)
+
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())

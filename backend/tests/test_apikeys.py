@@ -39,7 +39,10 @@ async def test_create_profile_nominal(db_pool: asyncpg.Pool, owner: uuid.UUID) -
 
 async def test_create_profile_admin(db_pool: asyncpg.Pool, owner: uuid.UUID) -> None:
     p = await svc.create_profile(
-        db_pool, owner, ApiProfileCreate(name="admin-profil", is_admin=True)
+        db_pool,
+        owner,
+        ApiProfileCreate(name="admin-profil", is_admin=True),
+        caller_is_superadmin=True,
     )
     assert p.is_admin is True
 
@@ -227,7 +230,10 @@ async def test_resolve_api_key_nominal(db_pool: asyncpg.Pool, owner: uuid.UUID) 
 
 async def test_resolve_api_key_admin_profile(db_pool: asyncpg.Pool, owner: uuid.UUID) -> None:
     p = await svc.create_profile(
-        db_pool, owner, ApiProfileCreate(name="resolve-admin", is_admin=True)
+        db_pool,
+        owner,
+        ApiProfileCreate(name="resolve-admin", is_admin=True),
+        caller_is_superadmin=True,
     )
     created = await svc.generate_key(db_pool, owner, ApiKeyCreate(profile_id=p.id, label="adm"))
     _, scopes, is_admin = await svc.resolve_api_key(db_pool, created.key)

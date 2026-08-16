@@ -29,6 +29,21 @@ def _generate_raw_key() -> str:
     return "dfk_" + secrets.token_urlsafe(32)
 
 
+def _guard_admin_flag(requested: bool | None, caller_is_superadmin: bool) -> None:
+    """Refuse la pose du drapeau `is_admin` à un appelant non-superadmin.
+
+    Un profil `is_admin` produit une clé API sans restriction de périmètre
+    (check_api_key_scope et _check_tool_authz deviennent no-op) : le poser est
+    une élévation de privilège. `requested` None/False (champ absent du PATCH ou
+    profil normal) ne déclenche rien ; le défaut de l'argument est fail-closed.
+    """
+    if requested and not caller_is_superadmin:
+        raise HTTPException(
+            status_code=403,
+            detail="droits superadmin requis pour un profil de clé API admin",
+        )
+
+
 async def list_profiles(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[ApiProfileOut]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -49,8 +64,13 @@ async def list_profiles(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[ApiProf
 
 
 async def create_profile(
-    pool: asyncpg.Pool, owner_id: uuid.UUID, body: ApiProfileCreate
+    pool: asyncpg.Pool,
+    owner_id: uuid.UUID,
+    body: ApiProfileCreate,
+    *,
+    caller_is_superadmin: bool = False,
 ) -> ApiProfileOut:
+    _guard_admin_flag(body.is_admin, caller_is_superadmin)
     async with pool.acquire() as conn:
         try:
             row = await conn.fetchrow(
@@ -104,9 +124,15 @@ async def get_profile(
 
 
 async def update_profile(
-    pool: asyncpg.Pool, owner_id: uuid.UUID, profile_id: uuid.UUID, body: ApiProfileUpdate
+    pool: asyncpg.Pool,
+    owner_id: uuid.UUID,
+    profile_id: uuid.UUID,
+    body: ApiProfileUpdate,
+    *,
+    caller_is_superadmin: bool = False,
 ) -> ApiProfileOut:
     updates = body.model_dump(exclude_unset=True)
+    _guard_admin_flag(updates.get("is_admin"), caller_is_superadmin)
     if not updates:
         return (await get_profile(pool, owner_id, profile_id)).model_copy()
 

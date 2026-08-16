@@ -140,7 +140,7 @@ async def _fetch_db_snapshot(conn: asyncpg.Connection, wk: str) -> dict[str, Res
     """Charge la structure existante du workspace sous forme de ResolvedType."""
     rows = await conn.fetch(
         """
-        SELECT ft.id, ft.slug, ft.label,
+        SELECT ft.id, ft.slug, ft.label, ft.content_template,
                p.slug AS parent_slug
         FROM functional_type ft
         LEFT JOIN functional_type p ON p.id = ft.parent
@@ -198,6 +198,7 @@ async def _fetch_db_snapshot(conn: asyncpg.Connection, wk: str) -> dict[str, Res
             label=r["label"],
             parent=r["parent_slug"],
             properties=props,
+            content_template=r["content_template"],
         )
     return snapshot
 
@@ -239,7 +240,12 @@ async def compute_diff(
             )
             continue
 
-        if db_type.label != rt.label:
+        # content_template absent du template = non géré par lui : pas un écart
+        # (cf. le COALESCE de l'UPDATE côté importer).
+        content_changed = (
+            rt.content_template is not None and db_type.content_template != rt.content_template
+        )
+        if db_type.label != rt.label or content_changed:
             result.items.append(DiffItem(kind="soft_update", path=path))
         else:
             result.items.append(DiffItem(kind="no-op", path=path))

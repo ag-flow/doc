@@ -17,19 +17,21 @@ log = structlog.get_logger(__name__)
 # Toutes les fonctions s'exécutent DANS la transaction appelante.
 
 
-async def upsert_value(
+async def resolve_write_value(
     conn: asyncpg.Connection,
     wk: uuid.UUID,
-    doc_id: uuid.UUID,
     prop_id: uuid.UUID,
     prop_type: str,
     value: str,
     prop_slug: str = "",
-) -> None:
-    """Écrit une valeur (création v1 ou bump de version) sans verrou optimiste client.
+) -> tuple[str | None, uuid.UUID | None, uuid.UUID | None]:
+    """Valide ``value`` contre la définition et retourne le triplet à stocker.
 
-    Pour une restricted_list, ``value`` est le slug de la valeur autorisée.
-    Les validateurs scalaires et les contraintes de la définition s'appliquent.
+    Retourne ``(value, allowed_value_ref, target_document_ref)`` tels qu'attendus
+    par ``properties_value_version``. Lève 422 si la valeur est incompatible avec
+    le type ou les contraintes. Partagé par l'écriture explicite (``upsert_value``)
+    et l'instanciation des défauts : les deux chemins doivent produire exactement
+    les mêmes données, sous les mêmes contrôles.
     """
     # Import paresseux : service.py importe ce module (héberge les validateurs).
     from docflow.documents import service as doc_svc
@@ -57,18 +59,7 @@ async def upsert_value(
             )
         stored_value: str | None = None
     else:
-        if prop_type == "int":
-            await doc_svc._validate_int(value, prop_slug)
-        elif prop_type == "date":
-            # Normalise un timestamp ISO en date (YYYY-MM-DD) avant stockage.
-            value = doc_svc._validate_date(value, prop_slug)
-        elif prop_type == "bool":
-            doc_svc._validate_bool(value, prop_slug)
-        elif prop_type == "url":
-            doc_svc._validate_url(value, prop_slug)
-        elif prop_type == "float":
-            doc_svc._validate_float(value, prop_slug)
-        elif prop_type == "reference":
+        if prop_type == "reference":
             try:
                 ref_id = uuid.UUID(value)
             except ValueError as exc:
@@ -107,10 +98,33 @@ async def upsert_value(
                             "(contrainte target_functional_type_ref)"
                         ),
                     )
+        else:
+            # Normalise au passage (ex. timestamp ISO → YYYY-MM-DD pour une date).
+            value = await doc_svc.validate_scalar_value(prop_type, value, prop_slug)
         await doc_svc._apply_constraints(conn, prop_id, prop_type, value)
         stored_value = value
 
     target_doc_ref = uuid.UUID(value) if prop_type == "reference" else None
+    return stored_value, allowed_value_ref, target_doc_ref
+
+
+async def upsert_value(
+    conn: asyncpg.Connection,
+    wk: uuid.UUID,
+    doc_id: uuid.UUID,
+    prop_id: uuid.UUID,
+    prop_type: str,
+    value: str,
+    prop_slug: str = "",
+) -> None:
+    """Écrit une valeur (création v1 ou bump de version) sans verrou optimiste client.
+
+    Pour une restricted_list, ``value`` est le slug de la valeur autorisée.
+    Les validateurs scalaires et les contraintes de la définition s'appliquent.
+    """
+    stored_value, allowed_value_ref, target_doc_ref = await resolve_write_value(
+        conn, wk, prop_id, prop_type, value, prop_slug
+    )
 
     pv_row = await conn.fetchrow(
         "SELECT id, version FROM properties_values "
@@ -160,12 +174,18 @@ async def instantiate_default_values(
 
     Garde d'idempotence : une propriété qui porte déjà une valeur (fournie par
     l'appelant) est ignorée — le défaut ne l'écrase jamais.
+
+    Un défaut invalide (antérieur au durcissement de ``create_def``/``update_def``,
+    ou dont la cible a disparu depuis) est ignoré avec un warning structuré :
+    faire échouer la création du document punirait l'auteur du document pour un
+    défaut de modèle, et matérialiser la valeur brute corromprait le bloc
+    (cast SQL en échec sur tout tri/filtre).
     """
     if type_id is None:
         return
     defs = await conn.fetch(
         """
-        SELECT pd.id, pd.type, pd.default_value
+        SELECT pd.id, pd.slug, pd.type, pd.default_value
         FROM properties_defs pd
         LEFT JOIN properties_values pv
             ON pv.property_def_ref = pd.id AND pv.document_ref = $2
@@ -178,27 +198,24 @@ async def instantiate_default_values(
     )
     for pd in defs:
         prop_id: uuid.UUID = pd["id"]
+        prop_slug: str = pd["slug"]
         prop_type: str = pd["type"]
         default_val: str = pd["default_value"]
 
-        allowed_value_ref: uuid.UUID | None = None
-        value_to_store: str | None = None
-        if prop_type == "restricted_list":
-            allowed_value_ref = await conn.fetchval(
-                "SELECT id FROM properties_allowed_values "
-                "WHERE property_def_ref = $1 AND slug = $2",
-                prop_id,
-                default_val,
+        try:
+            value_to_store, allowed_value_ref, target_doc_ref = await resolve_write_value(
+                conn, wk, prop_id, prop_type, default_val, prop_slug
             )
-            if allowed_value_ref is None:
-                log.warning(
-                    "default_value_not_found",
-                    prop_id=str(prop_id),
-                    default_val=default_val,
-                )
-                continue
-        else:
-            value_to_store = default_val
+        except HTTPException as exc:
+            log.warning(
+                "default_value_invalid_skipped",
+                prop_id=str(prop_id),
+                prop_slug=prop_slug,
+                prop_type=prop_type,
+                default_val=default_val,
+                reason=exc.detail,
+            )
+            continue
 
         pv_id: uuid.UUID = await conn.fetchval(
             "INSERT INTO properties_values "
@@ -210,11 +227,12 @@ async def instantiate_default_values(
         )
         await conn.execute(
             "INSERT INTO properties_value_version "
-            "(property_value_ref, version_number, value, allowed_value_ref) "
-            "VALUES ($1, 1, $2, $3)",
+            "(property_value_ref, version_number, value, allowed_value_ref, target_document_ref) "
+            "VALUES ($1, 1, $2, $3, $4)",
             pv_id,
             value_to_store,
             allowed_value_ref,
+            target_doc_ref,
         )
 
 

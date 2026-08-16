@@ -94,3 +94,4 @@ class ResolvedType(BaseModel):
     label: str
     parent: str | None
     properties: list[PropDef]
+    content_template: str | None = None

@@ -20,6 +20,7 @@ from docflow.templates.gallery import (
     pull_template,
 )
 from docflow.templates.importer import (
+    ConcurrentImportError,
     ImportConflictError,
     UnresolvedTargetTypeError,
     VersionConflictError,
@@ -557,6 +558,8 @@ async def import_template(
     try:
         report = await run_import(pool, ws_slug, tpl, dry_run=body.dry_run)
     except VersionConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ConcurrentImportError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ImportConflictError as e:
         conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]

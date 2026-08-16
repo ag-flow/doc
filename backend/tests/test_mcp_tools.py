@@ -1220,7 +1220,7 @@ async def test_api_profile_is_admin_true(db_pool: asyncpg.Pool) -> None:
         True,
     )
     body = ApiProfileCreate(name="profil-admin", description=None, is_admin=True)
-    profile = await create_profile(db_pool, owner_id, body)
+    profile = await create_profile(db_pool, owner_id, body, caller_is_superadmin=True)
     assert profile.is_admin is True
 
     profiles = await list_profiles(db_pool, owner_id)
@@ -1253,7 +1253,10 @@ async def test_resolve_api_key_retourne_profile_is_admin(db_pool: asyncpg.Pool) 
         True,
     )
     profile = await create_profile(
-        db_pool, owner_id, ApiProfileCreate(name="admin-prof", is_admin=True)
+        db_pool,
+        owner_id,
+        ApiProfileCreate(name="admin-prof", is_admin=True),
+        caller_is_superadmin=True,
     )
     key_created = await generate_key(
         db_pool, owner_id, ApiKeyCreate(profile_id=profile.id, label="test-key")

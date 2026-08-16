@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import asyncpg
 import pytest
@@ -184,6 +184,84 @@ async def test_list_workspaces_complet_en_jwt(
     result = await _call_tool("list_workspaces", {})
     slugs = {w["slug"] for w in json.loads(result[0].text)}
     assert _WS in slugs
+
+
+async def _seed_searchable_document(pool: asyncpg.Pool, ws_slug: str, title: str) -> None:
+    wk = await pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $1) RETURNING workspace_technical_key",
+        ws_slug,
+    )
+    ft = await pool.fetchval(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "VALUES ('page', 'Page', $1) RETURNING id",
+        wk,
+    )
+    blk = await pool.fetchval(
+        "INSERT INTO data_block (slug, label, functional_type_ref, workspace_technical_key) "
+        "VALUES ('blk', 'Bloc', $1, $2) RETURNING id",
+        ft,
+        wk,
+    )
+    doc = await pool.fetchval(
+        "INSERT INTO document (title, functional_type_ref, data_block_ref, "
+        "workspace_technical_key, version) VALUES ($1, $2, $3, $4, 1) RETURNING doc_technical_key",
+        title,
+        ft,
+        blk,
+        wk,
+    )
+    await pool.execute(
+        "INSERT INTO document_version (document_ref, version_number, title, content) "
+        "VALUES ($1, 1, $2, 'corps')",
+        doc,
+        title,
+    )
+
+
+@pytest.fixture()
+async def two_searchable_workspaces(db_pool: asyncpg.Pool) -> AsyncIterator[str]:
+    """Deux workspaces distincts contenant chacun un document au titre commun."""
+    term = "terme-fuite-scope"
+    await _seed_searchable_document(db_pool, "scope-ws-a", f"Doc A {term}")
+    await _seed_searchable_document(db_pool, "scope-ws-b", f"Doc B {term}")
+    yield term
+    await db_pool.execute(
+        "DELETE FROM workspace WHERE slug = ANY($1::text[])", ["scope-ws-a", "scope-ws-b"]
+    )
+
+
+async def test_search_documents_borne_au_scope_de_la_cle(
+    db_pool: asyncpg.Pool, two_searchable_workspaces: str
+) -> None:
+    """Une clé scopée sur un seul workspace ne voit pas les documents des autres,
+    même quand son propriétaire est superadmin (accessible_workspace_slugs=None)."""
+    configure(db_pool)
+    session, token = _use_session(
+        McpSession(
+            user=_user(is_admin=True),
+            api_key_scopes=[_scope("scope-ws-a", read_only=True)],
+        )
+    )
+    try:
+        result = await _call_tool("search_documents", {"q": two_searchable_workspaces})
+        slugs = {h["workspace_slug"] for h in json.loads(result[0].text)}
+        assert slugs == {"scope-ws-a"}
+    finally:
+        reset_current_session(token)  # type: ignore[arg-type]
+
+
+async def test_search_documents_complet_sans_cle(
+    db_pool: asyncpg.Pool, two_searchable_workspaces: str
+) -> None:
+    """Non-régression : une session superadmin non scopée par clé voit les deux."""
+    configure(db_pool)
+    session, token = _use_session(McpSession(user=_user(is_admin=True)))
+    try:
+        result = await _call_tool("search_documents", {"q": two_searchable_workspaces})
+        slugs = {h["workspace_slug"] for h in json.loads(result[0].text)}
+        assert slugs == {"scope-ws-a", "scope-ws-b"}
+    finally:
+        reset_current_session(token)  # type: ignore[arg-type]
 
 
 # ── Montage des endpoints ASGI purs ───────────────────────────────────────────

@@ -2038,6 +2038,7 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
 
 async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from docflow.templates.importer import (
+        ConcurrentImportError,
         ImportConflictError,
         VersionConflictError,
         run_import,
@@ -2049,7 +2050,7 @@ async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         tpl = _find_template(template_slug)
         report = await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
-    except VersionConflictError as e:
+    except (VersionConflictError, ConcurrentImportError) as e:
         return _text({"error": str(e)})
     except ImportConflictError as e:
         conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]
@@ -2074,6 +2075,7 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
     from docflow.blocks import service as block_svc
     from docflow.schemas.block import DataBlockCreate
     from docflow.templates.importer import (
+        ConcurrentImportError,
         ImportConflictError,
         VersionConflictError,
         run_import,
@@ -2092,7 +2094,7 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
             await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
         except VersionConflictError:
             pass  # version plus ancienne déjà installée — on continue
-        except (ImportConflictError, ValueError) as e:
+        except (ImportConflictError, ConcurrentImportError, ValueError) as e:
             return _text({"error": f"import template : {e}"})
 
     try:
@@ -2407,8 +2409,16 @@ async def _search_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list
     limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else 10
     limit = max(1, min(50, limit))
 
-    user = require_identity()
-    allowed = await accessible_workspace_slugs(pool, user)
+    allowed = await accessible_workspace_slugs(pool, require_identity())
+    # Outil cross-workspace : sans argument `workspace_slug`, il ne peut pas passer
+    # par `_WS_TOOLS` (dont le contrôle porte sur cet argument et refuserait tout).
+    # Le périmètre de la clé API s'applique donc ici, en intersection avec l'accès
+    # utilisateur — même composition que `_list_workspaces`. None = superadmin (tout).
+    session = current_session()
+    if session is not None and not session.unrestricted:
+        assert session.api_key_scopes is not None
+        key_allowed = allowed_workspace_slugs(session.api_key_scopes)
+        allowed = key_allowed if allowed is None else allowed & key_allowed
     results = await ref_svc.search_documents_global(pool, q, limit, allowed_ws=allowed)
     return _text([r.model_dump(mode="json") for r in results])
 

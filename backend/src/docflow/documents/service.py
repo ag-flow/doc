@@ -1076,6 +1076,28 @@ async def _apply_constraints(
             raise HTTPException(status_code=422, detail=error)
 
 
+async def validate_scalar_value(prop_type: str, value: str, prop_slug: str) -> str:
+    """Valide une valeur scalaire contre le type déclaré et retourne la valeur à stocker.
+
+    Point d'entrée unique des validateurs scalaires : écriture de valeur
+    (``upsert_value``), instanciation d'un défaut et déclaration d'un
+    ``default_value`` passent par ici. Les types sans validateur (``text``) et
+    les types résolus ailleurs (``restricted_list``, ``reference``, qui exigent
+    un accès base) traversent sans contrôle.
+    """
+    if prop_type == "int":
+        await _validate_int(value, prop_slug)
+    elif prop_type == "date":
+        return _validate_date(value, prop_slug)
+    elif prop_type == "bool":
+        _validate_bool(value, prop_slug)
+    elif prop_type == "url":
+        _validate_url(value, prop_slug)
+    elif prop_type == "float":
+        _validate_float(value, prop_slug)
+    return value
+
+
 async def _validate_int(value: str, prop_slug: str) -> None:
     try:
         int(value)

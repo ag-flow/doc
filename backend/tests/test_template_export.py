@@ -38,6 +38,7 @@ _TEMPLATE = {
             "slug": "epic",
             "label": "Epic",
             "inherit": "base",
+            "content_template": "# {{title}}\n\n## Contexte",
             "properties": [{"slug": "titre", "label": "Titre", "type": "text"}],
         },
     ],
@@ -74,6 +75,13 @@ async def test_export_flattens_inheritance_and_downloads(templates_dir: pathlib.
     statut = next(p for p in epic["properties"] if p["slug"] == "statut")
     assert statut["required"] is True
     assert [av["slug"] for av in statut["allowed_values"]] == ["todo"]
+
+
+async def test_export_includes_content_template(templates_dir: pathlib.Path) -> None:
+    resp = await tr.export_template("my-tpl")
+    payload = json.loads(bytes(resp.body))
+    epic = next(t for t in payload["functional_types"] if t["slug"] == "epic")
+    assert epic["content_template"] == "# {{title}}\n\n## Contexte"
 
 
 async def test_export_unknown_template_404(templates_dir: pathlib.Path) -> None:
