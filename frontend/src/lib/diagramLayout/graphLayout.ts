@@ -3,7 +3,8 @@
  *  Deux modes de superposition :
  *   - par groupe : si TOUS les nœuds ont un `group`, une couche = un groupe
  *     (ordre de première apparition) — pour les tiers/étages (Medallion…) ;
- *   - par profondeur sinon : longest-path depuis les sources (in-degré 0). */
+ *   - par profondeur sinon : longest-path depuis les sources (in-degré 0),
+ *     les arêtes de retour d'un cycle étant écartées du calcul. */
 import type { Rect } from './types'
 
 export interface GraphNode {
@@ -39,36 +40,80 @@ export interface LayeredGraph {
   height: number
 }
 
+/** Arêtes sortantes de chaque nœud, dans l'ordre de déclaration. Self-loops et
+ *  extrémités inconnues exclus : ils ne définissent aucun niveau. */
+function adjacency(nodes: GraphNode[], edges: GraphEdge[]): Map<string, GraphEdge[]> {
+  const known = new Set(nodes.map((n) => n.id))
+  const out = new Map<string, GraphEdge[]>(nodes.map((n) => [n.id, []]))
+  for (const e of edges) {
+    if (e.from === e.to || !known.has(e.from) || !known.has(e.to)) continue
+    out.get(e.from)!.push(e)
+  }
+  return out
+}
+
+/** Arêtes arrière d'un DFS (cible encore en cours d'exploration). Les retirer
+ *  rend le graphe acyclique : tout cycle contient au moins une arête arrière. */
+function backEdges(nodes: GraphNode[], out: Map<string, GraphEdge[]>): Set<GraphEdge> {
+  const back = new Set<GraphEdge>()
+  const open = new Set<string>()
+  const done = new Set<string>()
+  for (const root of nodes) {
+    if (done.has(root.id)) continue
+    const stack: Array<{ id: string; next: number }> = [{ id: root.id, next: 0 }]
+    open.add(root.id)
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]
+      const adj = out.get(top.id) ?? []
+      if (top.next >= adj.length) {
+        open.delete(top.id)
+        done.add(top.id)
+        stack.pop()
+        continue
+      }
+      const e = adj[top.next++]
+      if (open.has(e.to)) back.add(e)
+      else if (!done.has(e.to)) {
+        open.add(e.to)
+        stack.push({ id: e.to, next: 0 })
+      }
+    }
+  }
+  return back
+}
+
+/** Plus long chemin (Kahn) sur le graphe privé de ses arêtes arrière : les
+ *  sources sont en couche 0, chaque nœud une couche après son prédécesseur le
+ *  plus profond. Sur un DAG le résultat est identique à la relaxation naïve. */
+function longestPath(nodes: GraphNode[], out: Map<string, GraphEdge[]>, back: Set<GraphEdge>): Map<string, number> {
+  const layer = new Map<string, number>(nodes.map((n) => [n.id, 0]))
+  const indeg = new Map<string, number>(nodes.map((n) => [n.id, 0]))
+  const forward = (id: string): GraphEdge[] => (out.get(id) ?? []).filter((e) => !back.has(e))
+  for (const n of nodes) for (const e of forward(n.id)) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
+  const queue = nodes.filter((n) => indeg.get(n.id) === 0).map((n) => n.id)
+  for (let i = 0; i < queue.length; i++) {
+    for (const e of forward(queue[i])) {
+      layer.set(e.to, Math.max(layer.get(e.to) ?? 0, (layer.get(queue[i]) ?? 0) + 1))
+      const rest = (indeg.get(e.to) ?? 0) - 1
+      indeg.set(e.to, rest)
+      if (rest === 0) queue.push(e.to)
+    }
+  }
+  return layer
+}
+
 /** Indice de couche de chaque nœud. */
 function assignLayers(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
-  const layer = new Map<string, number>()
   const groupMode = nodes.length > 0 && nodes.every((n) => n.group !== undefined && n.group !== '')
   if (groupMode) {
+    const layer = new Map<string, number>()
     const order: string[] = []
     for (const n of nodes) if (!order.includes(n.group!)) order.push(n.group!)
     for (const n of nodes) layer.set(n.id, order.indexOf(n.group!))
     return layer
   }
-  // Longest-path : source = in-degré 0 → couche 0, puis relaxation bornée.
-  const indeg = new Map<string, number>(nodes.map((n) => [n.id, 0]))
-  for (const e of edges) if (indeg.has(e.to)) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
-  for (const n of nodes) layer.set(n.id, 0)
-  // Au plus |nodes| passes : converge sur un DAG, borné sur un cycle.
-  for (let pass = 0; pass < nodes.length; pass++) {
-    let changed = false
-    for (const e of edges) {
-      // Un self-loop (A→A) ne définit pas de niveau : il gonflerait la couche.
-      if (e.from === e.to) continue
-      if (!layer.has(e.from) || !layer.has(e.to)) continue
-      const want = (layer.get(e.from) ?? 0) + 1
-      if (want > (layer.get(e.to) ?? 0)) {
-        layer.set(e.to, want)
-        changed = true
-      }
-    }
-    if (!changed) break
-  }
-  return layer
+  const out = adjacency(nodes, edges)
+  return longestPath(nodes, out, backEdges(nodes, out))
 }
 
 /** Positionne les nœuds en couches. Chaque couche est centrée sur l'axe croisé. */

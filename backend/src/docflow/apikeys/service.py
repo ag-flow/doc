@@ -63,6 +63,78 @@ async def list_profiles(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[ApiProf
     return [ApiProfileOut(**dict(r)) for r in rows]
 
 
+async def _insert_profile(
+    conn: asyncpg.Connection, owner_id: uuid.UUID, body: ApiProfileCreate
+) -> asyncpg.Record:
+    try:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO api_profile (owner_id, name, description, is_admin)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, name, description, is_admin, created_at, updated_at
+            """,
+            owner_id,
+            body.name,
+            body.description,
+            body.is_admin,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail="nom de profil déjà utilisé") from exc
+    assert row is not None
+    return row
+
+
+def _reject_duplicate_scopes(scopes: list[ApiProfileScopeIn]) -> None:
+    seen: set[tuple[str, str | None]] = set()
+    for s in scopes:
+        key = (s.workspace_slug, s.block_slug)
+        if key in seen:
+            raise HTTPException(status_code=422, detail="scopes dupliqués dans la liste")
+        seen.add(key)
+
+
+async def _require_workspaces(conn: asyncpg.Connection, slugs: list[str]) -> None:
+    """Refuse un scope visant un workspace inexistant.
+
+    Un scope sur un slug fautif produit un profil d'apparence valide dont les
+    clés n'ouvrent aucun accès : le diagnostic se fait alors au runtime, sur un
+    403 opaque. On échoue à la pose, en nommant le slug.
+    """
+    if not slugs:
+        return
+    rows = await conn.fetch("SELECT slug FROM workspace WHERE slug = ANY($1::text[])", slugs)
+    known = {r["slug"] for r in rows}
+    missing = [s for s in dict.fromkeys(slugs) if s not in known]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"workspace introuvable : {', '.join(missing)}",
+        )
+
+
+async def _replace_scopes(
+    conn: asyncpg.Connection, profile_id: uuid.UUID, scopes: list[ApiProfileScopeIn]
+) -> list[asyncpg.Record]:
+    await conn.execute("DELETE FROM api_profile_scope WHERE profile_id = $1", profile_id)
+    rows: list[asyncpg.Record] = []
+    for s in scopes:
+        r = await conn.fetchrow(
+            """
+            INSERT INTO api_profile_scope
+                (profile_id, workspace_slug, block_slug, read_only)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, workspace_slug, block_slug, read_only
+            """,
+            profile_id,
+            s.workspace_slug,
+            s.block_slug,
+            s.read_only,
+        )
+        assert r is not None
+        rows.append(r)
+    return rows
+
+
 async def create_profile(
     pool: asyncpg.Pool,
     owner_id: uuid.UUID,
@@ -72,22 +144,36 @@ async def create_profile(
 ) -> ApiProfileOut:
     _guard_admin_flag(body.is_admin, caller_is_superadmin)
     async with pool.acquire() as conn:
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO api_profile (owner_id, name, description, is_admin)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id, name, description, is_admin, created_at, updated_at
-                """,
-                owner_id,
-                body.name,
-                body.description,
-                body.is_admin,
-            )
-        except asyncpg.UniqueViolationError as exc:
-            raise HTTPException(status_code=409, detail="nom de profil déjà utilisé") from exc
-    assert row is not None
+        row = await _insert_profile(conn, owner_id, body)
     return ApiProfileOut(**dict(row), scope_count=0, key_count=0)
+
+
+async def create_profile_with_scopes(
+    pool: asyncpg.Pool,
+    owner_id: uuid.UUID,
+    body: ApiProfileCreate,
+    scopes: list[ApiProfileScopeIn],
+    *,
+    caller_is_superadmin: bool = False,
+) -> ApiProfileDetail:
+    """Crée un profil et pose ses scopes dans une seule transaction.
+
+    Un profil sans scope n'ouvre aucun accès : le laisser derrière l'échec de la
+    pose des scopes produirait un profil inutilisable et invisible comme tel.
+    """
+    _guard_admin_flag(body.is_admin, caller_is_superadmin)
+    _reject_duplicate_scopes(scopes)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _require_workspaces(conn, [s.workspace_slug for s in scopes])
+            row = await _insert_profile(conn, owner_id, body)
+            scope_rows = await _replace_scopes(conn, row["id"], scopes)
+    return ApiProfileDetail(
+        **dict(row),
+        scope_count=len(scope_rows),
+        key_count=0,
+        scopes=[ApiProfileScopeOut(**dict(s)) for s in scope_rows],
+    )
 
 
 async def get_profile(
@@ -176,13 +262,7 @@ async def set_scopes(
     profile_id: uuid.UUID,
     scopes: list[ApiProfileScopeIn],
 ) -> list[ApiProfileScopeOut]:
-    seen: set[tuple[str, str | None]] = set()
-    for s in scopes:
-        key = (s.workspace_slug, s.block_slug)
-        if key in seen:
-            raise HTTPException(status_code=422, detail="scopes dupliqués dans la liste")
-        seen.add(key)
-
+    _reject_duplicate_scopes(scopes)
     async with pool.acquire() as conn:
         exists = await conn.fetchval(
             "SELECT 1 FROM api_profile WHERE id = $1 AND owner_id = $2",
@@ -192,22 +272,7 @@ async def set_scopes(
         if not exists:
             raise HTTPException(status_code=404, detail="profil introuvable")
         async with conn.transaction():
-            await conn.execute("DELETE FROM api_profile_scope WHERE profile_id = $1", profile_id)
-            rows = []
-            for s in scopes:
-                r = await conn.fetchrow(
-                    """
-                    INSERT INTO api_profile_scope
-                        (profile_id, workspace_slug, block_slug, read_only)
-                    VALUES ($1, $2, $3, $4)
-                    RETURNING id, workspace_slug, block_slug, read_only
-                    """,
-                    profile_id,
-                    s.workspace_slug,
-                    s.block_slug,
-                    s.read_only,
-                )
-                rows.append(r)
+            rows = await _replace_scopes(conn, profile_id, scopes)
             await conn.execute(
                 "UPDATE api_profile SET updated_at = now() WHERE id = $1", profile_id
             )

@@ -165,6 +165,18 @@ describe('DiagramView — dispatch par type', () => {
     expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(2)
   })
 
+  it('venn — intersection déclarée avant ses ensembles reste rendue', () => {
+    const { getByText, queryByTestId } = renderView(' type="venn"', 'A&B | Fullstack\nA | Frontend\nB | Backend')
+    expect(getByText('Fullstack')).toBeInTheDocument()
+    expect(queryByTestId('block-diagnostic')).toBeNull()
+  })
+
+  it('venn — intersection vers un ensemble inexistant reste ignorée', () => {
+    const { getByTestId, queryByText } = renderView(' type="venn"', 'A | Front\nB | Back\nA&Z | Fantome')
+    expect(queryByText('Fantome')).toBeNull()
+    expect(getByTestId('block-diagnostic')).toHaveTextContent('1 ligne ignorée')
+  })
+
   it('matrix (dp-security-matrix) → cellules de permission', () => {
     const { container, getByText } = renderView(' type="dp-security-matrix"', ' | Lire | Écrire\nAdmin | ✓ | ✗')
     // 1 ligne × 2 colonnes = 2 cellules.

@@ -16,6 +16,16 @@ vi.mock('../lib/api', async () => {
 
 import { api, docsApi, type WorkspaceOut, type DataBlockOut } from '../lib/api'
 import { WorkspaceLayout } from '../pages/WorkspaceLayout'
+import { WorkspaceProvider, useWorkspace } from '../contexts/WorkspaceContext'
+// Import statique : chargé à l'import du fichier de test, pas dans le corps du test
+// (la transformation à la volée du graphe de modules dépassait le timeout de 5 s).
+import WorkspaceList from '../pages/WorkspaceList'
+
+/** Sonde du contexte workspace : ce que liront les blocs dataset / puces artefact. */
+function SlugProbe() {
+  const { currentSlug } = useWorkspace()
+  return <div data-testid="ctx-slug">{currentSlug ?? '∅'}</div>
+}
 
 const existingBloc: DataBlockOut = {
   id: 'bloc-id',
@@ -55,6 +65,8 @@ function renderLayout(initialPath: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
+      <WorkspaceProvider>
+      <SlugProbe />
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route path="/workspaces" element={<div data-testid="workspaces-page">Workspaces</div>} />
@@ -69,6 +81,7 @@ function renderLayout(initialPath: string) {
           </Route>
         </Routes>
       </MemoryRouter>
+      </WorkspaceProvider>
     </QueryClientProvider>,
   )
 }
@@ -76,7 +89,27 @@ function renderLayout(initialPath: string) {
 describe('WorkspaceLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     vi.mocked(docsApi.getBlocks).mockResolvedValue([])
+  })
+
+  // Régression : le contexte workspace ne suivait que les clics dans la liste des
+  // workspaces. Toute autre navigation (Cmd+K, lien direct, F5) laissait un slug
+  // périmé — les blocs dataset, puces artefact et liens `artifact://` appelaient
+  // alors l'API sur le MAUVAIS workspace (404).
+  it('synchronise le contexte workspace depuis la route (slug périmé écarté)', async () => {
+    localStorage.setItem('ws_slug', 'autre-ws')
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes('/workspaces/devpod-ui')) return Promise.resolve(activeWs)
+      return Promise.resolve([activeWs])
+    })
+
+    renderLayout('/ws/devpod-ui/blocs')
+
+    await waitFor(() => expect(screen.getByTestId('ctx-slug')).toHaveTextContent('devpod-ui'))
+    // Le contenu ne se monte qu'une fois le contexte aligné sur la route.
+    await waitFor(() => expect(screen.getByTestId('blocs-page')).toBeInTheDocument())
+    expect(screen.getByTestId('ctx-slug')).toHaveTextContent('devpod-ui')
   })
 
   // Garde workspace : inconnu → redirect /workspaces
@@ -156,9 +189,6 @@ describe('WorkspaceList redirect message', () => {
   it('shows message when redirected from unknown workspace', async () => {
     vi.mocked(api.get).mockResolvedValue([activeWs])
     vi.mocked(docsApi.getBlocks).mockResolvedValue([])
-
-    const { default: WorkspaceList } = await import('../pages/WorkspaceList')
-    const { WorkspaceProvider } = await import('../contexts/WorkspaceContext')
 
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(

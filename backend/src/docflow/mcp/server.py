@@ -26,6 +26,10 @@ _settings: Settings | None = None
 
 _require_identity = require_identity
 
+# Tentatives d'écriture de update_document avant de rendre le conflit à
+# l'appelant (qui, lui, ne fournit jamais de version — cf. _update_document).
+_UPDATE_MAX_ATTEMPTS = 3
+
 
 _TOOLS: list[Tool] = [
     Tool(
@@ -182,8 +186,11 @@ _TOOLS: list[Tool] = [
             "ÉCRITURE : mise à jour versionnée et permanente, visible immédiatement. "
             "Au moins un des deux champs (title ou contenu) doit être fourni, "
             "sinon erreur. "
-            "La mise à jour est atomique : la version courante est lue puis "
-            "incrémentée dans la même transaction (concurrence optimiste transparente). "
+            "Concurrence gérée par le serveur : aucune version à fournir. En cas "
+            "d'écriture concurrente, l'appel est rejoué automatiquement sur la "
+            "version courante (les champs omis gardent alors la valeur posée par "
+            "l'autre écrivain). Une contention persistante retourne {error: "
+            "{version, title, content}} décrivant l'état courant — rejouer. "
             "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
             "(utiliser set_property_value pour cela). "
             "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
@@ -686,7 +693,9 @@ _TOOLS: list[Tool] = [
             "Crée un profil d'accès API avec un périmètre limité à UN workspace. "
             "ÉCRITURE : le profil est immédiatement utilisable pour générer des clés. "
             "name doit être unique parmi les profils de l'utilisateur système. "
-            "workspace_slug doit exister (utiliser list_workspaces pour le vérifier). "
+            "workspace_slug doit exister : un slug inconnu est refusé et aucun "
+            "profil n'est créé (utiliser list_workspaces pour le vérifier). "
+            "Le profil et son périmètre sont posés dans la même transaction. "
             "read_only=true (défaut) : lecture seule sur tout le workspace. "
             "read_only=false : lecture et écriture sur tout le workspace. "
             "description est optionnelle. "
@@ -886,6 +895,9 @@ _TOOLS: list[Tool] = [
             "retrait exige une propriété 'status' (restricted_list) avec une valeur "
             "autorisée 'removed_at_source' — sinon l'item concerné est reporté dans "
             "'errors' sans faire échouer l'opération. "
+            "Si plusieurs enfants existants portent le même external_id, la clé est "
+            "ambiguë : elle est ignorée (ni update, ni create, ni marquage de retrait) "
+            "et la collision est reportée dans 'errors' avec les ids concernés. "
             "Retourne {created, updated, unchanged, removed_marked} (listes d'ids), "
             "counts (compteurs) et errors (items en échec)."
         ),
@@ -909,7 +921,10 @@ _TOOLS: list[Tool] = [
                         "(chaîne, obligatoire — clé de corrélation), title (chaîne), "
                         "contenu (chaîne markdown, optionnel), properties (objet "
                         "{slug: valeur} optionnel ; pour une restricted_list, la valeur "
-                        "est le slug de la valeur autorisée)."
+                        "est le slug de la valeur autorisée). Un 'external_id' placé "
+                        "dans properties n'est jamais écrit — la clé de corrélation "
+                        "reste celle de l'item — et la divergence est reportée dans "
+                        "'errors'."
                     ),
                     "items": {"type": "object"},
                 },
@@ -1569,6 +1584,14 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     return _text({"created": True, "id": str(doc.doc_technical_key), "title": doc.title})
 
 
+def _conflict_version(status_code: int, detail: object) -> int | None:
+    """Version courante portée par un 409 de update_document ; None si autre erreur."""
+    if status_code != 409 or not isinstance(detail, dict):
+        return None
+    version = detail.get("version")
+    return version if isinstance(version, int) else None
+
+
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
 
@@ -1606,19 +1629,32 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     # Ne renseigner que les champs réellement fournis : un champ omis doit rester
     # « unset » (model_dump(exclude_unset=True) l'exclut) pour que le service
     # reporte sa valeur courante au lieu de l'écraser à NULL (bug MCO).
-    update_fields: dict[str, object] = {"expected_version": current_version}
+    update_fields: dict[str, object] = {}
     if "title" in args:
         update_fields["title"] = title
     if "contenu" in args:
         update_fields["content"] = contenu
 
-    try:
-        data = DocumentUpdate(**update_fields)
-        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
-    except HTTPException as e:
-        return _text({"error": e.detail})
+    # L'appelant MCP ne fournit pas de version : la lecture ci-dessus et
+    # l'écriture ne partagent pas la même transaction, et une écriture
+    # concurrente glissée entre les deux produirait un 409 qu'il ne pourrait
+    # résoudre qu'en rejouant. On rejoue donc ici, en repartant de la version
+    # portée par le conflit — les champs omis restent ceux du writer concurrent.
+    # Borné : au-delà, la contention est réelle et remonte à l'appelant.
+    for attempt in range(_UPDATE_MAX_ATTEMPTS):
+        try:
+            data = DocumentUpdate(expected_version=current_version, **update_fields)
+            doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
+        except HTTPException as e:
+            detail: object = e.detail
+            retry_version = _conflict_version(e.status_code, detail)
+            if retry_version is None or attempt == _UPDATE_MAX_ATTEMPTS - 1:
+                return _text({"error": detail})
+            current_version = retry_version
+            continue
+        return _text({"updated": True, "title": doc.title, "version": doc.version})
 
-    return _text({"updated": True, "title": doc.title, "version": doc.version})
+    raise AssertionError("boucle de retry update_document sortie sans issue")
 
 
 async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -2322,15 +2358,10 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
     owner_id = _require_identity().id
 
     try:
-        profile = await ak_svc.create_profile(
+        profile = await ak_svc.create_profile_with_scopes(
             pool,
             owner_id,
             ApiProfileCreate(name=name, description=description, is_admin=False),
-        )
-        await ak_svc.set_scopes(
-            pool,
-            owner_id,
-            profile.id,
             [ApiProfileScopeIn(workspace_slug=ws_slug, block_slug=None, read_only=read_only)],
         )
     except HTTPException as e:

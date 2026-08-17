@@ -67,6 +67,36 @@ describe('layeredGraph — robustesse cycle', () => {
     expect(g.layers.length).toBe(2)
     expect(g.layers[1]).toEqual(['B'])
   })
+
+  it('un self-loop seul (idle→idle) tient sur une unique couche', () => {
+    const g = layeredGraph([{ id: 'idle', label: 'idle' }], edges2([['idle', 'idle']]), {})
+    expect(g.layers).toEqual([['idle']])
+  })
+
+  it('cycle long A→B→C→A : couches compactes dans l’ordre du parcours', () => {
+    const nodes: GraphNode[] = [
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+      { id: 'C', label: 'C' },
+    ]
+    const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'C'], ['C', 'A']]), { dir: 'LR' })
+    expect(g.layers).toEqual([['A'], ['B'], ['C']])
+    expect(g.placed.get('A')!.x).toBeLessThan(g.placed.get('B')!.x)
+    expect(g.placed.get('B')!.x).toBeLessThan(g.placed.get('C')!.x)
+  })
+
+  it('squelette statemachine : 3 couches compactes, draft en tête', () => {
+    const { nodes, edges } = parseGraph(
+      'draft -> review | soumettre\nreview -> published | valider\nreview -> draft | rejeter\npublished -> published | mettre à jour',
+    )
+    const g = layeredGraph(nodes, edges, { dir: 'LR' })
+    expect(g.layers).toEqual([['draft'], ['review'], ['published']])
+    // Aucune colonne vide : la première couche colle au padding.
+    expect(g.placed.get('draft')!.x).toBe(10)
+    expect(g.placed.get('draft')!.x).toBeLessThan(g.placed.get('review')!.x)
+    expect(g.placed.get('review')!.x).toBeLessThan(g.placed.get('published')!.x)
+    expect(g.width).toBe(10 * 2 + 3 * 96 + 2 * 48)
+  })
 })
 
 function edges2(pairs: Array<[string, string]>): GraphEdge[] {
@@ -93,5 +123,17 @@ describe('parseGraph', () => {
     const g = parseGraph('A ->\nB')
     expect(g.ignored).toBe(1)
     expect(g.nodes.map((n) => n.id)).toContain('B')
+  })
+
+  it('un `->` dans le label ne fait pas une arête', () => {
+    const g = parseGraph('mig | Legacy -> Cloud | Infra')
+    expect(g.edges).toEqual([])
+    expect(g.nodes).toEqual([{ id: 'mig', label: 'Legacy -> Cloud', group: 'Infra' }])
+    expect(g.ignored).toBe(0)
+  })
+
+  it('un `->` dans le libellé d’arête reste un libellé', () => {
+    const g = parseGraph('a -> b | passe de a -> b')
+    expect(g.edges).toEqual([{ from: 'a', to: 'b', label: 'passe de a -> b' }])
   })
 })

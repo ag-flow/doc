@@ -236,3 +236,136 @@ async def test_sync_idempotent_rejeu(db_pool: asyncpg.Pool, synced: dict[str, ob
     assert result["errors"] == []
     # A, B, D et C (déjà removed_at_source) tous unchanged → 4
     assert result["counts"]["unchanged"] == 4
+
+
+# ── Bug : properties.external_id écrasait la clé de corrélation ─────────────
+
+
+async def _external_id_of(pool: asyncpg.Pool, doc_id: uuid.UUID) -> str | None:
+    for v in await doc_svc.list_property_values(pool, _WS, doc_id):
+        if v.prop_slug == "external_id":
+            return v.value
+    return None
+
+
+def _item_avec_conflit() -> dict[str, object]:
+    """Item dont les properties portent un external_id divergent de la clé."""
+    return {
+        "external_id": "T-1",
+        "title": "Tâche 1",
+        "contenu": "corps",
+        "properties": {"external_id": "t-1"},
+    }
+
+
+async def test_sync_creation_ignore_external_id_des_properties(
+    db_pool: asyncpg.Pool, synced: dict[str, object]
+) -> None:
+    """La clé de corrélation vient de item.external_id, jamais des properties."""
+    parent_id = synced["parent_id"]
+
+    result = await sync_child_documents(
+        db_pool,
+        _WS,
+        parent_id,  # type: ignore[arg-type]
+        "capture_item",
+        [_item_avec_conflit()],
+        exhaustive=False,
+    )
+
+    assert len(result["created"]) == 1  # type: ignore[arg-type]
+    new_id = uuid.UUID(result["created"][0])  # type: ignore[index]
+    assert await _external_id_of(db_pool, new_id) == "T-1"
+    # Le conflit est remonté explicitement, pas absorbé en silence.
+    errs = result["errors"]
+    assert len(errs) == 1  # type: ignore[arg-type]
+    assert errs[0]["external_id"] == "T-1"  # type: ignore[index]
+    assert "properties.external_id" in str(errs[0]["error"])  # type: ignore[index]
+
+
+async def test_sync_rejeu_item_avec_conflit_ne_duplique_pas(
+    db_pool: asyncpg.Pool, synced: dict[str, object]
+) -> None:
+    """Cœur du bug : au rejeu l'item doit être retrouvé, pas recréé."""
+    parent_id = synced["parent_id"]
+
+    first = await sync_child_documents(
+        db_pool, _WS, parent_id, "capture_item", [_item_avec_conflit()], exhaustive=False
+    )
+    second = await sync_child_documents(
+        db_pool, _WS, parent_id, "capture_item", [_item_avec_conflit()], exhaustive=False
+    )
+
+    assert second["created"] == []
+    assert second["unchanged"] == first["created"]
+    count = await db_pool.fetchval("SELECT count(*) FROM document WHERE parent = $1", parent_id)
+    # 3 enfants de la fixture + 1 seul créé par les deux passages
+    assert count == 4
+
+
+async def test_sync_update_ne_reecrit_pas_external_id_via_properties(
+    db_pool: asyncpg.Pool, synced: dict[str, object]
+) -> None:
+    """Un item existant ne peut pas muter sa clé de corrélation par properties."""
+    parent_id = synced["parent_id"]
+    children = synced["children"]  # type: ignore[assignment]
+    doc_a: uuid.UUID = children["a"]  # type: ignore[index]
+
+    result = await sync_child_documents(
+        db_pool,
+        _WS,
+        parent_id,  # type: ignore[arg-type]
+        "capture_item",
+        [{"external_id": "a", "title": "Child A", "properties": {"external_id": "zzz"}}],
+        exhaustive=False,
+    )
+
+    assert await _external_id_of(db_pool, doc_a) == "a"
+    assert result["created"] == []
+    assert len(result["errors"]) == 1  # type: ignore[arg-type]
+
+
+# ── Bug : enfants en doublon d'external_id silencieusement masqués ──────────
+
+
+async def test_sync_doublon_external_id_existant_remonte_une_erreur(
+    db_pool: asyncpg.Pool, synced: dict[str, object]
+) -> None:
+    """Deux enfants portant le même external_id : collision signalée, pas masquée."""
+    parent_id: uuid.UUID = synced["parent_id"]  # type: ignore[assignment]
+    children = synced["children"]  # type: ignore[assignment]
+    block_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT data_block_ref FROM document WHERE doc_technical_key = $1", parent_id
+    )
+    clone = await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Child A bis",
+            functional_type_slug="capture_item",
+            block_id=block_id,
+            parent_id=parent_id,
+            content="doublon",
+            properties={"external_id": "a"},
+        ),
+    )
+
+    result = await sync_child_documents(
+        db_pool,
+        _WS,
+        parent_id,
+        "capture_item",
+        [{"external_id": "a", "title": "Child A v2", "contenu": "modifié"}],
+        exhaustive=True,
+    )
+
+    errs = [e for e in result["errors"] if e["external_id"] == "a"]  # type: ignore[union-attr,index]
+    assert len(errs) == 1
+    msg = str(errs[0]["error"])
+    assert str(children["a"]) in msg and str(clone.doc_technical_key) in msg  # type: ignore[index]
+
+    # Aucun des deux homonymes n'est touché ni marqué retiré : comportement déterministe.
+    assert result["created"] == []
+    assert result["updated"] == []
+    assert await _status_of(db_pool, clone.doc_technical_key) == "active"
+    assert await _status_of(db_pool, children["a"]) == "active"  # type: ignore[index]

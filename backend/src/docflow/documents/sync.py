@@ -12,6 +12,11 @@ documentaires (accepter une connexion en paramètre), hors périmètre. C'est un
 choix assumé de réutilisation de la logique validée, pas un raccourci : chaque
 écriture individuelle reste transactionnelle et l'opération est idempotente
 per-item (un rejeu à l'identique n'écrit rien).
+
+Clé de corrélation : `external_id` vient exclusivement de `item.external_id` et
+n'est jamais écrite depuis `item.properties`. Une clé portée par plusieurs
+enfants existants est ambiguë : elle est ignorée et reportée dans `errors`.
+Aucune de ces deux situations ne fait échouer l'opération d'ensemble.
 """
 
 from __future__ import annotations
@@ -49,6 +54,7 @@ LEFT JOIN properties_values pv
 LEFT JOIN properties_value_version pvv
     ON pvv.property_value_ref = pv.id AND pvv.version_number = pv.version
 WHERE d.parent = $1 AND d.functional_type_ref = $2 AND d.workspace_technical_key = $3
+ORDER BY d.created_at, d.doc_technical_key
 """
 
 
@@ -89,6 +95,19 @@ def _item_properties(item: dict[str, object]) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items() if v is not None}
 
 
+def _writable_properties(item: dict[str, object]) -> tuple[dict[str, str], str | None]:
+    """Propriétés à écrire (clé de corrélation exclue) + external_id divergent éventuel.
+
+    `external_id` est la clé de corrélation : elle provient exclusivement de
+    `item.external_id`. Laisser `item.properties` la réécrire casserait la
+    corrélation, l'item ne serait plus retrouvé au rejeu et un document serait
+    recréé à chaque synchronisation.
+    """
+    props = _item_properties(item)
+    shadow = props.pop(EXTERNAL_ID_PROP, None)
+    return props, shadow
+
+
 def _pv_set(prop_type: str, value: str, expected_version: int) -> PropertyValueSet:
     """Construit un PropertyValueSet selon le type de la propriété."""
     if prop_type == "restricted_list":
@@ -125,6 +144,7 @@ async def _sync_existing(
     ws_slug: str,
     child: asyncpg.Record,
     item: dict[str, object],
+    properties: dict[str, str],
 ) -> bool:
     """Met à jour titre/contenu/propriétés d'un enfant existant ; True si modifié."""
     doc_id: uuid.UUID = child["doc_technical_key"]
@@ -146,7 +166,7 @@ async def _sync_existing(
             DocumentUpdate(expected_version=child["version"], **fields),
         )
         changed = True
-    if await _sync_properties(pool, ws_slug, doc_id, _item_properties(item)):
+    if await _sync_properties(pool, ws_slug, doc_id, properties):
         changed = True
     return changed
 
@@ -159,13 +179,14 @@ async def _create_child(
     child_type_slug: str,
     external_id: str,
     item: dict[str, object],
+    properties: dict[str, str],
 ) -> str:
     """Crée un document enfant du parent avec sa propriété external_id ; retourne l'id."""
     title = item.get("title")
     if title is None:
         raise HTTPException(status_code=422, detail="title requis pour créer l'enfant")
     contenu = item.get("contenu")
-    props: dict[str, str] = {EXTERNAL_ID_PROP: external_id, **_item_properties(item)}
+    props: dict[str, str] = {**properties, EXTERNAL_ID_PROP: external_id}
     doc = await doc_svc.create_document(
         pool,
         ws_slug,
@@ -198,6 +219,45 @@ async def _mark_removed(
     return True
 
 
+def _index_children(
+    rows: list[asyncpg.Record],
+) -> tuple[dict[str, asyncpg.Record], dict[str, list[str]]]:
+    """Indexe les enfants par external_id ; isole les clés portées par plusieurs enfants.
+
+    Aucune unicité n'est garantie en base : indexer à l'aveugle masquerait tous
+    les homonymes sauf un (jamais mis à jour, jamais marqués retirés). Les clés
+    en collision sont donc sorties de l'index et signalées à l'appelant.
+    """
+    index: dict[str, asyncpg.Record] = {}
+    ambiguous: dict[str, list[str]] = {}
+    for row in rows:
+        ext = row["external_id"]
+        if ext is None:
+            continue
+        doc_id = str(row["doc_technical_key"])
+        if ext in ambiguous:
+            ambiguous[ext].append(doc_id)
+        elif ext in index:
+            ambiguous[ext] = [str(index.pop(ext)["doc_technical_key"]), doc_id]
+        else:
+            index[ext] = row
+    return index, ambiguous
+
+
+def _collision_errors(ambiguous: dict[str, list[str]]) -> list[dict[str, object]]:
+    """Une erreur par external_id porté par plusieurs enfants du même parent."""
+    return [
+        {
+            "external_id": ext,
+            "error": (
+                f"external_id en doublon sur {len(doc_ids)} enfants "
+                f"({', '.join(doc_ids)}) : clé ignorée par la synchronisation"
+            ),
+        }
+        for ext, doc_ids in ambiguous.items()
+    ]
+
+
 async def sync_child_documents(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -217,13 +277,13 @@ async def sync_child_documents(
         block_id, child_type_id = await _resolve_context(conn, wk, parent_id, child_type_slug)
         rows = await conn.fetch(_LOAD_CHILDREN, parent_id, child_type_id, wk, EXTERNAL_ID_PROP)
 
-    existing = {r["external_id"]: r for r in rows if r["external_id"] is not None}
+    existing, ambiguous = _index_children(rows)
 
     created: list[str] = []
     updated: list[str] = []
     unchanged: list[str] = []
     removed_marked: list[str] = []
-    errors: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = _collision_errors(ambiguous)
     delivered: set[str] = set()
 
     for item in items:
@@ -233,18 +293,38 @@ async def sync_child_documents(
             continue
         external_id = raw_ext
         delivered.add(external_id)
+        if external_id in ambiguous:
+            continue
+        properties, shadow = _writable_properties(item)
+        if shadow is not None and shadow != external_id:
+            errors.append(
+                {
+                    "external_id": external_id,
+                    "error": (
+                        f"properties.external_id ('{shadow}') ignoré : la clé de "
+                        f"corrélation est item.external_id ('{external_id}')"
+                    ),
+                }
+            )
         try:
             child = existing.get(external_id)
             if child is not None:
                 doc_id = str(child["doc_technical_key"])
-                if await _sync_existing(pool, ws_slug, child, item):
+                if await _sync_existing(pool, ws_slug, child, item, properties):
                     updated.append(doc_id)
                 else:
                     unchanged.append(doc_id)
             else:
                 created.append(
                     await _create_child(
-                        pool, ws_slug, block_id, parent_id, child_type_slug, external_id, item
+                        pool,
+                        ws_slug,
+                        block_id,
+                        parent_id,
+                        child_type_slug,
+                        external_id,
+                        item,
+                        properties,
                     )
                 )
         except HTTPException as exc:

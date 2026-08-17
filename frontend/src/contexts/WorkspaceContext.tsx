@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 
 interface WorkspaceContextValue {
@@ -13,11 +13,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => localStorage.getItem('ws_slug')
   )
 
-  const set = (slug: string | null) => {
+  // Identité stable : les consommateurs synchronisent le slug depuis un effet
+  // (cf. WorkspaceLayout), qui se re-déclencherait à chaque rendu du provider.
+  const set = useCallback((slug: string | null) => {
     if (slug) localStorage.setItem('ws_slug', slug)
     else localStorage.removeItem('ws_slug')
     setCurrentSlug(slug)
-  }
+  }, [])
 
   return (
     <WorkspaceContext.Provider value={{ currentSlug, setCurrentSlug: set }}>

@@ -93,6 +93,17 @@ function computeDefaultExpanded(roots: BlockTreeNode[]): Record<string, boolean>
   return state
 }
 
+/** Ids de tous les nœuds de l'arbre (racines incluses), à plat. */
+function collectNodeIds(roots: BlockTreeNode[]): Set<string> {
+  const ids = new Set<string>()
+  const visit = (node: BlockTreeNode) => {
+    ids.add(node.id)
+    node.children.forEach(visit)
+  }
+  roots.forEach(visit)
+  return ids
+}
+
 /** Mode browse arbre : convertit un nœud `list_block_tree` (récursif) en ligne de table. */
 function treeNodeToRow(node: BlockTreeNode): TreeRow {
   return {
@@ -172,6 +183,9 @@ export function BlockDocumentList() {
   const [treeMode, setTreeMode] = useState(true)
   // Vide au départ ; peuplé par `computeDefaultExpanded` dès que l'arbre charge.
   const [expanded, setExpanded] = useState<ExpandedState>({})
+  // Nœuds ayant déjà reçu leur état d'expansion par défaut, et bloc auquel ils
+  // appartiennent : au-delà, seul l'utilisateur décide.
+  const defaultedNodes = useRef<{ scope: string; ids: Set<string> }>({ scope: '', ids: new Set() })
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
 
   // ── Sélection de colonnes : mémorisée PAR UTILISATEUR et PAR BLOC ────────
@@ -352,11 +366,30 @@ export function BlockDocumentList() {
   )
   const browseTotal = browseInfinite.data?.pages[0]?.total ?? 0
 
-  // Collapse par défaut : recalculé quand les racines chargées changent (bloc,
-  // tri, « Charger plus », invalidation). Les toggles manuels tiennent jusque-là.
+  // Collapse par défaut : appliqué UNE FOIS par nœud, à sa première apparition.
+  // Le rejouer à chaque identité de `browseRoots` le rejouait à chaque refetch — y
+  // compris celui déclenché par l'édition inline de l'utilisateur — et effaçait ses
+  // plis/déplis manuels sous la souris. « Charger plus » n'apporte que des nœuds
+  // inédits : eux reçoivent le défaut, les autres gardent l'état courant.
   useEffect(() => {
-    if (browseRoots.length > 0) setExpanded(computeDefaultExpanded(browseRoots))
-  }, [browseRoots])
+    if (browseRoots.length === 0) return
+    const scope = `${ws}/${block}`
+    const known = defaultedNodes.current.scope === scope ? defaultedNodes.current.ids : null
+    const defaults = computeDefaultExpanded(browseRoots)
+    defaultedNodes.current = { scope, ids: collectNodeIds(browseRoots) }
+    // Premier chargement du bloc (ou changement de bloc) : le défaut fait foi.
+    if (!known) {
+      setExpanded(defaults)
+      return
+    }
+    setExpanded((prev) => {
+      const merged: Record<string, boolean> = typeof prev === 'boolean' ? {} : { ...prev }
+      for (const [id, open] of Object.entries(defaults)) {
+        if (!known.has(id)) merged[id] = open
+      }
+      return merged
+    })
+  }, [browseRoots, ws, block])
 
   // ── Vues enregistrées ────────────────────────────────────────────────────
   const [showSaveView, setShowSaveView] = useState(false)

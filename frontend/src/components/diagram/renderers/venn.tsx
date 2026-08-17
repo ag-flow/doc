@@ -18,30 +18,44 @@ interface VennSet {
   label: string
 }
 
-/** Sépare corps → ensembles ordonnés + libellés d'intersection (clé triée). */
+/** Découpe `id | Label` (label absent → label = id). */
+function splitLine(line: string): { id: string; label: string } {
+  const bar = line.indexOf('|')
+  const id = (bar === -1 ? line : line.slice(0, bar)).trim()
+  return { id, label: bar === -1 ? id : line.slice(bar + 1).trim() }
+}
+
+/** Sépare corps → ensembles ordonnés + libellés d'intersection (clé triée).
+ *  Deux passes : les ensembles d'abord, pour qu'une intersection déclarée avant
+ *  ses membres résolve quand même (référence en avant). */
 function parseVenn(body: string): { sets: VennSet[]; inters: Map<string, string>; ignored: number } {
+  const lines = body
+    .split('\n')
+    .map((raw) => raw.trim())
+    .filter((line) => line.length > 0)
+    .map(splitLine)
+
   const sets: VennSet[] = []
-  const inters = new Map<string, string>()
   const index = new Map<string, number>()
-  let ignored = 0
-  for (const raw of body.split('\n')) {
-    const line = raw.trim()
-    if (line.length === 0) continue
-    const bar = line.indexOf('|')
-    const id = (bar === -1 ? line : line.slice(0, bar)).trim()
-    const label = bar === -1 ? id : line.slice(bar + 1).trim()
-    if (id.includes('&')) {
-      const members = id.split('&').map((s) => s.trim()).filter((s) => s.length > 0)
-      inters.set(members.map((m) => index.get(m)).filter((n) => n !== undefined).sort().join('-'), label)
-    } else {
-      if (!index.has(id)) {
-        index.set(id, sets.length)
-        sets.push({ id, label })
-      }
-    }
+  for (const { id, label } of lines) {
+    if (id.includes('&') || index.has(id)) continue
+    index.set(id, sets.length)
+    sets.push({ id, label })
   }
-  // Compte les intersections dont un membre est inconnu (clé partielle).
-  for (const [k] of inters) if (k.split('-').length < 2) ignored++
+
+  const inters = new Map<string, string>()
+  let ignored = 0
+  for (const { id, label } of lines) {
+    if (!id.includes('&')) continue
+    const members = id.split('&').map((s) => s.trim()).filter((s) => s.length > 0)
+    const refs = members.map((m) => index.get(m)).filter((n) => n !== undefined)
+    // Un membre jamais déclaré (faute de frappe) → intersection réellement ignorée.
+    if (members.length < 2 || refs.length !== members.length) {
+      ignored++
+      continue
+    }
+    inters.set(refs.sort((a, b) => a - b).join('-'), label)
+  }
   return { sets, inters, ignored }
 }
 
@@ -95,7 +109,6 @@ export function VennDiagram({ body, svgRef }: RendererProps) {
   }
 
   const interLabels: ReactNode[] = Array.from(inters.entries())
-    .filter(([k]) => k.split('-').every((s) => s.length > 0) && k.split('-').length >= 2)
     .map(([k, label], i) => {
       const p = interAnchor(k)
       return (

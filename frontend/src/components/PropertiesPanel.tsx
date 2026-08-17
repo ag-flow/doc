@@ -168,16 +168,19 @@ export function PropertiesPanel({ ws, docId, functionalTypeSlug, readOnly = fals
       ) : values.length === 0 ? (
         <p className="text-sm text-gray-400">{t('properties.empty')}</p>
       ) : (
+        /* La clé inclut le docId : d'un document à l'autre (même route, panneau non
+           remonté) les slugs sont identiques, et React réutiliserait l'instance du
+           champ — qui conserverait la valeur ET la version du document précédent. */
         values.map((prop) =>
           readOnly ? (
             <PropertyReadRow
-              key={prop.prop_slug}
+              key={`${docId}:${prop.prop_slug}`}
               prop={prop}
               allowedValues={allowedIndex.get(prop.prop_slug) ?? []}
             />
           ) : (
             <PropertyField
-              key={prop.prop_slug}
+              key={`${docId}:${prop.prop_slug}`}
               ws={ws}
               docId={docId}
               prop={prop}

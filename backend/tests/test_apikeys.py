@@ -274,3 +274,62 @@ async def test_resolve_api_key_met_a_jour_last_used(
         "SELECT last_used_at FROM api_key WHERE id = $1", created.id
     )
     assert last_used_after is not None
+
+
+# ── Création atomique profil + scopes ────────────────────────────────────────
+
+
+async def test_create_profile_with_scopes_nominal(db_pool: asyncpg.Pool, owner: uuid.UUID) -> None:
+    await db_pool.execute(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "ws-scopes",
+        "WS Scopes",
+    )
+    try:
+        detail = await svc.create_profile_with_scopes(
+            db_pool,
+            owner,
+            ApiProfileCreate(name="atomique"),
+            [ApiProfileScopeIn(workspace_slug="ws-scopes", block_slug=None, read_only=True)],
+        )
+        assert detail.scope_count == 1
+        assert detail.scopes[0].workspace_slug == "ws-scopes"
+        persisted = await svc.get_profile(db_pool, owner, detail.id)
+        assert len(persisted.scopes) == 1
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "ws-scopes")
+
+
+async def test_create_profile_with_scopes_workspace_inconnu_rollback(
+    db_pool: asyncpg.Pool, owner: uuid.UUID
+) -> None:
+    """Workspace inexistant : 422 nommant le slug, et aucun profil orphelin."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.create_profile_with_scopes(
+            db_pool,
+            owner,
+            ApiProfileCreate(name="orphelin"),
+            [ApiProfileScopeIn(workspace_slug="ws-absent", block_slug=None, read_only=True)],
+        )
+    assert exc.value.status_code == 422
+    assert "ws-absent" in str(exc.value.detail)
+    assert await svc.list_profiles(db_pool, owner) == []
+
+
+async def test_create_profile_with_scopes_garde_admin(
+    db_pool: asyncpg.Pool, owner: uuid.UUID
+) -> None:
+    """La garde anti-escalade is_admin s'applique aussi au chemin atomique."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.create_profile_with_scopes(
+            db_pool,
+            owner,
+            ApiProfileCreate(name="escalade", is_admin=True),
+            [],
+        )
+    assert exc.value.status_code == 403
+    assert await svc.list_profiles(db_pool, owner) == []

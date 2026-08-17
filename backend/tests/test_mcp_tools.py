@@ -1538,3 +1538,187 @@ async def test_delete_block_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
         )
     )
     assert "error" in res  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# 17. update_document — concurrence optimiste transparente (retry borné)
+# ---------------------------------------------------------------------------
+
+
+def _concurrent_writer(doc_svc: object, *, always: bool):  # type: ignore[no-untyped-def]
+    """Remplace update_document par une variante qui glisse une écriture
+    concurrente juste avant l'écriture demandée (une seule fois, ou à chaque
+    tentative si `always`). Reproduit la fenêtre entre lecture de version et
+    écriture."""
+    from docflow.schemas.document import DocumentUpdate
+
+    real = doc_svc.update_document  # type: ignore[attr-defined]
+    calls = {"n": 0}
+
+    async def _flaky(pool, ws_slug, target, data, author=None):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if always or calls["n"] == 1:
+            await real(
+                pool,
+                ws_slug,
+                target,
+                DocumentUpdate(
+                    expected_version=data.expected_version,
+                    title=f"Concurrent {calls['n']}",
+                ),
+            )
+        return await real(pool, ws_slug, target, data, author)
+
+    return _flaky, calls
+
+
+async def test_update_document_retry_absorbe_une_ecriture_concurrente(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une écriture concurrente entre la lecture de version et l'écriture ne
+    doit pas remonter de conflit à l'appelant : le handler rejoue."""
+    from docflow.documents import service as doc_svc
+
+    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
+    flaky, calls = _concurrent_writer(doc_svc, always=False)
+    monkeypatch.setattr(doc_svc, "update_document", flaky)
+
+    res = _json(
+        await _update_document(
+            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Après retry"}
+        )
+    )
+    assert res["updated"] is True  # type: ignore[index]
+    assert calls["n"] == 2
+    monkeypatch.undo()
+    got = _json(await _get_document(db_pool, ws, doc_id))
+    assert got["title"] == "Après retry"  # type: ignore[index]
+
+
+async def test_update_document_conflit_persistant_remonte_erreur(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retry borné : un conflit à chaque tentative finit en erreur exploitable
+    (version courante fournie), pas en boucle infinie."""
+    from docflow.documents import service as doc_svc
+
+    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
+    flaky, calls = _concurrent_writer(doc_svc, always=True)
+    monkeypatch.setattr(doc_svc, "update_document", flaky)
+
+    res = _json(
+        await _update_document(
+            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Jamais posé"}
+        )
+    )
+    assert "error" in res  # type: ignore[operator]
+    assert res["error"]["version"] > 0  # type: ignore[index]
+    assert calls["n"] == 3
+
+
+async def test_update_document_titre_seul_preserve_le_contenu_concurrent(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le rejeu relit l'état courant : un champ omis reste celui du writer
+    concurrent, il n'est pas écrasé par la valeur lue avant le conflit."""
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentUpdate
+
+    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
+    real = doc_svc.update_document
+    calls = {"n": 0}
+
+    async def _flaky(pool, ws_slug, target, data, author=None):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await real(
+                pool,
+                ws_slug,
+                target,
+                DocumentUpdate(
+                    expected_version=data.expected_version, content="# Corps concurrent"
+                ),
+            )
+        return await real(pool, ws_slug, target, data, author)
+
+    monkeypatch.setattr(doc_svc, "update_document", _flaky)
+    res = _json(
+        await _update_document(
+            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Titre gagnant"}
+        )
+    )
+    assert res["updated"] is True  # type: ignore[index]
+    monkeypatch.undo()
+    got = _json(await _get_document(db_pool, ws, doc_id))
+    assert got["title"] == "Titre gagnant"  # type: ignore[index]
+    assert got["contenu"] == "# Corps concurrent"  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# 18. create_api_profile — workspace vérifié + création atomique profil/scope
+# ---------------------------------------------------------------------------
+
+
+async def test_create_api_profile_workspace_inconnu_sans_profil_orphelin(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    """Un slug de workspace inexistant est refusé, sans laisser de profil sans scope."""
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool, {"name": "profil-fantome", "workspace_slug": "ws-qui-nexiste-pas"}
+        )
+    )
+    assert "error" in res  # type: ignore[operator]
+    assert "ws-qui-nexiste-pas" in str(res["error"])  # type: ignore[index]
+    count = await db_pool.fetchval(
+        "SELECT count(*) FROM api_profile WHERE owner_id = $1", mcp_session
+    )
+    assert count == 0
+
+
+async def test_create_api_profile_nominal_pose_profil_et_scope(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool,
+            {
+                "name": "profil-lecture",
+                "workspace_slug": mcp_ws["ws_slug"],
+                "read_only": True,
+            },
+        )
+    )
+    assert res["created"] is True  # type: ignore[index]
+    profile_id = uuid.UUID(str(res["profile_id"]))  # type: ignore[index]
+    row = await db_pool.fetchrow(
+        "SELECT workspace_slug, block_slug, read_only FROM api_profile_scope WHERE profile_id = $1",
+        profile_id,
+    )
+    assert row is not None
+    assert row["workspace_slug"] == mcp_ws["ws_slug"]
+    assert row["block_slug"] is None
+    assert row["read_only"] is True
+
+
+async def test_create_api_profile_reste_non_admin(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    """Garde anti-escalade : un profil créé via MCP n'est jamais admin."""
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool,
+            {"name": "profil-mcp", "workspace_slug": mcp_ws["ws_slug"], "is_admin": True},
+        )
+    )
+    assert res["created"] is True  # type: ignore[index]
+    is_admin = await db_pool.fetchval(
+        "SELECT is_admin FROM api_profile WHERE id = $1", uuid.UUID(str(res["profile_id"]))
+    )
+    assert is_admin is False

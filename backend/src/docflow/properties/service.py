@@ -3,11 +3,12 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
+import structlog
 from fastapi import HTTPException
 
-from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.db.helpers import require_prop_def, require_type, require_workspace, validate_slug
 from docflow.documents.changelog import log_structure_change
-from docflow.documents.service import validate_scalar_value
+from docflow.documents.service import validate_constraint_operand, validate_scalar_value
 from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
@@ -18,6 +19,8 @@ from docflow.schemas.properties import (
     PropertiesDefOut,
     PropertiesDefUpdate,
 )
+
+log = structlog.get_logger(__name__)
 
 # ── Properties defs ───────────────────────────────────────────────────────────
 
@@ -272,6 +275,95 @@ _TYPE_TRANSITIONS: dict[str, frozenset[str]] = {
     "int": frozenset({"float"}),
 }
 
+_SELECT_CURRENT_TEXT_VALUES = """
+SELECT DISTINCT v.value
+FROM properties_values pv
+JOIN properties_value_version v
+  ON v.property_value_ref = pv.id AND v.version_number = pv.version
+WHERE pv.property_def_ref = $1 AND v.value IS NOT NULL
+ORDER BY v.value
+"""
+
+_LINK_CURRENT_VALUES = """
+UPDATE properties_value_version v
+SET value = NULL, allowed_value_ref = $2
+FROM properties_values pv
+WHERE v.property_value_ref = pv.id
+  AND v.version_number = pv.version
+  AND pv.property_def_ref = $1
+  AND v.value = $3
+"""
+
+
+def _as_allowed_slug(value: str) -> str | None:
+    try:
+        return validate_slug(value, "valeur")
+    except ValueError:
+        return None
+
+
+async def _promote_values_to_vocabulary(
+    conn: asyncpg.Connection, prop_id: uuid.UUID, prop_slug: str
+) -> None:
+    """Transforme en vocabulaire les valeurs texte courantes d'une propriété (→ restricted_list).
+
+    Une valeur de ``restricted_list`` se stocke comme référence au vocabulaire, jamais
+    comme texte (invariant « value XOR allowed_value_ref »). Sans cette migration, les
+    documents déjà renseignés gardent leur texte avec ``allowed_value_ref = NULL`` : ils
+    disparaissent des filtres, du tri et du board, et ne comptent pas comme dépendants
+    d'une valeur autorisée — le tout sans la moindre erreur.
+
+    La migration s'exécute dans la transaction du changement de type : soit la propriété
+    change de type ET ses valeurs sont reliées, soit rien. Seules les versions COURANTES
+    sont réécrites (représentation d'une valeur inchangée, pas nouvelle valeur : ni bump
+    de version, ni entrée de changelog par document) ; l'historique reste immuable.
+
+    Une valeur libre qui ne peut pas être un slug rend la transition impossible : on
+    refuse (422) en listant les valeurs fautives plutôt que d'en perdre une en route.
+    """
+    rows = await conn.fetch(_SELECT_CURRENT_TEXT_VALUES, prop_id)
+    values: list[str] = [r["value"] for r in rows]
+    if not values:
+        return
+    invalid = [v for v in values if _as_allowed_slug(v) is None]
+    if invalid:
+        shown = ", ".join(f"'{v}'" for v in invalid[:5])
+        suffix = f" (et {len(invalid) - 5} autre(s))" if len(invalid) > 5 else ""
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"changement de type refusé : {len(invalid)} valeur(s) existante(s) de la "
+                f"propriété '{prop_slug}' ne peuvent pas devenir des valeurs autorisées "
+                f"(format attendu ^[a-z0-9][a-z0-9_-]*, longueur 1–100) : {shown}{suffix} — "
+                "corriger ou effacer ces valeurs, puis relancer le changement de type"
+            ),
+        )
+    next_position: int = await conn.fetchval(
+        "SELECT coalesce(max(position) + 1, 0) FROM properties_allowed_values "
+        "WHERE property_def_ref = $1",
+        prop_id,
+    )
+    for value in values:
+        # Un aller-retour restricted_list → text → restricted_list retrouve son
+        # vocabulaire : on relie à la valeur existante au lieu d'en créer une jumelle.
+        val_id: uuid.UUID | None = await conn.fetchval(_SELECT_VAL_ID, prop_id, value)
+        if val_id is None:
+            val_id = await conn.fetchval(
+                "INSERT INTO properties_allowed_values (property_def_ref, slug, label, position) "
+                "VALUES ($1, $2, $2, $3) RETURNING id",
+                prop_id,
+                value,
+                next_position,
+            )
+            next_position += 1
+        await conn.execute(_LINK_CURRENT_VALUES, prop_id, val_id, value)
+    log.info(
+        "property_values_promoted_to_vocabulary",
+        prop_id=str(prop_id),
+        prop_slug=prop_slug,
+        vocabulary=values,
+    )
+
 
 async def _check_updated_default(
     conn: asyncpg.Connection,
@@ -366,6 +458,10 @@ async def update_def(
                         f"existante(s) — transitions permises depuis "
                         f"'{prop_type}' : {permitted}",
                     )
+                if str(new_type) == "restricted_list" and prop_type != "restricted_list":
+                    # Avant la revalidation du défaut : un default_value égal à une
+                    # valeur existante devient légitime dès que le vocabulaire existe.
+                    await _promote_values_to_vocabulary(conn, prop_id, prop_slug)
             # Le défaut n'est revalidé que si la requête touche le défaut ou le
             # type : un PATCH sur le seul label ne doit pas buter sur un défaut
             # hérité (ex. slug de restricted_list déclaré avant son vocabulaire).
@@ -584,6 +680,18 @@ async def upsert_constraint(
                         "de type int, float ou date"
                     ),
                 )
+            # Un opérande illisible produirait une contrainte inerte (min/max) ou
+            # fatale (min_length/max_length/pattern → 500 à chaque écriture).
+            try:
+                validate_constraint_operand(data.kind, prop_type, data.value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"contrainte '{data.kind}' sur la propriété '{prop_slug}' "
+                        f"(type {prop_type}) : opérande '{data.value}' inexploitable — {exc}"
+                    ),
+                ) from exc
             row = await conn.fetchrow(
                 """
                 INSERT INTO properties_constraints (property_def_ref, kind, value, message)

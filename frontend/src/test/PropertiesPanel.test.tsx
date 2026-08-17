@@ -65,6 +65,20 @@ const richTypes = [
   },
 ]
 
+function budget(value: string, version: number): PropertyValueOut {
+  return {
+    prop_slug: 'budget',
+    prop_label: 'Budget',
+    type: 'int',
+    version,
+    value,
+    allowed_value_slug: null,
+    allowed_value_label: null,
+    required: false,
+    behavior: null,
+  }
+}
+
 function renderPanel(functionalTypeSlug: string | null = 'epic') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -514,6 +528,93 @@ describe('PropertiesPanel', () => {
     expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'status', {
       allowed_value_slug: 'done',
       expected_version: 1,
+    })
+  })
+
+  // Régression : naviguer du document A vers B (même route, panneau non remonté)
+  // alors qu'un champ de A est en cours de saisie. Les champs sont réconciliés par
+  // `key` : sans le docId dans la clé, l'instance de A est réutilisée et conserve sa
+  // valeur ET son `baseVersion` → la sauvegarde suivante écrit sur B avec la version de A.
+  it('navigation A→B (cache chaud) : affiche les valeurs de B, pas celles de A', async () => {
+    const valuesA = [budget('5', 1)]
+    const valuesB = [budget('99', 5)]
+    vi.mocked(docsApi.getDocumentValues).mockImplementation(async (_ws: string, docId: string) =>
+      docId === 'dA' ? valuesA : valuesB,
+    )
+    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue(budget('100', 6))
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // Cache chaud : les valeurs de B sont déjà connues (document visité récemment).
+    qc.setQueryData(['doc-values', 'ws', 'dB'], valuesB)
+    const panel = (docId: string) => (
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId={docId} functionalTypeSlug="epic" />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(panel('dA'))
+
+    const inputA = await screen.findByTestId('property-input-budget')
+    fireEvent.change(inputA, { target: { value: '7' } }) // saisie non commitée sur A
+
+    rerender(panel('dB'))
+    await waitFor(() =>
+      expect((screen.getByTestId('property-input-budget') as HTMLInputElement).value).toBe('99'),
+    )
+
+    // La sauvegarde suivante porte sur B, avec la version de B.
+    const inputB = screen.getByTestId('property-input-budget')
+    fireEvent.change(inputB, { target: { value: '100' } })
+    await act(async () => {
+      fireEvent.blur(inputB)
+    })
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'dB', 'budget', {
+      value: '100',
+      expected_version: 5,
+    })
+  })
+
+  // Régression : un refetch (change feed, retour d'onglet) doit rafraîchir l'affichage
+  // ET `baseVersion` quand le champ est au repos — sinon la sauvegarde suivante part
+  // avec une version périmée (409). Mais il ne doit JAMAIS écraser une saisie en cours.
+  it('refetch : resynchronise au repos, préserve une saisie en cours', async () => {
+    let remote = [budget('5', 1)]
+    vi.mocked(docsApi.getDocumentValues).mockImplementation(async () => remote)
+    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue(budget('7', 4))
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" />
+      </QueryClientProvider>,
+    )
+    const value = () => (screen.getByTestId('property-input-budget') as HTMLInputElement).value
+    await waitFor(() => expect(value()).toBe('5'))
+
+    // Champ au repos : la valeur distante s'affiche.
+    remote = [budget('42', 2)]
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['doc-values', 'ws', 'd1'] })
+    })
+    await waitFor(() => expect(value()).toBe('42'))
+
+    // Saisie en cours : un refetch d'arrière-plan ne la réinitialise pas…
+    fireEvent.change(screen.getByTestId('property-input-budget'), { target: { value: '7' } })
+    remote = [budget('99', 3)]
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['doc-values', 'ws', 'd1'] })
+    })
+    expect(value()).toBe('7')
+
+    // … et la sauvegarde part avec la version connue au moment de la saisie (2),
+    // pas avec celle du refetch ignoré : le conflit reste détectable côté serveur.
+    await act(async () => {
+      fireEvent.blur(screen.getByTestId('property-input-budget'))
+    })
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'budget', {
+      value: '7',
+      expected_version: 2,
     })
   })
 

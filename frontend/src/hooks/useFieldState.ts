@@ -76,6 +76,22 @@ export function useFieldState(
     baseVersion,
   })
 
+  // Dernier couple (valeur, version) reçu du serveur et adopté par l'état local.
+  const [synced, setSynced] = useState({ value: initialValue, version: baseVersion })
+
+  // Resynchronisation sur une valeur serveur fraîche (refetch du change feed, retour
+  // d'onglet) : sans elle, l'affichage reste figé sur la valeur du montage et
+  // `baseVersion` périme — la sauvegarde suivante part en 409 alors que l'utilisateur
+  // n'a jamais vu la valeur fraîche. Réservée au champ AU REPOS : dirty/saving/conflict/
+  // error portent une intention utilisateur qu'un refetch d'arrière-plan ne doit pas
+  // écraser (même garde que FE-03 dans DocumentEditor). Ajustement d'état pendant le
+  // rendu (pattern React « adjusting state when props change ») : pas de peinture
+  // intermédiaire avec l'ancienne valeur.
+  if (synced.value !== initialValue || synced.version !== baseVersion) {
+    setSynced({ value: initialValue, version: baseVersion })
+    if (state.status === 'idle') setState({ status: 'idle', value: initialValue, baseVersion })
+  }
+
   const setValue = useCallback((value: string | null) => {
     setState((prev) => ({ ...prev, value, status: 'dirty' }))
   }, [])

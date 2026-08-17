@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
@@ -95,18 +95,21 @@ const emptyTreePage: BlockTreePage = {
 
 function renderList(url = '/ws/ws/blocs/b1/documents') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[url]}>
-        <Routes>
-          <Route
-            path="/ws/:wsSlug/blocs/:blocSlug/documents"
-            element={<BlockDocumentList />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[url]}>
+          <Routes>
+            <Route
+              path="/ws/:wsSlug/blocs/:blocSlug/documents"
+              element={<BlockDocumentList />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  }
 }
 
 describe('BlockDocumentList', () => {
@@ -908,6 +911,83 @@ describe('BlockDocumentList', () => {
     // severite diverge mais statut est homogène → parent replié.
     expect(screen.queryByText('Bug A')).not.toBeInTheDocument()
     expect(screen.queryByText('Bug B')).not.toBeInTheDocument()
+  })
+
+  // Régression : l'heuristique de collapse s'appliquait à CHAQUE nouvelle identité de
+  // `browseRoots`, donc à chaque refetch — y compris celui déclenché par l'édition
+  // inline de l'utilisateur. Les plis/déplis manuels étaient perdus sous la souris.
+  it('préserve l’état d’expansion manuel à travers un refetch', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    // Enfants homogènes → par défaut replié ; l'utilisateur déplie à la main.
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, { f1: [statut('done')], f2: [statut('done')] }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    const { qc } = renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('expand-e1'))
+    await waitFor(() => expect(screen.getByText('Feature A')).toBeInTheDocument())
+
+    // Refetch avec des données réellement différentes (édition concurrente) :
+    // l'arbre se recompose, mais le dépli manuel doit survivre.
+    const renamed = docs.map((d) => (d.doc_technical_key === 'f1' ? { ...d, title: 'Feature A2' } : d))
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(renamed, { f1: [statut('done')], f2: [statut('done')] }),
+    )
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['block-tree', 'ws', 'b1'] })
+    })
+
+    await waitFor(() => expect(screen.getByText('Feature A2')).toBeInTheDocument())
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
+  })
+
+  // « Charger plus » : les nœuds nouvellement chargés reçoivent l'état par défaut,
+  // sans réinitialiser ceux que l'utilisateur a pliés/dépliés à la main.
+  it('« Charger plus » applique le défaut aux nouveaux nœuds seulement', async () => {
+    const page1 = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    const page2 = [
+      makeDoc({ doc_technical_key: 'e2', title: 'Epic 2', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'g1', title: 'Feature C', functional_type_slug: 'feature', parent_id: 'e2' }),
+      makeDoc({ doc_technical_key: 'g2', title: 'Feature D', functional_type_slug: 'feature', parent_id: 'e2' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(page1)
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+    vi.mocked(docsApi.getBlockTree).mockImplementation(async (_ws, _b, page) => {
+      // Page 1 : enfants homogènes (replié par défaut). Page 2 : statuts divergents
+      // (déplié par défaut).
+      if (page === 1) {
+        const p = makeTreePage(page1, { f1: [statut('done')], f2: [statut('done')] })
+        return { ...p, page: 1, total: 2, has_next: true }
+      }
+      const p = makeTreePage(page2, { g1: [statut('done')], g2: [statut('en_cours')] })
+      return { ...p, page: 2, total: 2, has_next: false }
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('expand-e1'))
+    await waitFor(() => expect(screen.getByText('Feature A')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('load-more-btn'))
+    await waitFor(() => expect(screen.getByText('Epic 2')).toBeInTheDocument())
+
+    // Nouveaux nœuds : état par défaut (divergents → dépliés).
+    expect(screen.getByText('Feature C')).toBeInTheDocument()
+    expect(screen.getByText('Feature D')).toBeInTheDocument()
+    // Nœud déjà chargé : le dépli manuel tient.
+    expect(screen.getByText('Feature A')).toBeInTheDocument()
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
   })
 })
 

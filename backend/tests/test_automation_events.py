@@ -7,6 +7,7 @@ du document ET les propriétés de l'event, enregistre le run et dédup.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -692,3 +693,93 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     assert await db_pool.fetchval(
         "SELECT count(*) FROM event_outbox WHERE workspace_technical_key = $1", wk
     ) == 0
+
+
+async def test_worker_holds_no_pool_connection_during_http(
+    test_schema_url: str,
+    apply_migrations: None,
+    db_pool: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aucune connexion n'est retenue pendant l'appel HTTP de l'automate.
+
+    Le worker tourne sur un pool de taille 1 : si la connexion restait prise
+    pendant le POST, l'acquisition tentée depuis le faux transport HTTP ne
+    pourrait pas aboutir (c'est l'épuisement de pool constaté en production).
+    """
+    _CALLS.clear()
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,'Probe',true,$2,0,$3,'POST',$4) RETURNING id",
+        wk,
+        [_UPDATED],
+        "https://probe.example/hook",
+        json.dumps({"doc": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id,
+        wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template "
+        "FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+    solo_pool: asyncpg.Pool = await asyncpg.create_pool(  # type: ignore[assignment]
+        dsn=test_schema_url, min_size=1, max_size=1
+    )
+    free_during_http: list[bool] = []
+
+    class _ProbeClient(_FakeClient):
+        async def request(
+            self, method: str, url: str, headers: Any = None, content: Any = None
+        ) -> _FakeResp:
+            try:
+                async with asyncio.timeout(2):
+                    async with solo_pool.acquire() as conn:
+                        await conn.fetchval("SELECT 1")
+                free_during_http.append(True)
+            except TimeoutError:
+                free_during_http.append(False)
+            return await super().request(method, url, headers=headers, content=content)
+
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _ProbeClient)
+    try:
+        await worker.run_tick(solo_pool, automation, object())
+    finally:
+        await solo_pool.close()
+
+    assert len(_CALLS) == 1
+    assert free_during_http == [True]
+    # Non-régression fonctionnelle : le run est historisé et le curseur avancé.
+    run = await db_pool.fetchrow(
+        "SELECT status, event_seq FROM automation_run WHERE automation_ref = $1", auto_id
+    )
+    assert run is not None
+    assert run["status"] == "ok"
+    assert (
+        await db_pool.fetchval(
+            "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", auto_id
+        )
+        == run["event_seq"]
+    )

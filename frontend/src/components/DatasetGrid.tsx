@@ -118,9 +118,15 @@ export function DatasetGrid({ workspaceSlug, datasetId, editable }: DatasetGridP
     }
   }
 
+  // PATCH partiel : n'envoyer QUE la cellule modifiée. Envoyer l'instantané de rendu
+  // de toute la ligne renvoyait les valeurs des cellules voisines telles qu'elles
+  // étaient au dernier rendu — une seconde édition avant la fin du refetch écrasait
+  // donc la première côté serveur (perte silencieuse). Le endpoint
+  // `PATCH .../rows/{id}` fait un upsert cellule par cellule : les colonnes absentes
+  // du corps ne sont pas touchées.
   const editCell = (row: DatasetRowOut, colSlug: string, value: string) => {
     if ((row.cells[colSlug] ?? '') === value) return
-    updateRow.mutate({ rowId: row.id, cells: { ...row.cells, [colSlug]: value === '' ? null : value } })
+    updateRow.mutate({ rowId: row.id, cells: { [colSlug]: value === '' ? null : value } })
   }
 
   return (
@@ -184,12 +190,11 @@ export function DatasetGrid({ workspaceSlug, datasetId, editable }: DatasetGridP
                   return (
                     <td key={cell.id} className="border-b border-gray-100 px-2 py-1 align-top">
                       {editable && col ? (
-                        <input
-                          data-testid={`dataset-cell-${cell.column.id}-${row.original.id}`}
+                        <EditableCell
+                          testId={`dataset-cell-${cell.column.id}-${row.original.id}`}
                           type={inputType(col.type)}
-                          defaultValue={raw}
-                          onBlur={(e) => editCell(row.original, cell.column.id, e.target.value)}
-                          className="w-full min-w-[6rem] rounded border border-transparent px-1 py-0.5 hover:border-gray-200 focus:border-blue-400 focus:outline-none"
+                          serverValue={raw}
+                          onCommit={(v) => editCell(row.original, cell.column.id, v)}
                         />
                       ) : (
                         <span>{raw}</span>
@@ -247,6 +252,48 @@ export function DatasetGrid({ workspaceSlug, datasetId, editable }: DatasetGridP
         />
       )}
     </div>
+  )
+}
+
+// ── Cellule éditable ─────────────────────────────────────────────────────────
+
+/** Champ de cellule contrôlé, aligné sur la valeur serveur à chaque refetch —
+ *  SAUF pendant une saisie : un rafraîchissement d'arrière-plan (retypage de
+ *  colonne, édition concurrente) ne doit pas réinitialiser le champ sous les
+ *  doigts de l'utilisateur. */
+function EditableCell({
+  testId,
+  type,
+  serverValue,
+  onCommit,
+}: {
+  testId: string
+  type: string
+  serverValue: string
+  onCommit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(serverValue)
+  const [editing, setEditing] = useState(false)
+  const [synced, setSynced] = useState(serverValue)
+
+  if (!editing && synced !== serverValue) {
+    setSynced(serverValue)
+    setDraft(serverValue)
+  }
+
+  return (
+    <input
+      data-testid={testId}
+      type={type}
+      value={draft}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setEditing(false)
+        onCommit(draft)
+      }}
+      className="w-full min-w-[6rem] rounded border border-transparent px-1 py-0.5 hover:border-gray-200 focus:border-blue-400 focus:outline-none"
+    />
   )
 }
 

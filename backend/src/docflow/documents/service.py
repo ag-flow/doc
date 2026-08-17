@@ -1017,6 +1017,110 @@ def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: 
             ) from exc
 
 
+_RANGE_KINDS = frozenset({"min", "max"})
+_LENGTH_KINDS = frozenset({"min_length", "max_length"})
+_ORDERED_TYPES = frozenset({"int", "float", "date"})
+
+
+def _constraint_applies(kind: str, prop_type: str) -> bool:
+    """Une contrainte de ce genre est-elle évaluable sur ce type de propriété ?"""
+    if kind in _RANGE_KINDS:
+        return prop_type in _ORDERED_TYPES
+    if kind in _LENGTH_KINDS or kind == "pattern":
+        return prop_type == "text"
+    return False
+
+
+def validate_constraint_operand(kind: str, prop_type: str, operand: str) -> None:
+    """Vérifie que l'opérande d'une contrainte est exploitable ; lève ``ValueError`` sinon.
+
+    Source unique de vérité, partagée par la déclaration de la contrainte
+    (``properties.service.upsert_constraint``, qui rejette en 422) et son
+    application (``_apply_constraints``, qui ignore et trace une contrainte
+    héritée inexploitable). Une borne qu'on ne sait pas relire ne protège rien :
+    la laisser passer, c'est une contrainte inerte — ou un 500 à chaque écriture.
+    """
+    if kind in _RANGE_KINDS:
+        _parse_ordered(prop_type, operand)
+        return
+    if kind in _LENGTH_KINDS:
+        length = int(operand)
+        if length < 0:
+            raise ValueError(f"'{kind}' attend un entier positif ou nul, reçu '{operand}'")
+        return
+    if kind == "pattern":
+        try:
+            re.compile(operand)
+        except re.error as exc:
+            raise ValueError(f"expression régulière invalide : {exc}") from exc
+        return
+    raise ValueError(f"genre de contrainte inconnu : '{kind}'")
+
+
+def _parse_ordered(prop_type: str, raw: str) -> int | float | datetime.date:
+    """Relit un scalaire ordonnable selon le type de la propriété (``ValueError`` sinon)."""
+    if prop_type == "int":
+        return int(raw)
+    if prop_type == "float":
+        return float(raw)
+    if prop_type == "date":
+        return datetime.date.fromisoformat(raw)
+    raise ValueError(f"type '{prop_type}' sans ordre total")
+
+
+def _violates_bound(kind: str, prop_type: str, value: str, operand: str) -> bool:
+    """La valeur utilisateur dépasse-t-elle la borne ? (opérande déjà validé)
+
+    Une valeur utilisateur illisible n'est PAS traitée ici : elle a été refusée
+    en amont par ``validate_scalar_value``. La distinguer de l'opérande est
+    justement l'objet de cette découpe — ce sont deux fautes de nature
+    différente (donnée du rédacteur vs modèle de l'administrateur).
+    """
+    bound = _parse_ordered(prop_type, operand)
+    try:
+        parsed = _parse_ordered(prop_type, value)
+    except ValueError:
+        return False
+    if isinstance(bound, datetime.date) and isinstance(parsed, datetime.date):
+        return parsed < bound if kind == "min" else parsed > bound
+    if isinstance(bound, datetime.date) or isinstance(parsed, datetime.date):
+        return False
+    return parsed < bound if kind == "min" else parsed > bound
+
+
+def _constraint_error(
+    kind: str, prop_type: str, value: str, operand: str, message: str | None
+) -> str | None:
+    """Message d'erreur si la valeur viole la contrainte, sinon None."""
+    if kind in _RANGE_KINDS:
+        if not _violates_bound(kind, prop_type, value, operand):
+            return None
+        if prop_type == "date":
+            default = (
+                f"date antérieure au minimum ({operand})"
+                if kind == "min"
+                else f"date postérieure au maximum ({operand})"
+            )
+        else:
+            default = (
+                f"valeur < minimum ({operand})"
+                if kind == "min"
+                else f"valeur > maximum ({operand})"
+            )
+        return message or default
+    if kind == "min_length":
+        if len(value) >= int(operand):
+            return None
+        return message or f"longueur < minimum ({operand})"
+    if kind == "max_length":
+        if len(value) <= int(operand):
+            return None
+        return message or f"longueur > maximum ({operand})"
+    if re.fullmatch(operand, value):
+        return None
+    return message or f"valeur ne correspond pas au pattern ({operand})"
+
+
 async def _apply_constraints(
     conn: asyncpg.Connection, prop_id: uuid.UUID, prop_type: str, value: str
 ) -> None:
@@ -1025,53 +1129,26 @@ async def _apply_constraints(
         prop_id,
     )
     for r in rows:
-        kind, cval, msg = r["kind"], r["value"], r["message"]
-        error: str | None = None
-        if kind == "min" and prop_type == "int":
-            try:
-                if int(value) < int(cval):
-                    error = msg or f"valeur < minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "int":
-            try:
-                if int(value) > int(cval):
-                    error = msg or f"valeur > maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min" and prop_type == "float":
-            try:
-                if float(value) < float(cval):
-                    error = msg or f"valeur < minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "float":
-            try:
-                if float(value) > float(cval):
-                    error = msg or f"valeur > maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min" and prop_type == "date":
-            try:
-                if datetime.date.fromisoformat(value) < datetime.date.fromisoformat(cval):
-                    error = msg or f"date antérieure au minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "date":
-            try:
-                if datetime.date.fromisoformat(value) > datetime.date.fromisoformat(cval):
-                    error = msg or f"date postérieure au maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min_length" and prop_type == "text":
-            if len(value) < int(cval):
-                error = msg or f"longueur < minimum ({cval})"
-        elif kind == "max_length" and prop_type == "text":
-            if len(value) > int(cval):
-                error = msg or f"longueur > maximum ({cval})"
-        elif kind == "pattern" and prop_type == "text":
-            if not re.fullmatch(cval, value):
-                error = msg or f"valeur ne correspond pas au pattern ({cval})"
+        kind, operand, msg = r["kind"], r["value"], r["message"]
+        if not _constraint_applies(kind, prop_type):
+            continue
+        try:
+            validate_constraint_operand(kind, prop_type, operand)
+        except ValueError as exc:
+            # Contrainte antérieure au durcissement d'upsert_constraint (ou dont le
+            # type de la propriété a changé depuis) : l'ignorer plutôt que d'infliger
+            # un 500 à chaque écriture, mais la tracer — une contrainte muette qui
+            # ne protège plus rien doit être corrigée, pas oubliée.
+            log.warning(
+                "constraint_operand_invalid_skipped",
+                prop_id=str(prop_id),
+                prop_type=prop_type,
+                kind=kind,
+                operand=operand,
+                reason=str(exc),
+            )
+            continue
+        error = _constraint_error(kind, prop_type, value, operand, msg)
         if error:
             raise HTTPException(status_code=422, detail=error)
 
