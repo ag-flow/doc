@@ -25,6 +25,7 @@ from docflow.documents.block_ops import (
 from docflow.documents.changelog import log_change
 from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
+from docflow.errors import DependentsConflictError
 from docflow.events import outbox
 from docflow.references.service import refresh_references
 from docflow.schemas.document import (
@@ -824,28 +825,18 @@ SELECT count(*) - 1 AS descendants FROM descendants
 """
 
 
-async def count_document_descendants(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> int:
-    """Compte les documents descendants d'un document (lui-même exclu).
-
-    Miroir de blocks/service.py::_COUNT_BLOCK_DEPENDENTS — sert de garde
-    « confirm si dépendants » côté appelant (primitive MCP delete_document) ;
-    delete_document lui-même reste sans garde (comportement REST inchangé).
-    """
-    async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
-        exists = await conn.fetchval(
-            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-            doc_id,
-            wk,
-        )
-        if not exists:
-            raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
-        count = await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id)
-    return int(count)
-
-
-async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
+async def delete_document(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, *, confirm: bool = True
+) -> dict[str, object]:
     """Supprime le document et tous ses descendants (ON DELETE CASCADE sur document.parent).
+
+    ``confirm=False`` refuse la suppression tant qu'il reste des descendants
+    (``DependentsConflictError``). Le décompte a lieu **dans la transaction de
+    suppression** : compté par l'appelant, un enfant créé entre le décompte et
+    le DELETE partait en cascade sans que la garde ait joué.
+
+    Le défaut ``True`` préserve le contrat REST historique, où la confirmation
+    est portée par l'interface et non par l'API.
 
     Retourne un snapshot {id, title, type} capturé avant suppression.
     """
@@ -864,6 +855,17 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             )
             if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+            if not confirm:
+                dependents = int(await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id))
+                if dependents > 0:
+                    raise DependentsConflictError(
+                        detail=(
+                            f"la suppression de ce document détruirait en cascade {dependents} "
+                            "document(s) descendant(s) (valeurs, commentaires, réactions "
+                            "compris) ; rappeler avec confirm=true pour confirmer"
+                        ),
+                        dependents=dependents,
+                    )
             # Capturés AVANT la suppression : les références partent en cascade
             # avec le document et ses descendants.
             artifact_candidates = await collect_subtree_artifacts(conn, doc_id)

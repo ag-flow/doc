@@ -258,9 +258,7 @@ async def test_append_unknown_document_404(
     db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
 ) -> None:
     with pytest.raises(HTTPException) as exc:
-        await doc_svc.append_to_document(
-            db_pool, _WS, uuid.uuid4(), content="x", position="bottom"
-        )
+        await doc_svc.append_to_document(db_pool, _WS, uuid.uuid4(), content="x", position="bottom")
     assert exc.value.status_code == 404
 
 
@@ -508,7 +506,9 @@ async def test_document_versions_history(
         db_pool, _WS, DocumentCreate(title="V1", content="# un", block_id=test_block["id"])
     )
     await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key,
+        db_pool,
+        _WS,
+        doc.doc_technical_key,
         DocumentUpdate(title="V2", content="# deux", expected_version=1),
     )
 
@@ -533,14 +533,17 @@ async def test_document_author_recorded(
     from docflow.schemas.document import DocumentUpdate
 
     doc = await doc_svc.create_document(
-        db_pool, _WS,
+        db_pool,
+        _WS,
         DocumentCreate(title="Signé", block_id=test_block["id"]),
         author="G. Aubert",
     )
     assert doc.updated_by == "G. Aubert"
 
     updated = await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key,
+        db_pool,
+        _WS,
+        doc.doc_technical_key,
         DocumentUpdate(title="Signé v2", content="x", expected_version=1),
         author="Agent RAG",
     )
@@ -549,7 +552,57 @@ async def test_document_author_recorded(
     # Écriture sans auteur connu : on GARDE le dernier auteur (coalesce),
     # on ne l'efface pas.
     kept = await doc_svc.update_document(
-        db_pool, _WS, doc.doc_technical_key,
+        db_pool,
+        _WS,
+        doc.doc_technical_key,
         DocumentUpdate(title="Signé v3", content="y", expected_version=2),
     )
     assert kept.updated_by == "Agent RAG"
+
+
+async def test_delete_document_guard_is_atomic(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """`confirm=False` refuse la cascade DANS la transaction de suppression.
+
+    Le décompte des descendants était fait par l'appelant, dans une transaction
+    distincte de la suppression : un enfant créé entre les deux était détruit
+    sans que la garde ait joué (TOCTOU). La garde appartient donc au service.
+    """
+    from docflow.errors import DependentsConflictError
+
+    parent = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Parent", block_id=test_block["id"])
+    )
+    await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="Child", parent_id=parent.doc_technical_key, block_id=test_block["id"]
+        ),
+    )
+
+    with pytest.raises(DependentsConflictError) as exc:
+        await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key, confirm=False)
+    assert exc.value.dependents == 1
+    # Refus = aucune destruction, même partielle.
+    assert await doc_svc.get_document(db_pool, _WS, parent.doc_technical_key) is not None
+
+    # Confirmé : la cascade s'applique.
+    await doc_svc.delete_document(db_pool, _WS, parent.doc_technical_key, confirm=True)
+    with pytest.raises(HTTPException) as http_exc:
+        await doc_svc.get_document(db_pool, _WS, parent.doc_technical_key)
+    assert http_exc.value.status_code == 404
+
+
+async def test_delete_document_without_descendants_needs_no_confirm(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Sans descendant, la garde ne se déclenche pas — `confirm` reste inutile."""
+    doc = await doc_svc.create_document(
+        db_pool, _WS, DocumentCreate(title="Seul", block_id=test_block["id"])
+    )
+    await doc_svc.delete_document(db_pool, _WS, doc.doc_technical_key, confirm=False)
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.get_document(db_pool, _WS, doc.doc_technical_key)
+    assert exc.value.status_code == 404

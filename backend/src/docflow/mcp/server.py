@@ -1698,6 +1698,7 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     from fastapi import HTTPException
 
     from docflow.documents import service as doc_svc
+    from docflow.errors import DependentsConflictError
 
     ws_slug = str(args.get("workspace_slug", ""))
     try:
@@ -1706,25 +1707,13 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         return _text({"error": "doc_id : UUID invalide"})
     confirm = bool(args.get("confirm", False))
 
+    # La garde vit dans le service, sous la transaction de suppression : la
+    # compter ici en ferait de nouveau un TOCTOU (un enfant créé entre-temps
+    # partirait en cascade sans confirmation).
     try:
-        dependents = await doc_svc.count_document_descendants(pool, ws_slug, doc_id)
-    except HTTPException as e:
-        return _text({"error": e.detail})
-
-    if dependents > 0 and not confirm:
-        return _text(
-            {
-                "error": (
-                    f"la suppression de ce document détruirait en cascade {dependents} "
-                    "document(s) descendant(s) (valeurs, commentaires, réactions "
-                    "compris) ; rappeler avec confirm=true pour confirmer"
-                ),
-                "dependents": dependents,
-            }
-        )
-
-    try:
-        snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id)
+        snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id, confirm=confirm)
+    except DependentsConflictError as e:
+        return _text({"error": e.detail, "dependents": e.dependents})
     except HTTPException as e:
         return _text({"error": e.detail})
 
