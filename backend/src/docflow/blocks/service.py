@@ -304,8 +304,8 @@ WITH RECURSIVE subtree AS (
     SELECT id FROM data_block WHERE id = $1
     UNION ALL
     SELECT b.id FROM data_block b JOIN subtree s ON b.parent = s.id
-)
-SELECT (SELECT count(*) FROM subtree) - 1 AS child_blocks,
+) CYCLE id SET is_cycle USING path
+SELECT (SELECT count(*) FROM subtree WHERE NOT is_cycle) - 1 AS child_blocks,
        (SELECT count(*) FROM document d
         WHERE d.data_block_ref IN (SELECT id FROM subtree)) AS documents
 """

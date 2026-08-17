@@ -26,7 +26,7 @@ async def resolve_block_scope(conn: asyncpg.Connection, block_id: uuid.UUID) -> 
             SELECT id FROM data_block WHERE id = $1
             UNION ALL
             SELECT b.id FROM data_block b JOIN subtree s ON b.parent = s.id
-        )
+        ) CYCLE id SET is_cycle USING path
         SELECT id FROM subtree
         """,
         block_id,

@@ -62,7 +62,7 @@ tree AS (
            c.updated_at, c.updated_by, t.depth + 1
     FROM document c
     JOIN tree t ON c.parent = t.doc_technical_key
-)
+) CYCLE doc_technical_key SET is_cycle USING path
 SELECT t.doc_technical_key AS id, t.title, t.parent AS parent_id,
        t.updated_at, t.updated_by,
        ft.slug AS functional_type_slug, t.depth

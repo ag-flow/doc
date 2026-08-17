@@ -325,7 +325,7 @@ async def collect_subtree_artifacts(conn: asyncpg.Connection, doc_id: uuid.UUID)
             SELECT d.doc_technical_key
             FROM document d
             JOIN descendants p ON d.parent = p.doc_technical_key
-        )
+        ) CYCLE doc_technical_key SET is_cycle USING path
         SELECT DISTINCT ar.artifact_ref
         FROM artifact_reference ar
         JOIN descendants ds ON ar.document_ref = ds.doc_technical_key

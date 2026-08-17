@@ -175,7 +175,7 @@ WITH RECURSIVE subtree AS (
     WHERE b.workspace_technical_key = $1 AND b.slug = $2
     UNION ALL
     SELECT c.id FROM functional_type c JOIN subtree s ON c.parent = s.id
-)
+) CYCLE id SET is_cycle USING path
 SELECT DISTINCT pd.slug, pd.type
 FROM properties_defs pd JOIN subtree s ON s.id = pd.functional_type_ref
 WHERE pd.slug = ANY($3::text[])

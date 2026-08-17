@@ -145,6 +145,13 @@ async def _validate_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_id: u
         )
 
 
+# Clé arbitraire mais stable (distincte de auth/lockout.py::_LOCKOUT_ADVISORY_KEY),
+# dédiée à l'invariant « hiérarchie des documents acyclique » : sans verrou, deux
+# reparentages croisés A→B / B→A valident chacun l'absence de cycle (READ COMMITTED
+# masque l'écriture non commitée de l'autre) puis commitent un cycle — check-then-act.
+_DOC_HIERARCHY_ADVISORY_KEY = 4_027_311_002
+
+
 async def _check_no_document_cycle(
     conn: asyncpg.Connection, doc_id: uuid.UUID, proposed_parent_id: uuid.UUID
 ) -> None:
@@ -154,13 +161,31 @@ async def _check_no_document_cycle(
     refuse si `doc_id` figure dans la chaîne d'ancêtres du nouveau parent
     (c.-à-d. si le nouveau parent est un descendant de doc_id). Prévient la
     boucle infinie de la CTE récursive de parcours d'arbre (DOC-02).
+
+    Must be called inside the same transaction as the UPDATE du parent : le
+    verrou consultatif est transactionnel, il ne couvre l'écriture que si elle
+    partage la transaction du garde.
     """
+    if not conn.is_in_transaction():
+        raise RuntimeError(
+            "_check_no_document_cycle doit s'exécuter dans la transaction de l'écriture "
+            "qu'il protège : hors transaction, son verrou est relâché immédiatement"
+        )
+    await conn.execute("SELECT pg_advisory_xact_lock($1)", _DOC_HIERARCHY_ADVISORY_KEY)
     if proposed_parent_id == doc_id:
         raise HTTPException(
             status_code=422, detail="un document ne peut pas être son propre parent"
         )
+    seen: set[uuid.UUID] = set()
     ancestor: uuid.UUID | None = proposed_parent_id
     while ancestor is not None:
+        if ancestor in seen:
+            # Cycle préexistant dans la chaîne d'ancêtres (donnée corrompue) :
+            # refuser plutôt que de boucler indéfiniment.
+            raise HTTPException(
+                status_code=422, detail="cycle détecté dans la hiérarchie des documents"
+            )
+        seen.add(ancestor)
         row = await conn.fetchrow(
             "SELECT parent FROM document WHERE doc_technical_key = $1", ancestor
         )
@@ -541,6 +566,14 @@ async def update_document(
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
 
+            # Ordre des verrous : le verrou consultatif de hiérarchie AVANT le
+            # FOR UPDATE de la ligne. Pris après, deux reparentages croisés
+            # s'entre-bloquent : chacun tient sa ligne, attend le verrou de
+            # l'autre, et l'UPDATE du parent exige un FOR KEY SHARE sur la
+            # ligne verrouillée en face → deadlock détecté par Postgres.
+            if raw.get("parent_id") is not None:
+                await conn.execute("SELECT pg_advisory_xact_lock($1)", _DOC_HIERARCHY_ADVISORY_KEY)
+
             # Existence + verrou optimiste
             head = await conn.fetchrow(
                 "SELECT version, title, functional_type_ref, parent, data_block_ref "
@@ -820,8 +853,8 @@ WITH RECURSIVE descendants AS (
     SELECT d.doc_technical_key
     FROM document d
     JOIN descendants p ON d.parent = p.doc_technical_key
-)
-SELECT count(*) - 1 AS descendants FROM descendants
+) CYCLE doc_technical_key SET is_cycle USING path
+SELECT count(*) - 1 AS descendants FROM descendants WHERE NOT is_cycle
 """
 
 
@@ -912,7 +945,7 @@ async def set_document_exposed(
                     SELECT d.doc_technical_key
                     FROM document d
                     JOIN descendants p ON d.parent = p.doc_technical_key
-                )
+                ) CYCLE doc_technical_key SET is_cycle USING path
                 UPDATE document SET exposed = $2, updated_at = now()
                 WHERE doc_technical_key IN (SELECT doc_technical_key FROM descendants)
                 """,
