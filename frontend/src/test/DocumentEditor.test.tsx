@@ -8,16 +8,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 
 // BlockNote est lourd à charger en jsdom : on mocke le wrapper éditeur.
+// Fidèle au vrai éditeur : le contenu n'est lu qu'AU MONTAGE — un changement
+// ultérieur de la prop (refetch d'arrière-plan) ne recharge rien sans remontage.
 vi.mock('../components/MarkdownEditor', () => ({
   MarkdownEditor: React.forwardRef(
     (
       { initialContent }: { initialContent?: string; onDirty?: () => void },
       ref: React.Ref<{ getMarkdown: () => Promise<string> }>,
     ) => {
+      const [content] = React.useState(initialContent ?? '')
       React.useImperativeHandle(ref, () => ({
-        getMarkdown: () => Promise.resolve(initialContent ?? ''),
+        getMarkdown: () => Promise.resolve(content),
       }))
-      return <div data-testid="markdown-editor-mock">{initialContent}</div>
+      return <div data-testid="markdown-editor-mock">{content}</div>
     },
   ),
 }))
@@ -96,6 +99,7 @@ function renderEditor() {
       </QueryClientProvider>,
     ),
     qc,
+    router,
   }
 }
 
@@ -434,6 +438,126 @@ describe('DocumentEditor — fusion automatique (phase B)', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('conflict-resolver')).toBeInTheDocument(),
+    )
+  })
+})
+
+// ── FE-03 durci : un refetch d'arrière-plan pendant l'édition ne doit JAMAIS
+//    réaligner le verrou optimiste (expectedVersion / ancestor), même à l'état
+//    idle — sinon la sauvegarde suivante écrase une version distante sans 409
+//    ni fusion three-way (perte silencieuse d'écritures concurrentes). ──
+
+describe('DocumentEditor — resync gelée en édition (perte concurrente)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it("édition à l'état idle : un refetch d'arrière-plan ne réaligne pas expectedVersion — le 409 et la fusion s'engagent", async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const remoteContent = '# Hello\n\nAjout agent.'
+    const { qc } = renderEditor()
+    await enterEditMode()
+
+    // Poll du change feed : la v5 distante arrive dans le cache alors que
+    // l'éditeur (monté sur la v3) n'est pas remonté — il affiche toujours la v3.
+    await act(async () => {
+      qc.setQueryData(['document', 'ws', 'd1'], { ...doc, content: remoteContent, version: 5 })
+    })
+    // Le rendu de la v5 est traité PENDANT l'état idle (c'est le cœur du bug) ;
+    // l'éditeur monté sur la v3 n'a pas rechargé le contenu distant.
+    await waitFor(() => expect(screen.getByText(/v5/)).toBeInTheDocument())
+    expect(screen.getByTestId('markdown-editor-mock')).not.toHaveTextContent('Ajout agent.')
+
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { title: 'Mon document', content: remoteContent, version: 5 }, 'conflit'),
+      )
+      .mockResolvedValueOnce({ ...doc, content: remoteContent, version: 6 })
+
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Titre édité' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(2))
+    // Cœur du fix : la sauvegarde porte la version réellement éditée (3), pas
+    // la v5 du refetch — c'est ce qui force le VRAI 409 côté serveur.
+    expect(vi.mocked(docsApi.patchDocument).mock.calls[0][2]).toMatchObject({
+      expected_version: 3,
+    })
+    // Le 409 engage la fusion three-way (base = v3 gelée) : la reprise porte la
+    // v5 et CONSERVE l'ajout de l'agent au lieu de l'écraser.
+    expect(vi.mocked(docsApi.patchDocument).mock.calls[1][2]).toMatchObject({
+      expected_version: 5,
+      content: remoteContent,
+    })
+  })
+
+  it('changement de document : le resync initial a lieu même en mode édition', async () => {
+    const doc2: DocumentOut = {
+      ...doc, doc_technical_key: 'd2', title: 'Deuxième', content: '# Deux', version: 7,
+    }
+    vi.mocked(docsApi.getDocument).mockImplementation((_ws: string, id: string) =>
+      Promise.resolve(id === 'd2' ? doc2 : doc),
+    )
+    const { router } = renderEditor()
+    await enterEditMode()
+    expect(screen.getByDisplayValue('Mon document')).toBeInTheDocument()
+
+    await act(async () => {
+      await router.navigate('/ws/ws/blocs/b1/documents/d2')
+    })
+    // Titre, contenu et verrou réalignés sur le doc chargé.
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('Deuxième')).toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('markdown-editor-mock')).toHaveTextContent('# Deux')
+
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc2, version: 8 })
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Deuxième bis' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.patchDocument)).toHaveBeenCalledWith(
+        'ws', 'd2', expect.objectContaining({ expected_version: 7 }),
+      ),
+    )
+  })
+
+  it('lecture : un refetch réaligne toujours (une version distante déjà connue est ignorée)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const { qc } = renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+
+    await act(async () => {
+      qc.setQueryData(['document', 'ws', 'd1'], { ...doc, version: 5 })
+    })
+    // Attendre que le rendu (et l'effet de resync) de la v5 soit traité.
+    await waitFor(() => expect(screen.getByText(/v5/)).toBeInTheDocument())
+
+    const calls = vi.mocked(watchDocument).mock.calls
+    const handlers = calls[calls.length - 1][2]
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    // expectedVersion réaligné sur 5 par le refetch : l'écho v5 est ignoré…
+    await act(async () => {
+      handlers.onChange({ document_id: 'd1', version: 5, updated_at: '', updated_by: 'agent' })
+    })
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
+    // …mais une v6 réellement nouvelle déclenche bien le re-fetch.
+    await act(async () => {
+      handlers.onChange({ document_id: 'd1', version: 6, updated_at: '', updated_by: 'agent' })
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBeGreaterThan(before),
     )
   })
 })

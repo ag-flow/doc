@@ -71,14 +71,10 @@ def test_rest_access_member_vs_non_member(
 
         # Superadmin : accès complet, liste complète.
         assert client.get(f"/api/workspaces/{_WS}/blocks", headers=admin).status_code == 200
-        assert any(
-            w["slug"] == _WS for w in client.get("/api/workspaces", headers=admin).json()
-        )
+        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=admin).json())
 
         # Non-membre : le workspace est INVISIBLE (liste) et 404 (ressources).
-        assert not any(
-            w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json()
-        )
+        assert not any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json())
         assert client.get(f"/api/workspaces/{_WS}/blocks", headers=user).status_code == 404
         assert client.get(f"/api/workspaces/{_WS}/types", headers=user).status_code == 404
         assert client.get(f"/api/workspaces/{_WS}/automations", headers=user).status_code == 404
@@ -102,9 +98,7 @@ def test_rest_access_member_vs_non_member(
         asyncio.run(_add_member())
         assert client.get(f"/api/workspaces/{_WS}/blocks", headers=user).status_code == 200
         assert client.get(f"/api/workspaces/{_WS}", headers=user).status_code == 200
-        assert any(
-            w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json()
-        )
+        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json())
 
 
 def test_rest_access_unknown_ws_keeps_usual_404(
@@ -193,6 +187,87 @@ def test_global_search_scoped_to_accessible_workspaces(
 
         # Sans token : refusé.
         assert client.get(f"/api/documents/locate/{doc_id}").status_code == 401
+
+
+def _make_api_key(client: TestClient, headers: dict[str, str], profile_name: str) -> str:
+    """Crée un profil scopé sur ``_WS`` et génère une clé ; retourne le Bearer brut."""
+    created = client.post("/api/user/api-profiles", json={"name": profile_name}, headers=headers)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    r = client.put(
+        f"/api/user/api-profiles/{pid}/scopes",
+        json={"scopes": [{"workspace_slug": _WS, "block_slug": None, "read_only": True}]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    key = client.post(
+        "/api/user/api-keys", json={"profile_id": pid, "label": profile_name}, headers=headers
+    )
+    assert key.status_code == 201, key.text
+    raw: str = key.json()["key"]
+    return raw
+
+
+def test_api_key_scope_intersecte_acces_reel_du_proprietaire(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Le trou : une clé auto-scopée sur un workspace où le propriétaire n'est ni
+    owner ni membre ne doit PAS ouvrir l'accès REST — 404, comme en JWT direct."""
+    with _client(monkeypatch, test_schema_url) as client:
+        _setup_users_and_ws(client, test_schema_url)
+        user = _login(client, _USER)
+        raw = _make_api_key(client, user, "escalade-scope")
+        key_headers = {"Authorization": f"Bearer {raw}"}
+
+        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=key_headers).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}/types", headers=key_headers).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}", headers=key_headers).status_code == 404
+
+
+def test_api_key_membre_reel_continue_de_fonctionner(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Non-régression : clé scopée sur un workspace dont le propriétaire EST membre."""
+    with _client(monkeypatch, test_schema_url) as client:
+        _setup_users_and_ws(client, test_schema_url)
+
+        async def _add_member() -> None:
+            conn = await asyncpg.connect(test_schema_url)
+            try:
+                await conn.execute(
+                    "INSERT INTO workspace_member (workspace_technical_key, user_id) "
+                    "SELECT w.workspace_technical_key, u.id FROM workspace w, app_user u "
+                    "WHERE w.slug = $1 AND u.email = $2 ON CONFLICT DO NOTHING",
+                    _WS,
+                    _USER,
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_add_member())
+        user = _login(client, _USER)
+        raw = _make_api_key(client, user, "membre-legitime")
+        key_headers = {"Authorization": f"Bearer {raw}"}
+
+        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=key_headers).status_code == 200
+        assert client.get(f"/api/workspaces/{_WS}", headers=key_headers).status_code == 200
+
+
+def test_api_key_proprietaire_superadmin_bypass(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Non-régression : le propriétaire superadmin passe (dans la limite des scopes)."""
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _setup_users_and_ws(client, test_schema_url)
+        raw = _make_api_key(client, admin, "cle-superadmin")
+        key_headers = {"Authorization": f"Bearer {raw}"}
+
+        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=key_headers).status_code == 200
+        assert client.get(f"/api/workspaces/{_WS}", headers=key_headers).status_code == 200
+        # Hors scope de la clé : refus par check_api_key_scope, inchangé.
+        r = client.post("/api/workspaces", json={"slug": "autre-ws", "label": "X"}, headers=admin)
+        assert r.status_code == 201, r.text
+        assert client.get("/api/workspaces/autre-ws", headers=key_headers).status_code == 403
 
 
 def test_global_automations_admin_only(

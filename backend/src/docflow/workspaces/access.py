@@ -70,15 +70,15 @@ async def require_ws_access(
 
     - Route sans `ws_slug` dans le chemin → no-op (la dépendance peut être posée
       au niveau du router, même mixte).
-    - Requête par clé API → no-op : les scopes de la clé gouvernent
-      (`check_api_key_scope`), inchangé.
+    - Requête par clé API : ``user`` est le **propriétaire** de la clé (résolu
+      par ``get_current_user``) — son accès réel s'applique aussi, EN PLUS des
+      scopes de la clé (`check_api_key_scope`). Accès effectif = accès
+      propriétaire ∩ scopes de clé, comme `_check_user_access` côté MCP.
     - Workspace inconnu → no-op : les services rendent leur 404 habituel.
     - Sans accès → **404** (fail closed : ne pas révéler l'existence).
     """
     ws_slug = request.path_params.get("ws_slug")
     if not ws_slug:
-        return
-    if getattr(request.state, "api_key_scopes", None) is not None:
         return
     if user.is_admin:
         return

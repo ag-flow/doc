@@ -153,12 +153,15 @@ export function DocumentEditor() {
   useEffect(() => {
     if (!doc) return
     const isNewDoc = loadedDocIdRef.current !== docId
-    // FE-03 : ne pas resynchroniser titre / expectedVersion lors d'un refetch
-    // d'arrière-plan (retour d'onglet, staleTime) pendant que l'utilisateur édite.
-    // Réaligner expectedVersion sur la version serveur ici contournerait le verrou
-    // optimiste et écraserait des modifications concurrentes sans dialogue de conflit ;
-    // un titre en cours d'édition serait par ailleurs réinitialisé.
-    if (!isNewDoc && status !== 'idle') return
+    // FE-03 : en mode édition, un refetch d'arrière-plan (poll du change feed,
+    // retour d'onglet) ne réaligne JAMAIS titre / expectedVersion / ancestor —
+    // même à l'état idle, car l'éditeur ne relit son contenu qu'au montage :
+    // réaligner ici ferait pointer le verrou optimiste sur une version que
+    // l'utilisateur ne voit pas, et sa prochaine sauvegarde écraserait la
+    // version distante sans 409 ni fusion three-way. En gelant, le vrai 409
+    // arrive et la machinerie de fusion arbitre. Le resync ne reste légitime
+    // que sur un vrai changement de document ou hors édition (lecture).
+    if (!isNewDoc && mode === 'edit') return
     loadedDocIdRef.current = docId ?? null
     setTitle(doc.title)
     setSlugValue(doc.slug ?? '')
@@ -166,7 +169,7 @@ export function DocumentEditor() {
     ancestorRef.current = { title: doc.title, content: doc.content ?? '' }
     // Changement de document : repartir d'un état propre (l'éditeur est remonté via key).
     if (isNewDoc) setStatus('idle')
-  }, [doc, docId, status])
+  }, [doc, docId, mode])
 
   const markDirty = useCallback(() => {
     setStatus((s) => (s === 'saving' ? s : 'dirty'))
