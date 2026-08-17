@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from docflow.auth.deps import require_authenticated
+from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.backup import runs, service
 from docflow.backup.schemas import (
     BackupJobCreate,
@@ -14,7 +14,16 @@ from docflow.backup.schemas import (
     RestoreGitReport,
 )
 
-router = APIRouter(prefix="/admin/backup", tags=["backup"])
+# Superadmin au niveau du ROUTER, pas route par route : ces endpoints pilotent
+# des dumps de la base, des dépôts distants et `include_restore_env` (qui dépose
+# JWT_SECRET / DATABASE_URL / clé de chiffrement chez la destination), et
+# `restore-git` réécrit du contenu dans l'instance. Une nouvelle route ajoutée
+# ici hérite de la protection au lieu de l'oublier.
+router = APIRouter(
+    prefix="/admin/backup",
+    tags=["backup"],
+    dependencies=[Depends(require_superadmin)],
+)
 
 _Auth = Depends(require_authenticated)
 

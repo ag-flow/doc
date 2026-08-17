@@ -304,3 +304,29 @@ def test_push_events_refuse_workspace_non_accessible(
         assert (
             client.post("/api/automations/push-events", json=body, headers=admin).status_code == 200
         )
+
+
+def test_admin_routers_refusent_un_utilisateur_non_admin(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Les surfaces d'administration d'infrastructure sont réservées aux superadmins.
+
+    backup et remote exposent une chaîne d'exfiltration complète : créer un
+    remote point vers un serveur tiers, puis un job `include_restore_env`
+    (qui dépose JWT_SECRET / DATABASE_URL / clé de chiffrement), puis le
+    déclencher. `/admin/contracts` expose URLs et specs de toutes les
+    intégrations. Rien de tout cela n'est accessible à un utilisateur simple.
+    """
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _setup_users_and_ws(client, test_schema_url)
+        user = _login(client, _USER)
+
+        for path in ("/api/admin/backup/jobs", "/api/admin/remote/points", "/api/admin/contracts"):
+            assert client.get(path, headers=user).status_code == 403, path
+            # Non-régression : le superadmin garde l'accès.
+            assert client.get(path, headers=admin).status_code == 200, path
+
+        # Écriture : la création d'un remote point (destination d'exfiltration)
+        # est refusée avant toute validation de corps.
+        r = client.post("/api/admin/remote/points", json={}, headers=user)
+        assert r.status_code == 403, r.text

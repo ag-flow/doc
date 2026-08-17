@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, status
 
-from docflow.auth.deps import require_authenticated
+from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.remote import service
 from docflow.remote.probe import probe_connection
 from docflow.remote.schemas import (
@@ -14,7 +14,14 @@ from docflow.remote.schemas import (
     RemotePointUpdate,
 )
 
-router = APIRouter(prefix="/admin/remote", tags=["remote"])
+# Superadmin au niveau du ROUTER : un remote point est une destination sortante
+# (hôte, clés, certificats) — pouvoir en créer une, c'est pouvoir désigner où
+# part une sauvegarde. Protection héritée par toute route ajoutée ensuite.
+router = APIRouter(
+    prefix="/admin/remote",
+    tags=["remote"],
+    dependencies=[Depends(require_superadmin)],
+)
 
 _Auth = Depends(require_authenticated)
 
