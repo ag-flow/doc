@@ -1232,7 +1232,10 @@ async def _check_user_access(
     session = current_session()
     if session is None:
         return None
-    user = acting_identity()
+    # Décision « attribution seule » : les droits se jugent TOUJOURS sur le
+    # porteur de la clé, jamais sur l'acteur OBO (forgeable par le porteur —
+    # le secret HMAC de verify_actor est la clé API elle-même).
+    user = require_identity()
     if user.is_admin or name == "create_workspace":
         return None
     if name in _WS_TOOLS or name == "import_template":
@@ -1412,9 +1415,10 @@ async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
             assert session.api_key_scopes is not None
             key_allowed = allowed_workspace_slugs(session.api_key_scopes)
             rows = [r for r in rows if r["slug"] in key_allowed]
-        # Filtre accès-utilisateur (owner/membre/superadmin). None = superadmin
-        # (tout). Intersection avec le scope de clé le cas échéant.
-        user_allowed = await accessible_workspace_slugs(pool, session.acting_user)
+        # Filtre accès-utilisateur (owner/membre/superadmin) : droits du porteur
+        # de la clé, jamais de l'acteur OBO. None = superadmin (tout).
+        # Intersection avec le scope de clé le cas échéant.
+        user_allowed = await accessible_workspace_slugs(pool, session.user)
         if user_allowed is not None:
             rows = [r for r in rows if r["slug"] in user_allowed]
     return _text([dict(r) for r in rows])
@@ -2462,12 +2466,13 @@ async def _add_workspace_member(pool: asyncpg.Pool, args: dict[str, object]) -> 
 
     role = str(args["role"]) if args.get("role") else "member"
     try:
+        # Contrôle de droits (owner/superadmin) → porteur de la clé, pas l'acteur OBO.
         out = await members.add_member(
             pool,
             str(args.get("workspace_slug", "")),
             str(args.get("member_email", "")),
             role,
-            acting_identity(),
+            require_identity(),
         )
     except HTTPException as e:
         return _text({"error": e.detail})
@@ -2482,11 +2487,12 @@ async def _remove_workspace_member(
     from docflow.workspaces import members
 
     try:
+        # Contrôle de droits (owner/superadmin) → porteur de la clé, pas l'acteur OBO.
         out = await members.remove_member(
             pool,
             str(args.get("workspace_slug", "")),
             str(args.get("member_email", "")),
-            acting_identity(),
+            require_identity(),
         )
     except HTTPException as e:
         return _text({"error": e.detail})

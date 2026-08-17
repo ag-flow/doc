@@ -32,8 +32,9 @@ class McpSession:
     def acting_user(self) -> AuthUser:
         """Identité agissante : l'humain OBO s'il existe, sinon l'identité de la clé.
 
-        Ne change PAS les droits (scopes de la clé) : sert à l'estampillage de
-        propriété (ex. workspace.owner_id) pour attribuer au véritable acteur.
+        Ne change JAMAIS les droits : toute décision d'accès se juge sur ``user``
+        (porteur de la clé), car l'acteur OBO est forgeable par ce porteur.
+        Sert uniquement à l'estampillage de propriété (owner_id, created_by).
         """
         return self.actor_user or self.user
 
@@ -74,8 +75,9 @@ def require_identity() -> AuthUser:
 def acting_identity() -> AuthUser:
     """Identité agissante (humain OBO ou identité de la clé) pour l'estampillage.
 
-    Erreur si la session n'est pas authentifiée. La clé de session reste
-    ``require_identity`` (droits) ; ceci ne sert qu'à l'attribution de propriété.
+    Erreur si la session n'est pas authentifiée. Les droits se jugent sur
+    ``require_identity`` (porteur de la clé) ; ceci ne sert qu'à l'attribution
+    de propriété (owner_id, created_by) — jamais à une décision d'accès.
     """
     session = _current_session.get()
     if session is None:

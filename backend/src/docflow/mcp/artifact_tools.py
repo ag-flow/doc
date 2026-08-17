@@ -15,7 +15,7 @@ from mcp.types import TextContent, Tool
 from docflow.artifacts import service
 from docflow.artifacts.links import build_download_query
 from docflow.config.settings import Settings
-from docflow.mcp.session import require_identity
+from docflow.mcp.session import acting_identity
 from docflow.net.ssrf import SSRFError, validate_public_url
 
 # Téléchargement d'un artefact depuis une URL (voie source_url). Le serveur va
@@ -287,7 +287,10 @@ async def handle_create_artifact(
         except (binascii.Error, ValueError):
             return _text({"error": "data_base64 invalide : base64 attendu"})
 
-    user = require_identity()
+    # Estampillage OBO : l'artefact est attribué à l'acteur (l'humain si l'OBO
+    # du portail l'a résolu, sinon l'identité de la clé) — cohérent avec
+    # datasets et workspaces.
+    user = acting_identity()
     try:
         created = await service.create_artifact(
             pool,
