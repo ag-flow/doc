@@ -15,7 +15,7 @@ from docflow.schemas.automations import (
     AutomationRunOut,
     AutomationUpdate,
 )
-from docflow.workspaces.access import require_ws_access
+from docflow.workspaces.access import assert_ws_access, require_ws_access
 
 router = APIRouter(tags=["automations"], dependencies=[Depends(require_ws_access)])
 
@@ -46,10 +46,16 @@ class PushEventsIn(BaseModel):
 
 @router.post("/automations/push-events")
 async def push_events(
-    body: PushEventsIn, request: Request, _: AuthUser = _Auth
+    body: PushEventsIn, request: Request, user: AuthUser = _Auth
 ) -> dict[str, object]:
     """Émet des events de modification synthétiques sur les documents des
     workspaces/blocs sélectionnés (re-déclenchement des automates)."""
+    # Le workspace vient du CORPS : `require_ws_access` (posée sur ce router) ne
+    # lit que le param de chemin et n'y voit rien. Tout est contrôlé AVANT le
+    # premier event émis — sinon un refus sur la 2ᵉ sélection laisserait la 1ʳᵉ
+    # déjà déclenchée.
+    for selection in body.selections:
+        await assert_ws_access(request, selection.workspace_slug, user, write=True)
     return await service.push_update_events(
         request.app.state.pool,
         [s.model_dump() for s in body.selections],
@@ -60,9 +66,7 @@ async def push_events(
 
 
 @router.get("/automations", response_model=list[AutomationOut])
-async def list_all_automations(
-    request: Request, _: AuthUser = _Admin
-) -> list[AutomationOut]:
+async def list_all_automations(request: Request, _: AuthUser = _Admin) -> list[AutomationOut]:
     """Tous les automates de l'instance, ordonnés par meilleure priorité."""
     return await service.list_automations(request.app.state.pool, None)
 

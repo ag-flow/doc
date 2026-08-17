@@ -281,3 +281,26 @@ def test_global_automations_admin_only(
         assert client.get("/api/automations", headers=admin).status_code == 200
         assert client.get("/api/automations", headers=user).status_code == 403
         assert client.get("/api/automations").status_code == 401
+
+
+def test_push_events_refuse_workspace_non_accessible(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Le workspace vient du CORPS, pas du chemin : `require_ws_access` (qui ne lit
+    que le param de chemin `ws_slug`) y est inerte. Sans contrôle propre, un
+    non-membre re-déclenche les automates d'un workspace qui ne lui est pas
+    accessible — les automates POSTent alors vers des endpoints externes."""
+    with _client(monkeypatch, test_schema_url) as client:
+        admin = _setup_users_and_ws(client, test_schema_url)
+        user = _login(client, _USER)
+
+        body = {"selections": [{"workspace_slug": _WS, "block_slugs": []}]}
+
+        # Non-membre : refusé (fail closed, comme les routes /workspaces/{ws}/…).
+        r = client.post("/api/automations/push-events", json=body, headers=user)
+        assert r.status_code == 404, r.text
+
+        # Superadmin : autorisé (non-régression du cas nominal).
+        assert (
+            client.post("/api/automations/push-events", json=body, headers=admin).status_code == 200
+        )

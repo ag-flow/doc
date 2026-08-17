@@ -80,6 +80,26 @@ async def require_ws_access(
     ws_slug = request.path_params.get("ws_slug")
     if not ws_slug:
         return
+    await assert_ws_access(request, ws_slug, user)
+
+
+async def assert_ws_access(
+    request: Request, ws_slug: str, user: AuthUser, *, write: bool = False
+) -> None:
+    """Même contrôle que `require_ws_access`, pour un workspace qui N'EST PAS
+    dans le chemin de la route (corps ou query).
+
+    `require_ws_access` ne lit que le paramètre de chemin `ws_slug` : posée sur
+    une route qui reçoit le workspace autrement, la dépendance est un no-op
+    SILENCIEUX et la route se retrouve sans contrôle d'accès. Toute route de ce
+    genre doit donc appeler ceci explicitement, une fois par workspace visé, et
+    AVANT le moindre effet de bord.
+
+    `write=True` exige en plus le droit d'écriture du scope de clé API.
+    """
+    from docflow.auth.deps import check_api_key_scope
+
+    check_api_key_scope(request, ws_slug, write=write)
     if user.is_admin:
         return
     pool = request.app.state.pool
