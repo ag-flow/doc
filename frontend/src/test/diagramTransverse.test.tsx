@@ -27,12 +27,36 @@ describe('Icon', () => {
     expect(svg.getAttribute('aria-label')).toBe('server')
   })
 
-  it('expose un noyau d’au moins 12 icônes, toutes rendables', () => {
-    expect(ICON_NAMES.length).toBeGreaterThanOrEqual(12)
+  it('expose le catalogue complet (≥ 55 icônes), toutes rendables', () => {
+    // 55 est la cible de l'enabler « Primitives transverses ». Seuil et non
+    // égalité : ajouter une icône ne doit pas casser le test, en retirer sous
+    // la cible doit le casser.
+    expect(ICON_NAMES.length).toBeGreaterThanOrEqual(55)
+    expect(new Set(ICON_NAMES).size).toBe(ICON_NAMES.length) // pas de doublon
     for (const name of ICON_NAMES) {
       const { container } = renderSvg(<Icon name={name} />)
       // Chaque glyphe produit au moins un élément géométrique.
       expect(container.querySelector('svg[data-diagram="icon"]')!.childElementCount).toBeGreaterThan(0)
+    }
+  })
+
+  it('couvre les briques IT/cloud nommées par l’enabler', () => {
+    // Ce que la fiche cite explicitement : sans elles, le catalogue est hors sujet
+    // quel que soit son volume.
+    for (const name of ['laptop', 'server', 'database', 'docker', 'kubernetes', 'aws', 'azure', 'github', 'postgres']) {
+      expect(ICON_NAMES).toContain(name)
+    }
+  })
+
+  it('ne pose fill=currentColor que sur des aplats, jamais sur un tracé ouvert', () => {
+    // Un <path> de contour rempli produit une tache noire au rendu : le style de
+    // trait est porté par <Icon> (fill:none), les glyphes ne remplissent que les
+    // pastilles/points.
+    for (const name of ICON_NAMES) {
+      const { container } = renderSvg(<Icon name={name} />)
+      for (const el of container.querySelectorAll('[fill="currentColor"]')) {
+        expect(['circle', 'text'], `${name}: <${el.tagName}> rempli`).toContain(el.tagName.toLowerCase())
+      }
     }
   })
 })
