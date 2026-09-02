@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 
-from docflow.artifacts import service
+from docflow.artifacts import service, uploads
 from docflow.artifacts.links import build_download_query, verify_download_sig
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactListOut, ArtifactMetaOut
@@ -17,6 +18,9 @@ router = APIRouter(tags=["artifacts"])
 _WS = "/workspaces/{ws_slug}"
 _ART = _WS + "/artifacts/{artifact_id}"
 _Auth = Depends(require_authenticated)
+
+# Jeton de ticket d'upload (secrets.token_urlsafe(32) → base64url).
+_UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
 
 
 def binary_response(data: bytes, media_type: str, filename: str, *, attachment: bool) -> Response:
@@ -35,8 +39,12 @@ def binary_response(data: bytes, media_type: str, filename: str, *, attachment: 
     )
 
 
-@router.post(_WS + "/artifacts", response_model=ArtifactCreatedOut, status_code=201,
-             dependencies=[Depends(require_ws_access)])
+@router.post(
+    _WS + "/artifacts",
+    response_model=ArtifactCreatedOut,
+    status_code=201,
+    dependencies=[Depends(require_ws_access)],
+)
 async def upload_artifact(
     ws_slug: str,
     file: UploadFile,
@@ -60,8 +68,35 @@ async def upload_artifact(
     )
 
 
-@router.get(_WS + "/artifacts", response_model=ArtifactListOut,
-            dependencies=[Depends(require_ws_access)])
+@router.put("/uploads/{upload_id}")
+async def put_upload(upload_id: str, request: Request) -> dict[str, object]:
+    """Dépose les octets d'un ticket d'upload (étape 2 de l'upload en deux temps).
+
+    Pas de Bearer : `upload_id` EST la capacité (aléatoire, à usage unique, à
+    TTL court). Le plafond de taille est appliqué au FLUX (pas seulement à la
+    valeur annoncée) : on coupe la lecture dès qu'il est dépassé, sans bufferiser
+    un corps arbitrairement gros. Le serveur vérifie taille annoncée, extension
+    au registre et empreinte recalculée avant de ranger quoi que ce soit.
+    """
+    if not _UPLOAD_ID_RE.match(upload_id):
+        raise HTTPException(status_code=404, detail="ticket d'upload introuvable")
+    max_bytes: int = request.app.state.settings.artifact_max_bytes
+    buffer = bytearray()
+    async for chunk in request.stream():
+        buffer.extend(chunk)
+        if len(buffer) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"fichier trop volumineux (max {max_bytes} octets)",
+            )
+    return await uploads.store_upload(
+        request.app.state.pool, upload_id, bytes(buffer), max_bytes=max_bytes
+    )
+
+
+@router.get(
+    _WS + "/artifacts", response_model=ArtifactListOut, dependencies=[Depends(require_ws_access)]
+)
 async def list_artifacts(
     ws_slug: str,
     request: Request,
@@ -89,8 +124,9 @@ async def list_artifacts(
     return ArtifactListOut(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get(_ART + "/meta", response_model=ArtifactMetaOut,
-            dependencies=[Depends(require_ws_access)])
+@router.get(
+    _ART + "/meta", response_model=ArtifactMetaOut, dependencies=[Depends(require_ws_access)]
+)
 async def get_artifact_meta(
     ws_slug: str, artifact_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> ArtifactMetaOut:

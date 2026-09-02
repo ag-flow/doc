@@ -6,6 +6,7 @@ import asyncpg
 import structlog
 
 from docflow.artifacts.service import purge_stale
+from docflow.artifacts.uploads import purge_expired as purge_expired_uploads
 from docflow.config.settings import Settings
 from docflow.datasets.references import purge_stale_datasets
 
@@ -42,3 +43,13 @@ async def purge_loop(pool: asyncpg.Pool, settings: Settings) -> None:
             raise
         except Exception:
             log.error("dataset_purge_failed", exc_info=True)
+        try:
+            # Tickets d'upload expirés (et leur blob temporaire) : usage unique
+            # non consommé, ou PUT jamais suivi de create_artifact.
+            purged_up = await purge_expired_uploads(pool)
+            if purged_up:
+                log.info("upload_ticket_purge", purged=purged_up)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.error("upload_ticket_purge_failed", exc_info=True)

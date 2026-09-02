@@ -59,6 +59,35 @@ async def create_artifact(
     retourné tel quel (deduplicated=True) — le binaire n'est jamais stocké
     deux fois dans un même workspace.
     """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            return await insert_artifact(
+                conn,
+                ws_slug,
+                filename=filename,
+                data=data,
+                created_by=created_by,
+                max_bytes=max_bytes,
+                media_type_override=media_type_override,
+            )
+
+
+async def insert_artifact(
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    *,
+    filename: str,
+    data: bytes,
+    created_by: uuid.UUID | None,
+    max_bytes: int,
+    media_type_override: str | None = None,
+) -> ArtifactCreatedOut:
+    """Cœur de la création, sur une connexion (et une transaction) fournies.
+
+    Permet à la consommation d'un ticket d'upload (`uploads.consume_upload`)
+    de créer l'artefact ET de marquer le ticket consommé dans une seule
+    transaction atomique. Suppose ``conn`` déjà dans une transaction.
+    """
     if not data:
         raise HTTPException(status_code=422, detail="fichier vide")
     if len(data) > max_bytes:
@@ -69,71 +98,69 @@ async def create_artifact(
     sha256 = hashlib.sha256(data).hexdigest()
     crc32 = zlib.crc32(data)
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            # Whitelist chargée depuis le registre (table artifact_media_type),
-            # source de vérité administrable.
-            allowed = await load_allowed_map(conn)
-            name, ext, media_type = _validate_filename(filename, allowed)
-            if media_type_override is not None:
-                # L'override reste borné à la whitelist : jamais un type
-                # arbitraire (text/html servi depuis notre origine = XSS).
-                if media_type_override not in set(allowed.values()):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"media_type non autorisé : {media_type_override}",
-                    )
-                media_type = media_type_override
-            wk = await require_workspace(conn, ws_slug, allow_archived=False)
-            inserted = await conn.fetchrow(
-                """
-                INSERT INTO artifact
-                    (workspace_technical_key, sha256, crc32, filename, extension,
-                     media_type, size_bytes, data, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (workspace_technical_key, sha256) DO NOTHING
-                RETURNING id
-                """,
-                wk,
-                sha256,
-                crc32,
-                name,
-                ext,
-                media_type,
-                len(data),
-                data,
-                created_by,
+    # Whitelist chargée depuis le registre (table artifact_media_type),
+    # source de vérité administrable.
+    allowed = await load_allowed_map(conn)
+    name, ext, media_type = _validate_filename(filename, allowed)
+    if media_type_override is not None:
+        # L'override reste borné à la whitelist : jamais un type
+        # arbitraire (text/html servi depuis notre origine = XSS).
+        if media_type_override not in set(allowed.values()):
+            raise HTTPException(
+                status_code=422,
+                detail=f"media_type non autorisé : {media_type_override}",
             )
-            if inserted is not None:
-                return ArtifactCreatedOut(
-                    id=inserted["id"],
-                    url=artifact_url(ws_slug, inserted["id"]),
-                    deduplicated=False,
-                    filename=name,
-                    extension=ext,
-                    media_type=media_type,
-                    size_bytes=len(data),
-                    sha256=sha256,
-                    crc32=crc32,
-                )
-            existing = await conn.fetchrow(
-                "SELECT id, filename, extension, media_type, size_bytes, crc32 "
-                "FROM artifact WHERE workspace_technical_key = $1 AND sha256 = $2",
-                wk,
-                sha256,
-            )
-            assert existing is not None  # UNIQUE garantit sa présence après le conflit
-            return ArtifactCreatedOut(
-                id=existing["id"],
-                url=artifact_url(ws_slug, existing["id"]),
-                deduplicated=True,
-                filename=existing["filename"],
-                extension=existing["extension"],
-                media_type=existing["media_type"],
-                size_bytes=existing["size_bytes"],
-                sha256=sha256,
-                crc32=existing["crc32"],
-            )
+        media_type = media_type_override
+    wk = await require_workspace(conn, ws_slug, allow_archived=False)
+    inserted = await conn.fetchrow(
+        """
+        INSERT INTO artifact
+            (workspace_technical_key, sha256, crc32, filename, extension,
+             media_type, size_bytes, data, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (workspace_technical_key, sha256) DO NOTHING
+        RETURNING id
+        """,
+        wk,
+        sha256,
+        crc32,
+        name,
+        ext,
+        media_type,
+        len(data),
+        data,
+        created_by,
+    )
+    if inserted is not None:
+        return ArtifactCreatedOut(
+            id=inserted["id"],
+            url=artifact_url(ws_slug, inserted["id"]),
+            deduplicated=False,
+            filename=name,
+            extension=ext,
+            media_type=media_type,
+            size_bytes=len(data),
+            sha256=sha256,
+            crc32=crc32,
+        )
+    existing = await conn.fetchrow(
+        "SELECT id, filename, extension, media_type, size_bytes, crc32 "
+        "FROM artifact WHERE workspace_technical_key = $1 AND sha256 = $2",
+        wk,
+        sha256,
+    )
+    assert existing is not None  # UNIQUE garantit sa présence après le conflit
+    return ArtifactCreatedOut(
+        id=existing["id"],
+        url=artifact_url(ws_slug, existing["id"]),
+        deduplicated=True,
+        filename=existing["filename"],
+        extension=existing["extension"],
+        media_type=existing["media_type"],
+        size_bytes=existing["size_bytes"],
+        sha256=sha256,
+        crc32=existing["crc32"],
+    )
 
 
 # ── Lecture ──────────────────────────────────────────────────────────────────

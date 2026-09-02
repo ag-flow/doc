@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     artifact_inline_max_bytes: int = 1024 * 1024
     # Purge des artefacts jamais référencés (brouillons abandonnés)
     artifact_purge_after_hours: int = 24
+    # Durée de vie d'un ticket d'upload d'artefact (create_upload → PUT →
+    # create_artifact). Court : le parcours s'exécute en quelques secondes.
+    artifact_upload_ttl_seconds: int = 3600
     # Purge des datasets jamais référencés (brouillons abandonnés)
     dataset_purge_after_hours: int = 24
     # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs

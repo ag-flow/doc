@@ -203,6 +203,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "get_block_type",
         "list_blocks",
         "delete_block",
+        "create_upload",
         "create_artifact",
         "get_artifact",
         "get_artifact_link",

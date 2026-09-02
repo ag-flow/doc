@@ -1391,6 +1391,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await _add_workspace_member(pool, arguments)
     if name == "remove_workspace_member":
         return await _remove_workspace_member(pool, arguments)
+    if name == "create_upload":
+        return await artifact_tools.handle_create_upload(pool, _settings, arguments)
     if name == "create_artifact":
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
     if name == "get_artifact":

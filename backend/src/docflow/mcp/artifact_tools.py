@@ -12,11 +12,12 @@ import httpx
 from fastapi import HTTPException
 from mcp.types import TextContent, Tool
 
-from docflow.artifacts import service
+from docflow.artifacts import service, uploads
 from docflow.artifacts.links import build_download_query
 from docflow.config.settings import Settings
-from docflow.mcp.session import acting_identity
+from docflow.mcp.session import acting_identity, require_identity
 from docflow.net.ssrf import SSRFError, validate_public_url
+from docflow.schemas.artifact import ArtifactCreatedOut
 
 # Téléchargement d'un artefact depuis une URL (voie source_url). Le serveur va
 # chercher le binaire lui-même : les octets ne transitent jamais par la sortie
@@ -62,14 +63,59 @@ async def _download_artifact_bytes(url: str, max_bytes: int) -> bytes:
 
 ARTIFACT_TOOLS: list[Tool] = [
     Tool(
+        name="create_upload",
+        description=(
+            "Ouvre un UPLOAD EN DEUX TEMPS pour pousser un fichier que tu as "
+            "déjà sur ton disque SANS que ses octets passent par la "
+            "conversation (contrairement à data_base64) ni par une URL déjà "
+            "publiée (contrairement à source_url). N'écrit AUCUN artefact : "
+            "délivre seulement un ticket. "
+            "Parcours : (1) create_upload(workspace_slug, filename, size_bytes, "
+            "sha256) → {upload_id, upload_url, expires_at} ; (2) envoie les "
+            "octets par `curl -X PUT --data-binary @fichier <upload_url>` ; "
+            "(3) create_artifact(workspace_slug, upload_id) → l'artefact naît "
+            "complet. "
+            "size_bytes = taille exacte du fichier en octets ; sha256 = son "
+            "empreinte hexadécimale (ex. `sha256sum fichier`). Le serveur "
+            "recalcule l'empreinte à la réception : un octet faux fait échouer "
+            "le PUT (aucun artefact corrompu). Extension et taille sont "
+            "validées ici (échec rapide). Le ticket est à usage unique, lié à "
+            "ce workspace et à toi, et expire vite — appelle create_artifact "
+            "juste après le PUT."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace cible"},
+                "filename": {
+                    "type": "string",
+                    "description": "Nom de fichier avec extension (ex. rapport.pdf)",
+                },
+                "size_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Taille exacte du fichier en octets",
+                },
+                "sha256": {
+                    "type": "string",
+                    "description": "Empreinte sha256 du fichier (64 caractères hexadécimaux)",
+                },
+            },
+            "required": ["workspace_slug", "filename", "size_bytes", "sha256"],
+        },
+    ),
+    Tool(
         name="create_artifact",
         description=(
             "Pousse un fichier (image ou tout binaire) dans un workspace. "
             "Fournir le binaire par EXACTEMENT "
-            "l'une de ces deux voies : `data_base64` (contenu encodé base64, inline) "
-            "OU `source_url` (URL http/https publique que LE SERVEUR télécharge "
-            "lui-même — à privilégier pour une grosse image, car les octets ne "
-            "transitent alors pas par la conversation). "
+            "l'une de ces trois voies : `data_base64` (contenu encodé base64, "
+            "inline) OU `source_url` (URL http/https publique que LE SERVEUR "
+            "télécharge lui-même) OU `upload_id` (ticket obtenu via create_upload "
+            "après avoir PUT les octets — à privilégier pour un fichier déjà sur "
+            "ton disque : les octets ne transitent pas par la conversation). "
+            "Avec `upload_id`, le nom de fichier vient du ticket ; `filename` est "
+            "ignoré. "
             "ÉCRITURE : l'artefact est stocké en base, dédupliqué par empreinte "
             "sha256 — pousser deux fois le même contenu retourne le même id "
             "(deduplicated=true). "
@@ -92,23 +138,34 @@ ARTIFACT_TOOLS: list[Tool] = [
                 "workspace_slug": {"type": "string", "description": "Slug du workspace cible"},
                 "filename": {
                     "type": "string",
-                    "description": "Nom de fichier avec extension (ex. schema.png)",
+                    "description": (
+                        "Nom de fichier avec extension (ex. schema.png). Requis pour "
+                        "data_base64 / source_url ; ignoré avec upload_id."
+                    ),
                 },
                 "data_base64": {
                     "type": "string",
                     "description": (
-                        "Contenu binaire du fichier encodé en base64 (exclusif avec source_url)"
+                        "Contenu binaire du fichier encodé en base64 "
+                        "(exclusif avec source_url et upload_id)"
                     ),
                 },
                 "source_url": {
                     "type": "string",
                     "description": (
                         "URL http/https publique du binaire, téléchargé côté serveur "
-                        "(exclusif avec data_base64)"
+                        "(exclusif avec data_base64 et upload_id)"
+                    ),
+                },
+                "upload_id": {
+                    "type": "string",
+                    "description": (
+                        "Ticket d'upload (create_upload) dont les octets ont déjà été "
+                        "PUT (exclusif avec data_base64 et source_url)"
                     ),
                 },
             },
-            "required": ["workspace_slug", "filename"],
+            "required": ["workspace_slug"],
         },
     ),
     Tool(
@@ -239,6 +296,7 @@ ARTIFACT_TOOLS: list[Tool] = [
 
 # Périmètre workspace des tools (fusionné dans _WS_TOOLS du serveur) : écriture ?
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
+    "create_upload": True,
     "create_artifact": True,
     "get_artifact": False,
     "get_artifact_data": False,
@@ -258,6 +316,50 @@ def _parse_artifact_id(raw: object) -> uuid.UUID | None:
         return None
 
 
+def _upload_url(settings: Settings, upload_id: str) -> str:
+    """URL absolue de dépôt PUT (préfixée par public_base_url si configurée)."""
+    base = (settings.public_base_url or "").rstrip("/")
+    return f"{base}/api/uploads/{upload_id}"
+
+
+async def handle_create_upload(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Ouvre un ticket d'upload : ne crée aucun artefact, retourne l'upload_url."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    filename = str(args.get("filename", ""))
+    raw_size = args.get("size_bytes")
+    if not isinstance(raw_size, int) or isinstance(raw_size, bool):
+        return _text({"error": "size_bytes invalide : entier attendu"})
+    sha256 = str(args.get("sha256", ""))
+
+    # Le ticket est lié au PORTEUR de la clé (require_identity) : seul lui
+    # pourra le consommer. L'acteur OBO, forgeable, ne sert pas de liaison.
+    try:
+        result = await uploads.create_upload(
+            pool,
+            ws_slug,
+            filename=filename,
+            size_bytes=raw_size,
+            sha256=sha256,
+            requested_by=require_identity().id,
+            ttl_seconds=settings.artifact_upload_ttl_seconds,
+            max_bytes=settings.artifact_max_bytes,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    upload_id = str(result["upload_id"])
+    return _text(
+        {
+            "upload_id": upload_id,
+            "upload_url": _upload_url(settings, upload_id),
+            "expires_at": result["expires_at"],
+        }
+    )
+
+
 async def handle_create_artifact(
     pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
 ) -> list[TextContent]:
@@ -267,14 +369,33 @@ async def handle_create_artifact(
     filename = str(args.get("filename", ""))
     max_bytes = settings.artifact_max_bytes
 
-    # Exactement une source : le binaire inline (data_base64) OU une URL que le
-    # serveur télécharge (source_url).
+    # Exactement une source : binaire inline (data_base64), URL téléchargée par
+    # le serveur (source_url), ou ticket d'upload dont les octets ont déjà été
+    # PUT (upload_id).
     raw_b64 = args.get("data_base64")
     raw_url = args.get("source_url")
+    raw_upload = args.get("upload_id")
     has_b64 = raw_b64 is not None and str(raw_b64) != ""
     has_url = raw_url is not None and str(raw_url) != ""
-    if has_b64 == has_url:
-        return _text({"error": "fournir exactement l'un de data_base64 ou source_url"})
+    has_upload = raw_upload is not None and str(raw_upload) != ""
+    if has_b64 + has_url + has_upload != 1:
+        return _text({"error": "fournir exactement l'un de data_base64, source_url ou upload_id"})
+
+    # Voie ticket : l'artefact est créé et le ticket consommé atomiquement.
+    # Le nom de fichier vient du ticket ; l'estampillage created_by suit l'OBO.
+    if has_upload:
+        try:
+            created = await uploads.consume_upload(
+                pool,
+                ws_slug,
+                str(raw_upload),
+                requested_by=require_identity().id,
+                created_by=acting_identity().id,
+                max_bytes=max_bytes,
+            )
+        except HTTPException as e:
+            return _text({"error": e.detail})
+        return _artifact_payload(created)
 
     if has_url:
         try:
@@ -302,6 +423,10 @@ async def handle_create_artifact(
         )
     except HTTPException as e:
         return _text({"error": e.detail})
+    return _artifact_payload(created)
+
+
+def _artifact_payload(created: ArtifactCreatedOut) -> list[TextContent]:
     return _text(
         {
             "id": str(created.id),

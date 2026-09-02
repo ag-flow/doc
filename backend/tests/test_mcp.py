@@ -62,7 +62,8 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     ):
         assert _t in tool_names
     assert "list_artifacts" in tool_names
-    assert len(_TOOLS) == 53
+    assert "create_upload" in tool_names
+    assert len(_TOOLS) == 54
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:
