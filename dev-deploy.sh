@@ -245,6 +245,14 @@ main() {
     echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
+
+    # ─── Entretien hebdomadaire du cache Docker (non bloquant) ────────────────
+    # Placé APRÈS le récapitulatif à dessein : le déploiement est déjà confirmé
+    # (smoke vert) et n'attend jamais la purge, qui peut durer plusieurs minutes
+    # sur un gros cache. Bornée à une fois/semaine par témoin, jamais bloquante.
+    echo ""
+    echo "==> Entretien Docker (au plus hebdomadaire)..."
+    prune_docker_cache "$DATA_ROOT" || true
 }
 
 # ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────
@@ -266,6 +274,43 @@ smoke_test_health() {
         echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
         exit 1
     fi
+}
+
+# ─── Entretien hebdomadaire du cache Docker ────────────────────────────────────
+# Chaque build empile de nouvelles couches ; l'image précédente est détaggée
+# mais ses snapshots restent sur disque, et rien ne les récupère. Purge bornée
+# AU PLUS une fois par semaine (témoin horodaté), au périmètre volontairement
+# restreint :
+#   - `docker builder prune -a`  → cache de build (le plus gros gain, sans risque) ;
+#   - `docker image prune`       → images dangling (builds précédents détaggés).
+# JAMAIS `system prune -a` (supprimerait les images de base, rallongeant tous les
+# builds) ni `volume prune` (détruirait les volumes persistants : pgdata Postgres
+# et stockage d'artefacts de docflow). La purge ne peut jamais faire échouer le
+# déploiement : chaque commande est isolée par `|| true`, la fonction retourne 0.
+prune_docker_cache() {
+    local DATA_ROOT="$1"
+    local WITNESS="${DATA_ROOT}/.last-docker-prune"
+
+    # Témoin frais (< 7 jours) → entretien sauté. `find -mtime +7` n'imprime le
+    # fichier que s'il a plus de 7×24 h ; témoin absent → chaîne vide au test
+    # `-f` → on purge (et on crée le témoin). Deux déploiements le même jour ne
+    # déclenchent donc qu'une purge.
+    if [[ -f "$WITNESS" ]] && [[ -z "$(find "$WITNESS" -mtime +7 -print 2>/dev/null)" ]]; then
+        echo "  → dernière purge < 7 jours ($(date -r "$WITNESS" '+%Y-%m-%d' 2>/dev/null)), ignorée"
+        return 0
+    fi
+
+    echo "  → purge du cache de build et des images détaggées..."
+    local reclaimed
+    reclaimed="$(docker builder prune -a -f 2>/dev/null | tail -1 || true)"
+    echo "    builder : ${reclaimed:-—}"
+    reclaimed="$(docker image prune -f 2>/dev/null | tail -1 || true)"
+    echo "    images  : ${reclaimed:-—}"
+
+    # Témoin posé APRÈS la purge : le prochain déploiement dans les 7 jours
+    # sautera l'entretien. Un échec de `touch` ne casse pas le déploiement.
+    touch "$WITNESS" 2>/dev/null || true
+    echo "  ✓ entretien Docker effectué"
 }
 
 # ─── Purge complète de la base ─────────────────────────────────────────────────
