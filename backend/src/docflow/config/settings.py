@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     artifact_inline_max_bytes: int = 1024 * 1024
     # Purge des artefacts jamais référencés (brouillons abandonnés)
     artifact_purge_after_hours: int = 24
+    # Rétention de l'historique d'un artefact MUTABLE : nombre de révisions
+    # conservées (la courante toujours incluse). Taillé à chaque écriture.
+    # Valeur élevée = désactive de fait le nettoyage.
+    artifact_revision_keep: int = 50
     # Durée de vie d'un ticket d'upload d'artefact (create_upload → PUT →
     # create_artifact). Court : le parcours s'exécute en quelques secondes.
     artifact_upload_ttl_seconds: int = 3600

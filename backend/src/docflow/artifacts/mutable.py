@@ -13,9 +13,44 @@ import uuid
 import zlib
 
 import asyncpg
+import structlog
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+
+log = structlog.get_logger(__name__)
+
+
+async def _trim_revisions(
+    conn: asyncpg.Connection, artifact_id: uuid.UUID, current_revision: int, keep: int | None
+) -> int:
+    """Taille l'historique : garde les `keep` dernières révisions.
+
+    La révision courante (`current_revision`, la plus haute) est TOUJOURS
+    conservée — on ne supprime que ce qui est plus ancien que la fenêtre. Aucun
+    effet si `keep` est None/≤0 ou si l'historique tient déjà dans la fenêtre.
+    Retourne le nombre de révisions purgées.
+    """
+    if keep is None or keep < 1:
+        return 0
+    cutoff = current_revision - keep  # supprime revision <= cutoff (jamais la courante)
+    if cutoff < 1:
+        return 0
+    result = await conn.execute(
+        "DELETE FROM artifact_revision WHERE artifact_ref = $1 AND revision <= $2",
+        artifact_id,
+        cutoff,
+    )
+    pruned = int(result.split()[-1])
+    if pruned:
+        log.info(
+            "artifact_revisions_pruned",
+            artifact_id=str(artifact_id),
+            pruned=pruned,
+            kept=keep,
+            current_revision=current_revision,
+        )
+    return pruned
 
 
 def is_textual_media_type(media_type: str) -> bool:
@@ -103,8 +138,9 @@ async def _commit_revision(
     new_data: bytes,
     new_revision: int,
     created_by: uuid.UUID | None,
+    keep: int | None,
 ) -> dict[str, object]:
-    """Écrit la tête et empile la révision (même transaction)."""
+    """Écrit la tête, empile la révision et taille l'historique (même transaction)."""
     sha256 = hashlib.sha256(new_data).hexdigest()
     crc32 = zlib.crc32(new_data)
     await conn.execute(
@@ -128,11 +164,13 @@ async def _commit_revision(
         new_data,
         created_by,
     )
+    pruned = await _trim_revisions(conn, artifact_id, new_revision, keep)
     return {
         "id": artifact_id,
         "revision": new_revision,
         "sha256": sha256,
         "size_bytes": len(new_data),
+        "revisions_pruned": pruned,
     }
 
 
@@ -145,6 +183,7 @@ async def update_artifact(
     if_revision: int,
     updated_by: uuid.UUID | None,
     max_bytes: int,
+    keep: int | None = None,
 ) -> dict[str, object]:
     """Remplacement intégral du contenu d'un artefact mutable (révision N+1)."""
     if not data:
@@ -162,6 +201,7 @@ async def update_artifact(
                 new_data=data,
                 new_revision=row["revision"] + 1,
                 created_by=updated_by,
+                keep=keep,
             )
 
 
@@ -174,6 +214,7 @@ async def patch_artifact(
     if_revision: int,
     updated_by: uuid.UUID | None,
     max_bytes: int,
+    keep: int | None = None,
 ) -> dict[str, object]:
     """Édition partielle par ancre textuelle d'un artefact mutable (révision N+1)."""
     async with pool.acquire() as conn:
@@ -203,6 +244,7 @@ async def patch_artifact(
                 new_data=new_data,
                 new_revision=row["revision"] + 1,
                 created_by=updated_by,
+                keep=keep,
             )
 
 
@@ -249,3 +291,25 @@ async def list_revisions(
             artifact_id,
         )
     return [dict(r) for r in rows]
+
+
+async def prune_artifact_revisions(
+    pool: asyncpg.Pool, ws_slug: str, artifact_id: uuid.UUID, *, keep: int
+) -> dict[str, object]:
+    """Purge explicite de l'historique d'un artefact : garde les `keep` dernières
+    révisions (la courante toujours conservée). `keep` doit être ≥ 1."""
+    if keep < 1:
+        raise HTTPException(status_code=422, detail="keep doit être ≥ 1")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            row = await conn.fetchrow(
+                "SELECT revision FROM artifact "
+                "WHERE id = $1 AND workspace_technical_key = $2 FOR UPDATE",
+                artifact_id,
+                wk,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"artefact {artifact_id} introuvable")
+            pruned = await _trim_revisions(conn, artifact_id, row["revision"], keep)
+    return {"id": artifact_id, "current_revision": row["revision"], "revisions_pruned": pruned}

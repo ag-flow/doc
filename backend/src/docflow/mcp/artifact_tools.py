@@ -421,12 +421,45 @@ ARTIFACT_TOOLS: list[Tool] = [
     ),
 ]
 
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="prune_artifact_revisions",
+        description=(
+            "Purge l'historique d'un artefact MUTABLE : conserve les `keep` dernières "
+            "révisions ; la révision COURANTE est toujours conservée. Opération "
+            "explicite et définitive (les révisions antérieures à la fenêtre sont "
+            "supprimées). Sans `keep`, applique la rétention par défaut de l'instance. "
+            "Aucun effet sur un artefact immuable (pas d'historique). Retourne "
+            "{id, current_revision, revisions_pruned}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de l'artefact",
+                },
+                "keep": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révisions à conserver (défaut : rétention de l'instance)",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id"],
+        },
+    )
+)
+
+
 # Périmètre workspace des tools (fusionné dans _WS_TOOLS du serveur) : écriture ?
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "create_upload": True,
     "create_artifact": True,
     "update_artifact": True,
     "patch_artifact": True,
+    "prune_artifact_revisions": True,
     "get_artifact": False,
     "get_artifact_data": False,
     "get_artifact_link": False,
@@ -587,6 +620,7 @@ async def handle_update_artifact(
             if_revision=if_revision,
             updated_by=acting_identity().id,
             max_bytes=settings.artifact_max_bytes,
+            keep=settings.artifact_revision_keep,
         )
     except HTTPException as e:
         return _text({"error": e.detail})
@@ -623,7 +657,31 @@ async def handle_patch_artifact(
             if_revision=if_revision,
             updated_by=acting_identity().id,
             max_bytes=settings.artifact_max_bytes,
+            keep=settings.artifact_revision_keep,
         )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def handle_prune_artifact_revisions(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Purge explicite de l'historique d'un artefact mutable (garde les N dernières)."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    raw_keep = args.get("keep")
+    keep = (
+        raw_keep
+        if isinstance(raw_keep, int) and not isinstance(raw_keep, bool)
+        else settings.artifact_revision_keep
+    )
+    try:
+        result = await mutable.prune_artifact_revisions(pool, ws_slug, artifact_id, keep=keep)
     except HTTPException as e:
         return _text({"error": e.detail})
     return _text(result)

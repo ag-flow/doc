@@ -461,3 +461,80 @@ async def test_mcp_create_update_patch_get_flow(
     finally:
         reset_current_session(token)  # type: ignore[arg-type]
         await db_pool.execute("DELETE FROM app_user WHERE email = 'mut-mcp@test.local'")
+
+
+# ── Rétention des révisions (fiche 97b41148) ──────────────────────────────────
+
+
+async def _create_and_update(pool: asyncpg.Pool, name: str, n: int, keep: int | None) -> uuid.UUID:
+    created = await service.create_artifact(
+        pool,
+        "test-ws",
+        filename=name,
+        data=b"<b>1</b>",
+        created_by=None,
+        max_bytes=_MAX,
+        mutable=True,
+    )
+    rev = 1
+    for i in range(2, n + 1):
+        res = await mutable.update_artifact(
+            pool,
+            "test-ws",
+            created.id,
+            data=f"<b>{i}</b>".encode(),
+            if_revision=rev,
+            updated_by=None,
+            max_bytes=_MAX,
+            keep=keep,
+        )
+        rev = int(res["revision"])  # type: ignore[arg-type]
+    return created.id
+
+
+async def test_trim_at_write_keeps_last_n_and_current(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    aid = await _create_and_update(db_pool, "t.html", 5, keep=3)  # révisions 1..5, keep 3
+    revs = [r["revision"] for r in await mutable.list_revisions(db_pool, "test-ws", aid)]
+    assert revs == [3, 4, 5]  # les 3 dernières ; la courante (5) toujours là
+    # La révision courante reste lisible telle quelle.
+    data, _, _ = await mutable.fetch_revision_content(db_pool, "test-ws", aid, 5)
+    assert data == b"<b>5</b>"
+
+
+async def test_no_trim_when_keep_none(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    aid = await _create_and_update(db_pool, "u.html", 5, keep=None)  # rétention désactivée
+    revs = [r["revision"] for r in await mutable.list_revisions(db_pool, "test-ws", aid)]
+    assert revs == [1, 2, 3, 4, 5]
+
+
+async def test_explicit_prune_keeps_last_n(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    aid = await _create_and_update(db_pool, "p.html", 5, keep=None)
+    res = await mutable.prune_artifact_revisions(db_pool, "test-ws", aid, keep=2)
+    assert res["revisions_pruned"] == 3 and res["current_revision"] == 5
+    revs = [r["revision"] for r in await mutable.list_revisions(db_pool, "test-ws", aid)]
+    assert revs == [4, 5]  # courante jamais supprimée
+
+
+async def test_prune_immutable_no_effect(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="im.txt", data=b"x", created_by=None, max_bytes=_MAX
+    )
+    res = await mutable.prune_artifact_revisions(db_pool, "test-ws", created.id, keep=1)
+    assert res["revisions_pruned"] == 0
+
+
+async def test_prune_keep_below_one_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    aid = await _create_and_update(db_pool, "z.html", 2, keep=None)
+    with pytest.raises(HTTPException) as exc:
+        await mutable.prune_artifact_revisions(db_pool, "test-ws", aid, keep=0)
+    assert exc.value.status_code == 422
