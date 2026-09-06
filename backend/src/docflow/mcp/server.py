@@ -1407,6 +1407,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await artifact_tools.handle_list_artifacts(pool, arguments)
     if name == "get_artifact_link":
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
+    if name == "get_preview_link":
+        return await artifact_tools.handle_get_preview_link(pool, _settings, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
         return await dataset_tools.handle(name, pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})

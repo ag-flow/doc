@@ -209,6 +209,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "patch_artifact",
         "get_artifact",
         "get_artifact_link",
+        "get_preview_link",
         "get_artifact_data",
         "list_artifacts",
         "list_block_properties",

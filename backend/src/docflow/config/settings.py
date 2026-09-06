@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     dataset_purge_after_hours: int = 24
     # URL publique de l'instance (préfixe des liens signés absolus) ; None = liens relatifs
     public_base_url: str | None = None
+    # Origine DÉDIÉE de rendu des maquettes HTML (ex. https://preview.yoops.org),
+    # DISTINCTE de public_base_url : du HTML non fiable y est servi en iframe
+    # sandboxée (CSP fermée). None = rendu des maquettes désactivé (fail closed).
+    preview_base_url: str | None = None
 
     # ── Producteur d'events workflow (contrat producteur) ──
     # Émission activée ssi les trois sont renseignés. L'event est posté en

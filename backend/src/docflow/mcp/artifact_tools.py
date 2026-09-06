@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from mcp.types import TextContent, Tool
 
 from docflow.artifacts import mutable, service, uploads
-from docflow.artifacts.links import build_download_query
+from docflow.artifacts.links import build_download_query, build_preview_query
 from docflow.config.settings import Settings
 from docflow.mcp.session import acting_identity, require_identity
 from docflow.net.ssrf import SSRFError, validate_public_url
@@ -342,6 +342,36 @@ ARTIFACT_TOOLS: list[Tool] = [
         },
     ),
     Tool(
+        name="get_preview_link",
+        description=(
+            "Émet un lien de PREVIEW signé (courte durée, révision-conscient) vers "
+            "une maquette d'écran — artefact MUTABLE de type text/html — rendu dans "
+            "une iframe sandboxée servie depuis l'origine de preview DÉDIÉE "
+            "(distincte de docflow). Réservé aux maquettes HTML : refusé sur tout "
+            "autre artefact. Sans origine de preview configurée sur l'instance, "
+            "refusé. Par défaut la révision courante ; `revision` pour une révision "
+            "précise. Retourne {url, revision, expires_in_seconds}. Pour lire le "
+            "contenu source d'une maquette, utiliser get_artifact_data."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la maquette",
+                },
+                "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révision à rendre (défaut : révision courante)",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id"],
+        },
+    ),
+    Tool(
         name="list_artifacts",
         description=(
             "Liste paginée des artefacts d'un workspace, du plus récent au plus "
@@ -400,6 +430,7 @@ ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "get_artifact": False,
     "get_artifact_data": False,
     "get_artifact_link": False,
+    "get_preview_link": False,
     "list_artifacts": False,
 }
 
@@ -767,3 +798,43 @@ async def handle_get_artifact_link(
     base = (settings.public_base_url or "").rstrip("/")
     expires_at = int(query.split("&")[0].removeprefix("exp="))
     return _text({"url": f"{base}{path}", "expires_at": expires_at})
+
+
+async def handle_get_preview_link(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Lien de preview signé (révision-conscient) d'une maquette HTML mutable."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    if not settings.preview_base_url:
+        return _text({"error": "origine de preview non configurée sur l'instance"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    try:
+        meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    if not meta.mutable or meta.media_type.lower() != "text/html":
+        return _text({"error": "get_preview_link réservé aux maquettes HTML mutables"})
+
+    raw_rev = args.get("revision")
+    revision = (
+        raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else meta.revision
+    )
+    if revision < 1 or revision > meta.revision:
+        return _text({"error": f"révision hors bornes (1..{meta.revision})"})
+
+    ttl = settings.artifact_link_ttl_seconds
+    query = build_preview_query(
+        ws_slug, artifact_id, revision, ttl_seconds=ttl, secret=settings.jwt_secret.reveal()
+    )
+    base = settings.preview_base_url.rstrip("/")
+    return _text(
+        {
+            "url": f"{base}/preview/{ws_slug}/{artifact_id}?{query}",
+            "revision": revision,
+            "expires_in_seconds": ttl,
+        }
+    )
