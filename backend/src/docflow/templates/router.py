@@ -4,6 +4,7 @@ import json
 import pathlib
 import re
 import uuid as _uuid
+from datetime import datetime
 
 import structlog
 import yaml
@@ -76,6 +77,14 @@ class ImportResultOut(BaseModel):
     no_op: bool
     adds: int
     soft_updates: int
+
+
+class WorkspaceTemplateOut(BaseModel):
+    """Template global dont un workspace est issu + la version importée."""
+
+    template: str
+    version: int
+    imported_at: datetime
 
 
 class RemoteTemplateInfo(BaseModel):
@@ -579,3 +588,27 @@ async def import_template(
         adds=len(report.diff.adds),
         soft_updates=len(report.diff.soft_updates),
     )
+
+
+@router.get(
+    "/workspaces/{ws_slug}/templates",
+    dependencies=[Depends(require_ws_access)],
+    response_model=list[WorkspaceTemplateOut],
+)
+async def list_workspace_templates(
+    ws_slug: str, request: Request, _: None = _Auth
+) -> list[WorkspaceTemplateOut]:
+    """Templates globaux dont ce workspace est issu, avec la version importée.
+
+    Le front compare cette version à celle du template global courant
+    (`GET /templates`) : si le global est plus récent, il propose une mise à
+    jour (additive — cf. la réconciliation de `run_import`, jamais de suppression).
+    """
+    rows = await request.app.state.pool.fetch(
+        "SELECT wti.template, wti.version, wti.imported_at "
+        "FROM workspace_template_import wti "
+        "JOIN workspace w ON w.workspace_technical_key = wti.workspace_technical_key "
+        "WHERE w.slug = $1 ORDER BY wti.template",
+        ws_slug,
+    )
+    return [WorkspaceTemplateOut(**dict(r)) for r in rows]
