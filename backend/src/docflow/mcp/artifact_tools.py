@@ -15,6 +15,7 @@ from mcp.types import TextContent, Tool
 from docflow.artifacts import mutable, service, uploads
 from docflow.artifacts.links import build_download_query, build_preview_query
 from docflow.config.settings import Settings
+from docflow.mcp.coerce import as_bool as _as_bool
 from docflow.mcp.session import acting_identity, require_identity
 from docflow.net.ssrf import SSRFError, validate_public_url
 from docflow.schemas.artifact import ArtifactCreatedOut
@@ -471,19 +472,6 @@ ARTIFACT_WS_TOOLS: dict[str, bool] = {
 
 def _text(data: object) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(data, default=str))]
-
-
-def _as_bool(raw: object) -> bool:
-    """Booléen tolérant : accepte `True` OU une chaîne « true »/« 1 »/« yes »/« oui ».
-
-    Nombre de clients LLM sérialisent les booléens en chaîne ; sans ça, `mutable`
-    stringifié serait vu comme faux et une maquette `.html` finirait refusée.
-    """
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw.strip().lower() in {"true", "1", "yes", "oui"}
-    return False
 
 
 def _parse_artifact_id(raw: object) -> uuid.UUID | None:

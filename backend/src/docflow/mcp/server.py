@@ -13,6 +13,7 @@ from mcp.types import CallToolResult, TextContent, Tool
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
 from docflow.mcp import artifact_tools, dataset_tools
+from docflow.mcp.coerce import as_bool
 from docflow.mcp.session import acting_identity, current_session, require_identity
 from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
 
@@ -298,7 +299,7 @@ _TOOLS: list[Tool] = [
                     "description": "UUID du document à supprimer",
                 },
                 "confirm": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true pour confirmer la suppression en cascade quand le "
                         "document a des descendants (défaut false ; cf. dependents "
@@ -676,7 +677,7 @@ _TOOLS: list[Tool] = [
                     "description": "Slug du bloc à supprimer",
                 },
                 "confirm": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true pour confirmer la suppression en cascade quand le bloc "
                         "a des dépendants (défaut false ; cf. dependents dans la "
@@ -713,7 +714,7 @@ _TOOLS: list[Tool] = [
                     "description": "Slug du workspace dont l'accès est accordé",
                 },
                 "read_only": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": "true = lecture seule (défaut), false = lecture+écriture",
                 },
                 "description": {
@@ -929,7 +930,7 @@ _TOOLS: list[Tool] = [
                     "items": {"type": "object"},
                 },
                 "exhaustive": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true = les enfants absents des items sont marqués retirés "
                         "(status=removed_at_source) ; false (défaut) = aucun marquage"
@@ -1719,7 +1720,7 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
         return _text({"error": "doc_id : UUID invalide"})
-    confirm = bool(args.get("confirm", False))
+    confirm = as_bool(args.get("confirm"), default=False)
 
     # La garde vit dans le service, sous la transaction de suppression : la
     # compter ici en ferait de nouveau un TOCTOU (un enfant créé entre-temps
@@ -1741,7 +1742,7 @@ async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> 
 
     ws_slug = str(args.get("workspace_slug", ""))
     child_type_slug = str(args.get("child_type_slug", ""))
-    exhaustive = bool(args.get("exhaustive", False))
+    exhaustive = as_bool(args.get("exhaustive"), default=False)
     try:
         parent_id = uuid.UUID(str(args.get("parent_id", "")))
     except ValueError:
@@ -2192,7 +2193,7 @@ async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
 
     ws_slug = str(args.get("workspace_slug", ""))
     block_slug = str(args.get("block_slug", ""))
-    confirm = bool(args.get("confirm", False))
+    confirm = as_bool(args.get("confirm"), default=False)
 
     # Décompte préalable pour un message explicite (miroir de _delete_document).
     try:
@@ -2352,7 +2353,7 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
     name = str(args.get("name", ""))
     ws_slug = str(args.get("workspace_slug", ""))
-    read_only = bool(args.get("read_only", True))
+    read_only = as_bool(args.get("read_only"), default=True)
     description = str(args["description"]) if "description" in args else None
 
     # Le profil est rattaché à l'identité authentifiée de la session MCP —
