@@ -624,6 +624,10 @@
     "pasteTypeAuto": "— d'après l'extension —",
     "pasteInsert": "Insérer"
   },
+  "maquette": {
+    "slashTitle": "Maquette d'écran",
+    "slashHint": "Insérer une maquette HTML (artefact mutable) rendue en iframe isolée"
+  },
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"

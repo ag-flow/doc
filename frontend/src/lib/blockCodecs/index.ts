@@ -26,6 +26,7 @@ import { conversationCodec } from './conversation'
 import { displayCodec } from './display'
 import { artifactCodec } from './artifact'
 import { diagramCodec } from './diagram'
+import { maquetteCodec } from './maquette'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,7 @@ export const registry: BlockCodec[] = [
   displayCodec as unknown as BlockCodec,
   artifactCodec as unknown as BlockCodec,
   diagramCodec as unknown as BlockCodec,
+  maquetteCodec as unknown as BlockCodec,
 ]
 
 const byType = new Map(registry.map((c) => [c.type, c]))

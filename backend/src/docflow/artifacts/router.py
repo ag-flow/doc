@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Upl
 from fastapi.responses import Response
 
 from docflow.artifacts import service, uploads
-from docflow.artifacts.links import build_download_query, verify_download_sig
+from docflow.artifacts.links import build_download_query, build_preview_query, verify_download_sig
 from docflow.auth.deps import check_api_key_scope, require_authenticated
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactListOut, ArtifactMetaOut
 from docflow.schemas.auth import AuthUser
@@ -174,6 +174,33 @@ async def mint_artifact_link(
     )
     return {
         "url": f"/api/workspaces/{ws_slug}/artifacts/{artifact_id}/download?{query}",
+        "expires_in_seconds": ttl,
+    }
+
+
+@router.get(_ART + "/preview-link", dependencies=[Depends(require_ws_access)])
+async def mint_preview_link(
+    ws_slug: str, artifact_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> dict[str, object]:
+    """Lien de preview signé (révision-conscient) d'une maquette HTML mutable.
+
+    Équivalent REST du tool MCP get_preview_link, consommé par le bloc maquette
+    de l'éditeur : l'iframe pointe l'URL retournée (origine de preview dédiée)."""
+    check_api_key_scope(request, ws_slug)
+    settings = request.app.state.settings
+    if not settings.preview_base_url:
+        raise HTTPException(status_code=400, detail="origine de preview non configurée")
+    meta = await service.get_artifact_meta(request.app.state.pool, ws_slug, artifact_id)
+    if not meta.mutable or meta.media_type.lower() != "text/html":
+        raise HTTPException(status_code=422, detail="réservé aux maquettes HTML mutables")
+    ttl = settings.artifact_link_ttl_seconds
+    query = build_preview_query(
+        ws_slug, artifact_id, meta.revision, ttl_seconds=ttl, secret=settings.jwt_secret.reveal()
+    )
+    base = settings.preview_base_url.rstrip("/")
+    return {
+        "url": f"{base}/preview/{ws_slug}/{artifact_id}?{query}",
+        "revision": meta.revision,
         "expires_in_seconds": ttl,
     }
 

@@ -5,6 +5,7 @@ import {
   serializeMarkdownWithCodecs,
   type CodecEditorApi,
 } from '../lib/blockCodecs'
+import { maquetteCodec } from '../lib/blockCodecs/maquette'
 
 const UUID = '11111111-2222-3333-4444-555555555555'
 
@@ -54,6 +55,13 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
     body: '[{"id": "root", "component": "Text", "text": "Hello", "hint": "h2"}]',
   },
   artifactChip: { id: UUID, label: 'Rapport.pdf' },
+  dfMaquette: {
+    artifactId: UUID,
+    titre: 'Écran de connexion',
+    viewport: 'mobile',
+    hauteur: '640',
+    description: 'Formulaire email + mot de passe',
+  },
 }
 
 describe('round-trip paramétré sur le registre', () => {
@@ -221,5 +229,27 @@ describe('non-régression : document combiné mermaid + dataset', () => {
     const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
     const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
     expect(out).toBe(md)
+  })
+})
+
+describe('maquette', () => {
+  const UUID2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+  it('sérialise l’artifactId en artifact:// dans le corps (compté au refcount)', () => {
+    const md = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: 'X',
+      viewport: 'desktop',
+      hauteur: '',
+      description: 'desc',
+    } as unknown as Parameters<typeof maquetteCodec.toMarkdown>[0])
+    expect(md).toContain(`artifact://${UUID2}`)
+    expect(md).toContain('df-maquette')
+  })
+
+  it('une fence df-maquette sans artifact:// n’est PAS revendiquée', async () => {
+    const md = '```df-maquette viewport="desktop"\nrien ici\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfMaquette')).toBe(false)
   })
 })

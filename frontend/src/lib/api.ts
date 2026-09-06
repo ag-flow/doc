@@ -629,6 +629,12 @@ export interface ArtifactLinkOut {
   expires_in_seconds: number
 }
 
+export interface PreviewLinkOut {
+  url: string
+  revision: number
+  expires_in_seconds: number
+}
+
 export interface ArtifactTypeOut {
   extension: string
   media_type: string
@@ -667,6 +673,9 @@ export const artifactsApi = {
   /** Lien signé de courte durée (ouverture dans un nouvel onglet, sans Bearer). */
   getLink: (ws: string, id: string) =>
     api.get<ArtifactLinkOut>(`/workspaces/${ws}/artifacts/${id}/link`),
+  /** Lien de preview signé d'une maquette HTML mutable (origine dédiée, iframe). */
+  previewLink: (ws: string, id: string) =>
+    api.get<PreviewLinkOut>(`/workspaces/${ws}/artifacts/${id}/preview-link`),
 }
 
 // ── API publique (sans authentification) ────────────────────────────────────
