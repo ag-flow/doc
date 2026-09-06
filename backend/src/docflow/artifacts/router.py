@@ -24,6 +24,13 @@ _UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
 
 
 def binary_response(data: bytes, media_type: str, filename: str, *, attachment: bool) -> Response:
+    # Défense en profondeur : `text/html` (canal maquette, artefacts mutables)
+    # n'est JAMAIS servi par les endpoints artefacts génériques — quelle que
+    # soit la disposition, et sur toute origine docflow (authentifiée ou /pub).
+    # Seul le serveur de preview (origine dédiée, sandbox, CSP) le rend. Cette
+    # garde double le denylist du registre (media_types.py).
+    if media_type.lower() == "text/html":
+        raise HTTPException(status_code=404, detail="artefact introuvable")
     disposition = "attachment" if attachment else "inline"
     # filename* RFC 5987 inutile ici : le nom est déjà restreint au basename ;
     # on neutralise guillemets et retours pour éviter toute injection d'en-tête.

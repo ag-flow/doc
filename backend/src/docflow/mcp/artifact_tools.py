@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 from mcp.types import TextContent, Tool
 
-from docflow.artifacts import service, uploads
+from docflow.artifacts import mutable, service, uploads
 from docflow.artifacts.links import build_download_query
 from docflow.config.settings import Settings
 from docflow.mcp.session import acting_identity, require_identity
@@ -164,8 +164,97 @@ ARTIFACT_TOOLS: list[Tool] = [
                         "PUT (exclusif avec data_base64 et source_url)"
                     ),
                 },
+                "mutable": {
+                    "type": "boolean",
+                    "description": (
+                        "Crée un artefact MUTABLE (défaut false) : id stable, éditable "
+                        "ensuite par update_artifact / patch_artifact, EXCLU de la "
+                        "déduplication. Requis pour une maquette d'écran. Seul un "
+                        "artefact mutable peut porter l'extension .html (canal dédié). "
+                        "Non supporté via upload_id."
+                    ),
+                },
             },
             "required": ["workspace_slug"],
+        },
+    ),
+    Tool(
+        name="update_artifact",
+        description=(
+            "Remplace INTÉGRALEMENT le contenu d'un artefact MUTABLE (l'id ne change "
+            "pas ; l'écriture crée la révision suivante). `content` est du texte "
+            "(UTF-8). `if_revision` est OBLIGATOIRE — la révision courante attendue "
+            "(lue via get_artifact) : une révision périmée est refusée (409) avec la "
+            "révision courante en retour, et un agent ne peut donc pas écrire sans "
+            "avoir lu. Refusé sur un artefact non mutable. Retourne {id, revision, "
+            "sha256, size_bytes}. Pour une retouche ponctuelle, préférer patch_artifact."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de l'artefact",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Nouveau contenu intégral (texte UTF-8)",
+                },
+                "if_revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révision attendue (obligatoire, concurrence optimiste)",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id", "content", "if_revision"],
+        },
+    ),
+    Tool(
+        name="patch_artifact",
+        description=(
+            "Édite un artefact MUTABLE TEXTUEL par ancres, sans réécrire tout le "
+            "contenu. `edits` = liste de {old_str, new_str} : chaque `old_str` doit "
+            "apparaître EXACTEMENT une fois dans le contenu courant — zéro ou "
+            "plusieurs occurrences rejette TOUTE la requête (rien n'est écrit, erreur "
+            "explicite). Éditions appliquées atomiquement sur le contenu original "
+            "(pas d'invalidation mutuelle des ancres). `if_revision` OBLIGATOIRE "
+            "(comme update_artifact). Refusé sur artefact binaire ou non mutable. "
+            "Crée la révision suivante ; retourne {id, revision, sha256, size_bytes}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de l'artefact",
+                },
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_str": {
+                                "type": "string",
+                                "description": "Ancre — doit matcher 1 fois",
+                            },
+                            "new_str": {"type": "string", "description": "Remplacement"},
+                        },
+                        "required": ["old_str", "new_str"],
+                    },
+                    "description": "Éditions par ancre (chaque old_str unique dans le contenu)",
+                },
+                "if_revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révision attendue (obligatoire, concurrence optimiste)",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id", "edits", "if_revision"],
         },
     ),
     Tool(
@@ -215,6 +304,14 @@ ARTIFACT_TOOLS: list[Tool] = [
                     "type": "string",
                     "format": "uuid",
                     "description": "UUID de l'artefact",
+                },
+                "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Révision précise à lire (artefact mutable) ; défaut = révision "
+                        "courante. L'historique des révisions est donné par get_artifact."
+                    ),
                 },
             },
             "required": ["workspace_slug", "artifact_id"],
@@ -298,6 +395,8 @@ ARTIFACT_TOOLS: list[Tool] = [
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "create_upload": True,
     "create_artifact": True,
+    "update_artifact": True,
+    "patch_artifact": True,
     "get_artifact": False,
     "get_artifact_data": False,
     "get_artifact_link": False,
@@ -368,6 +467,7 @@ async def handle_create_artifact(
     ws_slug = str(args.get("workspace_slug", ""))
     filename = str(args.get("filename", ""))
     max_bytes = settings.artifact_max_bytes
+    mutable = args.get("mutable") is True
 
     # Exactement une source : binaire inline (data_base64), URL téléchargée par
     # le serveur (source_url), ou ticket d'upload dont les octets ont déjà été
@@ -384,6 +484,10 @@ async def handle_create_artifact(
     # Voie ticket : l'artefact est créé et le ticket consommé atomiquement.
     # Le nom de fichier vient du ticket ; l'estampillage created_by suit l'OBO.
     if has_upload:
+        if mutable:
+            return _text(
+                {"error": "mutable non supporté via upload_id (utiliser data_base64 ou source_url)"}
+            )
         try:
             created = await uploads.consume_upload(
                 pool,
@@ -420,10 +524,78 @@ async def handle_create_artifact(
             data=data,
             created_by=user.id,
             max_bytes=max_bytes,
+            mutable=mutable,
         )
     except HTTPException as e:
         return _text({"error": e.detail})
     return _artifact_payload(created)
+
+
+async def handle_update_artifact(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Remplacement intégral du contenu d'un artefact mutable (révision N+1)."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    if_revision = args.get("if_revision")
+    if not isinstance(if_revision, int) or isinstance(if_revision, bool):
+        return _text({"error": "if_revision obligatoire (entier)"})
+    content = args.get("content")
+    if not isinstance(content, str):
+        return _text({"error": "content obligatoire (texte)"})
+    try:
+        result = await mutable.update_artifact(
+            pool,
+            ws_slug,
+            artifact_id,
+            data=content.encode("utf-8"),
+            if_revision=if_revision,
+            updated_by=acting_identity().id,
+            max_bytes=settings.artifact_max_bytes,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def handle_patch_artifact(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Édition par ancres d'un artefact mutable textuel (révision N+1)."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    if_revision = args.get("if_revision")
+    if not isinstance(if_revision, int) or isinstance(if_revision, bool):
+        return _text({"error": "if_revision obligatoire (entier)"})
+    raw_edits = args.get("edits")
+    if not isinstance(raw_edits, list) or not raw_edits:
+        return _text({"error": "edits obligatoire (liste non vide de {old_str, new_str})"})
+    edits: list[dict[str, str]] = []
+    for item in raw_edits:
+        if not isinstance(item, dict) or "old_str" not in item or "new_str" not in item:
+            return _text({"error": "chaque édition doit porter old_str et new_str"})
+        edits.append({"old_str": str(item["old_str"]), "new_str": str(item["new_str"])})
+    try:
+        result = await mutable.patch_artifact(
+            pool,
+            ws_slug,
+            artifact_id,
+            edits=edits,
+            if_revision=if_revision,
+            updated_by=acting_identity().id,
+            max_bytes=settings.artifact_max_bytes,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
 
 
 def _artifact_payload(created: ArtifactCreatedOut) -> list[TextContent]:
@@ -449,7 +621,11 @@ async def handle_get_artifact(pool: asyncpg.Pool, args: dict[str, object]) -> li
         meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
     except HTTPException as e:
         return _text({"error": e.detail})
-    return _text(meta.model_dump(mode="json"))
+    payload = meta.model_dump(mode="json")
+    # Historique consultable (artefacts mutables uniquement).
+    if meta.mutable:
+        payload["revisions"] = await mutable.list_revisions(pool, ws_slug, artifact_id)
+    return _text(payload)
 
 
 def _is_text_media_type(media_type: str) -> bool:
@@ -473,31 +649,35 @@ async def handle_get_artifact_data(
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
         return _text({"error": "artifact_id invalide : UUID attendu"})
+    raw_rev = args.get("revision")
+    revision = raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else None
+
+    # Fetch de la révision demandée (mutable) ou de la tête.
     try:
-        meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
+        if revision is not None:
+            data, media_type, filename = await mutable.fetch_revision_content(
+                pool, ws_slug, artifact_id, revision
+            )
+        else:
+            data, media_type, filename = await service.fetch_artifact_content(
+                pool, ws_slug, artifact_id
+            )
     except HTTPException as e:
         return _text({"error": e.detail})
 
     max_inline = settings.artifact_inline_max_bytes
-    if meta.size_bytes > max_inline:
+    if len(data) > max_inline:
         # Trop gros pour l'inline : ce n'est PAS une erreur, on oriente l'agent.
         return _text(
             {
                 "too_large": True,
-                "size_bytes": meta.size_bytes,
+                "size_bytes": len(data),
                 "max_inline_bytes": max_inline,
-                "media_type": meta.media_type,
-                "filename": meta.filename,
+                "media_type": media_type,
+                "filename": filename,
                 "hint": "contenu trop volumineux pour l'inline — utiliser get_artifact_link",
             }
         )
-
-    try:
-        data, media_type, filename = await service.fetch_artifact_content(
-            pool, ws_slug, artifact_id
-        )
-    except HTTPException as e:
-        return _text({"error": e.detail})
 
     if _is_text_media_type(media_type):
         try:
@@ -506,7 +686,7 @@ async def handle_get_artifact_data(
                     "content": data.decode("utf-8"),
                     "encoding": "utf-8",
                     "media_type": media_type,
-                    "size_bytes": meta.size_bytes,
+                    "size_bytes": len(data),
                     "filename": filename,
                     "truncated": False,
                 }
@@ -518,7 +698,7 @@ async def handle_get_artifact_data(
             "content": base64.b64encode(data).decode("ascii"),
             "encoding": "base64",
             "media_type": media_type,
-            "size_bytes": meta.size_bytes,
+            "size_bytes": len(data),
             "filename": filename,
             "truncated": False,
         }

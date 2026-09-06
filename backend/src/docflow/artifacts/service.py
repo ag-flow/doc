@@ -40,7 +40,36 @@ def _validate_filename(filename: str, allowed: dict[str, str]) -> tuple[str, str
     return name, ext, media_type
 
 
-# ── Création (dédupliquée par sha256) ────────────────────────────────────────
+def _basename(filename: str) -> str:
+    """Réduit un nom au basename nettoyé (aucun composant de chemin)."""
+    name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
+    if not name or len(name) > 255:
+        raise HTTPException(status_code=422, detail="nom de fichier invalide")
+    return name
+
+
+def _resolve_media(
+    filename: str, allowed: dict[str, str], *, mutable: bool, override: str | None
+) -> tuple[str, str, str]:
+    """Retourne (nom, extension, media_type) pour un artefact à créer.
+
+    Canal `.html` DÉDIÉ : `text/html` n'est jamais au registre (denylist
+    anti-XSS, cf. media_types.py). Un artefact **mutable** dont le nom finit en
+    `.html` est la seule voie qui le produit — et son contenu n'est jamais servi
+    inline depuis l'origine docflow (garde dans le routeur + serveur de preview).
+    """
+    if mutable and _basename(filename).lower().endswith(".html"):
+        return _basename(filename), "html", "text/html"
+    name, ext, media_type = _validate_filename(filename, allowed)
+    if override is not None:
+        # L'override reste borné à la whitelist : jamais un type arbitraire.
+        if override not in set(allowed.values()):
+            raise HTTPException(status_code=422, detail=f"media_type non autorisé : {override}")
+        media_type = override
+    return name, ext, media_type
+
+
+# ── Création (dédupliquée par sha256, sauf artefacts mutables) ────────────────
 
 
 async def create_artifact(
@@ -52,6 +81,7 @@ async def create_artifact(
     created_by: uuid.UUID | None,
     max_bytes: int,
     media_type_override: str | None = None,
+    mutable: bool = False,
 ) -> ArtifactCreatedOut:
     """Enregistre un binaire dans le workspace, dédupliqué par sha256.
 
@@ -69,6 +99,7 @@ async def create_artifact(
                 created_by=created_by,
                 max_bytes=max_bytes,
                 media_type_override=media_type_override,
+                mutable=mutable,
             )
 
 
@@ -81,6 +112,7 @@ async def insert_artifact(
     created_by: uuid.UUID | None,
     max_bytes: int,
     media_type_override: str | None = None,
+    mutable: bool = False,
 ) -> ArtifactCreatedOut:
     """Cœur de la création, sur une connexion (et une transaction) fournies.
 
@@ -99,26 +131,65 @@ async def insert_artifact(
     crc32 = zlib.crc32(data)
 
     # Whitelist chargée depuis le registre (table artifact_media_type),
-    # source de vérité administrable.
+    # source de vérité administrable. Le canal `.html` mutable la contourne.
     allowed = await load_allowed_map(conn)
-    name, ext, media_type = _validate_filename(filename, allowed)
-    if media_type_override is not None:
-        # L'override reste borné à la whitelist : jamais un type
-        # arbitraire (text/html servi depuis notre origine = XSS).
-        if media_type_override not in set(allowed.values()):
-            raise HTTPException(
-                status_code=422,
-                detail=f"media_type non autorisé : {media_type_override}",
-            )
-        media_type = media_type_override
+    name, ext, media_type = _resolve_media(
+        filename, allowed, mutable=mutable, override=media_type_override
+    )
     wk = await require_workspace(conn, ws_slug, allow_archived=False)
+
+    if mutable:
+        # Aucune déduplication : deux mutables de contenu identique restent
+        # deux artefacts distincts (patcher l'un ne doit jamais toucher l'autre).
+        # La révision 1 est aussi consignée dans l'historique.
+        row = await conn.fetchrow(
+            """
+            INSERT INTO artifact
+                (workspace_technical_key, sha256, crc32, filename, extension,
+                 media_type, size_bytes, data, created_by, mutable, revision)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1)
+            RETURNING id
+            """,
+            wk,
+            sha256,
+            crc32,
+            name,
+            ext,
+            media_type,
+            len(data),
+            data,
+            created_by,
+        )
+        assert row is not None
+        await conn.execute(
+            "INSERT INTO artifact_revision "
+            "(artifact_ref, revision, sha256, size_bytes, data, created_by) "
+            "VALUES ($1, 1, $2, $3, $4, $5)",
+            row["id"],
+            sha256,
+            len(data),
+            data,
+            created_by,
+        )
+        return ArtifactCreatedOut(
+            id=row["id"],
+            url=artifact_url(ws_slug, row["id"]),
+            deduplicated=False,
+            filename=name,
+            extension=ext,
+            media_type=media_type,
+            size_bytes=len(data),
+            sha256=sha256,
+            crc32=crc32,
+        )
+
     inserted = await conn.fetchrow(
         """
         INSERT INTO artifact
             (workspace_technical_key, sha256, crc32, filename, extension,
              media_type, size_bytes, data, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (workspace_technical_key, sha256) DO NOTHING
+        ON CONFLICT (workspace_technical_key, sha256) WHERE NOT mutable DO NOTHING
         RETURNING id
         """,
         wk,
@@ -174,7 +245,7 @@ async def get_artifact_meta(
         row = await conn.fetchrow(
             """
             SELECT a.id, a.filename, a.extension, a.media_type, a.size_bytes,
-                   a.sha256, a.crc32, a.created_at,
+                   a.sha256, a.crc32, a.created_at, a.mutable, a.revision,
                    (SELECT count(*) FROM artifact_reference r
                     WHERE r.artifact_ref = a.id)::int AS refcount
             FROM artifact a

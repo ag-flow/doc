@@ -32,6 +32,26 @@ class ArtifactMetaOut(BaseModel):
     crc32: int
     refcount: int
     created_at: datetime
+    mutable: bool = False
+    revision: int = 1
+
+
+class ArtifactRevisionOut(BaseModel):
+    """Une révision dans l'historique d'un artefact mutable (sans le binaire)."""
+
+    revision: int
+    sha256: str
+    size_bytes: int
+    created_at: datetime
+
+
+class ArtifactWriteOut(BaseModel):
+    """Résultat d'une écriture (update/patch) sur un artefact mutable."""
+
+    id: uuid.UUID
+    revision: int
+    sha256: str
+    size_bytes: int
 
 
 class ArtifactTypeOut(BaseModel):

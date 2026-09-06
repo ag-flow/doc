@@ -1395,6 +1395,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await artifact_tools.handle_create_upload(pool, _settings, arguments)
     if name == "create_artifact":
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
+    if name == "update_artifact":
+        return await artifact_tools.handle_update_artifact(pool, _settings, arguments)
+    if name == "patch_artifact":
+        return await artifact_tools.handle_patch_artifact(pool, _settings, arguments)
     if name == "get_artifact":
         return await artifact_tools.handle_get_artifact(pool, arguments)
     if name == "get_artifact_data":
