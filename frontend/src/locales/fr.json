@@ -180,6 +180,7 @@
     "inheritHint": "Les propriétés du type choisi sont copiées à la création (pas de lien vivant).",
     "baseType": "Type de base",
     "templateGroup": "Template « {{template}} »",
+    "templateUpdate": "Mettre à jour",
     "manualGroup": "Créés à la main",
     "none": "— aucun —",
     "delete": "Supprimer",

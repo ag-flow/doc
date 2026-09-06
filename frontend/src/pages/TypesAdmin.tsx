@@ -115,7 +115,18 @@ export function TypesAdmin() {
   const { data: templates = [] } = useQuery<TemplateInfo[]>({
     queryKey: ['templates'],
     queryFn: () => api.get<TemplateInfo[]>('/templates'),
-    enabled: showImport,
+  })
+
+  // Versions de template importées dans CE workspace : à comparer aux versions
+  // globales pour proposer une mise à jour.
+  const { data: wsTemplates = [] } = useQuery<
+    { template: string; version: number; imported_at: string }[]
+  >({
+    queryKey: ['ws-templates', ws],
+    queryFn: () =>
+      api.get<{ template: string; version: number; imported_at: string }[]>(
+        `/workspaces/${ws}/templates`,
+      ),
   })
 
   const createMutation = useMutation({
@@ -161,6 +172,40 @@ export function TypesAdmin() {
     },
     onError: (err: Error) => setImportError(err.message),
   })
+
+  // Mise à jour d'un template déjà importé : dry_run d'abord — un CONFLIT (422)
+  // bloque la mise à jour (la réconciliation est de toute façon additive :
+  // jamais de suppression de type/propriété, donc aucun orphelin).
+  const updateMutation = useMutation({
+    mutationFn: async (template: string) => {
+      await api.post(`/workspaces/${ws}/templates/import`, { template, dry_run: true })
+      return api.post<{ applied: boolean; no_op: boolean; adds: number; soft_updates: number }>(
+        `/workspaces/${ws}/templates/import`,
+        { template },
+      )
+    },
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['types-rich', ws] })
+      void queryClient.invalidateQueries({ queryKey: ['ws-templates', ws] })
+      setImportMsg(
+        result.no_op
+          ? t('tpl.importNoOp')
+          : t('tpl.importSuccess', { adds: result.adds, updates: result.soft_updates }),
+      )
+      setImportError(null)
+    },
+    onError: (err: Error) => setImportError(err.message),
+  })
+
+  // Une mise à jour est disponible si le template global est plus récent que la
+  // version importée dans ce workspace.
+  const importedVersion = new Map(wsTemplates.map((w) => [w.template, w.version]))
+  const globalVersion = new Map(templates.map((tp) => [tp.template, tp.version]))
+  const updateInfo = (template: string): { imported: number; latest: number } | null => {
+    const imp = importedVersion.get(template)
+    const glob = globalVersion.get(template)
+    return imp != null && glob != null && glob > imp ? { imported: imp, latest: glob } : null
+  }
 
   function handleCreate() {
     if (!newSlug || !newLabel) return
@@ -312,6 +357,23 @@ export function TypesAdmin() {
                       <>
                         <Package size={13} weight="duotone" className="text-accent-700" />
                         {t('types.templateGroup', { template: group.template })}
+                        {(() => {
+                          const u = updateInfo(group.template)
+                          return u ? (
+                            <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-accent-700">
+                              v{u.imported} → v{u.latest}
+                              <button
+                                type="button"
+                                className="rounded border border-accent-700/40 px-1.5 py-0.5 text-[11px] font-medium hover:bg-accent-50 disabled:opacity-50"
+                                disabled={updateMutation.isPending}
+                                data-testid={`tpl-update-${group.template}`}
+                                onClick={() => updateMutation.mutate(group.template!)}
+                              >
+                                {t('types.templateUpdate')}
+                              </button>
+                            </span>
+                          ) : null
+                        })()}
                       </>
                     ) : (
                       t('types.manualGroup')
