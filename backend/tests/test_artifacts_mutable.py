@@ -538,3 +538,54 @@ async def test_prune_keep_below_one_rejected(
     with pytest.raises(HTTPException) as exc:
         await mutable.prune_artifact_revisions(db_pool, "test-ws", aid, keep=0)
     assert exc.value.status_code == 422
+
+
+# ── Robustesse booléenne de `mutable` (clients qui stringifient) ──────────────
+
+
+def test_as_bool_tolerant() -> None:
+    from docflow.mcp.artifact_tools import _as_bool
+
+    assert _as_bool(True) is True
+    assert _as_bool("true") is True
+    assert _as_bool("True") is True
+    assert _as_bool("1") is True
+    assert _as_bool("yes") is True
+    assert _as_bool(False) is False
+    assert _as_bool("false") is False
+    assert _as_bool("") is False
+    assert _as_bool(None) is False
+    assert _as_bool(0) is False
+
+
+async def test_mcp_create_mutable_accepts_string_boolean(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Régression : `mutable="true"` (chaîne) doit créer une maquette .html —
+    sinon l'artefact naît immuable et .html est refusé (bug « mime refusé »)."""
+    import base64
+
+    from docflow.mcp import artifact_tools
+    from docflow.mcp.session import reset_current_session
+
+    token = await _session(db_pool, "mut-strbool@test.local")
+    try:
+        created = json.loads(
+            (
+                await artifact_tools.handle_create_artifact(
+                    db_pool,
+                    _settings(),  # type: ignore[arg-type]
+                    {
+                        "workspace_slug": "test-ws",
+                        "filename": "ecran.html",
+                        "data_base64": base64.b64encode(b"<html><body>hi</body></html>").decode(),
+                        "mutable": "true",  # chaîne, pas booléen
+                    },
+                )
+            )[0].text
+        )
+        assert "error" not in created
+        assert created["media_type"] == "text/html"
+    finally:
+        reset_current_session(token)  # type: ignore[arg-type]
+        await db_pool.execute("DELETE FROM app_user WHERE email = 'mut-strbool@test.local'")

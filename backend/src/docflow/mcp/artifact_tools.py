@@ -165,13 +165,14 @@ ARTIFACT_TOOLS: list[Tool] = [
                     ),
                 },
                 "mutable": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "Crée un artefact MUTABLE (défaut false) : id stable, éditable "
                         "ensuite par update_artifact / patch_artifact, EXCLU de la "
                         "déduplication. Requis pour une maquette d'écran. Seul un "
                         "artefact mutable peut porter l'extension .html (canal dédié). "
-                        "Non supporté via upload_id."
+                        "Non supporté via upload_id. Booléen — la chaîne \"true\" est "
+                        "aussi acceptée (clients qui sérialisent les booléens)."
                     ),
                 },
             },
@@ -472,6 +473,19 @@ def _text(data: object) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(data, default=str))]
 
 
+def _as_bool(raw: object) -> bool:
+    """Booléen tolérant : accepte `True` OU une chaîne « true »/« 1 »/« yes »/« oui ».
+
+    Nombre de clients LLM sérialisent les booléens en chaîne ; sans ça, `mutable`
+    stringifié serait vu comme faux et une maquette `.html` finirait refusée.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"true", "1", "yes", "oui"}
+    return False
+
+
 def _parse_artifact_id(raw: object) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(raw))
@@ -531,7 +545,7 @@ async def handle_create_artifact(
     ws_slug = str(args.get("workspace_slug", ""))
     filename = str(args.get("filename", ""))
     max_bytes = settings.artifact_max_bytes
-    mutable = args.get("mutable") is True
+    mutable = _as_bool(args.get("mutable"))
 
     # Exactement une source : binaire inline (data_base64), URL téléchargée par
     # le serveur (source_url), ou ticket d'upload dont les octets ont déjà été
