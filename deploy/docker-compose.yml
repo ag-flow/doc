@@ -30,6 +30,24 @@ services:
       start_period: 15s
     networks:
       - internal
+      - render_net
+
+  # Moteur de rendu HTML→PNG des maquettes (port OPTIONNEL, cf. RENDER_SERVICE_URL).
+  # Isolé sur `render_net` (internal: true) : AUCUNE route vers Internet — il
+  # exécute du HTML non fiable, l'exigence anti-SSRF du contrat de rendu est donc
+  # portée par le réseau, pas par le fournisseur. Non exposé sur le LAN (pas de
+  # ports:). L'app l'atteint par http://browserless:3000.
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    restart: unless-stopped
+    environment:
+      # Jeton d'accès DEV (réseau isolé, service non exposé) — à faire correspondre
+      # à RENDER_SERVICE_TOKEN dans /data/.env. Surchargeable via l'env de déploiement.
+      TOKEN: "${RENDER_SERVICE_TOKEN:-docflow-render-dev}"
+      CONCURRENT: "5"
+      TIMEOUT: "30000"
+    networks:
+      - render_net
 
   postgres:
     image: postgres:16-alpine
@@ -78,6 +96,11 @@ services:
 networks:
   internal:
     driver: bridge
+  # Réseau du moteur de rendu : internal: true = pas de passerelle → aucune sortie
+  # Internet possible depuis browserless (isolation du HTML non fiable).
+  render_net:
+    driver: bridge
+    internal: true
 
 volumes:
   pgdata:

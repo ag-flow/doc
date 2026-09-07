@@ -8,6 +8,7 @@ HTML ; mint du lien via MCP get_preview_link (réservé aux maquettes mutables).
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -24,7 +25,7 @@ _HTML = b"<html><body><h1>Maquette</h1></body></html>"
 _MAX = 10 * 1024 * 1024
 
 
-def _settings(preview: str | None = "https://preview.test") -> object:
+def _settings(preview: str | None = "https://preview.test", render: str | None = None) -> object:
     from docflow.config.settings import Settings
 
     return Settings(
@@ -32,6 +33,8 @@ def _settings(preview: str | None = "https://preview.test") -> object:
         jwt_secret="test-preview-secret",  # type: ignore[arg-type]
         public_base_url="https://doc.test",
         preview_base_url=preview,
+        render_service_url=render,
+        render_service_token="tok" if render else None,  # type: ignore[arg-type]
     )
 
 
@@ -297,3 +300,72 @@ async def test_mcp_get_preview_link_not_configured(
         )[0].text
     )
     assert "error" in res
+
+
+# ── MCP get_maquette_png (port de rendu) ──────────────────────────────────────
+
+
+async def test_mcp_get_maquette_png(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docflow.artifacts import render
+    from docflow.mcp import artifact_tools
+
+    seen: dict[str, object] = {}
+
+    async def _fake(settings: object, html: str, *, width: int, height: int = 900) -> bytes:
+        seen["width"] = width
+        seen["html"] = html
+        return b"\x89PNG\r\n\x1a\nDATA"
+
+    monkeypatch.setattr(render, "render_png", _fake)
+
+    aid = await _make_maquette(db_pool)
+    out = await artifact_tools.handle_get_maquette_png(
+        db_pool,
+        _settings(render="http://render.test"),
+        {"workspace_slug": "test-ws", "artifact_id": str(aid), "viewport": "mobile"},  # type: ignore[arg-type]
+    )
+    # 1er contenu = image PNG affichable ; 2e = métadonnées JSON.
+    assert out[0].type == "image"
+    assert out[0].mimeType == "image/png"
+    assert out[0].data == base64.b64encode(b"\x89PNG\r\n\x1a\nDATA").decode("ascii")
+    meta = json.loads(out[1].text)
+    assert meta["media_type"] == "image/png"
+    assert meta["viewport_width"] == 390  # preset mobile
+    assert seen["width"] == 390
+
+
+async def test_mcp_get_maquette_png_not_configured(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    from docflow.mcp import artifact_tools
+
+    aid = await _make_maquette(db_pool)
+    out = await artifact_tools.handle_get_maquette_png(
+        db_pool,
+        _settings(render=None),
+        {"workspace_slug": "test-ws", "artifact_id": str(aid)},  # type: ignore[arg-type]
+    )
+    assert "error" in json.loads(out[0].text)
+
+
+async def test_mcp_get_maquette_png_refuses_non_maquette(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    from docflow.mcp import artifact_tools
+
+    created = await service.create_artifact(
+        db_pool,
+        "test-ws",
+        filename="i.png",
+        data=b"\x89PNG\r\n\x1a\nx",
+        created_by=None,
+        max_bytes=_MAX,
+    )
+    out = await artifact_tools.handle_get_maquette_png(
+        db_pool,
+        _settings(render="http://render.test"),
+        {"workspace_slug": "test-ws", "artifact_id": str(created.id)},  # type: ignore[arg-type]
+    )
+    assert "error" in json.loads(out[0].text)

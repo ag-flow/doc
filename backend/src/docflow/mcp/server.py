@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
+from collections.abc import Sequence
 from typing import cast
 
 import asyncpg
 import structlog
 from mcp.server import Server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import CallToolResult, ImageContent, TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
@@ -1259,7 +1260,9 @@ async def _check_user_access(
     return None
 
 
-def _finalize_tool_result(result: list[TextContent]) -> list[TextContent] | CallToolResult:
+def _finalize_tool_result(
+    result: Sequence[TextContent | ImageContent],
+) -> Sequence[TextContent | ImageContent] | CallToolResult:
     """Marque `isError` sur une réponse d'échec métier.
 
     Les handlers signalent une erreur en renvoyant un contenu `{"error": ...}`
@@ -1279,11 +1282,15 @@ def _finalize_tool_result(result: list[TextContent]) -> list[TextContent] | Call
 
 
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
-async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent] | CallToolResult:
+async def _call_tool(
+    name: str, arguments: dict[str, object]
+) -> Sequence[TextContent | ImageContent] | CallToolResult:
     return _finalize_tool_result(await _dispatch_tool(name, arguments))
 
 
-async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
+async def _dispatch_tool(
+    name: str, arguments: dict[str, object]
+) -> Sequence[TextContent | ImageContent]:
     pool = _get_pool()
     log.info("mcp_call_tool", tool=name)
 
@@ -1412,6 +1419,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, object]) -> list[TextCo
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
     if name == "get_preview_link":
         return await artifact_tools.handle_get_preview_link(pool, _settings, arguments)
+    if name == "get_maquette_png":
+        return await artifact_tools.handle_get_maquette_png(pool, _settings, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
         return await dataset_tools.handle(name, pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})

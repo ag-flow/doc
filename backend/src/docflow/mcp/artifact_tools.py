@@ -6,13 +6,14 @@ import base64
 import binascii
 import json
 import uuid
+from collections.abc import Sequence
 
 import asyncpg
 import httpx
 from fastapi import HTTPException
-from mcp.types import TextContent, Tool
+from mcp.types import ImageContent, TextContent, Tool
 
-from docflow.artifacts import mutable, service, uploads
+from docflow.artifacts import mutable, render, service, uploads
 from docflow.artifacts.links import build_download_query, build_preview_query
 from docflow.config.settings import Settings
 from docflow.mcp.coerce import as_bool as _as_bool
@@ -172,7 +173,7 @@ ARTIFACT_TOOLS: list[Tool] = [
                         "ensuite par update_artifact / patch_artifact, EXCLU de la "
                         "déduplication. Requis pour une maquette d'écran. Seul un "
                         "artefact mutable peut porter l'extension .html (canal dédié). "
-                        "Non supporté via upload_id. Booléen — la chaîne \"true\" est "
+                        'Non supporté via upload_id. Booléen — la chaîne "true" est '
                         "aussi acceptée (clients qui sérialisent les booléens)."
                     ),
                 },
@@ -454,6 +455,51 @@ ARTIFACT_TOOLS.append(
     )
 )
 
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="get_maquette_png",
+        description=(
+            "Rend une MAQUETTE d'écran (artefact MUTABLE text/html) en PNG et le "
+            "retourne en image AFFICHABLE — pour VOIR le rendu (débordement, "
+            "contraste, layout cassé) et corriger. Le rendu est produit par le "
+            "service de rendu configuré sur l'instance (port OPTIONNEL) : sans lui, "
+            "refusé (la maquette reste visible via get_preview_link). `viewport` "
+            "(mobile|tablette|desktop) ou `width` en px choisit la largeur du cadre "
+            "(défaut desktop) — vérifier une maquette responsive dans plusieurs "
+            "largeurs. Par défaut la révision courante ; `revision` pour une "
+            "révision précise. Réservé aux maquettes HTML mutables."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "artifact_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la maquette",
+                },
+                "viewport": {
+                    "type": "string",
+                    "enum": ["mobile", "tablette", "desktop"],
+                    "description": "Preset de largeur (défaut desktop)",
+                },
+                "width": {
+                    "type": "integer",
+                    "minimum": 200,
+                    "maximum": 4096,
+                    "description": "Largeur exacte en px (prime sur viewport)",
+                },
+                "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révision à rendre (défaut : révision courante)",
+                },
+            },
+            "required": ["workspace_slug", "artifact_id"],
+        },
+    )
+)
+
 
 # Périmètre workspace des tools (fusionné dans _WS_TOOLS du serveur) : écriture ?
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
@@ -466,6 +512,7 @@ ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "get_artifact_data": False,
     "get_artifact_link": False,
     "get_preview_link": False,
+    "get_maquette_png": False,
     "list_artifacts": False,
 }
 
@@ -898,3 +945,66 @@ async def handle_get_preview_link(
             "expires_in_seconds": ttl,
         }
     )
+
+
+async def handle_get_maquette_png(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> Sequence[TextContent | ImageContent]:
+    """Rend une maquette HTML mutable en PNG affichable (via le service de rendu)."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    if not settings.render_service_url:
+        return _text({"error": "service de rendu non configuré sur l'instance (PNG indisponible)"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
+    if artifact_id is None:
+        return _text({"error": "artifact_id invalide : UUID attendu"})
+    try:
+        meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    if not meta.mutable or meta.media_type.lower() != "text/html":
+        return _text({"error": "get_maquette_png réservé aux maquettes HTML mutables"})
+
+    raw_rev = args.get("revision")
+    revision = (
+        raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else meta.revision
+    )
+    if revision < 1 or revision > meta.revision:
+        return _text({"error": f"révision hors bornes (1..{meta.revision})"})
+
+    try:
+        data, _media, _filename = await mutable.fetch_revision_content(
+            pool, ws_slug, artifact_id, revision
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+
+    raw_width = args.get("width")
+    width_arg = (
+        raw_width if isinstance(raw_width, int) and not isinstance(raw_width, bool) else None
+    )
+    raw_viewport = args.get("viewport")
+    viewport_arg = str(raw_viewport) if raw_viewport is not None else None
+    width = render.resolve_width(viewport_arg, width_arg)
+
+    try:
+        png = await render.render_png(settings, data.decode("utf-8", errors="replace"), width=width)
+    except render.RenderNotConfigured:
+        return _text({"error": "service de rendu non configuré sur l'instance (PNG indisponible)"})
+    except render.RenderError as e:
+        return _text({"error": f"échec du rendu PNG : {e}"})
+
+    image = ImageContent(
+        type="image", data=base64.b64encode(png).decode("ascii"), mimeType="image/png"
+    )
+    meta_text = _text(
+        {
+            "artifact_id": str(artifact_id),
+            "revision": revision,
+            "viewport_width": width,
+            "size_bytes": len(png),
+            "media_type": "image/png",
+        }
+    )
+    return [image, *meta_text]

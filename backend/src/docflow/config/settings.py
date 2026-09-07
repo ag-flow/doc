@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # DISTINCTE de public_base_url : du HTML non fiable y est servi en iframe
     # sandboxée (CSP fermée). None = rendu des maquettes désactivé (fail closed).
     preview_base_url: str | None = None
+    # ── Rendu PNG des maquettes (port optionnel) ──
+    # Service de rendu HTML→PNG (contrat : POST {url}/screenshot {html, viewport}
+    # → image/png ; compatible Browserless). None = PNG désactivé (dégradé assumé,
+    # jamais une installation cassée). Le service DOIT être isolé (aucun réseau
+    # sortant, éphémère) : il exécute du HTML non fiable (exigence anti-SSRF).
+    render_service_url: str | None = None
+    render_service_token: Secret | None = None
+    render_timeout_seconds: int = 30
 
     # ── Producteur d'events workflow (contrat producteur) ──
     # Émission activée ssi les trois sont renseignés. L'event est posté en

@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
-from docflow.artifacts import mutable
+from docflow.artifacts import mutable, render
 from docflow.artifacts.links import verify_preview_sig
 
 router = APIRouter(tags=["preview"])
@@ -51,6 +51,53 @@ def _inject_measure(html: str) -> str:
 def _preview_host(settings: object) -> str | None:
     base = getattr(settings, "preview_base_url", None)
     return urlparse(base).hostname if base else None
+
+
+@router.get("/preview/{ws_slug}/{artifact_id}.png")
+async def serve_preview_png(
+    ws_slug: str,
+    artifact_id: uuid.UUID,
+    request: Request,
+    rev: int = Query(..., ge=1),
+    exp: int = Query(...),
+    sig: str = Query(..., min_length=64, max_length=64),
+    viewport: str | None = Query(None),
+    width: int | None = Query(None, ge=200, le=4096),
+) -> Response:
+    """Rend une révision de maquette en PNG (même lien signé que l'aperçu HTML,
+    suffixe `.png`). 404 uniforme sur tout refus ; nécessite un service de rendu
+    configuré. Déclarée AVANT la route HTML pour capter le suffixe `.png`."""
+    settings = request.app.state.settings
+    host = _preview_host(settings)
+    if host is None:
+        raise HTTPException(status_code=404, detail="preview non configuré")
+    if request.url.hostname != host:
+        raise HTTPException(status_code=404, detail="origine non autorisée")
+    secret: str = settings.jwt_secret.reveal()
+    if not verify_preview_sig(ws_slug, artifact_id, rev, exp, sig, secret=secret):
+        raise HTTPException(status_code=404, detail="lien invalide ou expiré")
+    try:
+        data, media_type, _ = await mutable.fetch_revision_content(
+            request.app.state.pool, ws_slug, artifact_id, rev
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=404, detail="maquette introuvable") from exc
+    if media_type.lower() != "text/html":
+        raise HTTPException(status_code=404, detail="maquette introuvable")
+    frame_width = render.resolve_width(viewport, width)
+    try:
+        png = await render.render_png(
+            settings, data.decode("utf-8", errors="replace"), width=frame_width
+        )
+    except render.RenderNotConfigured:
+        raise HTTPException(status_code=404, detail="rendu PNG non configuré") from None
+    except render.RenderError as exc:
+        raise HTTPException(status_code=502, detail="échec du rendu PNG") from exc
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/preview/{ws_slug}/{artifact_id}")
