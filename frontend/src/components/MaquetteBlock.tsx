@@ -86,6 +86,10 @@ export function MaquetteView({
   const lockedW = _num(largeur)
   const lockedH = _num(hauteur)
   const width = lockedW ?? dev?.w ?? VIEWPORT_WIDTH[viewport] ?? VIEWPORT_WIDTH.desktop
+  // Largeur VERROUILLÉE (largeur explicite ou device) → taille exacte, le cadre
+  // ne rétrécit pas à la colonne (le conteneur défile). Sinon (preset viewport
+  // seul) → largeur responsive plafonnée à la colonne.
+  const widthLocked = Boolean(lockedW || dev)
   const fixed = mode === 'fixe' || (Boolean(dev) && mode !== 'auto')
   const fixedHeight = Math.min(lockedH ?? dev?.h ?? 480, _MAX_HEIGHT)
   const fallback = lockedH ?? 480
@@ -148,7 +152,7 @@ export function MaquetteView({
         </div>
       )}
 
-      <div className="flex justify-center bg-gray-50 p-3">
+      <div className="flex justify-center overflow-x-auto bg-gray-50 p-3">
         {!artifactId ? (
           <div
             className="flex w-full items-center justify-center rounded border border-dashed border-gray-300 bg-white p-4 text-center text-sm text-gray-400"
@@ -158,8 +162,12 @@ export function MaquetteView({
           </div>
         ) : link.isPending ? (
           <div
-            className="w-full animate-pulse rounded bg-gray-200"
-            style={{ maxWidth: width, height }}
+            className={
+              widthLocked
+                ? 'shrink-0 animate-pulse rounded bg-gray-200'
+                : 'w-full animate-pulse rounded bg-gray-200'
+            }
+            style={widthLocked ? { width, height } : { maxWidth: width, height }}
             aria-label="chargement de la maquette"
           />
         ) : link.isError ? (
@@ -179,8 +187,12 @@ export function MaquetteView({
             sandbox="allow-scripts"
             loading="lazy"
             referrerPolicy="no-referrer"
-            className="w-full rounded border-0 bg-white shadow-sm"
-            style={{ maxWidth: width, height }}
+            className={
+              widthLocked
+                ? 'shrink-0 rounded border-0 bg-white shadow-sm'
+                : 'w-full rounded border-0 bg-white shadow-sm'
+            }
+            style={widthLocked ? { width, height } : { maxWidth: width, height }}
           />
         ) : null}
       </div>
