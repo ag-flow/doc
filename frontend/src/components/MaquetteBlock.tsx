@@ -7,8 +7,10 @@
  * demande un lien de preview signé (révision-conscient) puis pointe l'iframe
  * dessus. `sandbox="allow-scripts"` SANS `allow-same-origin` : le JS de la
  * maquette s'exécute mais ne peut ni lire le DOM parent, ni les cookies, ni le
- * réseau. La hauteur remonte par postMessage (origine filtrée), à défaut la
- * hauteur déclarée s'applique.
+ * réseau. La hauteur remonte par postMessage ; comme l'iframe sandboxée a une
+ * origine OPAQUE (`e.origin === "null"`), on n'authentifie PAS le message par
+ * l'origine mais par `e.source === iframe.contentWindow` (il vient de NOTRE
+ * iframe). À défaut de message, la hauteur déclarée s'applique.
  */
 import { createReactBlockSpec } from '@blocknote/react'
 import { useQuery } from '@tanstack/react-query'
@@ -36,7 +38,7 @@ export function MaquetteView({ artifactId, titre, viewport, hauteur, description
   const declared = Number(hauteur)
   const fallback = Number.isFinite(declared) && declared > 0 ? declared : 480
   const [height, setHeight] = useState<number>(fallback)
-  const originRef = useRef<string | null>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const link = useQuery<PreviewLinkOut>({
     queryKey: ['artifact-preview', ws, artifactId],
@@ -50,18 +52,13 @@ export function MaquetteView({ artifactId, titre, viewport, hauteur, description
   })
 
   useEffect(() => {
-    if (!link.data?.url) return
-    try {
-      originRef.current = new URL(link.data.url).origin
-    } catch {
-      originRef.current = null
-    }
-  }, [link.data?.url])
-
-  useEffect(() => {
     function onMessage(e: MessageEvent) {
-      // Filtre d'origine : on n'écoute que l'origine de preview.
-      if (originRef.current && e.origin !== originRef.current) return
+      // L'iframe sandboxée (sans allow-same-origin) a une origine opaque : son
+      // postMessage arrive avec e.origin === "null". On authentifie donc le
+      // message par sa SOURCE — il doit venir de notre propre iframe — et non
+      // par l'origine (qui ne matcherait jamais l'origine de preview).
+      const frame = iframeRef.current
+      if (!frame || e.source !== frame.contentWindow) return
       const data = e.data as { type?: string; height?: number } | null
       if (data?.type === 'docflow-preview-height' && typeof data.height === 'number' && data.height > 0) {
         setHeight(Math.min(Math.ceil(data.height), _MAX_HEIGHT))
@@ -123,6 +120,7 @@ export function MaquetteView({ artifactId, titre, viewport, hauteur, description
           </div>
         ) : link.data ? (
           <iframe
+            ref={iframeRef}
             title={label}
             src={link.data.url}
             sandbox="allow-scripts"
