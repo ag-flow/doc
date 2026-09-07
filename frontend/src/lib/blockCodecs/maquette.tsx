@@ -3,7 +3,8 @@
  * `dfMaquette`. Le bloc ne porte PAS le HTML — seulement l'`artifactId` (rendu
  * dans le corps sous forme `artifact://<uuid>`, la SEULE forme comptée au
  * refcount : sans elle, l'artefact de la maquette serait purgé) et des
- * métadonnées d'affichage (titre, viewport, hauteur de repli, description).
+ * métadonnées d'affichage (titre, viewport, hauteur, description, et les
+ * verrous de taille optionnels : largeur, mode=fixe, device).
  *
  * Une fence sans `artifact://<uuid>` dans son corps n'est PAS revendiquée
  * (return null) — elle reste un bloc de code intact.
@@ -29,12 +30,19 @@ export const maquetteCodec = {
       viewport: attrs.viewport ?? 'desktop',
       hauteur: attrs.hauteur ?? '',
       description: attrs.description ?? '',
+      largeur: attrs.largeur ?? '',
+      mode: attrs.mode ?? '',
+      device: attrs.device ?? '',
     }
   },
   toMarkdown: (props: MaquetteProps): string => {
     const attrs: Record<string, string> = { viewport: props.viewport || 'desktop' }
     if (props.titre) attrs.titre = props.titre
     if (props.hauteur) attrs.hauteur = props.hauteur
+    // Verrous de taille : sérialisés seulement s'ils sont posés (additif).
+    if (props.largeur) attrs.largeur = props.largeur
+    if (props.mode && props.mode !== 'auto') attrs.mode = props.mode
+    if (props.device) attrs.device = props.device
     // description toujours sérialisée : seule surface d'accroche RAG de la maquette.
     attrs.description = props.description ?? ''
     return '```df-maquette' + serializeAttrs(attrs) + '\nartifact://' + props.artifactId + '\n```'
@@ -50,7 +58,16 @@ export const maquetteCodec = {
         [
           {
             type: 'dfMaquette',
-            props: { artifactId: '', titre: '', viewport: 'desktop', hauteur: 0, description: '' },
+            props: {
+              artifactId: '',
+              titre: '',
+              viewport: 'desktop',
+              hauteur: 0,
+              description: '',
+              largeur: '',
+              mode: '',
+              device: '',
+            },
           },
         ],
         ctx.editor.getTextCursorPosition().block,

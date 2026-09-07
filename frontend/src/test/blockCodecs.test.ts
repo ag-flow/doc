@@ -61,6 +61,9 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
     viewport: 'mobile',
     hauteur: '640',
     description: 'Formulaire email + mot de passe',
+    largeur: '',
+    mode: '',
+    device: '',
   },
 }
 
@@ -251,5 +254,45 @@ describe('maquette', () => {
     const md = '```df-maquette viewport="desktop"\nrien ici\n```\n'
     const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
     expect(blocks.some((b) => (b as { type?: string }).type === 'dfMaquette')).toBe(false)
+  })
+
+  it('parse les verrous de taille (largeur, mode, device)', () => {
+    const m = maquetteCodec.pattern.exec(
+      '```df-maquette viewport="mobile" largeur="360" mode="fixe" device="iphone-13"\n' +
+        `artifact://${UUID2}\n\`\`\``,
+    )
+    maquetteCodec.pattern.lastIndex = 0
+    const props = maquetteCodec.toBlock(m!)
+    expect(props).toMatchObject({ largeur: '360', mode: 'fixe', device: 'iphone-13' })
+  })
+
+  it('ne sérialise les verrous que s’ils sont posés', () => {
+    const withLocks = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: '',
+      viewport: 'mobile',
+      hauteur: '',
+      description: '',
+      largeur: '360',
+      mode: 'fixe',
+      device: '390x844',
+    })
+    expect(withLocks).toContain('largeur="360"')
+    expect(withLocks).toContain('mode="fixe"')
+    expect(withLocks).toContain('device="390x844"')
+
+    const bare = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: '',
+      viewport: 'mobile',
+      hauteur: '',
+      description: '',
+      largeur: '',
+      mode: '',
+      device: '',
+    })
+    expect(bare).not.toContain('largeur=')
+    expect(bare).not.toContain('mode=')
+    expect(bare).not.toContain('device=')
   })
 })

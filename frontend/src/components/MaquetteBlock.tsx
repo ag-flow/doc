@@ -23,21 +23,75 @@ import { useWorkspace } from '../contexts/WorkspaceContext'
 const VIEWPORT_WIDTH: Record<string, number> = { mobile: 390, tablette: 768, desktop: 1024 }
 const _MAX_HEIGHT = 6000
 
+/** Presets d'appareil (largeur×hauteur en px, proportions réelles). */
+const DEVICES: Record<string, { w: number; h: number }> = {
+  'iphone-se': { w: 375, h: 667 },
+  iphone: { w: 390, h: 844 },
+  'iphone-13': { w: 390, h: 844 },
+  'iphone-15-pro-max': { w: 430, h: 932 },
+  pixel: { w: 412, h: 915 },
+  'pixel-7': { w: 412, h: 915 },
+  ipad: { w: 768, h: 1024 },
+  'ipad-pro': { w: 1024, h: 1366 },
+}
+
+/** Résout `device` : preset nommé (ex. iphone-13) ou littéral "LxH" (ex. 390x844). */
+function resolveDevice(key: string): { w: number; h: number } | null {
+  const k = key.trim()
+  if (!k) return null
+  const lit = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/i.exec(k)
+  if (lit) return { w: Number(lit[1]), h: Number(lit[2]) }
+  return DEVICES[k.toLowerCase()] ?? null
+}
+
+const _num = (s: string): number | undefined => {
+  const n = Number(s)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
 export interface MaquetteProps {
   artifactId: string
   titre: string
   viewport: string
-  /** Hauteur de repli en px (chaîne, comme tous les attributs de fence). */
+  /** Hauteur en px (chaîne, comme tous les attributs de fence). Repli avant
+   * mesure en mode auto ; hauteur VERROUILLÉE du cadre en mode fixe. */
   hauteur: string
   description: string
+  /** Largeur libre en px : verrouille la largeur, prime sur le preset viewport. */
+  largeur: string
+  /** 'fixe' = cadre à hauteur figée + scroll interne (désactive l'auto-hauteur) ;
+   * 'auto'/'' = la hauteur épouse le contenu. */
+  mode: string
+  /** Preset d'appareil (nommé ou "LxH") : pose largeur ET hauteur, cadre fixe. */
+  device: string
 }
 
 /** Vue de la maquette (exportée pour les tests). */
-export function MaquetteView({ artifactId, titre, viewport, hauteur, description }: MaquetteProps) {
+export function MaquetteView({
+  artifactId,
+  titre,
+  viewport,
+  hauteur,
+  description,
+  largeur,
+  mode,
+  device,
+}: MaquetteProps) {
   const { currentSlug: ws } = useWorkspace()
-  const declared = Number(hauteur)
-  const fallback = Number.isFinite(declared) && declared > 0 ? declared : 480
-  const [height, setHeight] = useState<number>(fallback)
+
+  // Résolution des verrous de taille (précédence : largeur/hauteur explicites →
+  // device → viewport). Un device (ou mode=fixe) fige le cadre : hauteur
+  // verrouillée, scroll INTERNE à l'iframe, auto-hauteur désactivée.
+  const dev = resolveDevice(device)
+  const lockedW = _num(largeur)
+  const lockedH = _num(hauteur)
+  const width = lockedW ?? dev?.w ?? VIEWPORT_WIDTH[viewport] ?? VIEWPORT_WIDTH.desktop
+  const fixed = mode === 'fixe' || (Boolean(dev) && mode !== 'auto')
+  const fixedHeight = Math.min(lockedH ?? dev?.h ?? 480, _MAX_HEIGHT)
+  const fallback = lockedH ?? 480
+
+  const [autoHeight, setAutoHeight] = useState<number>(fallback)
+  const height = fixed ? fixedHeight : autoHeight
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const link = useQuery<PreviewLinkOut>({
@@ -61,14 +115,13 @@ export function MaquetteView({ artifactId, titre, viewport, hauteur, description
       if (!frame || e.source !== frame.contentWindow) return
       const data = e.data as { type?: string; height?: number } | null
       if (data?.type === 'docflow-preview-height' && typeof data.height === 'number' && data.height > 0) {
-        setHeight(Math.min(Math.ceil(data.height), _MAX_HEIGHT))
+        setAutoHeight(Math.min(Math.ceil(data.height), _MAX_HEIGHT))
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  const width = VIEWPORT_WIDTH[viewport] ?? VIEWPORT_WIDTH.desktop
   const label = titre || description || 'Maquette'
 
   return (
@@ -106,7 +159,7 @@ export function MaquetteView({ artifactId, titre, viewport, hauteur, description
         ) : link.isPending ? (
           <div
             className="w-full animate-pulse rounded bg-gray-200"
-            style={{ maxWidth: width, height: fallback }}
+            style={{ maxWidth: width, height }}
             aria-label="chargement de la maquette"
           />
         ) : link.isError ? (
@@ -145,6 +198,9 @@ export const MaquetteBlock = createReactBlockSpec(
       viewport: { default: 'desktop' },
       hauteur: { default: '' },
       description: { default: '' },
+      largeur: { default: '' },
+      mode: { default: '' },
+      device: { default: '' },
     },
     content: 'none',
   },
@@ -156,6 +212,9 @@ export const MaquetteBlock = createReactBlockSpec(
         viewport={props.block.props.viewport}
         hauteur={props.block.props.hauteur}
         description={props.block.props.description}
+        largeur={props.block.props.largeur}
+        mode={props.block.props.mode}
+        device={props.block.props.device}
       />
     ),
   },
