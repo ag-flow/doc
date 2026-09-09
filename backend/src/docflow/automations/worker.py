@@ -11,7 +11,7 @@ import httpx
 import structlog
 
 from docflow.automations import events_query
-from docflow.automations.substitution import render_and_validate
+from docflow.automations.substitution import render_and_validate, unresolved_variables
 from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
 
@@ -64,7 +64,7 @@ async def resolve_secret(secret_ref: str, *, pool: asyncpg.Pool, settings: objec
 
 
 class _Snapshot:
-    __slots__ = ("title", "content", "ws_slug", "block_slug", "doc_type")
+    __slots__ = ("title", "content", "ws_slug", "block_slug", "doc_type", "functional_type_slug")
 
     def __init__(
         self,
@@ -73,27 +73,33 @@ class _Snapshot:
         ws_slug: str | None,
         block_slug: str | None,
         doc_type: str | None,
+        functional_type_slug: str | None,
     ) -> None:
         self.title = title
         self.content = content
         self.ws_slug = ws_slug
         self.block_slug = block_slug
         self.doc_type = doc_type
+        self.functional_type_slug = functional_type_slug
 
 
 async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapshot | None:
     """Snapshot courant du document (None s'il n'existe plus).
 
     Contenu = document_version à la version courante ; ws_slug/block_slug servent
-    à construire l'URL de consultation ; doc_type = type technique (md | csv).
+    à construire l'URL de consultation ; doc_type = type technique (md | csv) ;
+    functional_type_slug = type fonctionnel (epic, feature…), exposé aux gabarits
+    d'indexation qui le référencent même sur des events qui ne le portent pas.
     """
     row = await conn.fetchrow(
         """
         SELECT d.title, d.type AS doc_type, dv.content,
-               w.slug AS ws_slug, b.slug AS block_slug
+               w.slug AS ws_slug, b.slug AS block_slug,
+               ft.slug AS functional_type_slug
         FROM document d
         JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
         LEFT JOIN data_block b ON b.id = d.data_block_ref
+        LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
         LEFT JOIN document_version dv
             ON dv.document_ref = d.doc_technical_key AND dv.version_number = d.version
         WHERE d.doc_technical_key = $1
@@ -103,7 +109,12 @@ async def _doc_snapshot(conn: asyncpg.Connection, doc_id: uuid.UUID) -> _Snapsho
     if row is None:
         return None
     return _Snapshot(
-        row["title"], row["content"], row["ws_slug"], row["block_slug"], row["doc_type"]
+        row["title"],
+        row["content"],
+        row["ws_slug"],
+        row["block_slug"],
+        row["doc_type"],
+        row["functional_type_slug"],
     )
 
 
@@ -167,6 +178,14 @@ def _variables(
     }
     for key, value in business.items():
         variables[f"event.{key}"] = "" if value is None else str(value)
+    # blockSlug / functionalTypeSlug ne figurent pas dans le business de tous les
+    # eventCodes (updated.v1, refreshed.v1… ne les portent pas). On les résout
+    # depuis le snapshot courant pour que les gabarits d'indexation les obtiennent
+    # quel que soit l'event ; le business reste prioritaire quand il les porte
+    # (created.v1, deleted.v1 — ce dernier n'a plus de snapshot).
+    if snap is not None:
+        variables.setdefault("event.blockSlug", snap.block_slug or "")
+        variables.setdefault("event.functionalTypeSlug", snap.functional_type_slug or "")
     return variables
 
 
@@ -274,6 +293,23 @@ async def _dispatch(
 
     body: str | None = None
     if automation["body_template"]:
+        # Fail-loud : une variable non résolue ne part JAMAIS en silence (elle
+        # partirait sinon en clair, ex. « {event.blockSlug} », dans un JSON encore
+        # valide → corpus RAG pollué sans alerte). Le run échoue, les variables
+        # manquantes sont nommées dans le journal, aucun POST n'est émis.
+        missing = unresolved_variables(automation["body_template"], variables)
+        if missing:
+            log.warning(
+                "automation_body_unresolved_variables",
+                automation_id=str(automation["id"]),
+                event_code=event["event_code"],
+                variables=missing,
+            )
+            return ExecResult(
+                "failed",
+                body="variables non résolues dans le gabarit : " + ", ".join(missing),
+                request_body=automation["body_template"],
+            )
         body = render_and_validate(automation["body_template"], variables)
         if body is None:
             log.warning(

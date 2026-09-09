@@ -783,3 +783,111 @@ async def test_worker_holds_no_pool_connection_during_http(
         )
         == run["event_seq"]
     )
+
+
+async def _mk_automation(
+    pool: asyncpg.Pool, wk: uuid.UUID, body_template: dict[str, Any]
+) -> asyncpg.Record:
+    """Automate abonné à updated.v1, portée sur le workspace wk, avec body donné."""
+    auto_id = await pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,0,$4,$5,$6) RETURNING id",
+        wk,
+        "RAG",
+        [_UPDATED],
+        "https://rag.example/index",
+        "POST",
+        json.dumps(body_template),
+    )
+    await pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id,
+        wk,
+    )
+    return await pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template "
+        "FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+
+class _Settings:
+    public_base_url = "https://doc.example"
+
+
+async def test_worker_resout_blockslug_et_type_via_snapshot_sur_updated(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """updated.v1 ne porte pas blockSlug/functionalTypeSlug dans son business ;
+    ils doivent être résolus depuis le snapshot courant du document."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 3}),
+    )
+    automation = await _mk_automation(
+        db_pool,
+        wk,
+        {"bloc": "{event.blockSlug}", "type": "{event.functionalTypeSlug}"},
+    )
+
+    await worker.run_tick(db_pool, automation, _Settings())
+
+    assert len(_CALLS) == 1
+    body = json.loads(_CALLS[0]["content"].decode())
+    assert body["bloc"] == "b"  # slug du bloc, résolu depuis le snapshot
+    assert body["type"] == "t"  # slug du type fonctionnel, résolu depuis le snapshot
+
+
+async def test_worker_refuse_variable_non_resolue_sans_emettre(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une variable non résolue ne part jamais en silence : run échoué, aucun POST."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 3}),
+    )
+    automation = await _mk_automation(
+        db_pool,
+        wk,
+        {"inconnue": "{event.variableInexistante}", "doc": "{content}"},
+    )
+
+    await worker.run_tick(db_pool, automation, _Settings())
+
+    # Aucun appel HTTP émis (pas de corpus pollué).
+    assert _CALLS == []
+    # Un run enregistré en échec.
+    runs = await db_pool.fetch(
+        "SELECT status FROM automation_run WHERE automation_ref = $1", automation["id"]
+    )
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"

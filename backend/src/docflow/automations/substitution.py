@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 import json
+import re
+
+# Un placeholder = « { » suivi d'un identifiant nu (éventuellement pointé, ex.
+# event.blockSlug) puis « } ». Les accolades JSON de structure ({"clé": …}, {})
+# ne matchent pas : après « { » vient un guillemet, une espace ou « } », pas un
+# identifiant. On ne détecte donc jamais une accolade de structure comme variable.
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][\w.]*)\}")
+
+
+def unresolved_variables(template: str, variables: dict[str, str]) -> list[str]:
+    """Placeholders du GABARIT sans variable correspondante, triés et dédupliqués.
+
+    Détecté sur le gabarit, JAMAIS sur le rendu : une valeur substituée (contenu
+    markdown d'un document) peut légitimement contenir des accolades — ce ne sont
+    pas des placeholders. Une variable non résolue ne doit jamais partir en
+    silence (cf. bug « gabarit non substitué à l'indexation ragflow »)."""
+    keys = {m.group(1) for m in _PLACEHOLDER.finditer(template)}
+    return sorted(k for k in keys if k not in variables)
 
 
 def render_body(template: str, variables: dict[str, str]) -> str:
