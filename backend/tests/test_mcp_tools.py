@@ -503,13 +503,18 @@ async def test_update_document_titre(db_pool: asyncpg.Pool, mcp_ws: dict[str, ob
                 "workspace_slug": mcp_ws["ws_slug"],
                 "doc_id": mcp_ws["doc_id"],
                 "title": "Epic A — modifié",
+                "expected_version": 1,
             },
         )
     )
     assert data["updated"] is True  # type: ignore[index]
+    # Le retour porte la NOUVELLE version, directement réutilisable en écriture.
+    assert data["version"] == 2  # type: ignore[index]
 
     check = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
     assert check["title"] == "Epic A — modifié"  # type: ignore[index]
+    assert check["version"] == 2  # type: ignore[index]
+    assert check["is_current"] is True  # type: ignore[index]
 
 
 async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
@@ -520,10 +525,11 @@ async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, 
                 "workspace_slug": mcp_ws["ws_slug"],
                 "doc_id": str(uuid.uuid4()),
                 "title": "Ghost",
+                "expected_version": 1,
             },
         )
     )
-    assert "error" in data  # type: ignore[operator]
+    assert data["error"]["code"] == "not_found"  # type: ignore[index]
 
 
 async def test_update_document_doc_id_malforme(
@@ -536,10 +542,90 @@ async def test_update_document_doc_id_malforme(
                 "workspace_slug": mcp_ws["ws_slug"],
                 "doc_id": "pas-un-uuid",
                 "title": "Ghost",
+                "expected_version": 1,
             },
         )
     )
     assert "error" in data  # type: ignore[operator]
+
+
+async def test_update_document_sans_version_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Bascule franche : expected_version obligatoire (pas d'écriture aveugle)."""
+    data = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": mcp_ws["ws_slug"], "doc_id": mcp_ws["doc_id"], "title": "X"},
+        )
+    )
+    assert data["error"]["code"] == "version_required"  # type: ignore[index]
+    # Refus = aucune écriture : le document reste à sa version initiale.
+    check = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    assert check["version"] == 1  # type: ignore[index]
+    assert check["title"] == "Epic A"  # type: ignore[index]
+
+
+async def test_update_document_version_perimee_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Conflit optimiste : version périmée → refus discriminable, sans écrasement."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    # Première écriture : passe la version à 2.
+    ok = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": ws, "doc_id": doc_id, "contenu": "v2", "expected_version": 1},
+        )
+    )
+    assert ok["version"] == 2  # type: ignore[index]
+    # Deuxième écriture sur la version 1 périmée : refus.
+    conflict = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "contenu": "écrasement",
+                "expected_version": 1,
+            },
+        )
+    )
+    err = conflict["error"]  # type: ignore[index]
+    assert err["code"] == "version_conflict"
+    # L'erreur porte l'état COURANT pour réappliquer sans relecture.
+    assert err["version"] == 2
+    assert err["contenu"] == "v2"
+    # Aucun écrasement : le contenu courant est intact.
+    got = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert got["contenu"] == "v2"  # type: ignore[index]
+    assert got["version"] == 2  # type: ignore[index]
+
+
+async def test_update_conflict_code_distinct_du_not_found(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le code du conflit est distinct de celui du document introuvable."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    conflict = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": ws, "doc_id": doc_id, "title": "z", "expected_version": 99},
+        )
+    )
+    not_found = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(uuid.uuid4()),
+                "title": "z",
+                "expected_version": 1,
+            },
+        )
+    )
+    assert conflict["error"]["code"] == "version_conflict"  # type: ignore[index]
+    assert not_found["error"]["code"] == "not_found"  # type: ignore[index]
 
 
 # Bug MCO : omission d'un champ (title ou contenu) ne doit PAS écraser l'autre à NULL.
@@ -553,7 +639,13 @@ async def test_update_document_titre_seul_preserve_contenu(
     # Le doc de la fixture a été créé avec contenu "# Epic A".
     res = _json(
         await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Epic A renommé"}
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "title": "Epic A renommé",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -569,7 +661,13 @@ async def test_update_document_contenu_seul_preserve_titre(
     ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
     res = _json(
         await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "contenu": "# Nouveau corps"}
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "contenu": "# Nouveau corps",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -586,7 +684,13 @@ async def test_update_document_deux_champs(
     res = _json(
         await _update_document(
             db_pool,
-            {"workspace_slug": ws, "doc_id": doc_id, "title": "T2", "contenu": "C2"},
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "title": "T2",
+                "contenu": "C2",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -601,6 +705,82 @@ async def test_update_document_sans_champ_refuse(
     ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
     res = _json(await _update_document(db_pool, {"workspace_slug": ws, "doc_id": doc_id}))
     assert "error" in res  # type: ignore[operator]
+
+
+async def test_get_document_version_anterieure(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """get_document(version=N) restitue titre+contenu d'alors, sans effet de bord."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    # Fixture : v1 = "# Epic A". On écrit une v2.
+    await _update_document(
+        db_pool,
+        {"workspace_slug": ws, "doc_id": doc_id, "contenu": "corps v2", "expected_version": 1},
+    )
+    v1 = _json(await _get_document(db_pool, ws, doc_id, 1))  # type: ignore[arg-type]
+    assert v1["contenu"] == "# Epic A"  # type: ignore[index]
+    assert v1["version"] == 1  # type: ignore[index]
+    assert v1["is_current"] is False  # type: ignore[index]
+
+    v2 = _json(await _get_document(db_pool, ws, doc_id, 2))  # type: ignore[arg-type]
+    assert v2["contenu"] == "corps v2"  # type: ignore[index]
+    assert v2["is_current"] is True  # type: ignore[index]
+
+    # La lecture d'une version ne crée aucune révision : le head reste à 2.
+    cur = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert cur["version"] == 2  # type: ignore[index]
+
+
+async def test_get_document_version_inexistante_donne_les_bornes(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    data = _json(await _get_document(db_pool, ws, doc_id, 99))  # type: ignore[arg-type]
+    err = data["error"]  # type: ignore[index]
+    assert err["code"] == "version_not_found"
+    assert err["available_min"] == 1
+    assert err["available_max"] == 1
+
+
+async def test_get_document_version_malformee(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    data = _json(await _get_document(db_pool, ws, doc_id, "abc"))  # type: ignore[arg-type]
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_create_document_retourne_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """create_document expose la version initiale (utilisable en expected_version)."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Epic Neuf",
+                "contenu": "# Neuf",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    assert data["created"] is True  # type: ignore[index]
+    assert data["version"] == 1  # type: ignore[index]
+    # La version initiale permet un update immédiat sans relecture.
+    upd = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": data["id"],  # type: ignore[index]
+                "contenu": "# Neuf v2",
+                "expected_version": data["version"],  # type: ignore[index]
+            },
+        )
+    )
+    assert upd["version"] == 2  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1544,120 +1724,6 @@ async def test_delete_block_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
         )
     )
     assert "error" in res  # type: ignore[operator]
-
-
-# ---------------------------------------------------------------------------
-# 17. update_document — concurrence optimiste transparente (retry borné)
-# ---------------------------------------------------------------------------
-
-
-def _concurrent_writer(doc_svc: object, *, always: bool):  # type: ignore[no-untyped-def]
-    """Remplace update_document par une variante qui glisse une écriture
-    concurrente juste avant l'écriture demandée (une seule fois, ou à chaque
-    tentative si `always`). Reproduit la fenêtre entre lecture de version et
-    écriture."""
-    from docflow.schemas.document import DocumentUpdate
-
-    real = doc_svc.update_document  # type: ignore[attr-defined]
-    calls = {"n": 0}
-
-    async def _flaky(pool, ws_slug, target, data, author=None):  # type: ignore[no-untyped-def]
-        calls["n"] += 1
-        if always or calls["n"] == 1:
-            await real(
-                pool,
-                ws_slug,
-                target,
-                DocumentUpdate(
-                    expected_version=data.expected_version,
-                    title=f"Concurrent {calls['n']}",
-                ),
-            )
-        return await real(pool, ws_slug, target, data, author)
-
-    return _flaky, calls
-
-
-async def test_update_document_retry_absorbe_une_ecriture_concurrente(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Une écriture concurrente entre la lecture de version et l'écriture ne
-    doit pas remonter de conflit à l'appelant : le handler rejoue."""
-    from docflow.documents import service as doc_svc
-
-    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
-    flaky, calls = _concurrent_writer(doc_svc, always=False)
-    monkeypatch.setattr(doc_svc, "update_document", flaky)
-
-    res = _json(
-        await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Après retry"}
-        )
-    )
-    assert res["updated"] is True  # type: ignore[index]
-    assert calls["n"] == 2
-    monkeypatch.undo()
-    got = _json(await _get_document(db_pool, ws, doc_id))
-    assert got["title"] == "Après retry"  # type: ignore[index]
-
-
-async def test_update_document_conflit_persistant_remonte_erreur(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Retry borné : un conflit à chaque tentative finit en erreur exploitable
-    (version courante fournie), pas en boucle infinie."""
-    from docflow.documents import service as doc_svc
-
-    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
-    flaky, calls = _concurrent_writer(doc_svc, always=True)
-    monkeypatch.setattr(doc_svc, "update_document", flaky)
-
-    res = _json(
-        await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Jamais posé"}
-        )
-    )
-    assert "error" in res  # type: ignore[operator]
-    assert res["error"]["version"] > 0  # type: ignore[index]
-    assert calls["n"] == 3
-
-
-async def test_update_document_titre_seul_preserve_le_contenu_concurrent(
-    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Le rejeu relit l'état courant : un champ omis reste celui du writer
-    concurrent, il n'est pas écrasé par la valeur lue avant le conflit."""
-    from docflow.documents import service as doc_svc
-    from docflow.schemas.document import DocumentUpdate
-
-    ws, doc_id = str(mcp_ws["ws_slug"]), str(mcp_ws["doc_id"])
-    real = doc_svc.update_document
-    calls = {"n": 0}
-
-    async def _flaky(pool, ws_slug, target, data, author=None):  # type: ignore[no-untyped-def]
-        calls["n"] += 1
-        if calls["n"] == 1:
-            await real(
-                pool,
-                ws_slug,
-                target,
-                DocumentUpdate(
-                    expected_version=data.expected_version, content="# Corps concurrent"
-                ),
-            )
-        return await real(pool, ws_slug, target, data, author)
-
-    monkeypatch.setattr(doc_svc, "update_document", _flaky)
-    res = _json(
-        await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Titre gagnant"}
-        )
-    )
-    assert res["updated"] is True  # type: ignore[index]
-    monkeypatch.undo()
-    got = _json(await _get_document(db_pool, ws, doc_id))
-    assert got["title"] == "Titre gagnant"  # type: ignore[index]
-    assert got["contenu"] == "# Corps concurrent"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------

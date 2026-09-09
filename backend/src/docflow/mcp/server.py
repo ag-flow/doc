@@ -28,10 +28,6 @@ _settings: Settings | None = None
 
 _require_identity = require_identity
 
-# Tentatives d'écriture de update_document avant de rendre le conflit à
-# l'appelant (qui, lui, ne fournit jamais de version — cf. _update_document).
-_UPDATE_MAX_ATTEMPTS = 3
-
 
 _TOOLS: list[Tool] = [
     Tool(
@@ -88,7 +84,15 @@ _TOOLS: list[Tool] = [
         name="get_document",
         description=(
             "Lit le contenu complet d'un document : id, title, contenu (markdown "
-            "brut), functional_type_slug. "
+            "brut), functional_type_slug, ET 'version' (numéro de révision courant) "
+            "avec 'is_current'. La 'version' retournée est l'identifiant à fournir à "
+            "update_document (concurrence optimiste). "
+            "Paramètre optionnel 'version' : lire une révision antérieure précise "
+            "(le contenu et le titre tels qu'ils étaient) — SEULS le titre et le "
+            "contenu sont versionnés ; functional_type_slug et les propriétés "
+            "reflètent toujours l'état courant. La lecture d'une version est sans "
+            "effet de bord (aucune restauration). Une version inexistante retourne "
+            "{error:{code:'version_not_found', available_min, available_max}}. "
             "Ajoute 'warnings' (liste) lorsque des propriétés obligatoires du type "
             "sont non renseignées : les renseigner avec set_property_value. "
             "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
@@ -104,6 +108,13 @@ _TOOLS: list[Tool] = [
                     "format": "uuid",
                     "description": "UUID du document (champ id de list_documents)",
                 },
+                "version": {
+                    "type": "integer",
+                    "description": (
+                        "Numéro de révision à lire (optionnel) ; omis = révision "
+                        "courante. Seuls titre et contenu sont restitués à cette version."
+                    ),
+                },
             },
             "required": ["workspace_slug", "doc_id"],
         },
@@ -116,7 +127,8 @@ _TOOLS: list[Tool] = [
             "list_documents dès la réponse. "
             "block_slug est requis : utiliser list_blocks (REST) ou lire la réponse "
             "de create_block pour obtenir le slug. "
-            "Retourne l'id (UUID) et le title du document créé. "
+            "Retourne l'id (UUID), le title et la 'version' initiale du document créé "
+            "(version directement utilisable comme expected_version d'un update_document). "
             "functional_type_slug est optionnel mais doit correspondre au type du bloc "
             "(doit exister dans le workspace, sinon erreur). "
             "contenu est du markdown libre, optionnel. "
@@ -187,12 +199,16 @@ _TOOLS: list[Tool] = [
             "Modifie le titre et/ou le contenu markdown d'un document existant. "
             "ÉCRITURE : mise à jour versionnée et permanente, visible immédiatement. "
             "Au moins un des deux champs (title ou contenu) doit être fourni, "
-            "sinon erreur. "
-            "Concurrence gérée par le serveur : aucune version à fournir. En cas "
-            "d'écriture concurrente, l'appel est rejoué automatiquement sur la "
-            "version courante (les champs omis gardent alors la valeur posée par "
-            "l'autre écrivain). Une contention persistante retourne {error: "
-            "{version, title, content}} décrivant l'état courant — rejouer. "
+            "sinon erreur. Retourne 'version' (nouvelle révision) en cas de succès. "
+            "CONCURRENCE OPTIMISTE — 'expected_version' est OBLIGATOIRE : c'est le "
+            "numéro de révision sur lequel s'appuie l'écriture, obtenu via "
+            "get_document ('version') ou le retour d'un update/create précédent. Si "
+            "la version a changé entre-temps, l'écriture est REFUSÉE (aucun "
+            "écrasement) et retourne {error:{code:'version_conflict', version, "
+            "title, contenu}} portant l'état courant. Boucle attendue côté client : "
+            "relire (ou lire l'état du conflit) → réappliquer ses modifications → "
+            "réécrire avec la version courante. Un appel sans expected_version est "
+            "refusé ({error:{code:'version_required'}}). "
             "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
             "(utiliser set_property_value pour cela). "
             "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
@@ -226,8 +242,16 @@ _TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Nouveau contenu markdown (omis = inchangé)",
                 },
+                "expected_version": {
+                    "type": "integer",
+                    "description": (
+                        "OBLIGATOIRE — numéro de révision présumé courant "
+                        "(champ 'version' de get_document ou retour d'un "
+                        "update/create). Refus si périmé, sans écrasement."
+                    ),
+                },
             },
-            "required": ["workspace_slug", "doc_id"],
+            "required": ["workspace_slug", "doc_id", "expected_version"],
         },
     ),
     Tool(
@@ -1313,6 +1337,7 @@ async def _dispatch_tool(
             pool,
             str(arguments.get("workspace_slug", "")),
             str(arguments.get("doc_id", "")),
+            arguments.get("version"),
         )
     if name == "create_document":
         return await _create_document(pool, arguments)
@@ -1518,19 +1543,29 @@ async def _list_documents(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]
     return _text([dict(r) for r in rows])
 
 
-async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
+async def _get_document(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: str, version: object = None
+) -> list[TextContent]:
     try:
         doc_uuid = uuid.UUID(doc_id)
     except ValueError:
         return _text({"error": "doc_id : UUID invalide"})
+    # Version demandée (optionnelle) : entier strict, sinon erreur explicite.
+    want_version: int | None = None
+    if version is not None:
+        try:
+            want_version = int(str(version))
+        except (TypeError, ValueError):
+            return _text({"error": "version : entier attendu (numéro de révision)"})
+
     async with pool.acquire() as conn:
         try:
             wk = await _require_workspace(conn, ws_slug)
         except ValueError as e:
             return _text({"error": str(e)})
-        row = await conn.fetchrow(
+        head = await conn.fetchrow(
             """
-            SELECT d.doc_technical_key::text AS id, d.title,
+            SELECT d.doc_technical_key::text AS id, d.title, d.version AS current_version,
                    dv.content AS contenu,
                    ft.slug AS functional_type_slug
             FROM document d
@@ -1544,17 +1579,67 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
             wk,
             doc_uuid,
         )
-        if row is None:
+        if head is None:
             return _text({"error": f"document '{doc_id}' introuvable"})
-        unset = await _required_unset_slugs(conn, wk, doc_uuid)
-    result = dict(row)
-    if unset:
-        result["warnings"] = [
-            "propriété(s) obligatoire(s) non renseignée(s) : "
-            + ", ".join(unset)
-            + " — les renseigner avec set_property_value"
-        ]
-    return _text(result)
+        current_version = head["current_version"]
+
+        # Révision courante : forme historique du retour, enrichie de version/is_current.
+        if want_version is None:
+            unset = await _required_unset_slugs(conn, wk, doc_uuid)
+            result: dict[str, object] = {
+                "id": head["id"],
+                "title": head["title"],
+                "contenu": head["contenu"],
+                "functional_type_slug": head["functional_type_slug"],
+                "version": current_version,
+                "is_current": True,
+            }
+            if unset:
+                result["warnings"] = [
+                    "propriété(s) obligatoire(s) non renseignée(s) : "
+                    + ", ".join(unset)
+                    + " — les renseigner avec set_property_value"
+                ]
+            return _text(result)
+
+        # Lecture d'une révision antérieure : seuls titre et contenu sont versionnés.
+        ver_row = await conn.fetchrow(
+            "SELECT title, content FROM document_version "
+            "WHERE document_ref = $1 AND version_number = $2",
+            doc_uuid,
+            want_version,
+        )
+        if ver_row is None:
+            bounds = await conn.fetchrow(
+                "SELECT min(version_number) AS lo, max(version_number) AS hi "
+                "FROM document_version WHERE document_ref = $1",
+                doc_uuid,
+            )
+            return _text(
+                {
+                    "error": {
+                        "code": "version_not_found",
+                        "message": f"version {want_version} introuvable pour ce document",
+                        "available_min": bounds["lo"] if bounds else None,
+                        "available_max": bounds["hi"] if bounds else None,
+                    }
+                }
+            )
+    return _text(
+        {
+            "id": head["id"],
+            "title": ver_row["title"],
+            "contenu": ver_row["content"],
+            # functional_type_slug n'est PAS versionné : état courant renvoyé tel quel.
+            "functional_type_slug": head["functional_type_slug"],
+            "version": want_version,
+            "is_current": want_version == current_version,
+            "note": (
+                "Seuls le titre et le contenu sont versionnés ; functional_type_slug "
+                "et les propriétés reflètent l'état courant."
+            ),
+        }
+    )
 
 
 async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1605,15 +1690,38 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     except HTTPException as e:
         return _text({"error": e.detail})
 
-    return _text({"created": True, "id": str(doc.doc_technical_key), "title": doc.title})
+    # La version initiale est retournée : elle est directement utilisable comme
+    # expected_version d'un update_document ultérieur (pas de relecture requise).
+    return _text(
+        {
+            "created": True,
+            "id": str(doc.doc_technical_key),
+            "title": doc.title,
+            "version": doc.version,
+        }
+    )
 
 
-def _conflict_version(status_code: int, detail: object) -> int | None:
-    """Version courante portée par un 409 de update_document ; None si autre erreur."""
-    if status_code != 409 or not isinstance(detail, dict):
-        return None
-    version = detail.get("version")
-    return version if isinstance(version, int) else None
+def _update_error(status_code: int, detail: object) -> dict[str, object]:
+    """Traduit une HTTPException du service update_document en erreur MCP
+    discriminable par un `code` machine (le client distingue conflit de version,
+    document introuvable et refus de droits sans analyser un message)."""
+    if status_code == 409 and isinstance(detail, dict):
+        # Conflit de version : porte l'état COURANT pour réappliquer sans relecture.
+        return {
+            "error": {
+                "code": "version_conflict",
+                "message": (
+                    "expected_version périmée : recharger l'état courant, réappliquer "
+                    "les modifications, réécrire avec la version courante."
+                ),
+                "version": detail.get("version"),
+                "title": detail.get("title"),
+                "contenu": detail.get("content"),
+            }
+        }
+    code = {404: "not_found", 403: "forbidden", 422: "invalid"}.get(status_code, "invalid")
+    return {"error": {"code": code, "message": detail}}
 
 
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1630,55 +1738,52 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     if not title and contenu is None:
         return _text({"error": "au moins title ou contenu requis"})
 
+    # Concurrence optimiste : expected_version est OBLIGATOIRE côté appelant. Pas
+    # d'écriture aveugle ni de rejeu transparent — un conflit est un refus explicite.
+    if args.get("expected_version") is None:
+        return _text(
+            {
+                "error": {
+                    "code": "version_required",
+                    "message": (
+                        "expected_version obligatoire : lire la version courante via "
+                        "get_document (champ 'version') avant d'écrire."
+                    ),
+                }
+            }
+        )
+    try:
+        expected_version = int(str(args["expected_version"]))
+    except (TypeError, ValueError):
+        return _text(
+            {
+                "error": {
+                    "code": "version_required",
+                    "message": "expected_version doit être un entier (numéro de révision).",
+                }
+            }
+        )
+
     try:
         doc_id = uuid.UUID(doc_id_str)
     except ValueError:
         return _text({"error": "doc_id : UUID invalide"})
 
-    # Lecture de la version courante pour la concurrence optimiste transparente
-    async with pool.acquire() as conn:
-        try:
-            wk = await _require_workspace(conn, ws_slug)
-        except ValueError as e:
-            return _text({"error": str(e)})
-        current_version: int | None = await conn.fetchval(
-            "SELECT version FROM document "
-            "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-            doc_id,
-            wk,
-        )
-    if current_version is None:
-        return _text({"error": f"document '{doc_id_str}' introuvable"})
-
-    # Ne renseigner que les champs réellement fournis : un champ omis doit rester
-    # « unset » (model_dump(exclude_unset=True) l'exclut) pour que le service
-    # reporte sa valeur courante au lieu de l'écraser à NULL (bug MCO).
+    # Ne renseigner que les champs réellement fournis : un champ omis reste
+    # « unset » (exclude_unset l'exclut) pour que le service conserve sa valeur
+    # courante au lieu de l'écraser à NULL.
     update_fields: dict[str, object] = {}
     if "title" in args:
         update_fields["title"] = title
     if "contenu" in args:
         update_fields["content"] = contenu
 
-    # L'appelant MCP ne fournit pas de version : la lecture ci-dessus et
-    # l'écriture ne partagent pas la même transaction, et une écriture
-    # concurrente glissée entre les deux produirait un 409 qu'il ne pourrait
-    # résoudre qu'en rejouant. On rejoue donc ici, en repartant de la version
-    # portée par le conflit — les champs omis restent ceux du writer concurrent.
-    # Borné : au-delà, la contention est réelle et remonte à l'appelant.
-    for attempt in range(_UPDATE_MAX_ATTEMPTS):
-        try:
-            data = DocumentUpdate(expected_version=current_version, **update_fields)
-            doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
-        except HTTPException as e:
-            detail: object = e.detail
-            retry_version = _conflict_version(e.status_code, detail)
-            if retry_version is None or attempt == _UPDATE_MAX_ATTEMPTS - 1:
-                return _text({"error": detail})
-            current_version = retry_version
-            continue
-        return _text({"updated": True, "title": doc.title, "version": doc.version})
-
-    raise AssertionError("boucle de retry update_document sortie sans issue")
+    try:
+        data = DocumentUpdate(expected_version=expected_version, **update_fields)
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
+    except HTTPException as e:
+        return _text(_update_error(e.status_code, e.detail))
+    return _text({"updated": True, "title": doc.title, "version": doc.version})
 
 
 async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
