@@ -13,10 +13,12 @@ import { prefsApi } from '../lib/api'
  * éditeur qui montent toutes deux ce hook.
  */
 
-/** Paliers d'échelle (multiplicateurs). Bornés, pas un curseur continu : la mise
- *  en page reste cohérente à chaque cran. 1 = échelle par défaut. */
-export const READING_SCALE_STEPS = [0.85, 0.925, 1, 1.1, 1.25, 1.4] as const
-export const DEFAULT_SCALE_STEP = 2
+/** Paliers d'échelle (multiplicateurs), de 30 % à 300 %. Bornés, pas un curseur
+ *  continu : la mise en page reste cohérente à chaque cran. 1 = échelle par défaut. */
+export const READING_SCALE_STEPS = [
+  0.3, 0.4, 0.5, 0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5, 3,
+] as const
+export const DEFAULT_SCALE_STEP = 6
 
 const PREF_KEY = 'reading-prefs'
 const CACHE_KEY = 'docflow.reading-prefs'

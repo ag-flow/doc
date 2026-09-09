@@ -51,6 +51,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const [richState, setRichState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [exportOpen, setExportOpen] = useState(false)
   const viewerRef = useRef<MarkdownViewerHandle>(null)
+  const readerRef = useRef<HTMLDivElement>(null)
 
   // Copie riche (texte + composants en images) : la rasterisation prend un
   // court instant, on montre un état d'attente puis un accusé.
@@ -97,6 +98,36 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
     return () => window.removeEventListener('keydown', onKey)
   }, [readingMode, setReadingMode])
 
+  // Zoom à la molette sur PC : Ctrl/⌘ + molette règle l'échelle cran par cran au
+  // survol du document (geste de zoom standard, aussi émis par le pinch trackpad).
+  // La molette SEULE continue de défiler — on ne capte que le geste modifié. On
+  // remplace ainsi le zoom natif du navigateur sur cette zone. Écouteur natif
+  // non-passif : preventDefault n'est pas permis via onWheel React (passif).
+  useEffect(() => {
+    const el = readerRef.current
+    if (!el) return
+    // Accumulateur normalisé en pixels (deltaMode ligne/page → pixels) : un cran
+    // de molette classique ≈ un palier, un pinch progresse en douceur.
+    let acc = 0
+    const STEP = 100
+    function onWheel(e: WheelEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault()
+      const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY
+      acc += px
+      while (acc <= -STEP) {
+        acc += STEP
+        incScale() // molette vers le haut = agrandir
+      }
+      while (acc >= STEP) {
+        acc -= STEP
+        decScale()
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [incScale, decScale])
+
   const { data: reactions } = useQuery<ReactionOut>({
     queryKey: ['doc-reactions', ws, docId],
     queryFn: () => reactionsApi.getDocReactions(ws, docId),
@@ -117,7 +148,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const hasContent = Boolean(displayContent.trim())
 
   return (
-    <div data-testid="document-reader">
+    <div data-testid="document-reader" ref={readerRef}>
       <DocumentShell
         kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
         title={
@@ -220,7 +251,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
                 title={t('reading.scaleReset')}
                 aria-label={t('reading.scaleValue', { pct: Math.round(scale * 100) })}
                 data-testid="scale-reset"
-                className="inline-flex min-w-[3.5ch] cursor-pointer items-center justify-center gap-1 border-0 bg-transparent px-0.5 text-[11px] tabular-nums text-ink/[0.6] hover:text-accent-700"
+                className="inline-flex min-w-[4.5ch] cursor-pointer items-center justify-center gap-1 border-0 bg-transparent px-0.5 text-[11px] tabular-nums text-ink/[0.6] hover:text-accent-700"
               >
                 <TextAa size={13} weight="duotone" />
                 {Math.round(scale * 100)}%

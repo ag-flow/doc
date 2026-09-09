@@ -100,10 +100,28 @@ describe('DocumentReader — préférences de lecture', () => {
     renderReader()
     expect(screen.getByTestId('scale-reset')).toHaveTextContent('100%')
     fireEvent.click(screen.getByTestId('scale-up'))
-    await waitFor(() => expect(screen.getByTestId('scale-reset')).toHaveTextContent('110%'))
+    // Palier suivant après 100 % dans la plage 30–300 %.
+    await waitFor(() => expect(screen.getByTestId('scale-reset')).toHaveTextContent('115%'))
     expect(prefsApi.set).toHaveBeenCalledWith(
       'reading-prefs',
-      expect.objectContaining({ scaleStep: 3 }),
+      expect.objectContaining({ scaleStep: 7 }),
     )
+  })
+
+  it('Ctrl + molette agrandit ; la molette seule ne zoome pas', async () => {
+    renderReader()
+    const reader = screen.getByTestId('document-reader')
+
+    // Molette seule : pas de zoom (défilement normal préservé).
+    fireEvent.wheel(reader, { deltaY: -300 })
+    expect(screen.getByTestId('scale-reset')).toHaveTextContent('100%')
+
+    // Ctrl + molette vers le haut : agrandit d'un cran (deltaY < 0, seuil 100).
+    fireEvent.wheel(reader, { deltaY: -100, ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('scale-reset')).toHaveTextContent('115%'))
+
+    // Ctrl + molette vers le bas : réduit d'un cran, retour à 100 %.
+    fireEvent.wheel(reader, { deltaY: 100, ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('scale-reset')).toHaveTextContent('100%'))
   })
 })
