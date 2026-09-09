@@ -113,10 +113,26 @@
   padding: 44px 52px;
   border-left: 5px solid var(--color-neutral-200);
   border-right: 5px solid var(--color-neutral-200);
-  font-size: 18px;
+  /* Échelle de lecture pilotée par une variable de racine (défaut 1). */
+  font-size: calc(var(--reading-scale, 1) * 18px);
   line-height: 1.8;
 }
-.doc-sheet > * { max-width: 72ch; }
+.doc-sheet > * { max-width: var(--reading-measure, 72ch); }
+
+/* Mesure de lecture bornée pour le TEXTE courant : quand un panneau est replié,
+   la feuille s'élargit mais le texte ne s'étire pas au-delà d'une mesure
+   confortable (on ne veut pas d'une ligne sur 2000 px). L'unité `ch` suit la
+   taille de police : la mesure reste ~72 caractères à toutes les échelles.
+   Les blocs LARGES (composants df-*, tableaux, code, images, maquettes) ne sont
+   pas ciblés : ils exploitent toute la largeur libérée. */
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='paragraph'],
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='heading'],
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='bulletListItem'],
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='numberedListItem'],
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='checkListItem'],
+.doc-sheet .wiki-prose .bn-block-content[data-content-type='quote'] {
+  max-width: var(--reading-measure, 72ch);
+}
 
 /* Le corps du document (éditeur BlockNote ou rendu de lecture) exploite TOUTE
    la surface de la feuille : pas de page blanche dans la page. Le wrapper perd
@@ -135,9 +151,9 @@
   background: transparent;
 }
 
-.doc-sheet h1 { font-size: 32px; margin: 40px 0 12px; }
-.doc-sheet h2 { font-size: 26px; margin: 34px 0 10px; }
-.doc-sheet h3 { font-size: 21px; margin: 28px 0 8px; }
+.doc-sheet h1 { font-size: calc(var(--reading-scale, 1) * 32px); margin: 40px 0 12px; }
+.doc-sheet h2 { font-size: calc(var(--reading-scale, 1) * 26px); margin: 34px 0 10px; }
+.doc-sheet h3 { font-size: calc(var(--reading-scale, 1) * 21px); margin: 28px 0 8px; }
 .doc-sheet p { margin: 0 0 var(--space-3); }
 .doc-sheet em { font-style: italic; }
 
@@ -146,7 +162,7 @@
   border-left: 4px solid var(--color-accent);
   padding-left: 18px;
   margin: 26px 0;
-  font-size: 16px;
+  font-size: calc(var(--reading-scale, 1) * 16px);
   color: color-mix(in srgb, var(--color-ink) 72%, transparent);
 }
 /* Le bloc « citation » de BlockNote porte son propre filet gris 2px
@@ -181,7 +197,7 @@
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 15px;
+  font-size: calc(var(--reading-scale, 1) * 15px);
 }
 .doc-sheet img { max-width: 100%; height: auto; }
 
@@ -238,3 +254,58 @@
   padding-bottom: 14px;
   margin-bottom: 28px;
 }
+
+/* ── Plein écran d'un rendu (diagramme, maquette, image d'artefact) ─────────
+   Overlay plein viewport sur fond neutre : le rendu s'affiche à sa taille
+   naturelle maximale, un SVG reste net (pas de bitmap étiré). */
+.df-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background: color-mix(in srgb, var(--color-ink) 84%, transparent);
+}
+.df-fullscreen-body {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-fullscreen-body > * { max-width: 100%; }
+.df-fullscreen-body svg,
+.df-fullscreen-body img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+}
+.df-fullscreen-iframe {
+  width: min(1600px, 96vw);
+  height: calc(100vh - 96px);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-100);
+}
+.df-fullscreen-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 101;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+.df-fullscreen-close:hover { color: var(--color-accent-700); }

@@ -22,7 +22,9 @@
 }
 .wiki-prose .bn-block-content {
   line-height: 1.75;
-  font-size: 1.05rem;
+  /* rem × échelle de lecture : le texte se RECOMPOSE (reflow) à chaque cran, il
+     ne subit pas un zoom géométrique — pas de défilement horizontal sur mobile. */
+  font-size: calc(var(--reading-scale, 1) * 1.05rem);
 }
 .wiki-prose .bn-block-group .bn-block-group {
   /* léger retrait des listes / blocs imbriqués */

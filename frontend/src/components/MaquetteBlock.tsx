@@ -15,9 +15,11 @@
 import { createReactBlockSpec } from '@blocknote/react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { AppWindow, ArrowClockwise, Warning } from '@phosphor-icons/react'
+import { AppWindow, ArrowClockwise, ArrowsOut, Warning } from '@phosphor-icons/react'
+import { useTranslation } from 'react-i18next'
 import { artifactsApi, type PreviewLinkOut } from '../lib/api'
 import { useWorkspace } from '../contexts/WorkspaceContext'
+import { FullscreenOverlay } from './FullscreenView'
 
 /** Largeur simulée par viewport (px). Inconnu → desktop. */
 const VIEWPORT_WIDTH: Record<string, number> = { mobile: 390, tablette: 768, desktop: 1024 }
@@ -94,7 +96,9 @@ export function MaquetteView({
   const fixedHeight = Math.min(lockedH ?? dev?.h ?? 480, _MAX_HEIGHT)
   const fallback = lockedH ?? 480
 
+  const { t } = useTranslation()
   const [autoHeight, setAutoHeight] = useState<number>(fallback)
+  const [full, setFull] = useState(false)
   const height = fixed ? fixedHeight : autoHeight
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -135,14 +139,26 @@ export function MaquetteView({
         <span className="font-medium text-gray-800">{label}</span>
         <span className="ml-auto text-xs uppercase tracking-wide text-gray-400">{viewport}</span>
         {link.data && (
-          <button
-            type="button"
-            title="Rafraîchir la maquette"
-            className="text-gray-400 hover:text-gray-700"
-            onClick={() => void link.refetch()}
-          >
-            <ArrowClockwise size={15} />
-          </button>
+          <>
+            <button
+              type="button"
+              title={t('reading.fullscreen')}
+              aria-label={t('reading.fullscreen')}
+              className="text-gray-400 hover:text-gray-700"
+              onClick={() => setFull(true)}
+              data-testid="maquette-fullscreen"
+            >
+              <ArrowsOut size={15} />
+            </button>
+            <button
+              type="button"
+              title="Rafraîchir la maquette"
+              className="text-gray-400 hover:text-gray-700"
+              onClick={() => void link.refetch()}
+            >
+              <ArrowClockwise size={15} />
+            </button>
+          </>
         )}
       </div>
 
@@ -196,6 +212,20 @@ export function MaquetteView({
           />
         ) : null}
       </div>
+
+      {full && link.data && (
+        <FullscreenOverlay label={label} onClose={() => setFull(false)}>
+          {/* Même lien signé et même sandbox qu'en ligne : le plein écran
+              s'appuie sur le serveur de preview, il ne le contourne pas. */}
+          <iframe
+            title={label}
+            src={link.data.url}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            className="df-fullscreen-iframe"
+          />
+        </FullscreenOverlay>
+      )}
     </div>
   )
 }

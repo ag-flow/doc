@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { Check, Copy, Download, Pencil } from 'lucide-react'
+import { Check, Copy, Download, Maximize2, Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { FullscreenOverlay } from './FullscreenView'
 
 /** Édition en place de la source d'un bloc custom (corps + attributs). */
 export interface BlockFrameEdit {
@@ -98,6 +99,7 @@ export function BlockFrame({ title, typeLabel, source, svg, edit, children }: Bl
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [full, setFull] = useState(false)
 
   async function copySource() {
     try {
@@ -141,6 +143,16 @@ export function BlockFrame({ title, typeLabel, source, svg, edit, children }: Bl
           )}
           <button
             type="button"
+            onClick={() => setFull(true)}
+            title={t('reading.fullscreen')}
+            aria-label={t('reading.fullscreen')}
+            className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+            data-testid="blockframe-fullscreen"
+          >
+            <Maximize2 size={13} />
+          </button>
+          <button
+            type="button"
             onClick={copySource}
             title={t('blockFrame.copy')}
             className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
@@ -161,6 +173,11 @@ export function BlockFrame({ title, typeLabel, source, svg, edit, children }: Bl
       </div>
       <div className="p-3">{children}</div>
       {editing && edit && <EditPanel edit={edit} onClose={() => setEditing(false)} />}
+      {full && (
+        <FullscreenOverlay label={title || typeLabel} onClose={() => setFull(false)}>
+          {children}
+        </FullscreenOverlay>
+      )}
     </div>
   )
 }

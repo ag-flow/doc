@@ -95,6 +95,13 @@
   /* Cible de clic du rail : 40px minimum (DoD du chrome). */
   --rail-target: 40px;
 
+  /* Échelle de lecture : multiplicateur appliqué à la typographie de la feuille
+     (piloté par les préférences de lecture, cf. useReadingPrefs). 1 = défaut. */
+  --reading-scale: 1;
+  /* Mesure de lecture confortable : le texte courant reste borné même quand les
+     panneaux sont repliés ; les blocs larges (diagrammes, tableaux) s'en affranchissent. */
+  --reading-measure: 72ch;
+
   /* Échelle d'espacement nommée, pour le CSS de composant hors Tailwind. */
   --space-1: 5px;
   --space-2: 10px;

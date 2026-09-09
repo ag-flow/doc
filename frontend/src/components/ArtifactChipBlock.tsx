@@ -1,7 +1,9 @@
 import { createReactBlockSpec } from '@blocknote/react'
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import {
   ArrowSquareOut,
+  ArrowsOut,
   DownloadSimple,
   File as FileIcon,
   FileArchive,
@@ -19,6 +21,7 @@ import {
 import { artifactsApi, type ArtifactMetaOut } from '../lib/api'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { humanFileSize } from '../lib/fileSize'
+import { FullscreenOverlay } from './FullscreenView'
 
 /** Icône représentative selon le media type / l'extension. */
 function iconFor(mediaType: string, extension: string): Icon {
@@ -60,6 +63,8 @@ export function ArtifactChipView({ id, label }: { id: string; label: string }) {
 
   const name = label || meta.data?.filename || id
   const Glyph = meta.data ? iconFor(meta.data.media_type, meta.data.extension) : FileIcon
+  const isImage = Boolean(meta.data?.media_type.startsWith('image/'))
+  const [fullUrl, setFullUrl] = useState<string | null>(null)
 
   async function download() {
     if (!ws || !meta.data) return
@@ -71,6 +76,14 @@ export function ArtifactChipView({ id, label }: { id: string; label: string }) {
     if (!ws) return
     const link = await artifactsApi.getLink(ws, id)
     window.open(link.url, '_blank', 'noopener')
+  }
+
+  // Plein écran d'une image : on affiche le contenu via le lien signé, comme
+  // « Ouvrir », mais dans l'overlay de rendu commun plutôt qu'un nouvel onglet.
+  async function openFullscreen() {
+    if (!ws) return
+    const link = await artifactsApi.getLink(ws, id)
+    setFullUrl(link.url)
   }
 
   return (
@@ -98,6 +111,16 @@ export function ArtifactChipView({ id, label }: { id: string; label: string }) {
         >
           <DownloadSimple size={14} weight="duotone" /> Télécharger
         </button>
+        {isImage && (
+          <button
+            type="button"
+            className="tag"
+            onClick={() => void openFullscreen()}
+            data-testid="artifact-chip-fullscreen"
+          >
+            <ArrowsOut size={14} weight="duotone" /> Plein écran
+          </button>
+        )}
         <button
           type="button"
           className="tag"
@@ -107,6 +130,11 @@ export function ArtifactChipView({ id, label }: { id: string; label: string }) {
           <ArrowSquareOut size={14} weight="duotone" /> Ouvrir
         </button>
       </div>
+      {fullUrl && (
+        <FullscreenOverlay label={name} onClose={() => setFullUrl(null)}>
+          <img src={fullUrl} alt={name} />
+        </FullscreenOverlay>
+      )}
     </div>
   )
 }

@@ -30,6 +30,10 @@ vi.mock('../lib/api', () => ({
     getDocReactions: vi.fn().mockResolvedValue({ up: 0, down: 0, mine: 0 }),
     toggleDocReaction: vi.fn(),
   },
+  prefsApi: {
+    get: vi.fn().mockResolvedValue({ key: 'reading-prefs', value: null }),
+    set: vi.fn().mockResolvedValue({ key: 'reading-prefs', value: null }),
+  },
 }))
 
 import { DocumentReader } from '../components/DocumentReader'

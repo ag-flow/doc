@@ -279,10 +279,24 @@
   },
   "docnav": {
     "toc": "Sommaire",
+    "props": "Propriétés",
     "prev": "Précédent",
     "next": "Suivant",
     "showToc": "Afficher le sommaire",
-    "hideToc": "Masquer le sommaire"
+    "hideToc": "Masquer le sommaire",
+    "showProps": "Afficher les propriétés",
+    "hideProps": "Masquer les propriétés"
+  },
+  "reading": {
+    "scale": "Échelle de lecture",
+    "scaleDown": "Réduire le texte",
+    "scaleUp": "Agrandir le texte",
+    "scaleReset": "Rétablir l'échelle par défaut",
+    "scaleValue": "Échelle de lecture : {{pct}} %",
+    "readingMode": "Mode lecture",
+    "readingModeHint": "Mode lecture — replier le sommaire et les propriétés (⌘/Ctrl + \\)",
+    "fullscreen": "Plein écran",
+    "fullscreenClose": "Fermer le plein écran"
   },
   "editor": {
     "save": "Enregistrer",

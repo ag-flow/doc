@@ -1,16 +1,22 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
+  BookOpen,
   Check,
   Copy,
   FilePdf,
   Images,
   LinkSimple,
   ListBullets,
+  Minus,
   PencilSimple,
+  Plus,
+  Sidebar,
   SpinnerGap,
+  TextAa,
 } from '@phosphor-icons/react'
+import { useReadingPrefs } from '../hooks/useReadingPrefs'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { stripTitleHeading } from '../lib/markdownTitle'
@@ -24,8 +30,6 @@ import { DocumentShell } from './DocumentShell'
 import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
 import { ExportPdfDialog } from './ExportPdfDialog'
 import { Button } from './ui/button'
-
-const TOC_STORAGE_KEY = 'docflow.doc.toc'
 
 interface DocumentReaderProps {
   ws: string
@@ -61,14 +65,37 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
       setTimeout(() => setRichState('idle'), 2500)
     }
   }
-  // Sommaire à gauche : ouvert par défaut, le choix est retenu localement.
-  const [tocOpen, setTocOpen] = useState(() => localStorage.getItem(TOC_STORAGE_KEY) !== '0')
-  function toggleToc() {
-    setTocOpen((open) => {
-      localStorage.setItem(TOC_STORAGE_KEY, open ? '0' : '1')
-      return !open
-    })
-  }
+  // Préférences de lecture (sommaire, propriétés, échelle) : mémorisées par
+  // compte via un magasin unique, retrouvées d'un document à l'autre.
+  const {
+    tocOpen,
+    propsOpen,
+    scale,
+    readingMode,
+    toggleToc,
+    toggleProps,
+    setReadingMode,
+    incScale,
+    decScale,
+    resetScale,
+    canInc,
+    canDec,
+  } = useReadingPrefs()
+
+  // Raccourci « mode lecture » : replie/redéploie sommaire ET propriétés d'un
+  // geste (⌘/Ctrl + \\, convention de bascule de panneaux latéraux). Ignoré
+  // quand la frappe vise un champ de saisie (ex. panneau commentaires).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== '\\') return
+      const el = e.target as HTMLElement | null
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      e.preventDefault()
+      setReadingMode(!readingMode)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [readingMode, setReadingMode])
 
   const { data: reactions } = useQuery<ReactionOut>({
     queryKey: ['doc-reactions', ws, docId],
@@ -111,6 +138,19 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
             >
               <ListBullets size={14} weight="duotone" />
               {t('docnav.toc')}
+            </button>
+            <button
+              type="button"
+              onClick={toggleProps}
+              title={t(propsOpen ? 'docnav.hideProps' : 'docnav.showProps')}
+              aria-pressed={propsOpen}
+              data-testid="props-toggle"
+              className={`inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 ${
+                propsOpen ? 'text-accent-700' : 'text-ink/[0.5]'
+              } hover:text-accent-700`}
+            >
+              <Sidebar size={14} weight="duotone" />
+              {t('docnav.props')}
             </button>
             {doc.slug && (
               <span className="inline-flex items-center gap-1">
@@ -162,6 +202,53 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
         actions={
           <>
+            <div className="flex items-center" data-testid="reading-scale" role="group" aria-label={t('reading.scale')}>
+              <Button
+                variant="icon"
+                size="sm"
+                title={t('reading.scaleDown')}
+                aria-label={t('reading.scaleDown')}
+                disabled={!canDec}
+                onClick={decScale}
+                data-testid="scale-down"
+              >
+                <Minus size={14} weight="bold" />
+              </Button>
+              <button
+                type="button"
+                onClick={resetScale}
+                title={t('reading.scaleReset')}
+                aria-label={t('reading.scaleValue', { pct: Math.round(scale * 100) })}
+                data-testid="scale-reset"
+                className="inline-flex min-w-[3.5ch] cursor-pointer items-center justify-center gap-1 border-0 bg-transparent px-0.5 text-[11px] tabular-nums text-ink/[0.6] hover:text-accent-700"
+              >
+                <TextAa size={13} weight="duotone" />
+                {Math.round(scale * 100)}%
+              </button>
+              <Button
+                variant="icon"
+                size="sm"
+                title={t('reading.scaleUp')}
+                aria-label={t('reading.scaleUp')}
+                disabled={!canInc}
+                onClick={incScale}
+                data-testid="scale-up"
+              >
+                <Plus size={14} weight="bold" />
+              </Button>
+            </div>
+            <Button
+              variant="icon"
+              size="sm"
+              title={t('reading.readingModeHint')}
+              aria-label={t('reading.readingMode')}
+              aria-pressed={readingMode}
+              onClick={() => setReadingMode(!readingMode)}
+              data-testid="reading-mode-toggle"
+              className={readingMode ? 'text-accent-700' : undefined}
+            >
+              <BookOpen size={14} weight={readingMode ? 'fill' : 'duotone'} />
+            </Button>
             {doc.exposed && (
               <Button
                 variant="icon"
@@ -192,15 +279,17 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
           </>
         }
         aside={
-          <>
-            <PropertiesPanel
-              ws={ws}
-              docId={docId}
-              functionalTypeSlug={doc.functional_type_slug}
-              readOnly
-            />
-            <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
-          </>
+          propsOpen ? (
+            <>
+              <PropertiesPanel
+                ws={ws}
+                docId={docId}
+                functionalTypeSlug={doc.functional_type_slug}
+                readOnly
+              />
+              <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
+            </>
+          ) : undefined
         }
         footer={
           <>
