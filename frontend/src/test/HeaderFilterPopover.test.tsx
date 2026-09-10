@@ -131,4 +131,14 @@ describe('HeaderFilterPopover', () => {
     renderPopover(restricted, { prop: 'statut', op: 'in', values: ['done'] })
     expect(screen.getByTestId('filter-btn-statut')).toHaveAttribute('data-active', 'true')
   })
+
+  it('le panneau utilise .popover-panel (largeur fixe) et non .dialog (width:100%)', () => {
+    // Anti-régression : `.dialog` (modale, width:100%) monté dans le conteneur
+    // inline-block du déclencheur s'effondrait à la largeur de l'icône.
+    renderPopover(textCol)
+    fireEvent.click(screen.getByTestId('filter-btn-nom'))
+    const pop = screen.getByTestId('filter-popover-nom')
+    expect(pop.className).toContain('popover-panel')
+    expect(pop.className.split(/\s+/)).not.toContain('dialog')
+  })
 })

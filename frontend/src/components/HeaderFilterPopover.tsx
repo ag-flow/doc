@@ -134,7 +134,7 @@ export function HeaderFilterPopover({ column, clause, onChange }: Props) {
 
       {open && (
         <div
-          className={`dialog elev-lg absolute z-20 mt-1 w-56 gap-2 p-3 text-left ${
+          className={`popover-panel elev-lg absolute z-20 mt-1 text-left ${
             alignRight ? 'right-0' : 'left-0'
           }`}
           data-testid={`filter-popover-${column.slug}`}

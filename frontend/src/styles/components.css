@@ -278,6 +278,20 @@ select.input { cursor: pointer; }
   background: var(--color-surface);
   box-shadow: var(--shadow-lg);
 }
+/* Popover ancré (filtres de colonne, menus contextuels) : à la DIFFÉRENCE de
+   `.dialog`, largeur FIXE et non `100%`. Un popover est monté dans un conteneur
+   `inline-block` réduit à son déclencheur (icône) ; un `width:100%` s'y
+   résoudrait contre cette largeur minuscule et effondrerait le panneau. */
+.popover-panel {
+  width: 224px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
 .dialog-title {
   font-family: var(--font-heading);
   font-weight: var(--font-heading-weight);
