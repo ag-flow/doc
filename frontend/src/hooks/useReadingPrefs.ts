@@ -18,7 +18,29 @@ import { prefsApi } from '../lib/api'
 export const READING_SCALE_STEPS = [
   0.3, 0.4, 0.5, 0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5, 3,
 ] as const
-export const DEFAULT_SCALE_STEP = 6
+/** Palier par défaut selon l'appareil : 100 % sur PC (index 6), 50 % sur mobile
+ *  (index 2 = 0.5) — un petit écran embrasse la page d'un coup d'œil. */
+export const DESKTOP_SCALE_STEP = 6
+export const MOBILE_SCALE_STEP = 2
+/** Défaut historique (desktop). Conservé pour clampStep et rétro-compat. */
+export const DEFAULT_SCALE_STEP = DESKTOP_SCALE_STEP
+
+/** Largeur au-delà de laquelle on considère un écran « mobile ». */
+const MOBILE_QUERY = '(max-width: 768px)'
+
+/** Vrai sur un viewport mobile. Prudent hors navigateur (SSR/jsdom sans
+ *  matchMedia) → desktop, pour ne jamais casser le rendu par défaut. */
+function isMobileViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia(MOBILE_QUERY).matches
+}
+
+/** Palier d'échelle par défaut, calculé à la volée selon l'appareil courant.
+ *  N'est utilisé que faute de préférence enregistrée ; une fois réglée, la
+ *  préférence de compte prime. */
+export function defaultScaleStep(): number {
+  return isMobileViewport() ? MOBILE_SCALE_STEP : DESKTOP_SCALE_STEP
+}
 
 const PREF_KEY = 'reading-prefs'
 const CACHE_KEY = 'docflow.reading-prefs'
@@ -43,7 +65,7 @@ function defaults(): ReadingPrefs {
   return {
     tocOpen: legacyToc !== '0',
     propsOpen: true,
-    scaleStep: DEFAULT_SCALE_STEP,
+    scaleStep: defaultScaleStep(),
   }
 }
 
@@ -169,7 +191,7 @@ export function useReadingPrefs(): UseReadingPrefs {
     setReadingMode: (on: boolean) => update({ tocOpen: !on, propsOpen: !on }),
     incScale: () => update((c) => ({ scaleStep: clampStep(c.scaleStep + 1) })),
     decScale: () => update((c) => ({ scaleStep: clampStep(c.scaleStep - 1) })),
-    resetScale: () => update({ scaleStep: DEFAULT_SCALE_STEP }),
+    resetScale: () => update({ scaleStep: defaultScaleStep() }),
     canInc: prefs.scaleStep < READING_SCALE_STEPS.length - 1,
     canDec: prefs.scaleStep > 0,
   }

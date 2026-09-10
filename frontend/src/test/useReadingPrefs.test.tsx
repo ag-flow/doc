@@ -15,6 +15,8 @@ import {
   useReadingPrefs,
   READING_SCALE_STEPS,
   DEFAULT_SCALE_STEP,
+  DESKTOP_SCALE_STEP,
+  MOBILE_SCALE_STEP,
 } from '../hooks/useReadingPrefs'
 
 function wrapper() {
@@ -24,10 +26,25 @@ function wrapper() {
   )
 }
 
+/** Simule un viewport mobile (ou non) via matchMedia (absent de jsdom). */
+function stubViewport(mobile: boolean) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: mobile,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }))
+}
+
 beforeEach(() => {
   localStorage.clear()
   document.documentElement.style.removeProperty('--reading-scale')
   vi.clearAllMocks()
+  vi.unstubAllGlobals()
   vi.mocked(prefsApi.get).mockResolvedValue({ key: 'reading-prefs', value: null })
   vi.mocked(prefsApi.set).mockResolvedValue({ key: 'reading-prefs', value: null })
 })
@@ -40,6 +57,39 @@ describe('useReadingPrefs', () => {
     expect(result.current.scaleStep).toBe(DEFAULT_SCALE_STEP)
     expect(result.current.scale).toBe(READING_SCALE_STEPS[DEFAULT_SCALE_STEP])
     expect(result.current.readingMode).toBe(false)
+  })
+
+  it('défaut mobile : échelle à 50 % (sans préférence enregistrée)', () => {
+    stubViewport(true)
+    const { result } = renderHook(() => useReadingPrefs(), { wrapper: wrapper() })
+    expect(result.current.scaleStep).toBe(MOBILE_SCALE_STEP)
+    expect(result.current.scale).toBe(0.5)
+  })
+
+  it('défaut desktop : échelle à 100 %', () => {
+    stubViewport(false)
+    const { result } = renderHook(() => useReadingPrefs(), { wrapper: wrapper() })
+    expect(result.current.scaleStep).toBe(DESKTOP_SCALE_STEP)
+    expect(result.current.scale).toBe(1)
+  })
+
+  it('une préférence enregistrée prime sur le défaut mobile', async () => {
+    stubViewport(true)
+    vi.mocked(prefsApi.get).mockResolvedValue({
+      key: 'reading-prefs',
+      value: { tocOpen: true, propsOpen: true, scaleStep: DESKTOP_SCALE_STEP },
+    })
+    const { result } = renderHook(() => useReadingPrefs(), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.scaleStep).toBe(DESKTOP_SCALE_STEP))
+  })
+
+  it('reset ramène au défaut de l’appareil courant (mobile → 50 %)', async () => {
+    stubViewport(true)
+    const { result } = renderHook(() => useReadingPrefs(), { wrapper: wrapper() })
+    act(() => result.current.incScale())
+    await waitFor(() => expect(result.current.scaleStep).toBe(MOBILE_SCALE_STEP + 1))
+    act(() => result.current.resetScale())
+    await waitFor(() => expect(result.current.scaleStep).toBe(MOBILE_SCALE_STEP))
   })
 
   it('reprend la préférence historique du sommaire (clé legacy) comme défaut', () => {
