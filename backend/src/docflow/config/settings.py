@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     # true = connexion locale FORCÉE active (panne OIDC) ; false = forcée
     # inactive. Ignorée tant qu'aucun utilisateur n'existe (setup wizard).
     local_login_enabled: bool | None = None
+    # ── Sessions serveur opaques (remplace le jeton HS256 de l'IHM) ──
+    # Fenêtre d'inactivité : glisse à chaque requête authentifiée, ferme les
+    # sessions oubliées.
+    session_idle_ttl_seconds: int = 12 * 3600
+    # Plafond absolu depuis l'instant d'authentification, INDÉPENDANT de
+    # l'activité : force une réauthentification périodique (donc une ré-évaluation
+    # des droits). Sans lui, une session active en permanence ne se referme jamais.
+    session_absolute_ttl_seconds: int = 24 * 3600
+    # Pose l'attribut Secure sur le cookie de session. Fail closed : par défaut le
+    # cookie n'est jamais renvoyé en clair. Un déploiement en http DOIT poser false
+    # explicitement (dev-deploy.sh le fait pour la machine de test) — l'oubli penche
+    # du bon côté : une connexion qui ne s'établit pas se voit, un cookie servi sans
+    # Secure non.
+    session_cookie_secure: bool = True
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.

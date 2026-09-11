@@ -6,7 +6,7 @@ import asyncpg
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from docflow.auth.jwt import decode_token, user_id_from_claims
+from docflow.auth.sessions import resolve_session_user_id, session_cookie_name
 from docflow.schemas.auth import AuthUser
 
 _bearer = HTTPBearer(auto_error=False)
@@ -22,29 +22,7 @@ def _pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
-def _jwt_secret(request: Request) -> str:
-    secret: str = request.app.state.settings.jwt_secret.reveal()
-    return secret
-
-
-async def _resolve_jwt(request: Request, credentials: HTTPAuthorizationCredentials) -> AuthUser:
-    try:
-        claims = decode_token(credentials.credentials, _jwt_secret(request))
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="token invalide ou expiré") from exc
-
-    user_id: uuid.UUID = user_id_from_claims(claims)
-    pool: asyncpg.Pool = _pool(request)
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(_SELECT_USER, user_id)
-
-    if row is None or row["disabled"]:
-        raise HTTPException(status_code=401, detail="compte désactivé ou introuvable")
-
-    if not row["validated"]:
-        raise HTTPException(status_code=403, detail="PendingValidation")
-
+def _user_from_row(row: asyncpg.Record) -> AuthUser:
     return AuthUser(
         id=row["id"],
         email=row["email"],
@@ -53,6 +31,38 @@ async def _resolve_jwt(request: Request, credentials: HTTPAuthorizationCredentia
         validated=row["validated"],
         disabled=row["disabled"],
     )
+
+
+async def _resolve_session(request: Request) -> AuthUser:
+    """Résout l'utilisateur depuis le cookie de session opaque.
+
+    La décision vit EN BASE : révocation, inactivité glissante et plafond absolu
+    s'appliquent ici — pas dans un jeton qu'on ne peut plus rattraper une fois
+    émis. C'est le remplacement du JWT HS256 (sortie du modèle « docflow émet
+    ses propres jetons »).
+    """
+    token = request.cookies.get(session_cookie_name())
+    if not token:
+        raise HTTPException(status_code=401, detail="authentification requise")
+
+    settings = request.app.state.settings
+    pool = _pool(request)
+    async with pool.acquire() as conn:
+        user_id: uuid.UUID | None = await resolve_session_user_id(
+            conn,
+            token,
+            idle_ttl_seconds=settings.session_idle_ttl_seconds,
+            absolute_ttl_seconds=settings.session_absolute_ttl_seconds,
+        )
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="session invalide ou expirée")
+        row = await conn.fetchrow(_SELECT_USER, user_id)
+
+    if row is None or row["disabled"]:
+        raise HTTPException(status_code=401, detail="compte désactivé ou introuvable")
+    if not row["validated"]:
+        raise HTTPException(status_code=403, detail="PendingValidation")
+    return _user_from_row(row)
 
 
 async def _resolve_api_key(request: Request, credentials: HTTPAuthorizationCredentials) -> AuthUser:
@@ -68,18 +78,17 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> AuthUser:
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="token manquant")
+    """Deux moyens d'authentification, explicitement distincts :
 
-    # Routage par forme de token : un JWT contient toujours deux points
-    # (header.payload.signature), une clé API (token_urlsafe) jamais. Router
-    # sur la forme plutôt que sur le seul préfixe dfk_ évite qu'une clé d'un
-    # autre préfixe parte en décodage JWT avec un 401 trompeur
-    # (« token invalide ou expiré » au lieu de « clé API invalide »).
-    if "." not in credentials.credentials:
+    - **En-tête `Authorization: Bearer`** = clé API (machine). docflow n'émet
+      plus de jeton porteur : un JWT présenté ici est traité comme une clé API,
+      donc refusé (« clé API invalide »). La validation d'un jeton IdP arrivera
+      avec l'enabler MCP OAuth 2.1.
+    - **Cookie de session** = IHM humaine (session serveur opaque révocable).
+    """
+    if credentials is not None:
         return await _resolve_api_key(request, credentials)
-
-    return await _resolve_jwt(request, credentials)
+    return await _resolve_session(request)
 
 
 async def require_authenticated(

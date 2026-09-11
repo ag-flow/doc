@@ -4,7 +4,6 @@ import asyncpg
 import structlog
 from fastapi import HTTPException
 
-from docflow.auth.jwt import create_token
 from docflow.config.settings import Settings
 from docflow.oidc.verify import OidcVerifyError, exchange_code, fetch_discovery, verify_id_token
 from docflow.schemas.auth import AuthUser
@@ -122,8 +121,12 @@ async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfig
     return _to_out(row)
 
 
-async def handle_oidc_callback(pool: asyncpg.Pool, settings: Settings, body: OidcCallbackIn) -> str:
-    """Flow authorization-code : échange le code, vérifie l'id_token, émet un JWT docflow.
+async def handle_oidc_callback(
+    pool: asyncpg.Pool, settings: Settings, body: OidcCallbackIn
+) -> AuthUser:
+    """Flow authorization-code : échange le code, vérifie l'id_token, provisionne
+    l'app_user et le renvoie. N'émet PLUS de jeton : le routeur ouvre une session
+    serveur et pose le cookie (sortie du modèle « docflow émet ses propres jetons »).
 
     Aucun claim n'est accepté sans vérification serveur de la signature de
     l'id_token contre le JWKS de l'issuer configuré (AUTH-01).
@@ -157,13 +160,14 @@ async def handle_oidc_callback(pool: asyncpg.Pool, settings: Settings, body: Oid
         # Le message d'OidcVerifyError ne contient ni token, ni claims, ni secret.
         log.warning("oidc_callback_rejected", reason=str(exc))
         raise HTTPException(status_code=401, detail="échec de vérification OIDC") from exc
-    return await issue_token_for_verified_claims(pool, settings.jwt_secret.reveal(), claims)
+    return await provision_user_for_verified_claims(pool, claims)
 
 
-async def issue_token_for_verified_claims(
-    pool: asyncpg.Pool, jwt_secret: str, id_token_claims: dict[str, object]
-) -> str:
-    """Provisionne ou lie l'app_user depuis des claims OIDC **déjà vérifiés**.
+async def provision_user_for_verified_claims(
+    pool: asyncpg.Pool, id_token_claims: dict[str, object]
+) -> AuthUser:
+    """Provisionne ou lie l'app_user depuis des claims OIDC **déjà vérifiés**, et
+    renvoie l'utilisateur (l'ouverture de session est faite par l'appelant).
 
     Ne jamais appeler avec des claims non vérifiés : la vérification de
     signature/iss/aud/exp est faite en amont par `handle_oidc_callback`.
@@ -249,7 +253,7 @@ async def issue_token_for_verified_claims(
         disabled=user_row["disabled"],
     )
     await pool.execute("UPDATE app_user SET last_login_at = now() WHERE id = $1", user.id)
-    return create_token(user, jwt_secret)
+    return user
 
 
 async def resolve_client_secret(

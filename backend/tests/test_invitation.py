@@ -24,7 +24,10 @@ def _admin(client: TestClient) -> dict[str, str]:
         json={"username": "inviter", "email": _ADMIN, "password": _PW},
     )
     login = client.post("/api/auth/login", json={"email": _ADMIN, "password": _PW})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert login.status_code == 200, login.text
+    token = client.cookies.get("docflow_session")
+    client.cookies.clear()
+    return {"docflow_session": token}
 
 
 def test_invitation_full_flow(
@@ -36,7 +39,7 @@ def test_invitation_full_flow(
         r = client.post(
             "/api/admin/users/invite",
             json={"email": "nouvelle@example.com", "label": "Nouvelle Venue"},
-            headers=admin,
+            cookies=admin,
         )
         assert r.status_code == 201, r.text
         path = r.json()["invite_path"]
@@ -79,7 +82,7 @@ def test_invitation_guards(
         assert client.post(
             "/api/admin/users/invite",
             json={"email": _ADMIN, "label": "Doublon"},
-            headers=admin,
+            cookies=admin,
         ).status_code == 409
         # Créer une invitation exige le rôle superadmin.
         assert client.post(

@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import uuid
-
 import asyncpg
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from docflow.app import app
-from docflow.auth.jwt import create_token
 from docflow.errors import DependentsConflictError
-from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
 from docflow.types import service as type_svc
 
@@ -21,13 +17,6 @@ _BASE_ENV = {
     "JWT_SECRET": _JWT_SECRET,
 }
 _WS = "test-ws"
-
-
-def _admin_token(user_id: uuid.UUID) -> str:
-    user = AuthUser(
-        id=user_id, email="a@b.com", label="L", is_admin=True, validated=True, disabled=False
-    )
-    return create_token(user, _JWT_SECRET)
 
 
 def _client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient:
@@ -169,8 +158,8 @@ async def test_types_crud_via_http(
         login = client.post(
             "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
         )
-        token = login.json()["access_token"]
-        hdrs = {"Authorization": f"Bearer {token}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
 
         r = client.post(
             f"/api/workspaces/{_WS}/types",
@@ -208,7 +197,8 @@ async def test_delete_type_confirm_guard_via_http(
         login = client.post(
             "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
         )
-        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
 
         base = f"/api/workspaces/{_WS}/types"
         assert (

@@ -31,7 +31,8 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     )
     assert setup.status_code == 201, setup.text
     login = client.post("/api/auth/login", json={"email": _EMAIL, "password": _PW})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert login.status_code == 200, login.text
+    return {}  # TestClient garde le cookie de session dans son jar
 
 
 def test_datasets_require_auth(

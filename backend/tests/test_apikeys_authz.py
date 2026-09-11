@@ -34,7 +34,9 @@ def _client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient
 def _login(client: TestClient, email: str) -> dict[str, str]:
     login = client.post("/api/auth/login", json={"email": email, "password": _PW})
     assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    token = client.cookies.get("docflow_session")
+    client.cookies.clear()
+    return {"docflow_session": token}
 
 
 def _setup_users(client: TestClient, test_schema_url: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -47,7 +49,7 @@ def _setup_users(client: TestClient, test_schema_url: str) -> tuple[dict[str, st
     r = client.post(
         "/api/admin/users",
         json={"email": _USER, "label": "AK Authz User", "password": _PW},
-        headers=admin,
+        cookies=admin,
     )
     assert r.status_code in (200, 201), r.text
 
@@ -74,7 +76,7 @@ def test_non_admin_ne_peut_pas_creer_profil_admin(
         r = client.post(
             "/api/user/api-profiles",
             json={"name": "escalade", "is_admin": True},
-            headers=user,
+            cookies=user,
         )
         assert r.status_code == 403, r.text
 
@@ -85,15 +87,15 @@ def test_non_admin_ne_peut_pas_promouvoir_profil(
     with _client(monkeypatch, test_schema_url) as client:
         _, user = _setup_users(client, test_schema_url)
         created = client.post(
-            "/api/user/api-profiles", json={"name": "normal-puis-admin"}, headers=user
+            "/api/user/api-profiles", json={"name": "normal-puis-admin"}, cookies=user
         )
         assert created.status_code == 201, created.text
         pid = created.json()["id"]
 
-        r = client.patch(f"/api/user/api-profiles/{pid}", json={"is_admin": True}, headers=user)
+        r = client.patch(f"/api/user/api-profiles/{pid}", json={"is_admin": True}, cookies=user)
         assert r.status_code == 403, r.text
 
-        detail = client.get(f"/api/user/api-profiles/{pid}", headers=user)
+        detail = client.get(f"/api/user/api-profiles/{pid}", cookies=user)
         assert detail.json()["is_admin"] is False
 
 
@@ -103,13 +105,13 @@ def test_non_admin_profil_normal_reste_autorise(
     """Non-régression : le cas nominal (profil non-admin) n'est pas cassé."""
     with _client(monkeypatch, test_schema_url) as client:
         _, user = _setup_users(client, test_schema_url)
-        created = client.post("/api/user/api-profiles", json={"name": "nominal"}, headers=user)
+        created = client.post("/api/user/api-profiles", json={"name": "nominal"}, cookies=user)
         assert created.status_code == 201, created.text
         assert created.json()["is_admin"] is False
         pid = created.json()["id"]
 
         renamed = client.patch(
-            f"/api/user/api-profiles/{pid}", json={"name": "nominal-2"}, headers=user
+            f"/api/user/api-profiles/{pid}", json={"name": "nominal-2"}, cookies=user
         )
         assert renamed.status_code == 200, renamed.text
         assert renamed.json()["name"] == "nominal-2"
@@ -123,7 +125,7 @@ def test_superadmin_peut_creer_profil_admin(
         r = client.post(
             "/api/user/api-profiles",
             json={"name": "profil-admin", "is_admin": True},
-            headers=admin,
+            cookies=admin,
         )
         assert r.status_code == 201, r.text
         assert r.json()["is_admin"] is True

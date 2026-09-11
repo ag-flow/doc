@@ -245,7 +245,8 @@ async def test_rest_tree_endpoint(
         login = client.post(
             "/api/auth/login", json={"email": "boot@example.com", "password": "boot_pw_123"}
         )
-        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
         resp = client.get(
             f"/api/workspaces/{_WS}/blocks/tree/tree",
             headers=hdrs,
@@ -261,7 +262,8 @@ async def test_rest_tree_endpoint(
         login = client.post(
             "/api/auth/login", json={"email": "boot@example.com", "password": "boot_pw_123"}
         )
-        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
         # Tri title desc via l'API.
         ordered = client.get(
             f"/api/workspaces/{_WS}/blocks/tree/tree",

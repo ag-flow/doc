@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from docflow.admin.users import service
 from docflow.auth.deps import require_superadmin
+from docflow.auth.sessions import revoke_all_sessions_for_user
 from docflow.schemas.admin_user import (
     AdminUserCreate,
     AdminUserOut,
@@ -70,3 +71,15 @@ async def set_password(
     _: AuthUser = _SuperAdmin,
 ) -> AdminUserOut:
     return await service.set_password(request.app.state.pool, user_id, body.password)
+
+
+@router.post("/{user_id}/sessions/revoke")
+async def revoke_sessions(
+    user_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
+) -> dict[str, int]:
+    """Révoque toutes les sessions actives d'un utilisateur (compromission).
+    Rend le nombre de sessions coupées — zéro est une information utile."""
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        revoked = await revoke_all_sessions_for_user(conn, user_id)
+    return {"revoked": revoked}

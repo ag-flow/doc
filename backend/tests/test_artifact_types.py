@@ -116,16 +116,13 @@ def _setup(client: TestClient, test_schema_url: str) -> tuple[dict[str, str], di
         "/api/setup/init-admin",
         json={"username": "atadmin", "email": _ADMIN, "password": _PW},
     )
-    admin = {
-        "Authorization": "Bearer "
-        + client.post(
-            "/api/auth/login", json={"email": _ADMIN, "password": _PW}
-        ).json()["access_token"]
-    }
+    client.post("/api/auth/login", json={"email": _ADMIN, "password": _PW})
+    admin = {"docflow_session": client.cookies.get("docflow_session")}
+    client.cookies.clear()
     client.post(
         "/api/admin/users",
         json={"email": _USER, "label": "AT User", "password": _PW},
-        headers=admin,
+        cookies=admin,
     )
 
     async def _validate() -> None:
@@ -138,12 +135,9 @@ def _setup(client: TestClient, test_schema_url: str) -> tuple[dict[str, str], di
             await conn.close()
 
     asyncio.run(_validate())
-    user = {
-        "Authorization": "Bearer "
-        + client.post(
-            "/api/auth/login", json={"email": _USER, "password": _PW}
-        ).json()["access_token"]
-    }
+    client.post("/api/auth/login", json={"email": _USER, "password": _PW})
+    user = {"docflow_session": client.cookies.get("docflow_session")}
+    client.cookies.clear()
     return admin, user
 
 
@@ -154,7 +148,7 @@ def test_read_authenticated_write_admin_only(
         admin, user = _setup(client, test_schema_url)
 
         # Lecture : utilisateur validé OK.
-        r = client.get("/api/artifact-types", headers=user)
+        r = client.get("/api/artifact-types", cookies=user)
         assert r.status_code == 200
         assert any(t["extension"] == "pdf" for t in r.json())
 
@@ -163,7 +157,7 @@ def test_read_authenticated_write_admin_only(
             client.post(
                 "/api/admin/artifact-types",
                 json={"extension": "heic", "media_type": "image/heic", "label": "HEIC"},
-                headers=user,
+                cookies=user,
             ).status_code
             == 403
         )
@@ -172,17 +166,17 @@ def test_read_authenticated_write_admin_only(
         created = client.post(
             "/api/admin/artifact-types",
             json={"extension": "heic", "media_type": "image/heic", "label": "HEIC"},
-            headers=admin,
+            cookies=admin,
         )
         assert created.status_code == 201, created.text
-        assert client.delete("/api/admin/artifact-types/heic", headers=admin).status_code == 204
+        assert client.delete("/api/admin/artifact-types/heic", cookies=admin).status_code == 204
 
         # Denylist via l'API.
         assert (
             client.post(
                 "/api/admin/artifact-types",
                 json={"extension": "htm", "media_type": "text/html", "label": "x"},
-                headers=admin,
+                cookies=admin,
             ).status_code
             == 422
         )

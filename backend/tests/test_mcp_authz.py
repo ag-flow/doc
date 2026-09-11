@@ -284,5 +284,5 @@ def test_mcp_endpoints_montes_et_proteges(monkeypatch: pytest.MonkeyPatch) -> No
     client = TestClient(app)  # sans lifespan : pas de DB requise pour le 401
     r_sse = client.get("/api/mcp/sse")
     r_msg = client.post("/api/mcp/messages?session_id=deadbeef")
-    assert (r_sse.status_code, r_sse.json()["detail"]) == (401, "token manquant")
-    assert (r_msg.status_code, r_msg.json()["detail"]) == (401, "token manquant")
+    assert (r_sse.status_code, r_sse.json()["detail"]) == (401, "authentification requise")
+    assert (r_msg.status_code, r_msg.json()["detail"]) == (401, "authentification requise")

@@ -31,7 +31,9 @@ def _client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient
 def _login(client: TestClient, email: str) -> dict[str, str]:
     login = client.post("/api/auth/login", json={"email": email, "password": _PW})
     assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    token = client.cookies.get("docflow_session")
+    client.cookies.clear()  # jar propre : auth explicite par requete (multi-identite)
+    return {"docflow_session": token}
 
 
 def _setup_users_and_ws(client: TestClient, test_schema_url: str) -> dict[str, str]:
@@ -44,7 +46,7 @@ def _setup_users_and_ws(client: TestClient, test_schema_url: str) -> dict[str, s
     client.post(
         "/api/admin/users",
         json={"email": _USER, "label": "Rest User", "password": _PW},
-        headers=admin,
+        cookies=admin,
     )
 
     async def _fix() -> None:
@@ -57,7 +59,7 @@ def _setup_users_and_ws(client: TestClient, test_schema_url: str) -> dict[str, s
             await conn.close()
 
     asyncio.run(_fix())
-    r = client.post("/api/workspaces", json={"slug": _WS, "label": "ACL WS"}, headers=admin)
+    r = client.post("/api/workspaces", json={"slug": _WS, "label": "ACL WS"}, cookies=admin)
     assert r.status_code == 201, r.text
     return admin
 
@@ -70,16 +72,16 @@ def test_rest_access_member_vs_non_member(
         user = _login(client, _USER)
 
         # Superadmin : accès complet, liste complète.
-        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=admin).status_code == 200
-        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=admin).json())
+        assert client.get(f"/api/workspaces/{_WS}/blocks", cookies=admin).status_code == 200
+        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", cookies=admin).json())
 
         # Non-membre : le workspace est INVISIBLE (liste) et 404 (ressources).
-        assert not any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json())
-        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=user).status_code == 404
-        assert client.get(f"/api/workspaces/{_WS}/types", headers=user).status_code == 404
-        assert client.get(f"/api/workspaces/{_WS}/automations", headers=user).status_code == 404
-        assert client.get(f"/api/workspaces/{_WS}/datasets", headers=user).status_code == 404
-        assert client.get(f"/api/workspaces/{_WS}", headers=user).status_code == 404
+        assert not any(w["slug"] == _WS for w in client.get("/api/workspaces", cookies=user).json())
+        assert client.get(f"/api/workspaces/{_WS}/blocks", cookies=user).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}/types", cookies=user).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}/automations", cookies=user).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}/datasets", cookies=user).status_code == 404
+        assert client.get(f"/api/workspaces/{_WS}", cookies=user).status_code == 404
 
         # Devenu MEMBRE : accès complet + visible dans la liste.
         async def _add_member() -> None:
@@ -96,9 +98,9 @@ def test_rest_access_member_vs_non_member(
                 await conn.close()
 
         asyncio.run(_add_member())
-        assert client.get(f"/api/workspaces/{_WS}/blocks", headers=user).status_code == 200
-        assert client.get(f"/api/workspaces/{_WS}", headers=user).status_code == 200
-        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", headers=user).json())
+        assert client.get(f"/api/workspaces/{_WS}/blocks", cookies=user).status_code == 200
+        assert client.get(f"/api/workspaces/{_WS}", cookies=user).status_code == 200
+        assert any(w["slug"] == _WS for w in client.get("/api/workspaces", cookies=user).json())
 
 
 def test_rest_access_unknown_ws_keeps_usual_404(
@@ -108,7 +110,7 @@ def test_rest_access_unknown_ws_keeps_usual_404(
         _setup_users_and_ws(client, test_schema_url)
         user = _login(client, _USER)
         # Workspace inexistant : 404 habituel (aucune fuite de différenciation).
-        assert client.get("/api/workspaces/nope-ws/blocks", headers=user).status_code == 404
+        assert client.get("/api/workspaces/nope-ws/blocks", cookies=user).status_code == 404
 
 
 def test_global_search_scoped_to_accessible_workspaces(
@@ -150,7 +152,7 @@ def test_global_search_scoped_to_accessible_workspaces(
         asyncio.run(_seed())
 
         # Superadmin : trouve le document, avec workspace (slug ET nom) et bloc.
-        r = client.get("/api/search/documents?q=rapport", headers=admin)
+        r = client.get("/api/search/documents?q=rapport", cookies=admin)
         assert r.status_code == 200
         hits = r.json()
         assert [h["title"] for h in hits] == ["Rapport annuel"]
@@ -164,7 +166,7 @@ def test_global_search_scoped_to_accessible_workspaces(
         assert hits[0]["version"] >= 1
 
         # Non-membre : rien (fail closed), pas d'erreur.
-        r = client.get("/api/search/documents?q=rapport", headers=user)
+        r = client.get("/api/search/documents?q=rapport", cookies=user)
         assert r.status_code == 200
         assert r.json() == []
 
@@ -173,7 +175,7 @@ def test_global_search_scoped_to_accessible_workspaces(
 
         # ── Locate (résolution des liens docflow://doc/{id}) : même périmètre ──
         doc_id = hits[0]["id"]
-        r = client.get(f"/api/documents/locate/{doc_id}", headers=admin)
+        r = client.get(f"/api/documents/locate/{doc_id}", cookies=admin)
         assert r.status_code == 200
         loc = r.json()
         assert loc["workspace_slug"] == _WS
@@ -181,9 +183,9 @@ def test_global_search_scoped_to_accessible_workspaces(
         assert loc["title"] == "Rapport annuel"
 
         # Non-membre : 404 — même réponse qu'un id inconnu, aucun oracle.
-        assert client.get(f"/api/documents/locate/{doc_id}", headers=user).status_code == 404
+        assert client.get(f"/api/documents/locate/{doc_id}", cookies=user).status_code == 404
         unknown = "00000000-0000-0000-0000-000000000000"
-        assert client.get(f"/api/documents/locate/{unknown}", headers=admin).status_code == 404
+        assert client.get(f"/api/documents/locate/{unknown}", cookies=admin).status_code == 404
 
         # Sans token : refusé.
         assert client.get(f"/api/documents/locate/{doc_id}").status_code == 401
@@ -191,17 +193,17 @@ def test_global_search_scoped_to_accessible_workspaces(
 
 def _make_api_key(client: TestClient, headers: dict[str, str], profile_name: str) -> str:
     """Crée un profil scopé sur ``_WS`` et génère une clé ; retourne le Bearer brut."""
-    created = client.post("/api/user/api-profiles", json={"name": profile_name}, headers=headers)
+    created = client.post("/api/user/api-profiles", json={"name": profile_name}, cookies=headers)
     assert created.status_code == 201, created.text
     pid = created.json()["id"]
     r = client.put(
         f"/api/user/api-profiles/{pid}/scopes",
         json={"scopes": [{"workspace_slug": _WS, "block_slug": None, "read_only": True}]},
-        headers=headers,
+        cookies=headers,
     )
     assert r.status_code == 200, r.text
     key = client.post(
-        "/api/user/api-keys", json={"profile_id": pid, "label": profile_name}, headers=headers
+        "/api/user/api-keys", json={"profile_id": pid, "label": profile_name}, cookies=headers
     )
     assert key.status_code == 201, key.text
     raw: str = key.json()["key"]
@@ -265,7 +267,7 @@ def test_api_key_proprietaire_superadmin_bypass(
         assert client.get(f"/api/workspaces/{_WS}/blocks", headers=key_headers).status_code == 200
         assert client.get(f"/api/workspaces/{_WS}", headers=key_headers).status_code == 200
         # Hors scope de la clé : refus par check_api_key_scope, inchangé.
-        r = client.post("/api/workspaces", json={"slug": "autre-ws", "label": "X"}, headers=admin)
+        r = client.post("/api/workspaces", json={"slug": "autre-ws", "label": "X"}, cookies=admin)
         assert r.status_code == 201, r.text
         assert client.get("/api/workspaces/autre-ws", headers=key_headers).status_code == 403
 
@@ -278,8 +280,8 @@ def test_global_automations_admin_only(
         admin = _setup_users_and_ws(client, test_schema_url)
         user = _login(client, _USER)
 
-        assert client.get("/api/automations", headers=admin).status_code == 200
-        assert client.get("/api/automations", headers=user).status_code == 403
+        assert client.get("/api/automations", cookies=admin).status_code == 200
+        assert client.get("/api/automations", cookies=user).status_code == 403
         assert client.get("/api/automations").status_code == 401
 
 
@@ -297,12 +299,12 @@ def test_push_events_refuse_workspace_non_accessible(
         body = {"selections": [{"workspace_slug": _WS, "block_slugs": []}]}
 
         # Non-membre : refusé (fail closed, comme les routes /workspaces/{ws}/…).
-        r = client.post("/api/automations/push-events", json=body, headers=user)
+        r = client.post("/api/automations/push-events", json=body, cookies=user)
         assert r.status_code == 404, r.text
 
         # Superadmin : autorisé (non-régression du cas nominal).
         assert (
-            client.post("/api/automations/push-events", json=body, headers=admin).status_code == 200
+            client.post("/api/automations/push-events", json=body, cookies=admin).status_code == 200
         )
 
 
@@ -322,11 +324,11 @@ def test_admin_routers_refusent_un_utilisateur_non_admin(
         user = _login(client, _USER)
 
         for path in ("/api/admin/backup/jobs", "/api/admin/remote/points", "/api/admin/contracts"):
-            assert client.get(path, headers=user).status_code == 403, path
+            assert client.get(path, cookies=user).status_code == 403, path
             # Non-régression : le superadmin garde l'accès.
-            assert client.get(path, headers=admin).status_code == 200, path
+            assert client.get(path, cookies=admin).status_code == 200, path
 
         # Écriture : la création d'un remote point (destination d'exfiltration)
         # est refusée avant toute validation de corps.
-        r = client.post("/api/admin/remote/points", json={}, headers=user)
+        r = client.post("/api/admin/remote/points", json={}, cookies=user)
         assert r.status_code == 403, r.text

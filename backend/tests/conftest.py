@@ -125,6 +125,14 @@ def clean_admin_users(test_schema_url: str, apply_migrations: None) -> Iterator[
     yield
 
 
+@pytest.fixture(autouse=True)
+def _session_cookie_insecure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le TestClient parle en http:// : un cookie Secure ne serait jamais renvoyé
+    et l'auth par session échouerait. On force donc secure=false en test (comme
+    dev-deploy.sh le fait pour la machine de test http)."""
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+
+
 @pytest.fixture()
 async def test_workspace(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
     """Create a workspace for M3/M4+ tests; delete it (+ cascade) after the test."""
