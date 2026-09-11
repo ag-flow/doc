@@ -73,8 +73,10 @@ export function Login() {
     setPendingValidation(false)
     setLoading(true)
     try {
-      const res = await api.post<{ access_token: string }>('/auth/login', { email, password })
-      setToken(res.access_token)
+      // Le serveur pose un cookie de session HttpOnly ; le corps porte le profil,
+      // plus aucun jeton. On marque juste l'UI comme authentifiée.
+      const user = await api.post<{ is_admin: boolean }>('/auth/login', { email, password })
+      setToken(user.is_admin)
       navigate('/')
     } catch (err: unknown) {
       const detail = (err as { detail?: string }).detail

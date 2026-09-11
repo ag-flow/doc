@@ -53,7 +53,7 @@ describe('Login', () => {
   })
 
   it('calls api.post on submit and sets token', async () => {
-    vi.mocked(api.post).mockResolvedValue({ access_token: 'tok-123' })
+    vi.mocked(api.post).mockResolvedValue({ is_admin: false })
     render(
       <MemoryRouter>
         <Login />
@@ -62,7 +62,7 @@ describe('Login', () => {
     fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByTestId('submit-button'))
-    await waitFor(() => expect(setToken).toHaveBeenCalledWith('tok-123'))
+    await waitFor(() => expect(setToken).toHaveBeenCalled())
     expect(mockNavigate).toHaveBeenCalledWith('/')
   })
 
@@ -105,7 +105,7 @@ describe('Login', () => {
     await waitFor(() => expect(beginOidcLogin).toHaveBeenCalledTimes(1))
   })
   it('la touche Entrée dans un champ valide le formulaire', async () => {
-    vi.mocked(api.post).mockResolvedValue({ access_token: 'tok-enter' })
+    vi.mocked(api.post).mockResolvedValue({ is_admin: false })
     render(
       <MemoryRouter>
         <Login />
@@ -116,7 +116,7 @@ describe('Login', () => {
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
     // Submit natif du formulaire (ce que produit Entrée dans un input)
     fireEvent.submit(email.closest('form')!)
-    await waitFor(() => expect(setToken).toHaveBeenCalledWith('tok-enter'))
+    await waitFor(() => expect(setToken).toHaveBeenCalled())
   })
 
   it('l’erreur est annoncée (role=alert), sous le champ mot de passe, et le marque invalide', async () => {

@@ -60,12 +60,12 @@ export function SetupForm() {
         email: result.data.email,
         password: result.data.password,
       })
-      // Connexion immédiate après création
-      const res = await api.post<{ access_token: string }>('/auth/login', {
+      // Connexion immédiate après création (cookie de session posé par le serveur).
+      const user = await api.post<{ is_admin: boolean }>('/auth/login', {
         email: result.data.email,
         password: result.data.password,
       })
-      setToken(res.access_token)
+      setToken(user.is_admin)
       navigate('/')
     } catch (err: unknown) {
       const status = (err as { status?: number }).status

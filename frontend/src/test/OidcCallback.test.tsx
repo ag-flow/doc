@@ -28,14 +28,14 @@ describe('OidcCallback', () => {
     vi.clearAllMocks()
   })
 
-  it('stores the token and navigates home on success', async () => {
-    vi.mocked(completeOidcCallback).mockResolvedValue('tok-oidc')
+  it('marks the UI authed and navigates home on success', async () => {
+    vi.mocked(completeOidcCallback).mockResolvedValue({ is_admin: false })
     render(
       <MemoryRouter>
         <OidcCallback />
       </MemoryRouter>,
     )
-    await waitFor(() => expect(setToken).toHaveBeenCalledWith('tok-oidc'))
+    await waitFor(() => expect(setToken).toHaveBeenCalled())
     expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true })
   })
 

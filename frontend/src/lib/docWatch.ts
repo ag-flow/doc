@@ -6,7 +6,7 @@
  * (1 s → 30 s). Le serveur émet l'état courant dès la connexion (test de vie)
  * et un keep-alive commenté ; `gone` termine le suivi (document supprimé).
  */
-import { apiUrl, getToken } from './api'
+import { apiUrl } from './api'
 
 export interface DocWatchEvent {
   document_id: string
@@ -57,9 +57,9 @@ export function watchDocument(
   const run = async () => {
     while (!stopped) {
       try {
-        const token = getToken()
         const res = await fetch(apiUrl(`/workspaces/${ws}/documents/${docId}/watch`), {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          // Le cookie de session HttpOnly accompagne la requête (même origine).
+          credentials: 'include',
           signal: controller.signal,
         })
         if (!res.ok || !res.body) throw new Error(`watch ${res.status}`)

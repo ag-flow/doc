@@ -5,7 +5,7 @@ import {
   UserCircle, FileCode, Password, Layout, UsersThree, Key, ShieldCheck, Broadcast,
   PlugsConnected, Paperclip, SignOut, type Icon,
 } from '@phosphor-icons/react'
-import { clearToken, isSuperAdmin } from '../lib/api'
+import { api, clearToken, isSuperAdmin } from '../lib/api'
 
 /**
  * Rail de navigation : encre pleine, 56px, icônes duotone sans libellé
@@ -54,7 +54,15 @@ export function AppRail() {
   const wsSlug = useMatch('/ws/:wsSlug/*')?.params.wsSlug ?? null
   const blocSlug = useMatch('/ws/:wsSlug/blocs/:blocSlug/*')?.params.blocSlug ?? null
 
-  function logout() {
+  async function logout() {
+    // Révoque la session EN BASE côté serveur (un cookie copié cesse de valoir),
+    // puis efface le cookie et l'indice d'UI. Best-effort : on nettoie et redirige
+    // même si l'appel échoue (hors ligne).
+    try {
+      await api.post('/auth/logout', {})
+    } catch {
+      /* ignore : on nettoie côté client de toute façon */
+    }
     clearToken()
     queryClient.clear()
     void navigate('/login')

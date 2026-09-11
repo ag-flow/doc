@@ -52,7 +52,9 @@ export async function beginOidcLogin(): Promise<void> {
 
 /** Termine le flow au retour de l'issuer : vérifie le state, poste le code au
  *  backend, retourne le JWT docflow. Le state/nonce sont consommés (one-shot). */
-export async function completeOidcCallback(params: URLSearchParams): Promise<string> {
+export async function completeOidcCallback(
+  params: URLSearchParams,
+): Promise<{ is_admin: boolean }> {
   const expectedState = sessionStorage.getItem(STATE_KEY)
   const nonce = sessionStorage.getItem(NONCE_KEY)
   sessionStorage.removeItem(STATE_KEY)
@@ -67,10 +69,11 @@ export async function completeOidcCallback(params: URLSearchParams): Promise<str
     throw new OidcFlowError('state OIDC absent ou invalide')
   }
 
-  const res = await oidcLoginApi.callback({
+  // Le serveur vérifie l'id_token, ouvre une session et pose le cookie ; le corps
+  // porte le profil (dont is_admin), plus aucun jeton à récupérer.
+  return await oidcLoginApi.callback({
     code,
     redirect_uri: oidcRedirectUri(),
     ...(nonce ? { nonce } : {}),
   })
-  return res.access_token
 }

@@ -1,17 +1,30 @@
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') + '/api'
 
-const TOKEN_KEY = 'docflow_token'
+// L'authentification réelle est un cookie de session HttpOnly, illisible en JS
+// (posé/effacé par le serveur). Ce drapeau localStorage n'est qu'un INDICE d'UI
+// pour le routage (afficher la mire vs l'app) — aucune valeur sensible. S'il est
+// périmé, l'API répond 401 et `handleUnauthorized` redirige vers /login.
+const AUTHED_KEY = 'docflow_authed'
+// Indice d'UI du rôle admin (afficher/masquer les liens d'administration). PAS
+// une décision de sécurité : le serveur revalide is_admin à chaque requête admin.
+const ADMIN_KEY = 'docflow_is_admin'
 
+/** Indice d'UI « une session est censée être ouverte » (pas un jeton). */
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return localStorage.getItem(AUTHED_KEY)
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
+/** Marque l'UI comme authentifiée après un login réussi (le cookie fait foi),
+ *  et mémorise le rôle admin retourné pour le routage/affichage. */
+export function setToken(isAdmin = false): void {
+  localStorage.setItem(AUTHED_KEY, '1')
+  if (isAdmin) localStorage.setItem(ADMIN_KEY, '1')
+  else localStorage.removeItem(ADMIN_KEY)
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(AUTHED_KEY)
+  localStorage.removeItem(ADMIN_KEY)
 }
 
 /** Erreur HTTP enrichie : porte le code statut et le corps `detail` brut. */
@@ -66,13 +79,12 @@ function detailMessage(detail: unknown, fallback: string): string {
 }
 
 async function requestText(path: string, options: RequestInit = {}): Promise<string> {
-  const token = getToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  // credentials:'include' → le cookie de session HttpOnly accompagne la requête.
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -83,13 +95,12 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
 
 /** Requête retournant un Blob (téléchargement de fichier), avec la même gestion 401 / erreurs que `request`. */
 async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
-  const token = getToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  // credentials:'include' → le cookie de session HttpOnly accompagne la requête.
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -99,15 +110,13 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -120,11 +129,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 /** Requête multipart (upload de fichier) : pas de Content-Type manuel, le
  *  navigateur pose lui-même la boundary du FormData. */
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: form, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    body: form,
+    headers,
+    credentials: 'include',
+  })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -924,18 +936,10 @@ export interface AppUserOut {
 }
 
 /** Décode le payload JWT localement (sans vérification — le serveur valide). */
+/** Rôle admin pour l'UI, mémorisé au login (indice, jamais une décision de
+ *  sécurité — le serveur revalide is_admin à chaque route d'administration). */
 export function isSuperAdmin(): boolean {
-  const token = getToken()
-  if (!token) return false
-  try {
-    const segment = token.split('.')[1]
-    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
-    const payload = JSON.parse(atob(padded))
-    return Boolean(payload.is_admin)
-  } catch {
-    return false
-  }
+  return localStorage.getItem(ADMIN_KEY) === '1'
 }
 
 export interface InviteCreated {
@@ -1618,5 +1622,5 @@ export interface OidcCallbackRequest {
 export const oidcLoginApi = {
   config: () => api.get<OidcPublicConfig | null>('/auth/oidc/config'),
   callback: (body: OidcCallbackRequest) =>
-    api.post<{ access_token: string; token_type: string }>('/auth/oidc/callback', body),
+    api.post<{ is_admin: boolean }>('/auth/oidc/callback', body),
 }
