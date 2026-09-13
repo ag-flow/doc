@@ -1233,7 +1233,12 @@ def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextConte
     session = current_session()
     if session is None or session.unrestricted:
         return None
-    if name in _ADMIN_TOOLS:
+    # create_block AVEC template_slug réalise un import structurel : il exige donc
+    # le même niveau qu'import_template (admin write), pas un simple write de scope.
+    admin_required = name in _ADMIN_TOOLS or (
+        name == "create_block" and bool(arguments.get("template_slug"))
+    )
+    if admin_required:
         return _text({"error": f"outil {name} : clé API non-admin, opération interdite"})
     if name in _WS_TOOLS:
         ws_slug = str(arguments.get("workspace_slug", ""))
@@ -2228,12 +2233,6 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
 
     from docflow.blocks import service as block_svc
     from docflow.schemas.block import DataBlockCreate
-    from docflow.templates.importer import (
-        ConcurrentImportError,
-        ImportConflictError,
-        VersionConflictError,
-        run_import,
-    )
 
     ws_slug = str(args.get("workspace_slug", ""))
     blk_slug = str(args.get("slug", ""))
@@ -2242,21 +2241,15 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
     parent_slug = str(args["parent_slug"]) if "parent_slug" in args else None
     template_slug = str(args["template_slug"]) if "template_slug" in args else None
 
-    if template_slug:
-        try:
-            tpl = _find_template(template_slug)
-            await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
-        except VersionConflictError:
-            pass  # version plus ancienne déjà installée — on continue
-        except (ImportConflictError, ConcurrentImportError, ValueError) as e:
-            return _text({"error": f"import template : {e}"})
-
+    # L'auto-import du template vit désormais dans le service (parité REST/MCP,
+    # transaction commune import+création) — plus de logique d'import ici.
     try:
         data = DataBlockCreate(
             slug=blk_slug,
             label=label,
             functional_type_slug=type_slug,
             parent_slug=parent_slug,
+            template_slug=template_slug,
         )
         result = await block_svc.create_block(pool, ws_slug, data)
     except ValidationError as e:

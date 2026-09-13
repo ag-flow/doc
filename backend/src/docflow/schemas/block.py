@@ -15,6 +15,9 @@ class DataBlockCreate(BaseModel):
     label: str
     functional_type_slug: str
     parent_slug: str | None = None
+    # Import automatique d'un template global AVANT la création du bloc, dans la
+    # même transaction (parité avec la surface MCP). None = aucun import.
+    template_slug: str | None = None
 
     @field_validator("slug")
     @classmethod

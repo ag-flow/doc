@@ -140,10 +140,54 @@ async def list_present_type_slugs(pool: asyncpg.Pool, ws_slug: str, block_slug: 
     return [r["slug"] for r in rows]
 
 
+async def _auto_import_template(
+    conn: asyncpg.Connection, wk: uuid.UUID, ws_slug: str, template_slug: str
+) -> None:
+    """Importe un template global DANS la transaction de création du bloc.
+
+    Partagé par REST et MCP (la logique vivait avant dans la couche transport MCP,
+    d'où une divergence de traitement d'erreurs). Comportement de référence du
+    chemin MCP conservé : import idempotent, `VersionConflictError` non bloquante
+    (version antérieure ou égale déjà installée), conflits remontés AVANT toute
+    création de bloc. Import et INSERT partagent la transaction : si la création du
+    bloc échoue ensuite (slug déjà pris), l'import est annulé — jamais d'état partiel.
+    """
+    from docflow.templates import catalog
+    from docflow.templates.importer import (
+        ConcurrentImportError,
+        ImportConflictError,
+        VersionConflictError,
+        _run_import_tx,
+    )
+    from docflow.templates.inheritance import resolve
+
+    try:
+        template = catalog.find_template(template_slug)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    resolved = resolve(template)
+    try:
+        await _run_import_tx(conn, str(wk), ws_slug, template, resolved, dry_run=False)
+    except VersionConflictError:
+        pass  # version antérieure/égale déjà installée — on continue (idempotent)
+    except ConcurrentImportError as exc:
+        raise HTTPException(status_code=409, detail=f"import template : {exc}") from exc
+    except ImportConflictError as exc:
+        raise HTTPException(status_code=409, detail=f"import template : {exc}") from exc
+    except ValueError as exc:
+        # p. ex. UnresolvedTargetTypeError : template mal formé.
+        raise HTTPException(status_code=422, detail=f"import template : {exc}") from exc
+
+
 async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) -> DataBlockOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            # Auto-import éventuel AVANT résolution du type : le template fournit
+            # le type fonctionnel du bloc sur un workspace vierge.
+            if data.template_slug:
+                await _auto_import_template(conn, wk, ws_slug, data.template_slug)
             type_id, type_parent_id = await _resolve_type(conn, wk, data.functional_type_slug)
 
             parent_id: uuid.UUID | None = None

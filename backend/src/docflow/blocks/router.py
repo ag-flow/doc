@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from docflow.auth.deps import (
     check_api_key_scope,
     filter_blocks_by_scope,
+    require_api_key_admin_write,
     require_authenticated,
 )
 from docflow.blocks import introspection, service
@@ -43,6 +44,10 @@ async def create_block(
     ws_slug: str, body: DataBlockCreate, request: Request, _: AuthUser = _Auth
 ) -> DataBlockOut:
     check_api_key_scope(request, ws_slug, write=True)
+    # template_slug déclenche un import structurel : on exige alors le même niveau
+    # qu'import_template (clé API admin write), au-delà du simple write de scope.
+    if body.template_slug:
+        require_api_key_admin_write(request)
     return await service.create_block(request.app.state.pool, ws_slug, body)
 
 
