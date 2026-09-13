@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # du bon côté : une connexion qui ne s'établit pas se voit, un cookie servi sans
     # Secure non.
     session_cookie_secure: bool = True
+    # Re-liaison d'émetteur OIDC (bascule d'IdP) : FERMÉE par défaut (fail closed).
+    # Ouverte explicitement le temps d'une migration (via /data/.env), elle laisse
+    # le pont par email vérifié ré-ancrer un compte connu sous un NOUVEL émetteur.
+    # Ne change RIEN au refus « même émetteur, sub différent » (toujours refusé).
+    oidc_relink_enabled: bool = False
     harpocrate_url: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.

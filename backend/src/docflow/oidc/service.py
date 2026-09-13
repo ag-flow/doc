@@ -160,14 +160,60 @@ async def handle_oidc_callback(
         # Le message d'OidcVerifyError ne contient ni token, ni claims, ni secret.
         log.warning("oidc_callback_rejected", reason=str(exc))
         raise HTTPException(status_code=401, detail="échec de vérification OIDC") from exc
-    return await provision_user_for_verified_claims(pool, claims)
+    return await provision_user_for_verified_claims(
+        pool, claims, issuer=issuer, relink_enabled=settings.oidc_relink_enabled
+    )
+
+
+_USER_COLS = "id, email, label, is_admin, validated, disabled"
+
+
+def _assert_relink_allowed(
+    *, previous_issuer: str | None, issuer: str, relink_enabled: bool, email: str
+) -> None:
+    """Décide si un compte déjà épinglé, rejoint par email sous un `sub` inconnu,
+    est une bascule d'émetteur légitime ou une anomalie.
+
+    LE DISCRIMINANT EST L'ÉMETTEUR, JAMAIS LE MODE. Même émetteur + sub différent =
+    deux identités distinctes chez le même fournisseur → refus, quel que soit le
+    mode de re-liaison. Seul un émetteur DIFFÉRENT est un scénario de migration, et
+    seul celui-là peut être ouvert par le mode. Câbler la garde sur le drapeau au
+    lieu de l'émetteur ferait de la fenêtre de migration une fenêtre de prise de
+    contrôle de compte (repris de la référence a2a auth/oidc_identity.py)."""
+    if previous_issuer == issuer:
+        log.warning("oidc_sub_mismatch_rejected", email=email)
+        raise HTTPException(
+            status_code=401, detail="compte déjà associé à une autre identité OIDC"
+        )
+    if not relink_enabled:
+        # Fail closed : une bascule d'émetteur est un acte d'administration, jamais
+        # un effet de bord d'un login.
+        log.warning(
+            "oidc_issuer_change_rejected", previous_issuer=previous_issuer, issuer=issuer
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "changement de fournisseur d'identité détecté : re-liaison fermée "
+                "(un administrateur doit l'ouvrir le temps de la bascule)"
+            ),
+        )
+    log.info("oidc_issuer_relinked", previous_issuer=previous_issuer, issuer=issuer)
 
 
 async def provision_user_for_verified_claims(
-    pool: asyncpg.Pool, id_token_claims: dict[str, object]
+    pool: asyncpg.Pool,
+    id_token_claims: dict[str, object],
+    *,
+    issuer: str,
+    relink_enabled: bool = False,
 ) -> AuthUser:
     """Provisionne ou lie l'app_user depuis des claims OIDC **déjà vérifiés**, et
     renvoie l'utilisateur (l'ouverture de session est faite par l'appelant).
+
+    Ancrage sur le couple `(issuer, sub)` : `sub` n'est immuable que chez un
+    émetteur donné. Résolution par le couple, puis pont par email vérifié
+    (STANDARD §4), avec re-liaison discriminée par l'émetteur en cas de bascule.
 
     Ne jamais appeler avec des claims non vérifiés : la vérification de
     signature/iss/aud/exp est faite en amont par `handle_oidc_callback`.
@@ -184,56 +230,96 @@ async def provision_user_for_verified_claims(
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Vérifier que OIDC est activé
             enabled_raw: bool | None = await conn.fetchval(
                 "SELECT enabled FROM oidc_config LIMIT 1"
             )
-            enabled: bool = bool(enabled_raw)
-            if not enabled:
+            if not bool(enabled_raw):
                 raise HTTPException(status_code=403, detail="OIDC non activé")
 
-            # Chercher par oidc_subject d'abord, puis par email
+            # 1. Résolution par le couple (issuer, sub) — l'ancrage courant.
             user_row = await conn.fetchrow(
-                "SELECT id, email, label, is_admin, validated, disabled "
-                "FROM app_user WHERE oidc_subject = $1",
+                f"SELECT {_USER_COLS} FROM app_user "
+                "WHERE oidc_issuer = $1 AND oidc_subject = $2",
+                issuer,
                 sub,
             )
-            if user_row is None:
-                user_row = await conn.fetchrow(
-                    "SELECT id, email, label, is_admin, validated, disabled "
+            if user_row is not None:
+                # L'email a changé côté IdP : ne pas suivre en silence, c'est une
+                # réassociation d'administration.
+                if user_row["email"] != email:
+                    log.warning("oidc_email_drift_rejected", user_id=str(user_row["id"]))
+                    raise HTTPException(
+                        status_code=401,
+                        detail="l'email a changé côté fournisseur d'identité : "
+                        "réassociation admin requise",
+                    )
+            else:
+                # 2. Pont par email VÉRIFIÉ (sinon un sub attaquant portant l'email
+                #    d'un compte local en prendrait le contrôle — AUTH-02).
+                by_email = await conn.fetchrow(
+                    f"SELECT {_USER_COLS}, oidc_issuer, oidc_subject "
                     "FROM app_user WHERE email = $1",
                     email,
                 )
-                if user_row is not None:
-                    # Ne lier un compte existant par email que si l'IdP a vérifié cet email,
-                    # sinon un sub attaquant portant l'email d'un compte local (admin) en
-                    # prendrait le contrôle (account takeover). Cf. AUTH-02.
+                if by_email is not None:
                     if not email_verified:
                         log.warning(
-                            "oidc_login_rejected",
-                            reason="email non vérifié par l'IdP",
-                            email=email,
+                            "oidc_login_rejected", reason="email non vérifié par l'IdP", email=email
                         )
                         raise HTTPException(
                             status_code=403,
                             detail="liaison OIDC refusée: email non vérifié par l'IdP",
                         )
+                    # Compte déjà épinglé à une autre identité OIDC → garde de re-liaison.
+                    if by_email["oidc_subject"] is not None:
+                        _assert_relink_allowed(
+                            previous_issuer=by_email["oidc_issuer"],
+                            issuer=issuer,
+                            relink_enabled=relink_enabled,
+                            email=email,
+                        )
+                        # Bascule : on referme le couple précédent dans l'historique.
+                        await conn.execute(
+                            "UPDATE user_oidc_identity_history SET unlinked_at = now() "
+                            "WHERE user_id = $1 AND unlinked_at IS NULL",
+                            by_email["id"],
+                        )
                     await conn.execute(
-                        "UPDATE app_user SET oidc_subject = $1, source = 'oidc' WHERE id = $2",
+                        "UPDATE app_user SET oidc_issuer = $1, oidc_subject = $2, "
+                        "source = 'oidc' WHERE id = $3",
+                        issuer,
                         sub,
-                        user_row["id"],
+                        by_email["id"],
+                    )
+                    await conn.execute(
+                        "INSERT INTO user_oidc_identity_history (user_id, issuer, sub) "
+                        "VALUES ($1, $2, $3)",
+                        by_email["id"],
+                        issuer,
+                        sub,
+                    )
+                    user_row = await conn.fetchrow(
+                        f"SELECT {_USER_COLS} FROM app_user WHERE id = $1", by_email["id"]
                     )
                 else:
-                    # Nouveau compte OIDC : non admin, non validé
+                    # 3. Nouveau compte OIDC : non admin, non validé.
                     user_row = await conn.fetchrow(
-                        """
+                        f"""
                         INSERT INTO app_user
-                            (email, label, oidc_subject, is_admin, validated, source)
-                        VALUES ($1, $2, $3, false, false, 'oidc')
-                        RETURNING id, email, label, is_admin, validated, disabled
+                            (email, label, oidc_issuer, oidc_subject, is_admin, validated, source)
+                        VALUES ($1, $2, $3, $4, false, false, 'oidc')
+                        RETURNING {_USER_COLS}
                         """,
                         email,
                         name,
+                        issuer,
+                        sub,
+                    )
+                    await conn.execute(
+                        "INSERT INTO user_oidc_identity_history (user_id, issuer, sub) "
+                        "VALUES ($1, $2, $3)",
+                        user_row["id"],
+                        issuer,
                         sub,
                     )
     assert user_row is not None
