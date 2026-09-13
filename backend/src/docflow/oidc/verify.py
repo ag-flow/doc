@@ -166,6 +166,54 @@ async def verify_id_token(
         )
 
 
+def validate_access_token_claims(
+    token: str, keyset: KeySet, *, issuer: str, audience: str, leeway: int = 60
+) -> dict[str, Any]:
+    """Vérifie un JETON D'ACCÈS entrant (serveur de ressources OAuth 2.1) :
+    signature asymétrique + iss + exp + sub, et `aud` contenant NOTRE ressource.
+
+    Diffère de l'id_token : l'audience n'est pas le client_id mais l'identifiant
+    de ressource de docflow (settings.oauth2_audience). L'appartenance à `aud`
+    (chaîne ou liste) est vérifiée explicitement — un jeton émis pour un autre
+    serveur MCP de la stack doit être refusé. Lève `OidcVerifyError` sur défaut.
+    """
+    try:
+        decoded = jwt.decode(token, keyset, algorithms=_ALLOWED_ALGS)
+        registry = jwt.JWTClaimsRegistry(
+            leeway=leeway,
+            iss={"essential": True, "value": issuer},
+            exp={"essential": True},
+            sub={"essential": True},
+        )
+        registry.validate(decoded.claims)
+    except JoseError as exc:
+        raise OidcVerifyError(f"jeton d'accès rejeté ({type(exc).__name__})") from exc
+    except ValueError as exc:
+        raise OidcVerifyError("jeton d'accès malformé") from exc
+    claims: dict[str, Any] = decoded.claims
+    aud = claims.get("aud")
+    audiences = aud if isinstance(aud, list) else [aud]
+    if audience not in audiences:
+        raise OidcVerifyError("audience du jeton différente de la ressource docflow")
+    return claims
+
+
+async def verify_access_token(token: str, *, issuer: str, audience: str) -> dict[str, Any]:
+    """Vérifie un jeton d'accès contre le JWKS de l'issuer (rotation gérée)."""
+    discovery = await fetch_discovery(issuer)
+    jwks_uri = str(discovery.get("jwks_uri", ""))
+    if not jwks_uri:
+        raise OidcVerifyError("jwks_uri absent du document de découverte")
+    keyset = await fetch_jwks(jwks_uri)
+    try:
+        return validate_access_token_claims(token, keyset, issuer=issuer, audience=audience)
+    except OidcVerifyError as first_error:
+        if not isinstance(first_error.__cause__, InvalidKeyIdError):
+            raise
+        keyset = await fetch_jwks(jwks_uri, force_refresh=True)
+        return validate_access_token_claims(token, keyset, issuer=issuer, audience=audience)
+
+
 async def exchange_code(
     *, issuer: str, code: str, redirect_uri: str, client_id: str, client_secret: str
 ) -> str:

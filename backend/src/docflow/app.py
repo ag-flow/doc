@@ -41,6 +41,7 @@ from docflow.events.producer_router import router as events_producer_router
 from docflow.events.router import router as events_router
 from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
+from docflow.mcp.oauth import router as mcp_oauth_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.me.preferences import router as me_prefs_router
@@ -174,6 +175,10 @@ app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)
 app.include_router(mcp_router, prefix=_API)
+# Métadonnées de ressource protégée (RFC 9728) : chemin racine /.well-known/…,
+# public, sans préfixe /api — enregistré avant le catch-all SPA qui, sinon,
+# l'intercepterait.
+app.include_router(mcp_oauth_router)
 app.include_router(webhooks_router, prefix=_API)
 app.include_router(remote_router, prefix=_API)
 app.include_router(backup_router, prefix=_API)
