@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import asyncpg
 import pytest
 from fastapi.testclient import TestClient
@@ -290,6 +292,24 @@ def test_local_login_disabled_flag(
         assert "désactivée" in r.json()["detail"]
 
 
+def _pin_admin_oidc(schema_url: str) -> None:
+    """Simule un login OIDC admin réussi (épinglage), pré-requis du garde-fou
+    anti-lockout avant de pouvoir couper la connexion locale."""
+
+    async def _do() -> None:
+        conn = await asyncpg.connect(schema_url)
+        try:
+            await conn.execute(
+                "UPDATE app_user SET oidc_issuer = 'https://issuer.example.com', "
+                "oidc_subject = 'admin-oidc-sub' WHERE email = $1",
+                _BOOTSTRAP_EMAIL,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_do())
+
+
 def test_oidc_only_via_config_and_reactivation(
     monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
@@ -297,6 +317,9 @@ def test_oidc_only_via_config_and_reactivation(
     désactiver l'OIDC réactive automatiquement la connexion locale."""
     with _make_client(monkeypatch, test_schema_url) as client:
         admin = _setup_admin(client)
+        # Garde-fou anti-lockout : couper le local exige un admin déjà connecté en
+        # OIDC. On simule cet épinglage réussi.
+        _pin_admin_oidc(test_schema_url)
         body = {
             "issuer": "https://issuer.example.com",
             "client_id": "docflow",

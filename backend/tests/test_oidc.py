@@ -352,3 +352,56 @@ async def test_meme_emetteur_sub_different_refuse_meme_relink_ouvert(
             relink_enabled=True,  # ouvert : ne doit RIEN changer au refus
         )
     assert exc.value.status_code == 401
+
+
+# ── Garde anti-lockout : couper le local exige un admin OIDC ─────────────────
+
+
+def _cfg(enabled: bool, disable_local: bool) -> OidcConfigSet:
+    return OidcConfigSet(
+        issuer=_ISS_A,
+        client_id="c",
+        client_secret_ref=_SECRET_REF,
+        enabled=enabled,
+        disable_local_login=disable_local,
+    )
+
+
+async def test_disable_local_login_refuse_sans_admin_oidc(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """§5 : activer OIDC-only est refusé tant qu'aucun admin ne s'est connecté en
+    OIDC (cas OIDC activé mais mal configuré → sinon instance verrouillée)."""
+    await db_pool.execute(
+        "INSERT INTO app_user (email, label, password_hash, is_admin, validated) "
+        "VALUES ('a@ex.com', 'A', 'x', true, true)"
+    )
+    with pytest.raises(HTTPException) as exc:
+        await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=True, disable_local=True))
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "no_oidc_admin"  # type: ignore[index]
+
+
+async def test_disable_local_login_autorise_avec_admin_oidc(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Après un login OIDC admin réussi (oidc_subject épinglé), la coupure passe."""
+    await db_pool.execute(
+        "INSERT INTO app_user (email, label, is_admin, validated, oidc_issuer, oidc_subject) "
+        "VALUES ('admin@ex.com', 'Adm', true, true, $1, 'adm-sub')",
+        _ISS_A,
+    )
+    out = await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=True, disable_local=True))
+    assert out.disable_local_login is True
+    assert await oidc_svc.local_login_disabled_by_oidc(db_pool) is True
+
+
+async def test_flag_sans_effet_si_oidc_desactive_non_regression(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Non-régression §5 : le flag n'a d'effet que si l'OIDC est activé —
+    poser disable_local_login avec enabled=false est permis (garde non déclenchée)
+    et le local reste actif ; désactiver l'OIDC réactive le local."""
+    out = await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=False, disable_local=True))
+    assert out.disable_local_login is True
+    assert await oidc_svc.local_login_disabled_by_oidc(db_pool) is False

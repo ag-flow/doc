@@ -81,9 +81,39 @@ async def local_login_disabled_by_oidc(pool: asyncpg.Pool) -> bool:
     return bool(row and row["enabled"] and row["disable_local_login"])
 
 
+async def count_admins_with_oidc(conn: asyncpg.Connection) -> int:
+    """Nombre d'administrateurs ayant un ancrage OIDC actif — c.-à-d. qui se sont
+    déjà connectés/liés avec succès en OIDC (l'ancrage n'est posé qu'à un login
+    OIDC vérifié). C'est la preuve qu'un admin peut entrer sans le login local.
+    Repris de la référence a2a (repositories/users.count_admins_with_oidc)."""
+    count: int = await conn.fetchval(
+        "SELECT count(*) FROM app_user "
+        "WHERE is_admin AND oidc_subject IS NOT NULL AND disabled = false"
+    )
+    return count
+
+
 async def set_oidc_config(pool: asyncpg.Pool, data: OidcConfigSet) -> OidcConfigOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Garde-fou anti-lockout (STANDARD §5) : couper la connexion locale est
+            # REFUSÉ tant qu'aucun admin ne s'est connecté avec succès en OIDC sur
+            # cette instance. Protège le cas le plus probable — OIDC activé mais mal
+            # configuré (client_id/redirect/secret erroné) : sans cette garde, le
+            # local se coupe, le 1er login OIDC échoue, et l'instance est verrouillée.
+            cutting_local = data.enabled and data.disable_local_login
+            if cutting_local and await count_admins_with_oidc(conn) == 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "no_oidc_admin",
+                        "message": (
+                            "Connexion locale non désactivable : aucun administrateur ne "
+                            "s'est encore connecté via OIDC sur cette instance. Connectez-vous "
+                            "une fois en OIDC avec un compte admin, puis réessayez."
+                        ),
+                    },
+                )
             existing = await conn.fetchrow("SELECT id FROM oidc_config LIMIT 1")
             if existing is None:
                 row = await conn.fetchrow(
