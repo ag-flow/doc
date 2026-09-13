@@ -684,15 +684,41 @@ function KeysTab() {
 
 // ── MCP URL banner ────────────────────────────────────────────────────────────
 
-function McpUrlBanner() {
-  const mcpUrl = `${window.location.origin}/api/mcp/sse`
+/** Ligne d'adresse copiable (URL monospace + étiquette de transport + bouton). */
+function CopyableAddress({ url, tag, testId }: { url: string; tag: string; testId?: string }) {
   const [copied, setCopied] = useState(false)
 
   async function copy() {
-    await navigator.clipboard.writeText(mcpUrl)
+    await navigator.clipboard.writeText(url)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
+
+  return (
+    <div className="flex max-w-[640px] items-center gap-2">
+      <code
+        className="min-w-0 flex-1 truncate rounded-md bg-neutral-100 px-3 py-2 text-[12px]
+          [font-family:var(--font-mono)] select-all"
+        data-testid={testId}
+      >
+        {url}
+      </code>
+      <span className="tag tag-neutral shrink-0 [font-family:var(--font-mono)]">{tag}</span>
+      <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void copy()}>
+        {copied
+          ? <Check size={13} weight="duotone" className="text-accent-700" />
+          : <Copy size={13} weight="duotone" />}
+        {copied ? 'Copié' : 'Copier'}
+      </Button>
+    </div>
+  )
+}
+
+function McpUrlBanner() {
+  const mcpUrl = `${window.location.origin}/api/mcp/sse`
+  // Contrat OpenAPI de l'API REST : c'est ce couple {URL du contrat, clé API}
+  // qu'un intégrateur (automate devpod…) vient chercher pour brancher ses appels.
+  const openApiUrl = `${window.location.origin}/openapi.json`
 
   return (
     <div className="mb-8">
@@ -703,19 +729,13 @@ function McpUrlBanner() {
       <p className="mb-2 mt-1 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
         Connectez vos outils IA (Claude Desktop, Cursor…) à cette instance docflow via le protocole MCP.
       </p>
-      <div className="flex max-w-[640px] items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-md bg-neutral-100 px-3 py-2 text-[12px]
-          [font-family:var(--font-mono)] select-all">
-          {mcpUrl}
-        </code>
-        <span className="tag tag-neutral shrink-0 [font-family:var(--font-mono)]">sse</span>
-        <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void copy()}>
-          {copied
-            ? <Check size={13} weight="duotone" className="text-accent-700" />
-            : <Copy size={13} weight="duotone" />}
-          {copied ? 'Copié' : 'Copier'}
-        </Button>
-      </div>
+      <CopyableAddress url={mcpUrl} tag="sse" testId="mcp-url" />
+
+      <p className="mb-2 mt-4 max-w-[96ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        Contrat OpenAPI de l'API REST — à importer dans un système tiers (automates)
+        pour appeler docflow. À utiliser avec une clé API ci-dessous.
+      </p>
+      <CopyableAddress url={openApiUrl} tag="openapi" testId="openapi-url" />
     </div>
   )
 }

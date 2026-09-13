@@ -10,6 +10,7 @@ from typing import Any
 import asyncpg
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -27,7 +28,7 @@ from docflow.automations.worker import worker_loop
 from docflow.backup.router import router as backup_router
 from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
-from docflow.config.base_url import set_derived_base_url
+from docflow.config.base_url import effective_base_url, set_derived_base_url
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
 from docflow.datasets.router import router as datasets_router
@@ -125,6 +126,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="docflow", lifespan=lifespan)
+
+
+def _custom_openapi() -> dict[str, Any]:
+    """Schéma OpenAPI enrichi d'un bloc `servers` à URL ABSOLUE.
+
+    Sans lui, un importeur de contrat (les automates devpod) construit des URLs
+    relatives (`/api/workspaces`) qui échouent son anti-SSRF (pas de hostname).
+    La source de l'URL est `effective_base_url` : `public_base_url` si configurée
+    (prod), sinon la base dérivée des en-têtes X-Forwarded par `_capture_base_url`
+    (dev / derrière proxy). Jamais codée en dur — chaque instance produit son URL.
+    Le reste du schéma (lourd) est mis en cache ; seul `servers` est réévalué à
+    chaque appel, car l'URL dérivée n'est connue qu'une fois des requêtes reçues.
+    """
+    if app.openapi_schema is None:
+        app.openapi_schema = get_openapi(
+            title=app.title, version=app.version, routes=app.routes
+        )
+    base = effective_base_url(getattr(app.state, "settings", None))
+    if base:
+        app.openapi_schema["servers"] = [{"url": base.rstrip("/")}]
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 @app.middleware("http")
