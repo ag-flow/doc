@@ -24,6 +24,9 @@ _EVENT_RETENTION_HOURS = 168  # 7 jours
 _BODY_EXCERPT = 500
 # Nombre de runs conservés en base par automate (historique).
 _RUN_HISTORY_KEEP = 20
+# Tentatives d'émission avant dead-letter (reprise persistante des échecs). Aligné
+# sur le producteur workflow (events/worker MAX_ATTEMPTS=8).
+_MAX_ATTEMPTS = 8
 
 
 @dataclass
@@ -193,14 +196,22 @@ def _variables(
 
 
 async def _prune_runs(conn: asyncpg.Connection, automation_id: uuid.UUID) -> None:
-    """Ne conserve que les N runs les plus récents de l'automate."""
+    """Ne conserve que les N runs RÉSOLUS les plus récents de l'automate.
+
+    Un run échoué encore actif (status='failed' et non dead-letter) porte l'état
+    de reprise (attempts) : le purger le ferait réémettre depuis zéro à l'infini
+    (attempts jamais atteint) — il n'est donc JAMAIS élagué tant qu'il n'est pas
+    résolu (ok ou dead-letter)."""
     await conn.execute(
         """
         DELETE FROM automation_run
-        WHERE automation_ref = $1 AND id NOT IN (
-            SELECT id FROM automation_run WHERE automation_ref = $1
+        WHERE automation_ref = $1
+          AND NOT (status = 'failed' AND dead_letter = false)
+          AND id NOT IN (
+            SELECT id FROM automation_run
+            WHERE automation_ref = $1 AND NOT (status = 'failed' AND dead_letter = false)
             ORDER BY executed_at DESC, id DESC LIMIT $2
-        )
+          )
         """,
         automation_id,
         _RUN_HISTORY_KEEP,
@@ -528,6 +539,89 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
     deferred = False
     for row in rows:
         deferred = await _process_event(pool, automation, row, settings, deferred=deferred)
+
+    # Reprise persistante : les émissions échouées (curseur déjà passé) sont
+    # rejouées ici, indépendamment du curseur — donc SANS bloquer le flux des
+    # nouveaux events. Une écriture non indexée est ainsi rattrapable.
+    await _retry_failed(pool, automation, settings)
+
+
+async def _retry_failed(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
+    """Réémet les runs `failed` non dead-letter dont l'event est encore au journal.
+
+    Succès → status 'ok' (rattrapé). Échec persistant au-delà de _MAX_ATTEMPTS, ou
+    event purgé du journal → dead-letter + journal `automation_event_dead_letter`
+    (le signal qu'un flux d'indexation ne parvient plus — à alerter côté supervision,
+    au lieu d'une perte silencieuse)."""
+    async with pool.acquire() as conn:
+        failed = await conn.fetch(
+            "SELECT event_seq, attempts FROM automation_run "
+            "WHERE automation_ref = $1 AND status = 'failed' AND dead_letter = false "
+            "AND event_seq IS NOT NULL ORDER BY event_seq LIMIT 100",
+            automation["id"],
+        )
+    for r in failed:
+        seq = r["event_seq"]
+        attempts = int(r["attempts"]) + 1
+        async with pool.acquire() as conn:
+            ev = await conn.fetchrow(
+                "SELECT seq, event_code, document_ref, business FROM document_event WHERE seq = $1",
+                seq,
+            )
+            if ev is None:
+                # Event purgé (au-delà de la rétention) : plus rejouable.
+                await conn.execute(
+                    "UPDATE automation_run SET dead_letter = true "
+                    "WHERE automation_ref = $1 AND event_seq = $2",
+                    automation["id"],
+                    seq,
+                )
+                log.warning(
+                    "automation_event_dead_letter",
+                    automation_id=str(automation["id"]),
+                    event_seq=seq,
+                    reason="event_purged",
+                )
+                continue
+            event = {
+                "event_code": ev["event_code"],
+                "document_ref": ev["document_ref"],
+                "business": ev["business"],
+            }
+            prep = await _prepare(conn, automation, event, settings)
+
+        res = await _dispatch(automation, event, prep, pool, settings)
+
+        dead = res.status != "ok" and attempts >= _MAX_ATTEMPTS
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE automation_run SET status = $3, attempts = $4, dead_letter = $5, "
+                "http_status = $6, response_body = $7, executed_at = now() "
+                "WHERE automation_ref = $1 AND event_seq = $2",
+                automation["id"],
+                seq,
+                res.status,
+                attempts,
+                dead,
+                res.http_status,
+                res.body,
+            )
+        if res.status == "ok":
+            log.info(
+                "automation_event_recovered",
+                automation_id=str(automation["id"]),
+                event_seq=seq,
+                attempts=attempts,
+            )
+        elif dead:
+            log.warning(
+                "automation_event_dead_letter",
+                automation_id=str(automation["id"]),
+                event_seq=seq,
+                attempts=attempts,
+                http_status=res.http_status,
+                reason="max_attempts",
+            )
 
 
 # ── Purge du journal d'events ─────────────────────────────────────────────────

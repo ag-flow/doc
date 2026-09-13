@@ -891,3 +891,100 @@ async def test_worker_refuse_variable_non_resolue_sans_emettre(
     )
     assert len(runs) == 1
     assert runs[0]["status"] == "failed"
+
+
+# ── Reprise persistante des émissions échouées (bug « corpus qui dérive ») ────
+
+
+class _CfgResp:
+    def __init__(self, ok: bool) -> None:
+        self.status_code = 200 if ok else 503
+        self.is_success = ok
+        self.text = "{}" if ok else "boom"
+
+
+_RESP: dict[str, bool] = {"ok": True}
+
+
+class _CfgClient(_FakeClient):
+    async def request(
+        self, method: str, url: str, headers: Any = None, content: Any = None
+    ) -> _CfgResp:
+        _CALLS.append({"method": method, "url": url})
+        return _CfgResp(_RESP["ok"])
+
+
+async def _seed_updated_event(db_pool: asyncpg.Pool) -> asyncpg.Record:
+    _CALLS.clear()
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 2}),
+    )
+    return await _mk_automation(db_pool, wk, {"doc": "{content}"})
+
+
+async def test_emission_echouee_est_rejouee_puis_rattrapee(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un POST en échec n'est plus perdu : une passe de retry le rejoue au tick
+    suivant et le rattrape quand ragflow revient."""
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _CfgClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    automation = await _seed_updated_event(db_pool)
+
+    _RESP["ok"] = False  # ragflow en panne
+    await worker.run_tick(db_pool, automation, _Settings())
+    run = await db_pool.fetchrow(
+        "SELECT status, attempts, dead_letter FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["status"] == "failed"
+    assert run["dead_letter"] is False
+    assert run["attempts"] >= 2  # scan (1) + au moins une passe de retry
+
+    _RESP["ok"] = True  # ragflow revient
+    await worker.run_tick(db_pool, automation, _Settings())
+    run = await db_pool.fetchrow(
+        "SELECT status, dead_letter FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["status"] == "ok"  # rattrapé, pas perdu
+    assert run["dead_letter"] is False
+
+
+async def test_echec_persistant_finit_en_dead_letter(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Au-delà de _MAX_ATTEMPTS, l'event est dead-letter (visible), pas rejoué à
+    l'infini ni perdu en silence."""
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _CfgClient)
+    monkeypatch.setattr(worker, "_MAX_ATTEMPTS", 2)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    automation = await _seed_updated_event(db_pool)
+
+    _RESP["ok"] = False
+    await worker.run_tick(db_pool, automation, _Settings())  # scan + retry → attempts atteint 2
+    run = await db_pool.fetchrow(
+        "SELECT dead_letter, status FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["dead_letter"] is True
+    assert run["status"] == "failed"
+
+    # Un tick de plus ne le rejoue plus (dead-letter exclu de la passe de retry).
+    calls_before = len(_CALLS)
+    await worker.run_tick(db_pool, automation, _Settings())
+    assert len(_CALLS) == calls_before
