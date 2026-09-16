@@ -1,0 +1,46 @@
+docflow
+Copyright 2026 Gaël Béard
+
+SPDX-License-Identifier: FSL-1.1-ALv2
+
+Ce logiciel est distribué sous la Functional Source License, Version 1.1,
+Apache 2.0 Future License (FSL-1.1-ALv2). Le texte intégral figure dans le
+fichier LICENSE à la racine du dépôt.
+
+Résumé (non contractuel — seul LICENSE fait foi) :
+  - Toute utilisation est permise SAUF un « usage concurrent » (Competing Use),
+    c.-à-d. mettre le logiciel à disposition de tiers dans un produit ou service
+    commercial qui s'y substitue ou en reproduit la fonctionnalité.
+  - Deux ans après la date de mise à disposition de chaque version, celle-ci
+    bascule automatiquement sous Apache License 2.0.
+
+--------------------------------------------------------------------------------
+Composants tiers
+--------------------------------------------------------------------------------
+
+Ce produit intègre ou redistribue des composants tiers, sous leurs licences
+respectives. Les mentions ci-dessous sont requises par ces licences.
+
+Éditeur de contenu riche (frontend)
+  - @blocknote/core, @blocknote/react, @blocknote/mantine — MPL-2.0
+    Mozilla Public License 2.0. Copyright (c) BlockNote contributors.
+    Source du composant : https://github.com/TypeCellOS/BlockNote
+    La MPL-2.0 est une licence copyleft « au fichier » : le code source des
+    fichiers couverts par la MPL reste disponible sous MPL-2.0.
+
+Bibliothèques transitives sous licences permissives
+  - ProseMirror (prosemirror-*) — MIT
+  - Mantine (@mantine/*) — MIT
+  - React, Vite, TanStack Query, i18next, Tailwind, shadcn/ui — MIT
+  - FastAPI, Starlette, pydantic, Uvicorn, httpx, croniter, markdown — MIT / BSD
+  - asyncpg, structlog, cryptography — Apache-2.0 / BSD
+  - argon2-cffi, Authlib, joserfc, GitPython, WeasyPrint, PyYAML — MIT / BSD
+  - MCP Python SDK — MIT
+
+Copyleft faible (compatible, usage bibliothèque)
+  - Paramiko — LGPL-2.1-or-later
+    Utilisé comme bibliothèque (liaison dynamique) ; aucune modification de son
+    code source. La LGPL n'étend pas ses obligations copyleft à docflow.
+
+Aucune dépendance sous copyleft fort (GPL / AGPL) n'est présente dans l'arbre
+de dépendances de production.
