@@ -21,12 +21,25 @@ import asyncpg
 import structlog
 
 from docflow.events import catalog
+from docflow.observability import correlation as corr
 
 log = structlog.get_logger(__name__)
 
-# Champs système de l'enveloppe (norme §2.3) — liste fixe et fermée.
+# Champs système de l'enveloppe (norme §2.3) — liste fixe et fermée. Les champs
+# de corrélation (STANDARD « Traçabilité du contexte ») sont des champs système
+# préfixés `_` : hors dataSchema métier, donc sans collision possible.
 _SYSTEM_FIELDS = frozenset(
-    {"_eventId", "_eventCode", "_occurredAt", "_source", "_specVersion", "_traceId"}
+    {
+        "_eventId",
+        "_eventCode",
+        "_occurredAt",
+        "_source",
+        "_specVersion",
+        "_traceId",
+        "_correlationId",
+        "_correlationKind",
+        "_origin",
+    }
 )
 
 _enabled: bool = False
@@ -71,22 +84,32 @@ def build_envelope(
     occurred_at: datetime,
     source: str,
     business: dict[str, Any],
+    correlation: corr.CorrelationContext | None = None,
 ) -> dict[str, Any]:
     """Assemble l'enveloppe plate : champs système + champs métier à la racine.
 
     Refuse un champ métier dont le nom empiète sur la liste système (norme §2.2).
+    Porte le contexte de corrélation (STANDARD) : `_traceId` relaie le
+    `traceparent` entrant, `_correlationId/_correlationKind/_origin` le fil long.
     """
     collisions = _SYSTEM_FIELDS & business.keys()
     if collisions:
         raise ValueError(f"champ métier en collision avec un champ système : {sorted(collisions)}")
-    return {
+    envelope: dict[str, Any] = {
         "_eventId": str(event_id),
         "_eventCode": event_code,
         "_occurredAt": occurred_at.isoformat(),
         "_source": source,
         "_specVersion": catalog.SPEC_VERSION,
-        **business,
     }
+    if correlation is not None:
+        envelope["_correlationId"] = correlation.correlation_id
+        envelope["_correlationKind"] = correlation.correlation_kind
+        envelope["_origin"] = correlation.origin
+        if correlation.traceparent:
+            envelope["_traceId"] = correlation.traceparent
+    envelope.update(business)
+    return envelope
 
 
 # Namespace stable pour les `_eventId` déterministes (uuid5). Fixe : ne jamais
@@ -119,25 +142,46 @@ def _as_uuid(value: Any) -> uuid.UUID | None:
         return None
 
 
+def _resolve_correlation(business: dict[str, Any]) -> corr.CorrelationContext:
+    """Contexte de corrélation de l'event : relais du fil ambiant s'il existe,
+    sinon naissance d'un fil `kind=document` ancré sur la clé du document
+    (STANDARD : le fil naît de la mutation quand il n'a pas de déclencheur amont).
+    """
+    ambient = corr.current()
+    if ambient is not None:
+        return ambient
+    doc_key = _as_uuid(business.get("documentId"))
+    if doc_key is not None:
+        return corr.new_document_context(doc_key)
+    return corr.new_context("document")
+
+
 async def _record_document_event(
     conn: asyncpg.Connection,
     event_code: str,
     workspace_wk: uuid.UUID | None,
     business: dict[str, Any],
+    correlation: corr.CorrelationContext,
 ) -> None:
     """Journal DURABLE de l'event (consommé par les automates).
 
     Écrit TOUJOURS, indépendamment de l'émission workflow externe (activation /
     allowlist) : les automates internes ne doivent pas dépendre du producteur.
+    Porte le contexte de corrélation pour que le worker le relaie (cf. A4).
     """
     await conn.execute(
         "INSERT INTO document_event "
-        "(workspace_technical_key, document_ref, event_code, business) "
-        "VALUES ($1, $2, $3, $4::jsonb)",
+        "(workspace_technical_key, document_ref, event_code, business, "
+        " correlation_id, correlation_kind, origin, traceparent) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)",
         workspace_wk,
         _as_uuid(business.get("documentId")),
         event_code,
         json.dumps(business, ensure_ascii=False),
+        correlation.correlation_id,
+        correlation.correlation_kind,
+        correlation.origin,
+        correlation.traceparent,
     )
 
 
@@ -163,8 +207,11 @@ async def enqueue(
     if not catalog.is_known(event_code):
         log.warning("event_code_unknown", event_code=event_code)
         return
+    # Contexte de corrélation résolu une seule fois : le même fil est écrit sur
+    # le journal ET l'outbox producteur (cohérence de bout en bout).
+    correlation = _resolve_correlation(business)
     # 1) Journal durable des events (automates) — toujours.
-    await _record_document_event(conn, event_code, workspace_wk, business)
+    await _record_document_event(conn, event_code, workspace_wk, business, correlation)
     # 2) Outbox producteur workflow — gated (activation + allowlist).
     if not _enabled:
         return
@@ -172,13 +219,19 @@ async def enqueue(
         return
     event_id = _event_id(event_code, dedup_key)
     occurred_at = datetime.now(UTC)
-    envelope = build_envelope(event_id, event_code, occurred_at, _source, business)
+    envelope = build_envelope(event_id, event_code, occurred_at, _source, business, correlation)
     await conn.execute(
-        "INSERT INTO event_outbox (id, event_code, workspace_technical_key, payload, occurred_at) "
-        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO event_outbox "
+        "(id, event_code, workspace_technical_key, payload, occurred_at, "
+        " correlation_id, correlation_kind, origin, traceparent) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING",
         event_id,
         event_code,
         workspace_wk,
         json.dumps(envelope, ensure_ascii=False),
         occurred_at,
+        correlation.correlation_id,
+        correlation.correlation_kind,
+        correlation.origin,
+        correlation.traceparent,
     )

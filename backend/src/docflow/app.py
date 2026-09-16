@@ -47,6 +47,7 @@ from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
 from docflow.me.preferences import router as me_prefs_router
 from docflow.me.router import router as me_router
+from docflow.observability.middleware import CorrelationMiddleware
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router
@@ -140,9 +141,7 @@ def _custom_openapi() -> dict[str, Any]:
     chaque appel, car l'URL dérivée n'est connue qu'une fois des requêtes reçues.
     """
     if app.openapi_schema is None:
-        app.openapi_schema = get_openapi(
-            title=app.title, version=app.version, routes=app.routes
-        )
+        app.openapi_schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
     base = effective_base_url(getattr(app.state, "settings", None))
     if base:
         app.openapi_schema["servers"] = [{"url": base.rstrip("/")}]
@@ -150,6 +149,10 @@ def _custom_openapi() -> dict[str, Any]:
 
 
 app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+# Ingress de corrélation (STANDARD « Traçabilité du contexte », A3) : middleware
+# ASGI pur pour que le contextvar posé soit vu par le service qui `enqueue`.
+app.add_middleware(CorrelationMiddleware)
 
 
 @app.middleware("http")

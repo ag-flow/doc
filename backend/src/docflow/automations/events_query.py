@@ -59,7 +59,8 @@ async def matching_batch(
 ) -> list[asyncpg.Record]:
     """Events matchés au-delà du curseur (batch ordonné)."""
     rows: list[asyncpg.Record] = await conn.fetch(
-        "SELECT de.seq, de.document_ref, de.event_code, de.business "
+        "SELECT de.seq, de.document_ref, de.event_code, de.business, "
+        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent "
         + _FROM_WHERE
         + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT $7",
         wks,
@@ -84,7 +85,8 @@ async def next_matching(
 ) -> asyncpg.Record | None:
     """Prochain event matché au-delà du curseur (ou None)."""
     return await conn.fetchrow(
-        "SELECT de.seq, de.document_ref, de.event_code, de.business "
+        "SELECT de.seq, de.document_ref, de.event_code, de.business, "
+        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent "
         + _FROM_WHERE
         + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT 1",
         wks,
@@ -144,9 +146,7 @@ async def prev_cursor(
     return val or 0
 
 
-async def consume(
-    conn: asyncpg.Connection, event_seq: int, automation_id: uuid.UUID
-) -> None:
+async def consume(conn: asyncpg.Connection, event_seq: int, automation_id: uuid.UUID) -> None:
     """Marque l'event consommé par l'automate (stop_chain, appel réussi).
     Le premier consommateur gagne (jamais écrasé)."""
     await conn.execute(

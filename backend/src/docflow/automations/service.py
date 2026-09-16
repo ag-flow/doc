@@ -56,9 +56,7 @@ async def _workspace_slugs(conn: asyncpg.Connection, automation_id: uuid.UUID) -
     return [r["slug"] for r in rows]
 
 
-async def _resolve_workspace_keys(
-    conn: asyncpg.Connection, slugs: list[str]
-) -> list[uuid.UUID]:
+async def _resolve_workspace_keys(conn: asyncpg.Connection, slugs: list[str]) -> list[uuid.UUID]:
     """Résout des slugs de workspaces en clés ; 422 si l'un est inconnu."""
     keys: list[uuid.UUID] = []
     for slug in slugs:
@@ -102,9 +100,7 @@ async def _set_workspaces(
     )
 
 
-async def _maybe_workspace(
-    conn: asyncpg.Connection, ws_slug: str | None
-) -> uuid.UUID | None:
+async def _maybe_workspace(conn: asyncpg.Connection, ws_slug: str | None) -> uuid.UUID | None:
     """Clé du workspace si un scope est demandé ; None = vue globale (admin)."""
     return await require_workspace(conn, ws_slug) if ws_slug is not None else None
 
@@ -272,17 +268,12 @@ async def reorder_automations(
     async with pool.acquire() as conn, conn.transaction():
         wk = await _maybe_workspace(conn, ws_slug)
         if wk is None:
-            current = {
-                r["id"] for r in await conn.fetch("SELECT id FROM automation")
-            }
+            current = {r["id"] for r in await conn.fetch("SELECT id FROM automation")}
             if set(ids) != current or len(ids) != len(current):
-                raise HTTPException(
-                    422, "l'ordre doit couvrir exactement tous les automates"
-                )
+                raise HTTPException(422, "l'ordre doit couvrir exactement tous les automates")
             for i, automation_id in enumerate(ids, start=1):
                 await conn.execute(
-                    "UPDATE automation_workspace SET position = $1 "
-                    "WHERE automation_ref = $2",
+                    "UPDATE automation_workspace SET position = $1 WHERE automation_ref = $2",
                     i,
                     automation_id,
                 )
@@ -398,9 +389,7 @@ async def update_automation(
         if "workspace_slugs" in raw:
             new_slugs = raw.pop("workspace_slugs") or []
             if not new_slugs:
-                raise HTTPException(
-                    422, "un automate doit couvrir au moins un workspace"
-                )
+                raise HTTPException(422, "un automate doit couvrir au moins un workspace")
             await _set_workspaces(
                 conn, automation_id, await _resolve_workspace_keys(conn, new_slugs)
             )
@@ -886,14 +875,18 @@ async def push_update_events(
             result = await conn.execute(
                 """
                 INSERT INTO document_event
-                    (workspace_technical_key, document_ref, event_code, business)
+                    (workspace_technical_key, document_ref, event_code, business,
+                     correlation_id, correlation_kind, origin)
                 SELECT d.workspace_technical_key, d.doc_technical_key,
                        'docflow.document.refreshed.v1',
                        jsonb_build_object(
                            'documentId', d.doc_technical_key::text,
                            'workspaceSlug', w.slug,
                            'version', d.version,
-                           'title', d.title)
+                           'title', d.title),
+                       -- Fil né de la mutation, sans déclencheur amont :
+                       -- kind=document, id = clé technique OPAQUE du document.
+                       d.doc_technical_key::text, 'document', 'doc'
                 FROM document d
                 JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
                 JOIN data_block b ON b.id = d.data_block_ref
@@ -905,9 +898,7 @@ async def push_update_events(
             )
             emitted = int(result.split()[-1])
             total += emitted
-            details.append(
-                {"workspace_slug": ws_slug, "block_slugs": blocks, "events": emitted}
-            )
+            details.append({"workspace_slug": ws_slug, "block_slugs": blocks, "events": emitted})
     # Le détail par sélection est journalisé ET retourné : un push qui émet 0
     # sur une sélection doit se voir immédiatement (diagnostic).
     log.info("automation_events_pushed", count=total, selections=details)

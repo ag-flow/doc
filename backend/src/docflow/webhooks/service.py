@@ -356,6 +356,13 @@ async def emit_event(
                     encryption_key=encryption_key,
                     harpocrate_url=harpocrate_url,
                 )
+                # Frontière EXTERNE (STANDARD « Traçabilité du contexte » §4) :
+                # un webhook part vers une URL CLIENTE. On n'y pose JAMAIS de
+                # `traceparent` — la topologie interne (ids de spans, structure
+                # des services) ne se publie pas au-delà de la frontière de
+                # confiance. Contraste voulu avec l'automate → cible interne, qui
+                # lui propage (automations/worker._dispatch). `headers` reste donc
+                # ce que le client a configuré, rien de plus.
                 started = time.monotonic()
                 status_code: int | None = None
                 error: str | None = None

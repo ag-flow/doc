@@ -95,3 +95,17 @@ class Settings(BaseSettings):
     # Rétention des events LIVRÉS dans l'outbox : purgés au-delà (heures). Les
     # entrées dead-letter (failed_at) sont conservées pour inspection.
     event_outbox_purge_after_hours: int = 24
+
+    # Propagation du contexte de trace (STANDARD « Traçabilité du contexte »).
+    # Suffixes d'hôtes reconnus INTERNES vers lesquels un automate propage
+    # traceparent + baggage. FAIL-CLOSED : liste vide (défaut) = on ne propage
+    # vers AUCUNE cible. La topologie interne ne franchit jamais une frontière
+    # externe (webhook client, cible hors allowlist). Relu à chaud via Settings.
+    trace_propagation_internal_hosts: list[str] = []
+
+    # Ingress : nom de l'en-tete pose par la gateway sur un appel INTERNE
+    # authentifie pour voucher le contexte de trace entrant. FAIL-CLOSED : None
+    # (defaut) = aucun contexte entrant n'est jamais relaye (un appelant externe
+    # / l'UI demarre un fil neuf). Trust delegue a la gateway sur le reseau
+    # interne, meme modele que X-Forwarded-* (STANDARD 3/4).
+    trace_ingress_header: str | None = None

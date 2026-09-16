@@ -5,6 +5,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import asyncpg
 import httpx
@@ -14,6 +15,7 @@ from docflow.automations import events_query
 from docflow.automations.substitution import render_and_validate, unresolved_variables
 from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
+from docflow.observability import correlation as corr
 
 log = structlog.get_logger(__name__)
 
@@ -27,6 +29,20 @@ _RUN_HISTORY_KEEP = 20
 # Tentatives d'émission avant dead-letter (reprise persistante des échecs). Aligné
 # sur le producteur workflow (events/worker MAX_ATTEMPTS=8).
 _MAX_ATTEMPTS = 8
+
+
+def _is_internal_target(url: str, settings: object) -> bool:
+    """Vrai si l'hôte de `url` est reconnu INTERNE (suffixe allowlisté).
+
+    Décide la propagation du contexte de trace (STANDARD §3) : seule une cible
+    interne reçoit `traceparent`/baggage. FAIL-CLOSED : allowlist vide → False,
+    on ne propage vers rien tant qu'un hôte interne n'est pas explicitement déclaré.
+    """
+    suffixes = getattr(settings, "trace_propagation_internal_hosts", None) or []
+    host = (urlsplit(url).hostname or "").lower()
+    if not host:
+        return False
+    return any(host == s.lower() or host.endswith("." + s.lower().lstrip(".")) for s in suffixes)
 
 
 @dataclass
@@ -341,6 +357,15 @@ async def _dispatch(
         )
         return ExecResult("failed", body=f"URL refusée : {exc}", request_body=body)
 
+    # Frontière de propagation (STANDARD §3/§4) : vers une cible INTERNE
+    # allowlistée on relaie traceparent + baggage pour que le fil tienne de bout
+    # en bout (cas type : indexation ragflow sur document.created/updated/deleted).
+    # Vers une cible EXTERNE (hors allowlist), on ne pose RIEN : la topologie
+    # interne ne franchit pas la frontière de confiance. Asymétrie voulue.
+    ctx = corr.from_event_row(event)
+    if ctx is not None and _is_internal_target(automation["url"], settings):
+        corr.inject_internal(headers, ctx)
+
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.request(
@@ -505,6 +530,12 @@ async def _process_event(
             "event_code": row["event_code"],
             "document_ref": row["document_ref"],
             "business": row["business"],
+            # Contexte de corrélation journalisé avec l'event : le worker le
+            # relaie vers la cible interne (A4), sans le réécrire.
+            "correlation_id": row["correlation_id"],
+            "correlation_kind": row["correlation_kind"],
+            "origin": row["origin"],
+            "traceparent": row["traceparent"],
         }
         prep = await _prepare(conn, automation, event, settings)
 
