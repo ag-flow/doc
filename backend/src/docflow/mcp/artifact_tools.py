@@ -13,7 +13,7 @@ import httpx
 from fastapi import HTTPException
 from mcp.types import ImageContent, TextContent, Tool
 
-from docflow.artifacts import mutable, render, service, uploads
+from docflow.artifacts import mockup_base, mutable, render, service, uploads
 from docflow.artifacts.links import build_download_query, build_preview_query
 from docflow.config.settings import Settings
 from docflow.mcp.coerce import as_bool as _as_bool
@@ -502,12 +502,114 @@ ARTIFACT_TOOLS.append(
 
 
 # Périmètre workspace des tools (fusionné dans _WS_TOOLS du serveur) : écriture ?
+# ── Base CSS des maquettes (mockup-base) ──────────────────────────────────────
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="set_mockup_base",
+        description=(
+            "Crée ou met à jour la BASE CSS partagée des maquettes d'une application. "
+            "La base est un artefact MUTABLE text/css : sa révision EST sa version. "
+            "Sans `base_id` → crée une nouvelle base (retourne {base_id, revision:1}). "
+            "Avec `base_id` + `if_revision` → met à jour (révision N+1). La mise à jour "
+            "ne PROPAGE rien : utiliser propagate_mockup_base pour réécrire les maquettes. "
+            "`css` = contenu de la feuille (tokens :root, reset, primitives ; JAMAIS de "
+            "mise en page d'écran)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "css": {"type": "string", "description": "Contenu CSS de la base"},
+                "base_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la base à mettre à jour (omis = création)",
+                },
+                "if_revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Révision attendue (obligatoire avec base_id)",
+                },
+            },
+            "required": ["workspace_slug", "css"],
+        },
+    )
+)
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="apply_mockup_base",
+        description=(
+            "Embarque (ou met à jour) le bloc de base CSS à la version COURANTE dans une "
+            "maquette (artefact HTML mutable), entre marqueurs "
+            '`<style data-mockup-base="<base_id>" data-mockup-base-rev="N">…</style>`. '
+            "Bloc déjà présent → remplacé (patch, ancre unique) ; absent → inséré avant "
+            "</head>. Le fichier reste auto-portant. Retourne {maquette_id, revision, "
+            "base_rev, changed}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "base_id": {"type": "string", "format": "uuid", "description": "UUID de la base"},
+                "maquette_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "UUID de la maquette HTML",
+                },
+            },
+            "required": ["workspace_slug", "base_id", "maquette_id"],
+        },
+    )
+)
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="propagate_mockup_base",
+        description=(
+            "Réécrit le bloc de base à la version courante dans TOUTES les maquettes de "
+            "cette base qui sont en retard (patch par ancre unique). Une maquette qui "
+            "échoue (conflit de révision, corruption) n'interrompt pas les autres. "
+            "Retourne {base_id, current_rev, updated[], skipped[], failed[]}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "base_id": {"type": "string", "format": "uuid", "description": "UUID de la base"},
+            },
+            "required": ["workspace_slug", "base_id"],
+        },
+    )
+)
+ARTIFACT_TOOLS.append(
+    Tool(
+        name="mockup_base_drift",
+        description=(
+            "Liste les maquettes portant cette base et leur version embarquée vs la "
+            "version courante — pour repérer les échecs de propagation ou les fichiers "
+            "édités à la main hors base. Lecture seule. Retourne {base_id, current_rev, "
+            "total, stale, maquettes[]}."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_slug": {"type": "string", "description": "Slug du workspace"},
+                "base_id": {"type": "string", "format": "uuid", "description": "UUID de la base"},
+            },
+            "required": ["workspace_slug", "base_id"],
+        },
+    )
+)
+
 ARTIFACT_WS_TOOLS: dict[str, bool] = {
     "create_upload": True,
     "create_artifact": True,
     "update_artifact": True,
     "patch_artifact": True,
     "prune_artifact_revisions": True,
+    "set_mockup_base": True,
+    "apply_mockup_base": True,
+    "propagate_mockup_base": True,
+    "mockup_base_drift": False,
     "get_artifact": False,
     "get_artifact_data": False,
     "get_artifact_link": False,
@@ -1008,3 +1110,104 @@ async def handle_get_maquette_png(
         }
     )
     return [image, *meta_text]
+
+
+# ── Handlers mockup-base ──────────────────────────────────────────────────────
+
+
+async def handle_set_mockup_base(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Crée ou met à jour la base CSS (mutable text/css)."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    css = args.get("css")
+    if not isinstance(css, str):
+        return _text({"error": "css obligatoire (texte)"})
+    base_id: uuid.UUID | None = None
+    if args.get("base_id") is not None:
+        base_id = _parse_artifact_id(args.get("base_id"))
+        if base_id is None:
+            return _text({"error": "base_id invalide : UUID attendu"})
+    if_revision = args.get("if_revision")
+    if if_revision is not None and (
+        not isinstance(if_revision, int) or isinstance(if_revision, bool)
+    ):
+        return _text({"error": "if_revision invalide (entier)"})
+    try:
+        result = await mockup_base.set_mockup_base(
+            pool,
+            ws_slug,
+            css=css,
+            updated_by=acting_identity().id,
+            max_bytes=settings.artifact_max_bytes,
+            base_id=base_id,
+            if_revision=if_revision,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def handle_apply_mockup_base(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Embarque le bloc de base à la version courante dans une maquette."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    base_id = _parse_artifact_id(args.get("base_id"))
+    maquette_id = _parse_artifact_id(args.get("maquette_id"))
+    if base_id is None or maquette_id is None:
+        return _text({"error": "base_id et maquette_id requis (UUID)"})
+    try:
+        result = await mockup_base.apply_mockup_base(
+            pool,
+            ws_slug,
+            maquette_id=maquette_id,
+            base_id=base_id,
+            updated_by=acting_identity().id,
+            max_bytes=settings.artifact_max_bytes,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def handle_propagate_mockup_base(
+    pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
+) -> list[TextContent]:
+    """Propage la base courante vers toutes ses maquettes en retard."""
+    if settings is None:
+        return _text({"error": "configuration indisponible"})
+    ws_slug = str(args.get("workspace_slug", ""))
+    base_id = _parse_artifact_id(args.get("base_id"))
+    if base_id is None:
+        return _text({"error": "base_id invalide : UUID attendu"})
+    try:
+        result = await mockup_base.propagate_mockup_base(
+            pool,
+            ws_slug,
+            base_id,
+            updated_by=acting_identity().id,
+            max_bytes=settings.artifact_max_bytes,
+        )
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)
+
+
+async def handle_mockup_base_drift(
+    pool: asyncpg.Pool, args: dict[str, object]
+) -> list[TextContent]:
+    """Liste les maquettes d'une base et leur dérive de version (lecture seule)."""
+    ws_slug = str(args.get("workspace_slug", ""))
+    base_id = _parse_artifact_id(args.get("base_id"))
+    if base_id is None:
+        return _text({"error": "base_id invalide : UUID attendu"})
+    try:
+        result = await mockup_base.mockup_base_drift(pool, ws_slug, base_id)
+    except HTTPException as e:
+        return _text({"error": e.detail})
+    return _text(result)

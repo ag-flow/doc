@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from docflow.admin.users.router import router as users_router
 from docflow.apikeys.router import router as apikeys_router
 from docflow.artifacts.preview_router import router as preview_router
+from docflow.artifacts.mockup_router import router as mockup_base_router
 from docflow.artifacts.router import router as artifacts_router
 from docflow.artifacts.types_router import admin_router as artifact_types_admin_router
 from docflow.artifacts.types_router import read_router as artifact_types_read_router
@@ -197,6 +198,7 @@ app.include_router(artifacts_router, prefix=_API)
 # Le tunnel route preview.<domaine> → cet endpoint ; la route se garde elle-même
 # par l'hôte (fail closed si preview_base_url non configuré).
 app.include_router(preview_router)
+app.include_router(mockup_base_router, prefix=_API)
 app.include_router(artifact_types_read_router, prefix=_API)
 app.include_router(artifact_types_admin_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)

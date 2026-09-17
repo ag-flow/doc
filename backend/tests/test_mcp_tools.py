@@ -237,6 +237,10 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "query_dataset",
         "import_dataset_csv",
         "export_dataset_csv",
+        "set_mockup_base",
+        "apply_mockup_base",
+        "propagate_mockup_base",
+        "mockup_base_drift",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 

@@ -68,7 +68,11 @@ async def test_list_tools_returns_all_tools(db_pool: asyncpg.Pool) -> None:
     assert "get_preview_link" in tool_names
     assert "get_maquette_png" in tool_names
     assert "prune_artifact_revisions" in tool_names
-    assert len(_TOOLS) == 59
+    assert "set_mockup_base" in tool_names
+    assert "apply_mockup_base" in tool_names
+    assert "propagate_mockup_base" in tool_names
+    assert "mockup_base_drift" in tool_names
+    assert len(_TOOLS) == 63
 
 
 async def test_configure_sets_pool(db_pool: asyncpg.Pool) -> None:

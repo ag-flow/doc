@@ -1451,6 +1451,14 @@ async def _dispatch_tool(
         return await artifact_tools.handle_get_preview_link(pool, _settings, arguments)
     if name == "get_maquette_png":
         return await artifact_tools.handle_get_maquette_png(pool, _settings, arguments)
+    if name == "set_mockup_base":
+        return await artifact_tools.handle_set_mockup_base(pool, _settings, arguments)
+    if name == "apply_mockup_base":
+        return await artifact_tools.handle_apply_mockup_base(pool, _settings, arguments)
+    if name == "propagate_mockup_base":
+        return await artifact_tools.handle_propagate_mockup_base(pool, _settings, arguments)
+    if name == "mockup_base_drift":
+        return await artifact_tools.handle_mockup_base_drift(pool, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
         return await dataset_tools.handle(name, pool, arguments)
     return _text({"error": f"outil inconnu : {name}"})
