@@ -31,6 +31,7 @@ import { ContractsAdmin } from './pages/ContractsAdmin'
 import { MyProfilePage } from './pages/MyProfilePage'
 import { DesignSystemPage } from './pages/DesignSystemPage'
 import { InvitePage } from './pages/InvitePage'
+import { OnboardingOverlay } from './onboarding/OnboardingOverlay'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -58,6 +59,11 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
+        {/* Parcours guidé : monté dans le layout authentifié (a le contexte
+            routeur pour useLocation). L'état « fermé pour cette session » vit
+            hors composant (variable de module) car AppLayout se remonte à
+            chaque navigation. */}
+        <OnboardingOverlay />
       </div>
     </HeaderSlotProvider>
   )

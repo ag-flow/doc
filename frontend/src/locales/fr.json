@@ -657,5 +657,41 @@
     "none": "Aucune vue enregistrée",
     "saveTitle": "Enregistrer la vue courante",
     "saveHint": "Le tri, les filtres et les colonnes affichées sont mémorisés."
+  },
+  "onboarding": {
+    "aria": "Guide de découverte de docflow",
+    "progression": "Étape {{index}} sur {{total}}",
+    "reouvrir": "Rouvrir le guide",
+    "desactiver": "Ne plus afficher",
+    "fermer": "Fermer",
+    "suivant": "Suivant",
+    "terminer": "Terminer",
+    "horsSequence": "Rendez-vous sur « {{page}} » pour reprendre le guide.",
+    "steps": {
+      "bienvenue": {
+        "title": "Bienvenue dans docflow",
+        "body": "Tout s'organise par espace de travail. À l'intérieur, des blocs regroupent des documents markdown arborescents, structurés par des types, des propriétés et des statuts que vous définissez."
+      },
+      "templates": {
+        "title": "Modèles",
+        "body": "Démarrez d'une structure toute faite : un modèle installe types, propriétés et statuts en un clic, réutilisable d'un espace à l'autre."
+      },
+      "automations": {
+        "title": "Automates",
+        "body": "Réagissez aux changements : un automate appelle un service externe quand un document est créé, modifié ou supprimé."
+      },
+      "contracts": {
+        "title": "Contrats OpenAPI",
+        "body": "Le contrat d'API de docflow, prêt à brancher dans un système tiers ou un automate."
+      },
+      "apiKeys": {
+        "title": "Clés API & MCP",
+        "body": "Générez des clés pour vos agents et automates, et récupérez l'adresse du serveur MCP et du schéma OpenAPI."
+      },
+      "profil": {
+        "title": "Votre profil",
+        "body": "Gérez votre compte et vos préférences. Vous pouvez rouvrir ou désactiver ce guide à tout moment."
+      }
+    }
   }
 }

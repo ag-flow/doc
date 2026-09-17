@@ -304,3 +304,52 @@ select.input { cursor: pointer; }
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
+
+/* ── Onboarding (parcours guidé première connexion) ──────────────────────────
+   Bulle et contrôles ancrés EN BAS À DROITE (le coin gauche porte les toasts).
+   z au-dessus du chrome, sous les toasts (100). Style Broadsheet : surface
+   surélevée, ombre lg, rayon lg — cohérent avec .dialog. */
+.onboarding-controls {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 90;
+  display: flex;
+  gap: var(--space-2);
+}
+.onboarding-bulle {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 90;
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+.onboarding-progress {
+  margin: 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+}
+.onboarding-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 15px;
+  line-height: 1.2;
+}
+.onboarding-body { margin: 0; font-size: 13px; opacity: 0.8; }
+.onboarding-actions {
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.onboarding-actions-left { display: flex; gap: var(--space-1); }
