@@ -88,21 +88,28 @@ async def test_contexte_ambiant_est_relayé_sans_réécriture(
     )
     token = corr.bind(upstream)
     try:
-        await doc_svc.create_document(
+        doc = await doc_svc.create_document(
             db_pool, _WS, DocumentCreate(title="B", functional_type_slug="epic", block_id=block_id)
         )
     finally:
         corr.reset(token)
 
+    # Filtré sur le document créé : le schéma de test est partagé entre tests et
+    # accumule des lignes — une requête non filtrée piocherait une autre ligne.
     de = await db_pool.fetchrow(
-        "SELECT correlation_id, correlation_kind, origin, traceparent FROM document_event"
+        "SELECT correlation_id, correlation_kind, origin, traceparent FROM document_event "
+        "WHERE document_ref = $1",
+        doc.doc_technical_key,
     )
     # Relais opaque : le fil amont n'est pas réécrit en kind=document.
     assert de["correlation_id"] == "wf-thread-777"
     assert de["correlation_kind"] == "workflow_instance"
     assert de["origin"] == "workflow"
     assert de["traceparent"] == upstream.traceparent
-    env = json.loads((await db_pool.fetchrow("SELECT payload FROM event_outbox"))["payload"])
+    row = await db_pool.fetchrow(
+        "SELECT payload FROM event_outbox WHERE correlation_id = $1", "wf-thread-777"
+    )
+    env = json.loads(row["payload"])
     assert env["_traceId"] == upstream.traceparent  # relais du traceparent entrant
 
 
