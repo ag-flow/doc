@@ -22,7 +22,14 @@ async def get_oidc_config(request: Request, _: AuthUser = _SuperAdmin) -> OidcCo
 async def set_oidc_config(
     body: OidcConfigSet, request: Request, _: AuthUser = _SuperAdmin
 ) -> OidcConfigOut:
-    return await service.set_oidc_config(request.app.state.pool, body)
+    pool = request.app.state.pool
+    # Résolubilité à la configuration (STANDARD Harpocrate §6) : un client_secret_ref
+    # vault doit désigner un endpoint existant (échec explicite, pas à la 1re connexion).
+    if body.client_secret_ref:
+        from docflow.vault import service as vault_svc
+
+        await vault_svc.assert_refs_resolvable(pool, [body.client_secret_ref])
+    return await service.set_oidc_config(pool, body)
 
 
 @router.get("/auth/oidc/config", response_model=OidcPublicConfig | None)

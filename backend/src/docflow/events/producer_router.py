@@ -73,7 +73,14 @@ async def put_producer_config(
     body: EventsProducerConfigUpdate, request: Request, _: AuthUser = _SuperAdmin
 ) -> EventsProducerConfigOut:
     pool = request.app.state.pool
-    cfg = await producer_config.update_config(pool, body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    # Résolubilité à la configuration (STANDARD Harpocrate §6) : un secret_ref vault
+    # doit désigner un endpoint existant.
+    if data.get("secret_ref"):
+        from docflow.vault import service as vault_svc
+
+        await vault_svc.assert_refs_resolvable(pool, [data["secret_ref"]])
+    cfg = await producer_config.update_config(pool, data)
     # Prise en compte à chaud immédiate (activation / source / allowlist).
     await outbox.reconcile(pool)
     return _to_out(cfg)

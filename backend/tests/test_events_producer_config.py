@@ -207,6 +207,33 @@ def _reset(url: str) -> None:
     asyncio.run(_do())
 
 
+def _seed_harpocrate_endpoint(url: str) -> None:
+    """Sème l'endpoint « harpocrate » (alias de _VAULT_REF) en base, pour que la
+    validation de résolubilité (§6) du secret_ref producteur passe. La harness n'a
+    pas d'ENCRYPTION_KEY : on insère directement (la validation ne déchiffre rien)."""
+
+    async def _do() -> None:
+        conn = await asyncpg.connect(url)
+        try:
+            owner = await conn.fetchval("SELECT id FROM app_user ORDER BY created_at LIMIT 1")
+            sid = await conn.fetchval(
+                "INSERT INTO user_secret (owner_ref, slug, label, value_enc, kind, secret_type) "
+                "VALUES ($1, 'harpo-key', 'K', 'x', 'generic', 'HARPOCRATE_API_KEY') "
+                "ON CONFLICT (owner_ref, slug) DO UPDATE SET label = EXCLUDED.label RETURNING id",
+                owner,
+            )
+            await conn.execute(
+                "INSERT INTO vault_wallet (name, owner_ref, url, api_key_secret_ref) "
+                "VALUES ('harpocrate', $1, 'https://v', $2) ON CONFLICT (name) DO NOTHING",
+                owner,
+                sid,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_do())
+
+
 def test_put_requires_superadmin() -> None:
     # Sans token : 401 avant tout accès DB.
     client = TestClient(app)
@@ -219,6 +246,9 @@ def test_put_and_get_roundtrip(
     _reset(test_schema_url)
     with _client(monkeypatch, test_schema_url) as client:
         hdrs = _auth(client)
+        # L'endpoint « harpocrate » (alias de _VAULT_REF) doit exister : la config
+        # producteur valide désormais la résolubilité de son secret_ref (§6).
+        _seed_harpocrate_endpoint(test_schema_url)
         r = client.put(
             "/api/admin/events-producer",
             headers=hdrs,
@@ -274,12 +304,37 @@ def test_put_secret_ref_must_be_vault_422(
         assert r.status_code == 422
 
 
+def test_put_producer_rejects_unresolvable_endpoint(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Validation de résolubilité (§6) : un secret_ref vault bien formé mais dont
+    l'endpoint n'existe pas est refusé (422), pas découvert à la 1re émission."""
+    _reset(test_schema_url)
+    with _client(monkeypatch, test_schema_url) as client:
+        hdrs = _auth(client)
+        r = client.put(
+            "/api/admin/events-producer",
+            headers=hdrs,
+            json={
+                "enabled": True,
+                "ingestion_url": "https://wf",
+                "source_id": "docflow",
+                "source_uri": "x",
+                "allowed_events": [_CREATED],
+                "secret_ref": "${vault://nexistepas:/p}",
+            },
+        )
+        assert r.status_code == 422
+        assert "inexistant" in r.text
+
+
 def test_test_connection_ok(
     monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     _reset(test_schema_url)
     with _client(monkeypatch, test_schema_url) as client:
         hdrs = _auth(client)
+        _seed_harpocrate_endpoint(test_schema_url)
         client.put(
             "/api/admin/events-producer",
             headers=hdrs,
