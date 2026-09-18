@@ -52,7 +52,7 @@ def _decrypt_safe(key: str | None, data: bytes | None) -> dict[str, str]:
     try:
         return decrypt_headers(key, data)
     except Exception:
-        log.warning("webhook_headers_decrypt_failed")
+        log.warning("webhook_headers_decrypt_failed", exc_info=True)
         return {}
 
 
@@ -273,7 +273,7 @@ async def _resolve_headers(
                 enc_key=encryption_key,
             )
         except Exception as exc:
-            log.warning("webhook_header_unresolved", header=name, error=str(exc))
+            log.warning("webhook_header_unresolved", header=name, error=str(exc), exc_info=True)
             out[name] = ""
     return out
 
@@ -308,7 +308,9 @@ async def _record_delivery(
                 webhook_id,
             )
     except Exception as exc:
-        log.warning("webhook_delivery_log_failed", webhook_id=str(webhook_id), error=str(exc))
+        log.warning(
+            "webhook_delivery_log_failed", webhook_id=str(webhook_id), error=str(exc), exc_info=True
+        )
 
 
 async def emit_event(
@@ -383,6 +385,7 @@ async def emit_event(
                         webhook_id=str(row["id"]),
                         webhook_event=event,
                         error=str(exc),
+                        exc_info=True,
                     )
                 await _record_delivery(
                     pool,
@@ -393,4 +396,4 @@ async def emit_event(
                     int((time.monotonic() - started) * 1000),
                 )
     except Exception as exc:
-        log.error("webhook_emit_error", webhook_event=event, error=str(exc))
+        log.error("webhook_emit_error", webhook_event=event, error=str(exc), exc_info=True)

@@ -140,7 +140,10 @@ async def _restore_block_dir(
             report.blocks_created += 1
     except Exception as exc:  # noqa: BLE001 — un bloc en échec n'arrête pas le reste
         report.errors.append(f"{ws_slug}/{block_slug}: {exc}")
-        log.warning("restore_block_failed", workspace=ws_slug, block=block_slug, error=str(exc))
+        log.warning(
+            "restore_block_failed", workspace=ws_slug, block=block_slug, error=str(exc),
+            exc_info=True,
+        )
         return
 
     # 3. Documents du bloc, puis sous-blocs
@@ -164,7 +167,9 @@ async def _restore_docs(
             doc_id = await _restore_one_doc(pool, ws_slug, block_id, md_path, parent_doc_id, report)
         except Exception as exc:  # noqa: BLE001 — continuer les autres documents
             report.errors.append(f"{ws_slug}/…/{slug}: {exc}")
-            log.warning("restore_doc_failed", workspace=ws_slug, slug=slug, error=str(exc))
+            log.warning(
+                "restore_doc_failed", workspace=ws_slug, slug=slug, error=str(exc), exc_info=True
+            )
             continue
         child_dir = directory / slug
         if child_dir.is_dir() and not (child_dir / BLOCK_META_FILENAME).exists():

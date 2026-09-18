@@ -142,11 +142,11 @@ async def _deliver_one(
     except TimeoutError:
         error = f"budget de livraison dépassé ({_DELIVERY_BUDGET:g}s)"
         await _mark_failed(pool, row["id"], row["attempts"], error)
-        log.warning("event_delivery_timeout", event_id=str(row["id"]))
+        log.warning("event_delivery_timeout", event_id=str(row["id"]), exc_info=True)
         return
     except Exception as exc:  # réseau, DNS, TLS…
         await _mark_failed(pool, row["id"], row["attempts"], str(exc))
-        log.warning("event_delivery_failed", event_id=str(row["id"]), error=str(exc))
+        log.warning("event_delivery_failed", event_id=str(row["id"]), error=str(exc), exc_info=True)
         return
     if 200 <= status < 300:
         await _mark_sent(pool, row["id"])
@@ -245,5 +245,5 @@ async def worker_loop(pool: asyncpg.Pool, settings: Any) -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("event_worker_error", error=str(exc))
+                log.error("event_worker_error", error=str(exc), exc_info=True)
             await asyncio.sleep(tick)

@@ -214,6 +214,7 @@ async def instantiate_default_values(
                 prop_type=prop_type,
                 default_val=default_val,
                 reason=exc.detail,
+                exc_info=True,
             )
             continue
 

@@ -142,7 +142,9 @@ def _fetch_sync(
                 auth_retry_done = True
                 _cache.invalidate_identifier(identifier)
                 _cache.drop_client(base_url, token)
-                log.warning("vault_permission_denied_retry", endpoint=identifier, path=path)
+                log.warning(
+                    "vault_permission_denied_retry", endpoint=identifier, path=path, exc_info=True
+                )
                 continue
             raise ValueError(
                 f"Accès refusé au coffre « {identifier} » (chemin « {path} ») "
@@ -155,14 +157,16 @@ def _fetch_sync(
                 _cache.invalidate_identifier(identifier)
                 _cache.drop_client(base_url, token)
                 log.warning(
-                    "vault_auth_error_retry", endpoint=identifier, path=path, status=code
+                    "vault_auth_error_retry",
+                    endpoint=identifier, path=path, status=code, exc_info=True,
                 )
                 continue
             if code == 0 and net_attempt < max_attempts - 1:
                 net_attempt += 1
                 _cache.drop_client(base_url, token)
                 log.warning(
-                    "vault_network_retry", endpoint=identifier, path=path, attempt=net_attempt
+                    "vault_network_retry",
+                    endpoint=identifier, path=path, attempt=net_attempt, exc_info=True,
                 )
                 time.sleep(backoff_base * (2 ** (net_attempt - 1)))
                 continue

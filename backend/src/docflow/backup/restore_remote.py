@@ -57,7 +57,9 @@ async def restore_from_remote(
         try:
             await asyncio.to_thread(_clone)
         except GitCommandError as e:
-            log.warning("restore_git_clone_failed", point=remote_point_slug, error=str(e))
+            log.warning(
+                "restore_git_clone_failed", point=remote_point_slug, error=str(e), exc_info=True
+            )
             raise HTTPException(502, f"clone du dépôt de sauvegarde échoué : {e}") from e
 
         if git_base_path:

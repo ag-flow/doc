@@ -118,6 +118,6 @@ async def test_connection(request: Request, _: AuthUser = _SuperAdmin) -> dict[s
     try:
         status = await _poster(url, body, headers)
     except Exception as exc:
-        log.warning("events_producer_test_failed", error=str(exc))
+        log.warning("events_producer_test_failed", error=str(exc), exc_info=True)
         raise HTTPException(status_code=502, detail=f"connexion échouée : {exc}") from exc
     return {"status": status, "ok": 200 <= status < 300}

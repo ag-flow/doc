@@ -92,7 +92,7 @@ async def resolve_idp_bearer(
             token, issuer=issuer, audience=settings.oauth2_audience
         )
     except OidcVerifyError as exc:
-        log.warning("mcp_bearer_rejected", reason=str(exc))
+        log.warning("mcp_bearer_rejected", reason=str(exc), exc_info=True)
         return None
 
     sub = str(claims.get("sub", ""))

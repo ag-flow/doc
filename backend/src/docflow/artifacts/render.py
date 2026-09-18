@@ -78,7 +78,7 @@ async def render_png(
         async with httpx.AsyncClient(timeout=settings.render_timeout_seconds) as client:
             resp = await client.post(url, params=params, json=payload)
     except httpx.HTTPError as exc:
-        log.warning("render_service_unreachable", error=str(exc))
+        log.warning("render_service_unreachable", error=str(exc), exc_info=True)
         raise RenderError(f"service de rendu injoignable : {exc}") from exc
     if resp.status_code != 200:
         log.warning("render_service_http_error", status=resp.status_code)

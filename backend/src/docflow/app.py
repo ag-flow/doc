@@ -71,17 +71,19 @@ _STATIC = pathlib.Path(__file__).parent.parent.parent / "static"
 def _configure_logging(level: str) -> None:
     if structlog.is_configured():
         return
+    # Rendu CONSOLE key-value (pas JSON) : la flotte (Alloy → Loki) est bâtie sur
+    # ce format et filtre par filtres de ligne, jamais `| json` (STANDARD logs §7/§8).
+    # ConsoleRenderer rend lui-même exc_info (traceback lisible) — pas de format_exc_info.
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
             structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer(colors=False),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),

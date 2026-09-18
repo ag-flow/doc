@@ -1181,6 +1181,7 @@ async def _apply_constraints(
                 kind=kind,
                 operand=operand,
                 reason=str(exc),
+                exc_info=True,
             )
             continue
         error = _constraint_error(kind, prop_type, value, operand, msg)

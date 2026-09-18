@@ -312,6 +312,7 @@ async def _dispatch(
                     automation_id=str(automation["id"]),
                     header=h["name"],
                     error=str(exc),
+                    exc_info=True,
                 )
                 return ExecResult("failed", body=f"résolution du secret « {h['name']} » échouée")
             headers[h["name"]] = prefix + resolved
@@ -354,6 +355,7 @@ async def _dispatch(
             "automation_url_rejected",
             automation_id=str(automation["id"]),
             error=str(exc),
+            exc_info=True,
         )
         return ExecResult("failed", body=f"URL refusée : {exc}", request_body=body)
 
@@ -390,6 +392,7 @@ async def _dispatch(
             automation_id=str(automation["id"]),
             event_code=event["event_code"],
             error=str(exc),
+            exc_info=True,
         )
         return ExecResult("failed", body=str(exc), request_body=body)
 
@@ -698,12 +701,13 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
                 "automation_run_tick_error",
                 automation_id=str(automation["id"]),
                 error=str(exc),
+                exc_info=True,
             )
 
     try:
         await _purge_events(pool)
     except Exception as exc:
-        log.error("automation_event_purge_failed", error=str(exc))
+        log.error("automation_event_purge_failed", error=str(exc), exc_info=True)
 
 
 async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
@@ -713,5 +717,5 @@ async def worker_loop(pool: asyncpg.Pool, settings: object) -> None:
         try:
             await tick(pool, settings)
         except Exception as exc:
-            log.error("automation_worker_tick_failed", error=str(exc))
+            log.error("automation_worker_tick_failed", error=str(exc), exc_info=True)
         await asyncio.sleep(tick_seconds)

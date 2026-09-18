@@ -42,7 +42,7 @@ def _is_due(job: dict[str, Any], now: datetime) -> bool:
         try:
             from croniter import croniter  # type: ignore[import-untyped]
         except ImportError:
-            log.warning("backup_cron_croniter_missing")
+            log.warning("backup_cron_croniter_missing", exc_info=True)
             return False
         if not croniter.match(job["schedule_cron"], now):
             return False
@@ -187,7 +187,7 @@ async def run_job(
         log.info("backup_job_success", job_slug=job["slug"], **result)
 
     except Exception as exc:
-        log.error("backup_job_error", job_slug=job["slug"], error=str(exc))
+        log.error("backup_job_error", job_slug=job["slug"], error=str(exc), exc_info=True)
         async with pool.acquire() as conn:
             await runs.finish_run(conn, run_id, status="error", error_message=str(exc))
             await runs.prune_old_runs(conn, job_id)

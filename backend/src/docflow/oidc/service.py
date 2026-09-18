@@ -64,7 +64,7 @@ async def get_login_config(pool: asyncpg.Pool) -> OidcPublicConfig | None:
     try:
         discovery = await fetch_discovery(public.issuer)
     except OidcVerifyError as exc:
-        log.warning("oidc_discovery_failed", reason=str(exc))
+        log.warning("oidc_discovery_failed", reason=str(exc), exc_info=True)
         raise HTTPException(status_code=502, detail="issuer OIDC injoignable") from exc
     endpoint = str(discovery.get("authorization_endpoint", ""))
     if not endpoint:
@@ -188,7 +188,7 @@ async def handle_oidc_callback(
         )
     except OidcVerifyError as exc:
         # Le message d'OidcVerifyError ne contient ni token, ni claims, ni secret.
-        log.warning("oidc_callback_rejected", reason=str(exc))
+        log.warning("oidc_callback_rejected", reason=str(exc), exc_info=True)
         raise HTTPException(status_code=401, detail="échec de vérification OIDC") from exc
     return await provision_user_for_verified_claims(
         pool, claims, issuer=issuer, relink_enabled=settings.oidc_relink_enabled
