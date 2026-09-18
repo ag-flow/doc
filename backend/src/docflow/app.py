@@ -16,8 +16,8 @@ from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
 from docflow.apikeys.router import router as apikeys_router
-from docflow.artifacts.preview_router import router as preview_router
 from docflow.artifacts.mockup_router import router as mockup_base_router
+from docflow.artifacts.preview_router import router as preview_router
 from docflow.artifacts.router import router as artifacts_router
 from docflow.artifacts.types_router import admin_router as artifact_types_admin_router
 from docflow.artifacts.types_router import read_router as artifact_types_read_router
