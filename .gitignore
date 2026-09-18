@@ -220,3 +220,6 @@ __marimo__/
 
 # docflow — infos de connexion des instances de test générées (infra/secrets, jamais committées)
 scripts/test-instance*.local.md
+
+# Logs des serveurs de dev locaux
+.dev-logs/

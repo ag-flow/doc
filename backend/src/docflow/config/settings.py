@@ -8,7 +8,15 @@ from docflow.secrets.secret import Secret
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(extra="forbid", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        extra="forbid",
+        case_sensitive=False,
+        # Dev local : charge backend/.env (gitignoré) s'il existe. L'environnement
+        # réel du process reste prioritaire ; en prod (aucun .env) le comportement
+        # est inchangé — la config vient exclusivement des variables d'env.
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
     database_url: str
     jwt_secret: Secret
