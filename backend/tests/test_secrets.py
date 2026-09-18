@@ -85,10 +85,15 @@ async def test_resolver_inline_ignores_harpocrate_url() -> None:
 # ── Resolver — erreurs de configuration ──────────────────────────────────────
 
 
-async def test_resolver_vault_ref_without_harpocrate_raises() -> None:
+async def test_resolver_vault_ref_without_any_url_raises() -> None:
+    """Endpoint sans URL ET HARPOCRATE_URL absente → échec explicite sur l'URL."""
     s = Secret("${vault://mywallet:/oidc/secret}")
-    with pytest.raises(ValueError, match="HARPOCRATE_URL"):
-        await resolve(s, harpocrate_url=None)
+    mock_pool = MagicMock()
+    with patch(
+        "docflow.vault.service.get_api_key", new=AsyncMock(return_value=("hrpv_tok", None))
+    ):
+        with pytest.raises(ValueError, match="URL du coffre"):
+            await resolve(s, harpocrate_url=None, pool=mock_pool, enc_key="k")
 
 
 async def test_resolver_vault_ref_without_pool_raises() -> None:
@@ -124,7 +129,10 @@ async def test_resolver_vault_ref_calls_harpocrate() -> None:
     mock_client_instance = MagicMock()
     mock_client_instance.secrets = mock_secrets
 
-    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value="hrpv_1_abc")):
+    with patch(
+        "docflow.vault.service.get_api_key",
+        new=AsyncMock(return_value=("hrpv_1_abc", None)),
+    ):
         with patch("harpocrate.VaultClient", return_value=mock_client_instance) as mock_cls:
             result = await resolve(
                 s,
@@ -148,7 +156,10 @@ async def test_resolver_vault_ref_passes_correct_path() -> None:
     mock_client_instance = MagicMock()
     mock_client_instance.secrets = mock_secrets
 
-    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value="hrpv_tok")):
+    with patch(
+        "docflow.vault.service.get_api_key",
+        new=AsyncMock(return_value=("hrpv_tok", None)),
+    ):
         with patch("harpocrate.VaultClient", return_value=mock_client_instance):
             result = await resolve(
                 s,
@@ -161,23 +172,51 @@ async def test_resolver_vault_ref_passes_correct_path() -> None:
     mock_secrets.get.assert_called_once_with("/infra/db/postgres_password")
 
 
+async def test_resolver_vault_endpoint_url_takes_precedence() -> None:
+    """L'URL portée par l'endpoint prime sur l'URL globale."""
+    s = Secret("${vault://corp:/p}")
+    mock_pool = MagicMock()
+    mock_secrets = MagicMock()
+    mock_secrets.get.return_value = "v"
+    mock_client_instance = MagicMock()
+    mock_client_instance.secrets = mock_secrets
+
+    with patch(
+        "docflow.vault.service.get_api_key",
+        new=AsyncMock(return_value=("tok", "https://endpoint.example")),
+    ):
+        with patch("harpocrate.VaultClient", return_value=mock_client_instance) as mock_cls:
+            await resolve(
+                s, harpocrate_url="https://global.example", pool=mock_pool, enc_key="k"
+            )
+
+    mock_cls.assert_called_once_with(token="tok", base_url="https://endpoint.example")
+
+
 async def test_check_wallet_reports_token_state(
     db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Écart n°6 : l'état du jeton d'un wallet est testable sans exposer la clé."""
-    from docflow.schemas.vault import VaultWalletCreate
+    """Écart n°6 : l'état du jeton d'un endpoint est testable sans exposer la clé."""
+    from docflow.schemas.vault import VaultSecretCreate, VaultWalletCreate
     from docflow.vault import service as vault_svc
 
     enc_key = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
-    with patch("docflow.vault.service.get_api_key", new=AsyncMock(return_value=None)):
-        wallet = await vault_svc.create_wallet(
-            db_pool, VaultWalletCreate(name="w-check", api_key="hrpv_1_abc"), enc_key=enc_key
-        )
-
-    # Sans HARPOCRATE_URL : refus propre, pas d'appel réseau.
-    out = await vault_svc.check_wallet(db_pool, wallet.id, enc_key, None)
-    assert out.ok is False
-    assert "HARPOCRATE_URL" in (out.error or "")
+    owner = await db_pool.fetchval(
+        "INSERT INTO app_user (email, label, source, validated, is_admin) "
+        "VALUES ('wc@example.com', 'V', 'local', true, true) RETURNING id"
+    )
+    key = await vault_svc.create_secret(
+        db_pool,
+        owner,
+        VaultSecretCreate(
+            label="K", slug="k-wc", value="hrpv_1_abc", secret_type="HARPOCRATE_API_KEY"
+        ),
+        enc_key=enc_key,
+    )
+    wallet = await vault_svc.create_wallet(
+        db_pool, owner,
+        VaultWalletCreate(name="w-check", url="http://harpo.example", api_key_secret_id=key.id),
+    )
 
     # SDK en échec (clé révoquée…) : ok=False avec le message, jamais la clé.
     class _BoomClient:
@@ -187,9 +226,15 @@ async def test_check_wallet_reports_token_state(
     import harpocrate
 
     monkeypatch.setattr(harpocrate, "VaultClient", _BoomClient)
-    out = await vault_svc.check_wallet(db_pool, wallet.id, enc_key, "http://harpo.example")
+    out = await vault_svc.check_wallet(db_pool, owner, wallet.id, enc_key, "http://harpo.example")
     assert out.ok is False
     assert "révoquée" in (out.error or "")
     assert "hrpv_1_abc" not in (out.error or "")
 
-    await db_pool.execute("DELETE FROM vault_wallet WHERE id = $1", wallet.id)
+    # Endpoint migré sans URL + pas d'URL globale : refus propre, pas d'appel réseau.
+    await db_pool.execute("UPDATE vault_wallet SET url = NULL WHERE id = $1", wallet.id)
+    out = await vault_svc.check_wallet(db_pool, owner, wallet.id, enc_key, None)
+    assert out.ok is False
+    assert "URL" in (out.error or "")
+
+    await db_pool.execute("DELETE FROM app_user WHERE id = $1", owner)

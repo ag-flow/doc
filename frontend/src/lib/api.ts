@@ -969,6 +969,14 @@ export const usersApi = {
 export interface VaultWalletOut {
   id: string
   name: string
+  url: string | null
+  description: string | null
+  /** Secret local (type HARPOCRATE_API_KEY) qui porte le token. */
+  api_key_secret_id: string
+  /** Libellé du secret clé — jamais sa valeur. */
+  api_key_secret_label: string
+  /** Consommateurs référençant ${vault://name:…}. */
+  used_by: number
   created_at: string
   updated_at: string
 }
@@ -995,8 +1003,12 @@ export interface WalletCheckOut {
 
 export const vaultApi = {
   listWallets: () => api.get<VaultWalletOut[]>('/admin/vault/wallets'),
-  createWallet: (body: { name: string; api_key: string }) =>
-    api.post<VaultWalletOut>('/admin/vault/wallets', body),
+  createWallet: (body: {
+    name: string
+    url: string
+    description?: string
+    api_key_secret_id: string
+  }) => api.post<VaultWalletOut>('/admin/vault/wallets', body),
   /** Teste la clé auprès de Harpocrate — l'état du jeton, jamais la clé. */
   checkWallet: (id: string) =>
     api.post<WalletCheckOut>(`/admin/vault/wallets/${id}/check`, {}),

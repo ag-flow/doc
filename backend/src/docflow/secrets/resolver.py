@@ -74,8 +74,6 @@ async def resolve(
     if not m:
         return raw
 
-    if not harpocrate_url:
-        raise ValueError("Secret contains a vault reference but HARPOCRATE_URL is not configured")
     if pool is None or enc_key is None:
         raise ValueError("pool and enc_key are required to resolve a vault reference")
 
@@ -86,15 +84,22 @@ async def resolve(
     # Importé ici pour éviter d'initialiser le SDK si Harpocrate n'est pas utilisé.
     from docflow.vault.service import get_api_key
 
-    api_key = await get_api_key(pool, wallet_name, enc_key)
-    if api_key is None:
-        raise ValueError(f"Wallet Harpocrate « {wallet_name} » introuvable dans la base.")
+    resolved = await get_api_key(pool, wallet_name, enc_key)
+    if resolved is None:
+        raise ValueError(f"Endpoint vault « {wallet_name} » introuvable dans la base.")
+    api_key, endpoint_url = resolved
+    # L'URL de l'endpoint prime ; repli sur l'URL globale (endpoints migrés).
+    base_url = endpoint_url or harpocrate_url
+    if not base_url:
+        raise ValueError(
+            "URL du coffre non configurée (endpoint sans URL et HARPOCRATE_URL absente)"
+        )
 
     # Le SDK Harpocrate est synchrone — on l'exécute dans un thread dédié.
     def _fetch() -> str:
         from harpocrate import VaultClient
 
-        client = VaultClient(token=api_key, base_url=harpocrate_url)
+        client = VaultClient(token=api_key, base_url=base_url)
         return str(client.secrets.get(path))
 
     return await asyncio.to_thread(_fetch)

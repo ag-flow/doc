@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from docflow.auth.deps import require_authenticated, require_superadmin
+from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.vault import (
     HmacSecretCreate,
@@ -21,7 +21,6 @@ from docflow.vault import service
 
 router = APIRouter(tags=["vault"])
 
-_SuperAdmin = Depends(require_superadmin)
 _Auth = Depends(require_authenticated)
 
 
@@ -32,36 +31,34 @@ def _key(request: Request) -> str:
     return str(key.reveal())
 
 
-# ── Wallets (superadmin) ──────────────────────────────────────────────────────
+# ── Endpoints vault (tout admin, scoped owner) ────────────────────────────────
 
 
 @router.get("/admin/vault/wallets", response_model=list[VaultWalletOut])
-async def list_wallets(request: Request, _: AuthUser = _SuperAdmin) -> list[VaultWalletOut]:
-    return await service.list_wallets(request.app.state.pool)
+async def list_wallets(request: Request, user: AuthUser = _Auth) -> list[VaultWalletOut]:
+    return await service.list_wallets(request.app.state.pool, user.id)
 
 
 @router.post("/admin/vault/wallets", response_model=VaultWalletOut, status_code=201)
 async def create_wallet(
-    body: VaultWalletCreate, request: Request, _: AuthUser = _SuperAdmin
+    body: VaultWalletCreate, request: Request, user: AuthUser = _Auth
 ) -> VaultWalletOut:
-    return await service.create_wallet(request.app.state.pool, body, _key(request))
+    return await service.create_wallet(request.app.state.pool, user.id, body)
 
 
 @router.delete("/admin/vault/wallets/{wallet_id}", status_code=204)
-async def delete_wallet(wallet_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin) -> None:
-    await service.delete_wallet(request.app.state.pool, wallet_id)
-
-
-# ── Secrets utilisateur (tout admin, scoped owner) ────────────────────────────
+async def delete_wallet(wallet_id: uuid.UUID, request: Request, user: AuthUser = _Auth) -> None:
+    await service.delete_wallet(request.app.state.pool, user.id, wallet_id)
 
 
 @router.post("/admin/vault/wallets/{wallet_id}/check", response_model=WalletCheckOut)
 async def check_wallet(
-    wallet_id: uuid.UUID, request: Request, _: AuthUser = _SuperAdmin
+    wallet_id: uuid.UUID, request: Request, user: AuthUser = _Auth
 ) -> WalletCheckOut:
-    """Teste la clé du wallet auprès de Harpocrate (jamais la clé en clair)."""
+    """Teste la clé de l'endpoint auprès de Harpocrate (jamais la clé en clair)."""
     return await service.check_wallet(
         request.app.state.pool,
+        user.id,
         wallet_id,
         _key(request),
         getattr(request.app.state.settings, "harpocrate_url", None),

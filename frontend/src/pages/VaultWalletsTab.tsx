@@ -2,7 +2,10 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Plus } from '@phosphor-icons/react'
-import { vaultApi, type VaultWalletOut, type WalletCheckOut } from '../lib/api'
+import {
+  vaultApi, secretsApi,
+  type VaultWalletOut, type WalletCheckOut, type VaultSecretOut,
+} from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
@@ -19,14 +22,22 @@ export function VaultWalletsTab() {
     queryFn: () => vaultApi.listWallets(),
     retry: false,
   })
+  // Secrets locaux typés HARPOCRATE_API_KEY : la clé de l'endpoint se choisit
+  // ici (jamais de saisie directe du token).
+  const { data: keys = [] } = useQuery<VaultSecretOut[]>({
+    queryKey: ['harpocrate-keys'],
+    queryFn: () => secretsApi.list('HARPOCRATE_API_KEY'),
+    retry: false,
+  })
 
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
-  const [apiKey, setApiKey] = useState('')
+  const [url, setUrl] = useState('')
+  const [description, setDescription] = useState('')
+  const [apiKeySecretId, setApiKeySecretId] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VaultWalletOut | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  // Résultat du test de jeton, par wallet — affiché en ligne.
   const [checks, setChecks] = useState<Record<string, WalletCheckOut>>({})
 
   const checkMutation = useMutation({
@@ -37,13 +48,16 @@ export function VaultWalletsTab() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => vaultApi.createWallet({ name, api_key: apiKey }),
+    mutationFn: () =>
+      vaultApi.createWallet({
+        name,
+        url,
+        description: description.trim() || undefined,
+        api_key_secret_id: apiKeySecretId,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['vault-wallets'] })
-      setShowForm(false)
-      setName('')
-      setApiKey('')
-      setFormError(null)
+      resetForm()
     },
     onError: (err: Error) => setFormError(err.message),
   })
@@ -58,7 +72,18 @@ export function VaultWalletsTab() {
     onError: (err: Error) => setDeleteError(err.message),
   })
 
-  if (isLoading) return <TableSkeleton rows={3} columns={3} />
+  function resetForm() {
+    setShowForm(false)
+    setName('')
+    setUrl('')
+    setDescription('')
+    setApiKeySecretId('')
+    setFormError(null)
+  }
+
+  const canSubmit = name.trim() && url.trim() && apiKeySecretId
+
+  if (isLoading) return <TableSkeleton rows={3} columns={6} />
 
   return (
     <>
@@ -78,9 +103,11 @@ export function VaultWalletsTab() {
             <thead>
               <tr>
                 <th>{t('vault.colWallet')}</th>
+                <th>{t('vault.colUrl')}</th>
+                <th>{t('vault.colKey')}</th>
                 <th>{t('vault.colRef')}</th>
                 <th>{t('vault.colToken', 'Jeton')}</th>
-                <th>{t('blocs.colLastWrite', 'Dernière écriture')}</th>
+                <th>{t('vault.colUsedBy')}</th>
                 <th />
               </tr>
             </thead>
@@ -89,6 +116,12 @@ export function VaultWalletsTab() {
                 <tr key={w.id} data-testid={`wallet-row-${w.name}`}>
                   <td className="text-[15px] font-[600] [font-family:var(--font-heading)]">
                     {w.name}
+                  </td>
+                  <td className="text-[12px] text-ink/[0.6] [font-family:var(--font-mono)]">
+                    {w.url ?? '—'}
+                  </td>
+                  <td className="text-[13px]" data-testid={`wallet-key-${w.name}`}>
+                    {w.api_key_secret_label}
                   </td>
                   <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
                     {`\${vault://${w.name}:/…}`}
@@ -114,7 +147,7 @@ export function VaultWalletsTab() {
                       <span className="text-ink/[0.4]">—</span>
                     )}
                   </td>
-                  <td className="text-ink/[0.55]">{relativeDate(w.updated_at)}</td>
+                  <td className="text-ink/[0.55]">{w.used_by > 0 ? w.used_by : '—'}</td>
                   <td className="text-right">
                     <Button variant="ghost" size="sm"
                       onClick={() => checkMutation.mutate(w.id)}
@@ -146,27 +179,56 @@ export function VaultWalletsTab() {
       {showForm && (
         <form
           className="mt-5 flex max-w-xl flex-col gap-3"
-          onSubmit={(e) => { e.preventDefault(); if (name.trim() && apiKey.trim()) createMutation.mutate() }}
+          onSubmit={(e) => { e.preventDefault(); if (canSubmit) createMutation.mutate() }}
         >
-          <Field label={t('vault.walletName')} htmlFor="wallet-name" hint={t('vault.walletNameHint')}>
-            <Input
-              id="wallet-name"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setFormError(null) }}
-              placeholder="mon-wallet"
-              autoFocus
-              data-testid="vault-name-input"
-            />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('vault.walletName')} htmlFor="wallet-name" hint={t('vault.walletNameHint')}>
+              <Input
+                id="wallet-name"
+                value={name}
+                onChange={(e) => { setName(e.target.value); setFormError(null) }}
+                placeholder="mon-coffre"
+                autoFocus
+                data-testid="vault-name-input"
+              />
+            </Field>
+            <Field label={t('vault.walletUrl')} htmlFor="wallet-url">
+              <Input
+                id="wallet-url"
+                value={url}
+                onChange={(e) => { setUrl(e.target.value); setFormError(null) }}
+                placeholder="https://vault.yoops.org"
+                data-testid="vault-url-input"
+              />
+            </Field>
+          </div>
+          {/* Clé d'API : jamais saisie ici — on référence un secret local typé. */}
+          <Field label={t('vault.apiKeySecret')} htmlFor="wallet-key" hint={t('vault.apiKeySecretHint')}>
+            {keys.length === 0 ? (
+              <p className="field-error m-0" data-testid="vault-no-keys">{t('vault.noKeys')}</p>
+            ) : (
+              <select
+                id="wallet-key"
+                className="input"
+                value={apiKeySecretId}
+                onChange={(e) => { setApiKeySecretId(e.target.value); setFormError(null) }}
+                data-testid="vault-key-select"
+              >
+                <option value="">{t('vault.apiKeySelectPlaceholder')}</option>
+                {keys.map((k) => (
+                  <option key={k.id} value={k.id}>{k.label} ({k.slug})</option>
+                ))}
+              </select>
+            )}
           </Field>
-          <Field label={t('vault.apiKey')} htmlFor="wallet-key">
+          <Field label={t('vault.walletDescription')} htmlFor="wallet-desc"
+            hint={t('vault.walletDescriptionHint')}>
             <Input
-              id="wallet-key"
-              type="password"
-              autoComplete="off"
-              value={apiKey}
-              onChange={(e) => { setApiKey(e.target.value); setFormError(null) }}
-              placeholder="••••••••••••"
-              data-testid="vault-apikey-input"
+              id="wallet-desc"
+              value={description}
+              onChange={(e) => { setDescription(e.target.value); setFormError(null) }}
+              placeholder=""
+              data-testid="vault-desc-input"
             />
           </Field>
           <div aria-live="polite" className="empty:hidden">
@@ -174,12 +236,11 @@ export function VaultWalletsTab() {
           </div>
           <div className="flex gap-2">
             <Button type="submit"
-              disabled={!name.trim() || !apiKey.trim() || createMutation.isPending}
+              disabled={!canSubmit || createMutation.isPending}
               data-testid="vault-create-btn">
               {createMutation.isPending ? t('common.loading') : t('vault.add')}
             </Button>
-            <Button type="button" variant="secondary"
-              onClick={() => { setShowForm(false); setFormError(null) }}>
+            <Button type="button" variant="secondary" onClick={resetForm}>
               {t('common.cancel')}
             </Button>
           </div>

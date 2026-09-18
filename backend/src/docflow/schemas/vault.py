@@ -9,13 +9,24 @@ from pydantic import BaseModel, Field
 class VaultWalletCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
-    name: str
-    api_key: str
+    # Alias GLOBAL (unique) : sert dans les références ${vault://name:/path}.
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    url: str = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=500)
+    # Référence vers un secret local typé HARPOCRATE_API_KEY (jamais le token).
+    api_key_secret_id: uuid.UUID
 
 
 class VaultWalletOut(BaseModel):
     id: uuid.UUID
     name: str
+    url: str | None
+    description: str | None
+    api_key_secret_id: uuid.UUID
+    # Libellé du secret clé (jamais sa valeur), pour l'affichage.
+    api_key_secret_label: str
+    # Nombre de consommateurs référençant ${vault://name:…} (automates + producteur).
+    used_by: int = 0
     created_at: datetime
     updated_at: datetime
 
