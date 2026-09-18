@@ -63,10 +63,42 @@ async def create_wallet(
 
 
 async def delete_wallet(pool: asyncpg.Pool, wallet_id: uuid.UUID) -> None:
+    """Supprime un coffre. Refusé (409) tant qu'un consommateur référence encore
+    `${vault://<nom>:…}` — un automate ou le producteur d'events ; sinon la
+    résolution échouerait silencieusement à l'exécution (STANDARD Harpocrate §4,
+    miroir de la garde déjà en place pour les secrets utilisateur)."""
     async with pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM vault_wallet WHERE id = $1", wallet_id)
-    if result == "DELETE 0":
-        raise HTTPException(404, "Wallet introuvable.")
+        name = await conn.fetchval("SELECT name FROM vault_wallet WHERE id = $1", wallet_id)
+        if name is None:
+            raise HTTPException(404, "Wallet introuvable.")
+        # Préfixe EXACT (pas de LIKE : `_`/`-` d'un nom seraient des jokers LIKE).
+        prefix = f"${{vault://{name}:"
+        autos = await conn.fetch(
+            "SELECT DISTINCT a.label FROM automation_header h "
+            "JOIN automation a ON a.id = h.automation_ref "
+            "WHERE left(h.secret_ref, char_length($1)) = $1 ORDER BY a.label",
+            prefix,
+        )
+        producer = await conn.fetchval(
+            "SELECT 1 FROM events_producer_config WHERE left(secret_ref, char_length($1)) = $1",
+            prefix,
+        )
+        if autos or producer:
+            labels = [r["label"] for r in autos]
+            parts = []
+            if labels:
+                parts.append(f"{len(labels)} automate(s)")
+            if producer:
+                parts.append("le producteur d'events")
+            raise HTTPException(
+                409,
+                {
+                    "message": "coffre utilisé par " + " et ".join(parts),
+                    "automations": labels,
+                    "producer": bool(producer),
+                },
+            )
+        await conn.execute("DELETE FROM vault_wallet WHERE id = $1", wallet_id)
 
 
 async def get_api_key(pool: asyncpg.Pool, name: str, enc_key: str) -> str | None:
