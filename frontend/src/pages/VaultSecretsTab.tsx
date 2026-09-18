@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Copy, Plus } from '@phosphor-icons/react'
-import { secretsApi, type VaultSecretOut } from '../lib/api'
+import { secretsApi, vaultApi, type VaultSecretOut, type VaultWalletOut } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Field } from '../components/ui/field'
@@ -19,19 +19,38 @@ export function VaultSecretsTab() {
     queryKey: ['user-secrets'],
     queryFn: () => secretsApi.list(),
   })
+  // Endpoints déclarés : peuplent le sélecteur de stockage (« Local » + endpoints).
+  const { data: endpoints = [] } = useQuery<VaultWalletOut[]>({
+    queryKey: ['vault-wallets'],
+    queryFn: () => vaultApi.listWallets(),
+    retry: false,
+  })
 
   const [showForm, setShowForm] = useState(false)
   const [label, setLabel] = useState('')
   const [slug, setSlug] = useState('')
   const [secretType, setSecretType] = useState('GENERIC')
   const [value, setValue] = useState('')
+  // Stockage : 'local' ou l'identifiant d'un endpoint vault.
+  const [storage, setStorage] = useState('local')
+  const [vaultPath, setVaultPath] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VaultSecretOut | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
+  const isLocal = storage === 'local'
+
   const createMutation = useMutation({
-    mutationFn: () => secretsApi.create({ label, slug, value, secret_type: secretType }),
+    mutationFn: () =>
+      secretsApi.create(
+        isLocal
+          ? { label, slug, value, secret_type: secretType }
+          : {
+              label, slug, secret_type: secretType,
+              storage_type: 'vault', vault_identifier: storage, vault_path: vaultPath,
+            },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['user-secrets'] })
       resetForm()
@@ -66,6 +85,8 @@ export function VaultSecretsTab() {
     setSlug('')
     setSecretType('GENERIC')
     setValue('')
+    setStorage('local')
+    setVaultPath('')
     setSlugTouched(false)
     setFormError(null)
   }
@@ -82,9 +103,9 @@ export function VaultSecretsTab() {
     label.trim() &&
     /^[a-z0-9][a-z0-9_-]*$/.test(slug) &&
     /^[A-Z][A-Z0-9_]*$/.test(secretType) &&
-    value.trim()
+    (isLocal ? value.trim() : vaultPath.trim())
 
-  if (isLoading) return <TableSkeleton rows={3} columns={5} />
+  if (isLoading) return <TableSkeleton rows={3} columns={6} />
 
   return (
     <>
@@ -105,6 +126,7 @@ export function VaultSecretsTab() {
               <tr>
                 <th>{t('vault.secrets.label')}</th>
                 <th>{t('vault.colType')}</th>
+                <th>{t('vault.colStorage')}</th>
                 <th>{t('vault.colRef')}</th>
                 <th>{t('vault.colUsedBy')}</th>
                 <th />
@@ -125,6 +147,17 @@ export function VaultSecretsTab() {
                     <span className="text-[12px] text-ink/[0.6] [font-family:var(--font-mono)]">
                       {s.secret_type}
                     </span>
+                  </td>
+                  <td data-testid={`secret-storage-${s.slug}`}>
+                    {s.storage_type === 'vault' ? (
+                      <span className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
+                        {s.vault_identifier}:{s.vault_path}
+                      </span>
+                    ) : (
+                      <span className="text-[12px] text-ink/[0.5]">
+                        {t('vault.secrets.storageLocal')}
+                      </span>
+                    )}
                   </td>
                   <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
                     {`\${secret://${s.id.slice(0, 8)}…}`}
@@ -218,18 +251,48 @@ export function VaultSecretsTab() {
               <option value="HARPOCRATE_API_KEY" />
             </datalist>
           </Field>
-          {/* DoD : valeur masquée, écrite une fois, jamais relue depuis l'API. */}
-          <Field label={t('vault.secrets.value')} htmlFor="secret-value">
-            <Input
-              id="secret-value"
-              type="password"
-              autoComplete="new-password"
-              value={value}
-              onChange={(e) => { setValue(e.target.value); setFormError(null) }}
-              placeholder="••••••••••••"
-              data-testid="secret-value-input"
-            />
+          {/* Stockage : « Local » + un item par endpoint déclaré. Sans endpoint,
+              « Local » seul et sélectionné d'office. Aucun repli automatique. */}
+          <Field label={t('vault.secrets.storage')} htmlFor="secret-storage">
+            <select
+              id="secret-storage"
+              className="input"
+              value={storage}
+              onChange={(e) => { setStorage(e.target.value); setFormError(null) }}
+              data-testid="secret-storage-select"
+            >
+              <option value="local">{t('vault.secrets.storageLocal')}</option>
+              {secretType !== 'HARPOCRATE_API_KEY' &&
+                endpoints.map((ep) => (
+                  <option key={ep.id} value={ep.name}>{ep.name}</option>
+                ))}
+            </select>
           </Field>
+          {isLocal ? (
+            /* DoD : valeur masquée, écrite une fois, jamais relue depuis l'API. */
+            <Field label={t('vault.secrets.value')} htmlFor="secret-value">
+              <Input
+                id="secret-value"
+                type="password"
+                autoComplete="new-password"
+                value={value}
+                onChange={(e) => { setValue(e.target.value); setFormError(null) }}
+                placeholder="••••••••••••"
+                data-testid="secret-value-input"
+              />
+            </Field>
+          ) : (
+            <Field label={t('vault.secrets.path')} htmlFor="secret-path"
+              hint={t('vault.secrets.pathHint')}>
+              <Input
+                id="secret-path"
+                value={vaultPath}
+                onChange={(e) => { setVaultPath(e.target.value); setFormError(null) }}
+                placeholder="/infra/db/postgres_password"
+                data-testid="secret-path-input"
+              />
+            </Field>
+          )}
           <div aria-live="polite" className="empty:hidden">
             {formError && <p className="field-error m-0" data-testid="secret-form-error">{formError}</p>}
           </div>

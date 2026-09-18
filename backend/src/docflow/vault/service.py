@@ -179,7 +179,9 @@ async def list_secrets(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT s.id, s.slug, s.label, s.secret_type, s.created_at, s.updated_at,
+            SELECT s.id, s.slug, s.label, s.secret_type,
+                   s.storage_type, s.vault_identifier, s.vault_path,
+                   s.created_at, s.updated_at,
                    (SELECT count(*) FROM automation_header h
                      WHERE h.secret_ref = '${secret://' || s.id || '}') AS used_by_automations
             FROM user_secret s
@@ -203,20 +205,54 @@ async def create_secret(
     body: VaultSecretCreate,
     enc_key: str,
 ) -> VaultSecretOut:
-    value_enc = encrypt_str(enc_key, body.value)
+    if body.secret_type == "HARPOCRATE_API_KEY" and body.storage_type != "local":
+        raise HTTPException(422, "Un secret HARPOCRATE_API_KEY doit être stocké en local.")
     async with pool.acquire() as conn:
+        if body.storage_type == "local":
+            if not body.value:
+                raise HTTPException(422, "Valeur requise pour un secret local.")
+            if body.vault_identifier or body.vault_path:
+                raise HTTPException(422, "Champs vault interdits pour un stockage local.")
+            value_enc: str | None = encrypt_str(enc_key, body.value)
+            vault_identifier: str | None = None
+            vault_path: str | None = None
+        else:  # vault — aucun repli automatique (fail closed)
+            if body.value:
+                raise HTTPException(
+                    422, "Valeur interdite : le coffre détient la valeur d'un secret vault."
+                )
+            if not body.vault_identifier or not body.vault_path:
+                raise HTTPException(422, "Endpoint et chemin requis pour un stockage vault.")
+            exists = await conn.fetchval(
+                "SELECT 1 FROM vault_wallet WHERE name = $1 AND owner_ref = $2",
+                body.vault_identifier,
+                user_id,
+            )
+            if not exists:
+                raise HTTPException(
+                    422, f"Endpoint vault « {body.vault_identifier} » inexistant : aucun repli."
+                )
+            value_enc = None
+            vault_identifier = body.vault_identifier
+            vault_path = body.vault_path
         try:
             row = await conn.fetchrow(
                 """
-                INSERT INTO user_secret (owner_ref, slug, label, value_enc, secret_type)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, slug, label, secret_type, created_at, updated_at
+                INSERT INTO user_secret
+                    (owner_ref, slug, label, value_enc, secret_type,
+                     storage_type, vault_identifier, vault_path)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING id, slug, label, secret_type, storage_type,
+                          vault_identifier, vault_path, created_at, updated_at
                 """,
                 user_id,
                 body.slug,
                 body.label,
                 value_enc,
                 body.secret_type,
+                body.storage_type,
+                vault_identifier,
+                vault_path,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
@@ -426,19 +462,31 @@ async def assert_refs_owned(
 
 
 async def resolve_user_secret_value(
-    pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str
+    pool: asyncpg.Pool,
+    secret_id: uuid.UUID,
+    enc_key: str,
+    harpocrate_url: str | None = None,
 ) -> str | None:
-    """Résout la valeur d'un secret utilisateur par son id (tous kinds).
+    """Résout la valeur d'un secret utilisateur par son id (local ou vault).
 
-    Utilisé par le résolveur `${secret://<uuid>}` (worker d'automate) pour
-    injecter une valeur secrète (ex. clé API externe) dans un header. Résolution
-    par id global, côté serveur — la valeur n'est jamais renvoyée à l'API.
+    Utilisé par le résolveur `${secret://<uuid>}` (worker d'automate). La fabrique
+    choisit le backend selon `storage_type` : local (déchiffrement Fernet) ou vault
+    (endpoint → SDK Harpocrate). Résolution côté serveur — jamais renvoyée à l'API.
     """
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT value_enc FROM user_secret WHERE id = $1", secret_id)
+        row = await conn.fetchrow(
+            "SELECT storage_type, value_enc, vault_identifier, vault_path "
+            "FROM user_secret WHERE id = $1",
+            secret_id,
+        )
     if row is None:
         return None
-    return decrypt_str(enc_key, row["value_enc"])
+    from docflow.secrets.backends import create_backend
+
+    backend = create_backend(
+        row["storage_type"], pool=pool, enc_key=enc_key, harpocrate_url=harpocrate_url
+    )
+    return await backend.get(row)
 
 
 async def resolve_hmac_value(pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str) -> str | None:

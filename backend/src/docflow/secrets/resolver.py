@@ -65,7 +65,9 @@ async def resolve(
             raise ValueError("pool and enc_key are required to resolve a secret reference")
         from docflow.vault.service import resolve_user_secret_value
 
-        value = await resolve_user_secret_value(pool, uuid.UUID(ms.group(1)), enc_key)
+        value = await resolve_user_secret_value(
+            pool, uuid.UUID(ms.group(1)), enc_key, harpocrate_url=harpocrate_url
+        )
         if value is None:
             raise ValueError(f"Secret « {ms.group(1)} » introuvable dans la base.")
         return value

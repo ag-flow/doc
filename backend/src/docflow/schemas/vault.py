@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -44,10 +45,15 @@ class VaultSecretCreate(BaseModel):
 
     label: str = Field(min_length=1, max_length=200)
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
-    value: str = Field(min_length=1)
+    # Requise pour un stockage local ; interdite pour un stockage vault.
+    value: str | None = Field(default=None, min_length=1)
     # Typage fonctionnel (liste extensible en MAJUSCULES), orthogonal à `kind`.
     # `GENERIC` par défaut ; `HARPOCRATE_API_KEY` pour une clé d'API de coffre.
     secret_type: str = Field(default="GENERIC", max_length=64, pattern=r"^[A-Z][A-Z0-9_]*$")
+    # Stockage explicite (aucun repli automatique) : local ou un endpoint vault déclaré.
+    storage_type: Literal["local", "vault"] = "local"
+    vault_identifier: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    vault_path: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class VaultSecretOut(BaseModel):
@@ -55,6 +61,9 @@ class VaultSecretOut(BaseModel):
     slug: str
     label: str
     secret_type: str
+    storage_type: str
+    vault_identifier: str | None = None
+    vault_path: str | None = None
     created_at: datetime
     updated_at: datetime
     # Usage (renseigné au listing) : headers d'automates et de webhooks

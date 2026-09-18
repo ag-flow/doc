@@ -427,6 +427,10 @@
       "slugHint": "Minuscules, chiffres, tirets, underscores.",
       "type": "Type",
       "typeHint": "MAJUSCULES, chiffres, underscore. Ex. GENERIC, HARPOCRATE_API_KEY.",
+      "storage": "Stockage",
+      "storageLocal": "Local",
+      "path": "Chemin dans le coffre",
+      "pathHint": "Chemin du secret dans le wallet Harpocrate (ex. /infra/db/postgres_password).",
       "value": "Valeur secrète",
       "addBtn": "Nouveau secret",
       "add": "Enregistrer",
@@ -435,6 +439,7 @@
       "slugConflict": "Un secret avec ce slug existe déjà."
     },
     "colType": "Type",
+    "colStorage": "Stockage",
     "kicker": "Administration",
     "chapo": "Un wallet Harpocrate donne accès à un jeu de secrets ; automates et webhooks les référencent par ${vault://…} ou ${secret://…} — rien ne transite ni ne s'affiche en clair.",
     "colWallet": "Wallet",
