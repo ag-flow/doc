@@ -31,7 +31,10 @@ async def _assert_header_secrets_owned(
     routeur (l'identité y est présente). None = pas de headers dans le body."""
     if headers is None:
         return
-    await vault_svc.assert_refs_owned(request.app.state.pool, list(headers.values()), owner_id)
+    refs = list(headers.values())
+    await vault_svc.assert_refs_owned(request.app.state.pool, refs, owner_id)
+    # Résolubilité à la configuration (STANDARD Harpocrate §6).
+    await vault_svc.assert_refs_resolvable(request.app.state.pool, refs)
 
 
 @router.get(_WS + "/webhooks", response_model=list[WebhookOut])

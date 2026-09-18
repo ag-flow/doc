@@ -33,7 +33,10 @@ async def _assert_header_secrets_owned(
     dans le body (update partiel) → rien à valider."""
     if headers is None:
         return
-    await vault_svc.assert_refs_owned(pool, [h.secret_ref for h in headers], owner_id)
+    refs = [h.secret_ref for h in headers]
+    await vault_svc.assert_refs_owned(pool, refs, owner_id)
+    # Résolubilité à la configuration (STANDARD Harpocrate §6).
+    await vault_svc.assert_refs_resolvable(pool, refs)
 
 
 _WS = "/workspaces/{ws_slug}"

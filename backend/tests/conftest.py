@@ -88,6 +88,17 @@ def apply_migrations(test_schema_url: str) -> None:
         loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_vault_cache() -> Iterator[None]:
+    """Le cache de résolution vault est process-global : on le vide autour de
+    chaque test pour garantir l'isolation (valeurs ET clients SDK mockés)."""
+    from docflow.secrets.vault_fetch import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()
+
+
 @pytest.fixture()
 async def db_pool(test_schema_url: str, apply_migrations: None) -> AsyncIterator[asyncpg.Pool]:
     """Function-scoped pool wired to the test schema.

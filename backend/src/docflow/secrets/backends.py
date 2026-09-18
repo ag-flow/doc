@@ -12,7 +12,6 @@ un chemin nu. Aucun repli automatique entre backends (fail closed).
 
 from __future__ import annotations
 
-import asyncio
 from typing import Protocol
 
 import asyncpg
@@ -48,28 +47,15 @@ class HarpocrateBackend:
         self._harpocrate_url = harpocrate_url
 
     async def get(self, secret_row: asyncpg.Record) -> str:
-        from docflow.vault.service import get_api_key
+        from docflow.secrets.vault_fetch import fetch_vault_secret
 
-        identifier = secret_row["vault_identifier"]
-        path = secret_row["vault_path"]
-        resolved = await get_api_key(self._pool, identifier, self._enc_key)
-        if resolved is None:
-            raise ValueError(f"Endpoint vault « {identifier} » introuvable dans la base.")
-        token, endpoint_url = resolved
-        base_url = endpoint_url or self._harpocrate_url
-        if not base_url:
-            raise ValueError(
-                f"URL du coffre non configurée pour l'endpoint « {identifier} » "
-                f"(chemin « {path} »)."
-            )
-
-        def _fetch() -> str:
-            from harpocrate import VaultClient
-
-            client = VaultClient(token=token, base_url=base_url)
-            return str(client.secrets.get(path))
-
-        return await asyncio.to_thread(_fetch)
+        return await fetch_vault_secret(
+            pool=self._pool,
+            enc_key=self._enc_key,
+            identifier=secret_row["vault_identifier"],
+            path=secret_row["vault_path"],
+            harpocrate_url=self._harpocrate_url,
+        )
 
 
 def create_backend(

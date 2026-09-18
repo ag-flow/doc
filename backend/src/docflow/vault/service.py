@@ -129,19 +129,29 @@ async def delete_wallet(
             "SELECT 1 FROM events_producer_config WHERE left(secret_ref, char_length($1)) = $1",
             prefix,
         )
-        if autos or producer:
+        # Secrets vault-backed pointant cet endpoint (intégrité de résolubilité).
+        vault_secrets = [
+            r["slug"]
+            for r in await conn.fetch(
+                "SELECT slug FROM user_secret WHERE vault_identifier = $1 ORDER BY slug", name
+            )
+        ]
+        if autos or producer or vault_secrets:
             labels = [r["label"] for r in autos]
             parts = []
             if labels:
                 parts.append(f"{len(labels)} automate(s)")
             if producer:
                 parts.append("le producteur d'events")
+            if vault_secrets:
+                parts.append(f"{len(vault_secrets)} secret(s)")
             raise HTTPException(
                 409,
                 {
                     "message": "endpoint utilisé par " + " et ".join(parts),
                     "automations": labels,
                     "producer": bool(producer),
+                    "secrets": vault_secrets,
                 },
             )
         await conn.execute(
@@ -459,6 +469,51 @@ async def assert_refs_owned(
             detail=f"secret(s) non accessible(s) (autre propriétaire ou inexistant) : "
             f"{', '.join(str(s) for s in sorted(foreign))}",
         )
+
+
+_VAULT_REF_RE = re.compile(r"^\$\{vault://([^/:]+):(/.+)\}$")
+_SECRET_REF_RE = re.compile(r"^\$\{secret://([0-9a-fA-F-]{36})\}$")
+
+
+async def assert_refs_resolvable(pool: asyncpg.Pool, refs: Iterable[str | None]) -> None:
+    """Validation de résolubilité à la CONFIGURATION (STANDARD Harpocrate §6).
+
+    Rattacher une référence à un consommateur vérifie qu'elle est résoluble :
+    l'endpoint désigné existe (donc sa clé d'API est présente, `api_key_secret_ref`
+    étant NOT NULL). Vérification structurelle (aucun appel réseau) ; 422 sinon —
+    une erreur de configuration ne doit pas se découvrir à la première utilisation.
+    """
+    async with pool.acquire() as conn:
+        for ref in refs:
+            if not ref:
+                continue
+            r = ref.strip()
+            mv = _VAULT_REF_RE.match(r)
+            if mv:
+                identifier = mv.group(1)
+                ok = await conn.fetchval("SELECT 1 FROM vault_wallet WHERE name = $1", identifier)
+                if not ok:
+                    raise HTTPException(
+                        422,
+                        f"Référence non résoluble : endpoint vault « {identifier} » inexistant.",
+                    )
+                continue
+            ms = _SECRET_REF_RE.match(r)
+            if ms:
+                row = await conn.fetchrow(
+                    "SELECT storage_type, vault_identifier FROM user_secret WHERE id = $1",
+                    uuid.UUID(ms.group(1)),
+                )
+                if row and row["storage_type"] == "vault":
+                    ok = await conn.fetchval(
+                        "SELECT 1 FROM vault_wallet WHERE name = $1", row["vault_identifier"]
+                    )
+                    if not ok:
+                        raise HTTPException(
+                            422,
+                            "Référence non résoluble : le secret vault pointe l'endpoint "
+                            f"« {row['vault_identifier']} » inexistant.",
+                        )
 
 
 async def resolve_user_secret_value(
