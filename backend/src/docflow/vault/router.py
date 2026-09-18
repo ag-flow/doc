@@ -69,8 +69,12 @@ async def check_wallet(
 
 
 @router.get("/admin/secrets", response_model=list[VaultSecretOut])
-async def list_secrets(request: Request, user: AuthUser = _Auth) -> list[VaultSecretOut]:
-    return await service.list_secrets(request.app.state.pool, user.id, _key(request))
+async def list_secrets(
+    request: Request, secret_type: str | None = None, user: AuthUser = _Auth
+) -> list[VaultSecretOut]:
+    return await service.list_secrets(
+        request.app.state.pool, user.id, _key(request), secret_type
+    )
 
 
 @router.post("/admin/secrets", response_model=VaultSecretOut, status_code=201)

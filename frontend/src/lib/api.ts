@@ -977,6 +977,8 @@ export interface VaultSecretOut {
   id: string
   slug: string
   label: string
+  /** Typage fonctionnel (MAJUSCULES) : GENERIC, HARPOCRATE_API_KEY, … */
+  secret_type: string
   created_at: string
   updated_at: string
   /** Automates dont un header référence ce secret. */
@@ -1002,10 +1004,14 @@ export const vaultApi = {
 }
 
 export const secretsApi = {
-  list: () => api.get<VaultSecretOut[]>('/admin/secrets'),
+  /** Liste des secrets, filtrable par type fonctionnel (ex. HARPOCRATE_API_KEY). */
+  list: (secretType?: string) =>
+    api.get<VaultSecretOut[]>(
+      secretType ? `/admin/secrets?secret_type=${encodeURIComponent(secretType)}` : '/admin/secrets',
+    ),
   /** Référence à coller dans un header d'automate — jamais la valeur. */
   refOf: (id: string) => `\${secret://${id}}`,
-  create: (body: { label: string; slug: string; value: string }) =>
+  create: (body: { label: string; slug: string; value: string; secret_type?: string }) =>
     api.post<VaultSecretOut>('/admin/secrets', body),
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }

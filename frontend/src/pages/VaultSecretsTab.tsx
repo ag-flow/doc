@@ -23,6 +23,7 @@ export function VaultSecretsTab() {
   const [showForm, setShowForm] = useState(false)
   const [label, setLabel] = useState('')
   const [slug, setSlug] = useState('')
+  const [secretType, setSecretType] = useState('GENERIC')
   const [value, setValue] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VaultSecretOut | null>(null)
@@ -30,7 +31,7 @@ export function VaultSecretsTab() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const createMutation = useMutation({
-    mutationFn: () => secretsApi.create({ label, slug, value }),
+    mutationFn: () => secretsApi.create({ label, slug, value, secret_type: secretType }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['user-secrets'] })
       resetForm()
@@ -63,6 +64,7 @@ export function VaultSecretsTab() {
     setShowForm(false)
     setLabel('')
     setSlug('')
+    setSecretType('GENERIC')
     setValue('')
     setSlugTouched(false)
     setFormError(null)
@@ -76,9 +78,13 @@ export function VaultSecretsTab() {
     toast(t('vault.refCopied'), 'success')
   }
 
-  const canSubmit = label.trim() && /^[a-z0-9][a-z0-9_-]*$/.test(slug) && value.trim()
+  const canSubmit =
+    label.trim() &&
+    /^[a-z0-9][a-z0-9_-]*$/.test(slug) &&
+    /^[A-Z][A-Z0-9_]*$/.test(secretType) &&
+    value.trim()
 
-  if (isLoading) return <TableSkeleton rows={3} columns={4} />
+  if (isLoading) return <TableSkeleton rows={3} columns={5} />
 
   return (
     <>
@@ -98,6 +104,7 @@ export function VaultSecretsTab() {
             <thead>
               <tr>
                 <th>{t('vault.secrets.label')}</th>
+                <th>{t('vault.colType')}</th>
                 <th>{t('vault.colRef')}</th>
                 <th>{t('vault.colUsedBy')}</th>
                 <th />
@@ -112,6 +119,11 @@ export function VaultSecretsTab() {
                     </span>
                     <span className="ml-2 text-[12px] text-ink/[0.45] [font-family:var(--font-mono)]">
                       {s.slug}
+                    </span>
+                  </td>
+                  <td data-testid={`secret-type-${s.slug}`}>
+                    <span className="text-[12px] text-ink/[0.6] [font-family:var(--font-mono)]">
+                      {s.secret_type}
                     </span>
                   </td>
                   <td className="text-[12px] text-accent-700 [font-family:var(--font-mono)]">
@@ -186,6 +198,26 @@ export function VaultSecretsTab() {
               />
             </Field>
           </div>
+          {/* Typage fonctionnel (liste extensible) : datalist de suggestions,
+              saisie libre en MAJUSCULES normalisée. */}
+          <Field label={t('vault.secrets.type')} htmlFor="secret-type"
+            hint={t('vault.secrets.typeHint')}>
+            <Input
+              id="secret-type"
+              list="secret-type-options"
+              value={secretType}
+              onChange={(e) => {
+                setSecretType(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))
+                setFormError(null)
+              }}
+              placeholder="GENERIC"
+              data-testid="secret-type-input"
+            />
+            <datalist id="secret-type-options">
+              <option value="GENERIC" />
+              <option value="HARPOCRATE_API_KEY" />
+            </datalist>
+          </Field>
           {/* DoD : valeur masquée, écrite une fois, jamais relue depuis l'API. */}
           <Field label={t('vault.secrets.value')} htmlFor="secret-value">
             <Input

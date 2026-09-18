@@ -34,12 +34,16 @@ class VaultSecretCreate(BaseModel):
     label: str = Field(min_length=1, max_length=200)
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     value: str = Field(min_length=1)
+    # Typage fonctionnel (liste extensible en MAJUSCULES), orthogonal à `kind`.
+    # `GENERIC` par défaut ; `HARPOCRATE_API_KEY` pour une clé d'API de coffre.
+    secret_type: str = Field(default="GENERIC", max_length=64, pattern=r"^[A-Z][A-Z0-9_]*$")
 
 
 class VaultSecretOut(BaseModel):
     id: uuid.UUID
     slug: str
     label: str
+    secret_type: str
     created_at: datetime
     updated_at: datetime
     # Usage (renseigné au listing) : headers d'automates et de webhooks

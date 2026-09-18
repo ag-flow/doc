@@ -416,6 +416,8 @@
       "label": "Libellé",
       "slug": "Slug (identifiant)",
       "slugHint": "Minuscules, chiffres, tirets, underscores.",
+      "type": "Type",
+      "typeHint": "MAJUSCULES, chiffres, underscore. Ex. GENERIC, HARPOCRATE_API_KEY.",
       "value": "Valeur secrète",
       "addBtn": "Nouveau secret",
       "add": "Enregistrer",
@@ -423,6 +425,7 @@
       "deleteConfirm": "Supprimer « {{name}} » ? Cette action est irréversible.",
       "slugConflict": "Un secret avec ce slug existe déjà."
     },
+    "colType": "Type",
     "kicker": "Administration",
     "chapo": "Un wallet Harpocrate donne accès à un jeu de secrets ; automates et webhooks les référencent par ${vault://…} ou ${secret://…} — rien ne transite ni ne s'affiche en clair.",
     "colWallet": "Wallet",

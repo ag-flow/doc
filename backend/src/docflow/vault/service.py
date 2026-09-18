@@ -114,19 +114,24 @@ async def get_api_key(pool: asyncpg.Pool, name: str, enc_key: str) -> str | None
 
 
 async def list_secrets(
-    pool: asyncpg.Pool, user_id: uuid.UUID, enc_key: str | None = None
+    pool: asyncpg.Pool,
+    user_id: uuid.UUID,
+    enc_key: str | None = None,
+    secret_type: str | None = None,
 ) -> list[VaultSecretOut]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT s.id, s.slug, s.label, s.created_at, s.updated_at,
+            SELECT s.id, s.slug, s.label, s.secret_type, s.created_at, s.updated_at,
                    (SELECT count(*) FROM automation_header h
                      WHERE h.secret_ref = '${secret://' || s.id || '}') AS used_by_automations
             FROM user_secret s
             WHERE s.owner_ref = $1 AND s.kind = 'generic'
+              AND ($2::text IS NULL OR s.secret_type = $2)
             ORDER BY s.label
             """,
             user_id,
+            secret_type,
         )
     out = [VaultSecretOut(**dict(row)) for row in rows]
     # Usage côté webhooks : headers chiffrés, scannés côté serveur.
@@ -146,14 +151,15 @@ async def create_secret(
         try:
             row = await conn.fetchrow(
                 """
-                INSERT INTO user_secret (owner_ref, slug, label, value_enc)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id, slug, label, created_at, updated_at
+                INSERT INTO user_secret (owner_ref, slug, label, value_enc, secret_type)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, slug, label, secret_type, created_at, updated_at
                 """,
                 user_id,
                 body.slug,
                 body.label,
                 value_enc,
+                body.secret_type,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
