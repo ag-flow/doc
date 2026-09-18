@@ -722,7 +722,7 @@ export function BlockDocumentList() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-[1200px] px-6 pt-11">
+      <div className="px-6 pt-11">
         <TableSkeleton rows={8} columns={4} />
       </div>
     )
@@ -737,7 +737,7 @@ export function BlockDocumentList() {
     ?? value
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 pt-11 pb-24" data-testid="block-document-list">
+    <div className="px-6 pt-11 pb-24" data-testid="block-document-list">
       <SectionHead kicker={ws ?? ''} title={blocLabel || t('documents.title')}>
         {/* Dropdown visibilité colonnes */}
         <div className="relative">
@@ -884,6 +884,7 @@ export function BlockDocumentList() {
           }
         />
       ) : (
+        <div className="-mx-6 overflow-x-auto px-6">
         <table className="table" data-testid="documents-table">
           <thead>
             {table.getHeaderGroups().map((hg) => (
@@ -978,6 +979,7 @@ export function BlockDocumentList() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {/* « Charger plus » : ajoute la page suivante à la suite (accumulation). */}
