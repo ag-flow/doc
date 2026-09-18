@@ -12,9 +12,7 @@ from fastapi import HTTPException
 from docflow.artifacts.service import (
     collect_subtree_artifacts,
     purge_unreferenced,
-    refresh_artifact_references,
 )
-from docflow.datasets.references import refresh_dataset_references
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
@@ -23,11 +21,11 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.documents.content_refs import refresh_content_references
 from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
 from docflow.errors import DependentsConflictError
 from docflow.events import outbox
-from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
     DocumentOut,
@@ -473,9 +471,9 @@ async def create_document(
                 initial_content,
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
-            await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
-            await refresh_artifact_references(conn, row["doc_technical_key"], wk, initial_content)
-            await refresh_dataset_references(conn, row["doc_technical_key"], wk, initial_content)
+            await refresh_content_references(
+                conn, row["doc_technical_key"], wk, initial_content
+            )
 
             # Valeurs initiales de propriétés + contrat required (contrat dur :
             # la création échoue si une required sans default/behavior manque).
@@ -633,9 +631,7 @@ async def update_document(
                     author,
                 )
                 await log_change(conn, wk, doc_id, "U")
-                await refresh_references(conn, doc_id, wk, new_content)
-                await refresh_artifact_references(conn, doc_id, wk, new_content)
-                await refresh_dataset_references(conn, doc_id, wk, new_content)
+                await refresh_content_references(conn, doc_id, wk, new_content)
                 await outbox.enqueue(
                     conn,
                     event_code="docflow.document.updated.v1",
@@ -828,9 +824,7 @@ async def append_to_document(
                 author,
             )
             await log_change(conn, wk, doc_id, "U")
-            await refresh_references(conn, doc_id, wk, new_content)
-            await refresh_artifact_references(conn, doc_id, wk, new_content)
-            await refresh_dataset_references(conn, doc_id, wk, new_content)
+            await refresh_content_references(conn, doc_id, wk, new_content)
             await outbox.enqueue(
                 conn,
                 event_code="docflow.document.updated.v1",

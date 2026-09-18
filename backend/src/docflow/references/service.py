@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from docflow.db.helpers import require_workspace
-from docflow.references.parser import extract_references
 
 # ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -48,15 +47,18 @@ async def refresh_references(
     conn: asyncpg.Connection,
     doc_id: uuid.UUID,
     ws_key: uuid.UUID,
-    content: str | None,
+    refs: dict[str, str],
 ) -> None:
     """Remplace toutes les références du document.
 
     Doit être appelé dans la même transaction que le bump de version.
-    La table est reconstruite à partir du contenu courant ; un lien retiré
+    La table est reconstruite à partir des liens fournis ; un lien retiré
     disparaît donc de la table au save suivant.
+
+    ``refs`` ({uuid canonique: libellé}) est EXTRAIT PAR LE CODEC du type de
+    contenu (cf. ``documents.content_refs``) : cette fonction ne connaît plus la
+    grammaire du document, seulement la réconciliation.
     """
-    refs = extract_references(content or "")
     await conn.execute("DELETE FROM document_reference WHERE source_ref = $1", doc_id)
     if refs:
         await conn.executemany(

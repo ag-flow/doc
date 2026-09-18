@@ -8,15 +8,12 @@ from docflow.secrets.secret import Secret
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="forbid",
-        case_sensitive=False,
-        # Dev local : charge backend/.env (gitignoré) s'il existe. L'environnement
-        # réel du process reste prioritaire ; en prod (aucun .env) le comportement
-        # est inchangé — la config vient exclusivement des variables d'env.
-        env_file=".env",
-        env_file_encoding="utf-8",
-    )
+    # La configuration vient EXCLUSIVEMENT des variables d'environnement : pas de
+    # chargement de fichier ici. Un `env_file` se résoudrait relativement au cwd,
+    # donc un `.env` de développement fuirait dans les tests (et pourrait fuiter
+    # en production). La commodité dev est portée par le lanceur `dev-start.sh`,
+    # qui exporte `backend/.env` avant de démarrer le serveur.
+    model_config = SettingsConfigDict(extra="forbid", case_sensitive=False)
 
     database_url: str
     jwt_secret: Secret

@@ -45,8 +45,13 @@ start_backend() {
   echo "› backend (FastAPI/uvicorn) :$BACKEND_PORT"
   kill_port "$BACKEND_PORT"
   [ -f "$BACKEND_DIR/.env" ] || { echo "  ❌ $BACKEND_DIR/.env absent"; exit 1; }
-  ( cd "$BACKEND_DIR" && nohup .venv/bin/uvicorn docflow.app:app --reload \
-      --host 0.0.0.0 --port "$BACKEND_PORT" > "$LOG_DIR/backend.log" 2>&1 & )
+  # L'application ne lit aucun fichier de config : elle ne connaît que
+  # l'environnement. C'est donc ici qu'on exporte backend/.env, et nulle part
+  # ailleurs — ainsi un .env de dev ne peut pas fuiter dans les tests.
+  ( cd "$BACKEND_DIR" \
+      && set -a && . ./.env && set +a \
+      && nohup .venv/bin/uvicorn docflow.app:app --reload \
+           --host 0.0.0.0 --port "$BACKEND_PORT" > "$LOG_DIR/backend.log" 2>&1 & )
   wait_http "http://localhost:$BACKEND_PORT/health" "backend"
 }
 

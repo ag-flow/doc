@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from docflow.artifacts.links import build_download_query, verify_download_sig
 from docflow.artifacts.parser import extract_artifact_ids
+from docflow.documents.content_refs import refresh_content_references
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"fake-png-payload"
 
@@ -291,7 +292,7 @@ async def test_get_artifact_meta_and_refcount(
     assert meta.refcount == 0
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc réf")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn,
             doc_id,
             test_workspace["workspace_technical_key"],  # type: ignore[arg-type]
@@ -314,7 +315,7 @@ async def test_refcount_counts_chip_scheme_reference(
     )
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc puce")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"[Le joint](artifact://{created.id})"
         )
     meta = await service.get_artifact_meta(db_pool, "test-ws", created.id)
@@ -357,9 +358,9 @@ async def test_refresh_removes_ref_and_purges_at_zero(
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc purge")
     url = f"/api/workspaces/test-ws/artifacts/{created.id}"
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_id, wk, f"![p]({url})")
+        await refresh_content_references(conn, doc_id, wk, f"![p]({url})")
         # Le contenu ne référence plus l'artefact → refcount 0 → purge immédiate
-        await service.refresh_artifact_references(conn, doc_id, wk, "plus d'image")
+        await refresh_content_references(conn, doc_id, wk, "plus d'image")
     gone = await db_pool.fetchval("SELECT 1 FROM artifact WHERE id = $1", created.id)
     assert gone is None
 
@@ -377,10 +378,10 @@ async def test_refresh_keeps_artifact_referenced_elsewhere(
     doc_a = await _create_doc(db_pool, test_workspace, test_block, "Doc A")
     doc_b = await _create_doc(db_pool, test_workspace, test_block, "Doc B")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_a, wk, f"![s]({url})")
-        await service.refresh_artifact_references(conn, doc_b, wk, f"![s]({url})")
+        await refresh_content_references(conn, doc_a, wk, f"![s]({url})")
+        await refresh_content_references(conn, doc_b, wk, f"![s]({url})")
         # A retire sa référence : l'artefact reste (utilisé par B)
-        await service.refresh_artifact_references(conn, doc_a, wk, "rien")
+        await refresh_content_references(conn, doc_a, wk, "rien")
     still = await db_pool.fetchval("SELECT 1 FROM artifact WHERE id = $1", created.id)
     assert still == 1
 
@@ -408,7 +409,7 @@ async def test_refresh_ignores_unknown_and_foreign_artifacts(
             f"![foreign](/api/workspaces/test-ws/artifacts/{foreign.id})"
         )
         async with db_pool.acquire() as conn:
-            await service.refresh_artifact_references(conn, doc_id, wk, content)
+            await refresh_content_references(conn, doc_id, wk, content)
         count = await db_pool.fetchval(
             "SELECT count(*) FROM artifact_reference WHERE document_ref = $1", doc_id
         )
@@ -438,8 +439,8 @@ async def test_delete_document_purges_orphan_artifact(
     doc_a = await _create_doc(db_pool, test_workspace, test_block, "Doc suppr")
     doc_b = await _create_doc(db_pool, test_workspace, test_block, "Doc garde")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_a, wk, f"![d]({url}) ![k]({kept_url})")
-        await service.refresh_artifact_references(conn, doc_b, wk, f"![k]({kept_url})")
+        await refresh_content_references(conn, doc_a, wk, f"![d]({url}) ![k]({kept_url})")
+        await refresh_content_references(conn, doc_b, wk, f"![k]({kept_url})")
 
     await doc_svc.delete_document(db_pool, "test-ws", doc_a)
 
@@ -469,7 +470,7 @@ async def test_purge_stale_only_old_unreferenced(
     )
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc stale")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"![r](/api/workspaces/test-ws/artifacts/{referenced.id})"
         )
     # Vieillir artificiellement stale + referenced
@@ -499,7 +500,7 @@ async def test_public_fetch_requires_exposed_reference(
     )
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc public")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"![p](/api/workspaces/test-ws/artifacts/{created.id})"
         )
 
@@ -552,8 +553,8 @@ async def test_public_fetch_one_exposed_reference_suffices(
     doc_pub = await _create_doc(db_pool, test_workspace, test_block, "Doc exposé")
     doc_priv = await _create_doc(db_pool, test_workspace, test_block, "Doc privé")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_pub, wk, f"![m]({url})")
-        await service.refresh_artifact_references(conn, doc_priv, wk, f"![m]({url})")
+        await refresh_content_references(conn, doc_pub, wk, f"![m]({url})")
+        await refresh_content_references(conn, doc_priv, wk, f"![m]({url})")
     await db_pool.execute(
         "UPDATE document SET exposed = true WHERE doc_technical_key = $1", doc_pub
     )
@@ -975,7 +976,7 @@ async def test_list_artifacts_filters(
     # document_id : artefacts référencés par un document donné.
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc réf")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"[r](artifact://{rapport.id})"
         )
     items, total = await service.list_artifacts(

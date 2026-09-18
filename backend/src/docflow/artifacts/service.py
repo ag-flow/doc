@@ -8,7 +8,6 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.artifacts.media_types import load_allowed_map
-from docflow.artifacts.parser import extract_artifact_ids
 from docflow.db.helpers import require_workspace
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
 
@@ -372,17 +371,20 @@ async def refresh_artifact_references(
     conn: asyncpg.Connection,
     doc_id: uuid.UUID,
     ws_key: uuid.UUID,
-    content: str | None,
+    parsed: set[str],
 ) -> None:
-    """Reconstruit les références artefacts du document depuis son contenu.
+    """Reconstruit les références artefacts du document.
 
     Doit être appelé dans la même transaction que le save (miroir de
     references.refresh_references). Un artefact dont la dernière référence
     disparaît est supprimé immédiatement ; un artefact référencé ailleurs
     est conservé. Les références vers des artefacts inexistants ou d'un
     autre workspace sont ignorées (le save n'échoue jamais pour un lien mort).
+
+    ``parsed`` (uuid canoniques) est EXTRAIT PAR LE CODEC du type de contenu
+    (cf. ``documents.content_refs``) : cette fonction ne connaît plus la
+    grammaire du document, seulement la réconciliation.
     """
-    parsed = extract_artifact_ids(content or "")
     old_rows = await conn.fetch(
         "SELECT artifact_ref FROM artifact_reference WHERE document_ref = $1", doc_id
     )
