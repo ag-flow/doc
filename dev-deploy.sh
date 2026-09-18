@@ -217,6 +217,9 @@ main() {
     echo "==> [4/4] Smoke /health (timeout 90s)..."
     smoke_test_health "$COMPOSE_FILE"
 
+    # ─── Déclaration au portail (après le smoke, best-effort) ─────────────────
+    declarer_exposition_portail
+
     # ─── Récapitulatif ────────────────────────────────────────────────────────
     local IP ADMIN_INFO
     IP="$(hostname -I | awk '{print $1}')"
@@ -253,6 +256,34 @@ main() {
     echo ""
     echo "==> Entretien Docker (au plus hebdomadaire)..."
     prune_docker_cache "$DATA_ROOT" || true
+}
+
+# ─── Déclaration au portail (annuaire des services exposés) ─────────────────
+# STANDARD « Exposer un service interne… » : après le smoke, la stack déclare
+# ses services au portail via scripts/declarer-exposition.sh, voie AGENT (--me,
+# code TOTP). Best-effort et 100 % piloté par l'ENVIRONNEMENT — on ne touche
+# jamais /data/.env pour ça :
+#   PORTAL_URL       base du portail (ex. https://dev.yoops.org) — vide = no-op
+#   PORTAL_TOKEN     code TOTP « <login>:<code> » (jamais journalisé, jamais argv)
+#   EXPOSE_WORKSPACE workspace propriétaire côté portail
+#   EXPOSE_SERVICE   nom du service (défaut : docflow)
+# Le script sous-jacent no-op sans PORTAL_TOKEN/PORTAL_URL et n'échoue jamais :
+# docflow reste déployable hors de tout contexte portail. docflow expose UNE
+# origine (UI + API + MCP sous /api/mcp), page d'entrée `/` → pas de --path.
+declarer_exposition_portail() {
+    [[ -x scripts/declarer-exposition.sh ]] || return 0
+    local ip
+    ip="$(hostname -I | awk '{print $1}')"
+    echo ""
+    echo "==> Déclaration au portail (best-effort)..."
+    scripts/declarer-exposition.sh \
+        --me \
+        --portal "${PORTAL_URL:-}" \
+        --workspace "${EXPOSE_WORKSPACE:-}" \
+        --service "${EXPOSE_SERVICE:-docflow}" \
+        --target-host "$ip" \
+        --target-port 8080 \
+        --scheme http || true
 }
 
 # ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────

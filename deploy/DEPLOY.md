@@ -318,6 +318,51 @@ server {
 
 ---
 
+## Services publiés à l'annuaire (portail)
+
+STANDARD « Exposer un service interne derrière l'authentification du portail ».
+docflow expose **une seule origine** — l'UI, l'API REST et le serveur MCP (sous
+`/api/mcp`) partagent le port `8080`, page d'entrée `/`. Un unique service est
+donc à déclarer à l'annuaire du portail ; il devient joignable en
+`https://<workspace>-docflow.<domaine>`.
+
+| Service | Origine | Entrée | Obligatoire |
+|---|---|---|---|
+| `docflow` (UI + API + MCP) | VM:8080 | `/` (pas de `--path`) | oui, pour la stack principale |
+
+*(L'origine de **preview** des maquettes — `preview_base_url` — est une origine
+DÉDIÉE, gérée par son propre tunnel, hors de cette déclaration.)*
+
+**La déclaration est un geste d'agent**, authentifié par un **code TOTP**
+éphémère, jamais par un jeton admin partagé (§ standard) :
+
+1. L'utilisateur active son TOTP au portail (Gérer → APIKey agents / TOTP).
+2. L'agent obtient un code à 8 chiffres (30 s) via la primitive MCP `totp_code`
+   **du portail** (docflow n'implémente pas cette primitive).
+3. L'agent exporte l'environnement puis relance le déploiement — la déclaration
+   part **après le smoke**, via `scripts/declarer-exposition.sh --me` :
+
+```bash
+export PORTAL_URL="https://dev.yoops.org"      # base du portail
+export EXPOSE_WORKSPACE="docflow"              # workspace propriétaire
+export PORTAL_TOKEN="<login>:<code-TOTP>"      # jamais journalisé, jamais en argv
+sudo -E ./dev-deploy.sh dev                    # -E : conserve l'environnement
+```
+
+Best-effort et **fail-open** : sans `PORTAL_URL`/`PORTAL_TOKEN`, la déclaration
+est un no-op silencieux — docflow reste déployable hors de tout contexte portail.
+La déclaration est idempotente (rejouée à chaque déploiement).
+
+**Révoquer** un service devenu inutile (deux codes TOTP de pas différents si
+enchaîné avec une déclaration) :
+
+```bash
+curl -X DELETE -K - "https://dev.yoops.org/me/expositions/docflow-docflow" <<< \
+  'header = "Authorization: Bearer <login>:<code-TOTP>"'
+```
+
+---
+
 ## Sauvegarde
 
 > docflow dispose d'un worker de sauvegarde interne (`backup/worker.py`) qui produit des
