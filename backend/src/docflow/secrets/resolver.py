@@ -19,6 +19,17 @@ _SECRET_RE = re.compile(r"^\$\{secret://([0-9a-fA-F-]{36})\}$")
 log = structlog.get_logger(__name__)
 
 
+def _assert_safe_vault_path(path: str) -> None:
+    """Rejette une traversée de chemin dans une référence ${vault://nom:/chemin}.
+
+    La regex garantit déjà le `/` initial (chemin absolu). Ici on interdit tout
+    segment `..` : un `${vault://w:/../autre}` tenterait de sortir du périmètre
+    attendu du coffre (STANDARD « Gestion des secrets » §6 — garde anti-traversal).
+    """
+    if any(seg == ".." for seg in path.split("/")):
+        raise ValueError(f"chemin vault invalide (traversée « .. » interdite) : {path}")
+
+
 async def resolve(
     secret: Secret,
     *,
@@ -69,6 +80,7 @@ async def resolve(
         raise ValueError("pool and enc_key are required to resolve a vault reference")
 
     wallet_name, path = m.group(1), m.group(2)
+    _assert_safe_vault_path(path)
     log.debug("resolving_vault_secret", wallet=wallet_name, path=path)
 
     # Importé ici pour éviter d'initialiser le SDK si Harpocrate n'est pas utilisé.

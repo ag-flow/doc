@@ -4,6 +4,7 @@ import asyncio
 import re
 import secrets as _secrets
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 import asyncpg
@@ -98,9 +99,7 @@ async def list_secrets(
     out = [VaultSecretOut(**dict(row)) for row in rows]
     # Usage côté webhooks : headers chiffrés, scannés côté serveur.
     for secret in out:
-        secret.used_by_webhooks = len(
-            await _webhooks_referencing_secret(pool, secret.id, enc_key)
-        )
+        secret.used_by_webhooks = len(await _webhooks_referencing_secret(pool, secret.id, enc_key))
     return out
 
 
@@ -263,14 +262,60 @@ async def reveal_hmac_secret(
     """
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT value_enc FROM user_secret "
-            "WHERE id = $1 AND owner_ref = $2 AND kind = 'hmac'",
+            "SELECT value_enc FROM user_secret WHERE id = $1 AND owner_ref = $2 AND kind = 'hmac'",
             secret_id,
             user_id,
         )
     if row is None:
         raise HTTPException(404, "Secret HMAC introuvable.")
     return decrypt_str(enc_key, row["value_enc"])
+
+
+# Référence à un secret utilisateur par id : ${secret://uuid} ou ${hmac://uuid}.
+# Seuls ces deux schémas désignent un `user_secret` (propriété par utilisateur) ;
+# ${vault://…} désigne un coffre d'instance (superadmin), hors isolation par user.
+_OWNED_REF_RE = re.compile(r"^\$\{(?:secret|hmac)://([0-9a-fA-F-]{36})\}$")
+
+
+async def assert_refs_owned(
+    pool: asyncpg.Pool,
+    refs: Iterable[str | None],
+    owner_id: uuid.UUID,
+) -> None:
+    """Vérifie que toute référence ${secret://}/${hmac://} appartient à `owner_id`.
+
+    Isolation stricte par propriétaire (STANDARD « Gestion des secrets » §1/§6) :
+    on ne peut pas rattacher à un automate / webhook / config le secret d'un
+    AUTRE utilisateur. Point d'application = l'écriture (là où l'identité existe),
+    puisque la résolution ultérieure se fait côté worker, sans contexte requête.
+    Les ${vault://…} (coffres d'instance) ne sont pas concernés. 403 si une
+    référence pointe un secret inexistant ou d'un autre propriétaire.
+    """
+    seen: set[uuid.UUID] = set()
+    for ref in refs:
+        if not ref:
+            continue
+        m = _OWNED_REF_RE.match(ref.strip())
+        if m:
+            seen.add(uuid.UUID(m.group(1)))
+    if not seen:
+        return
+    async with pool.acquire() as conn:
+        owned = {
+            r["id"]
+            for r in await conn.fetch(
+                "SELECT id FROM user_secret WHERE id = ANY($1::uuid[]) AND owner_ref = $2",
+                list(seen),
+                owner_id,
+            )
+        }
+    foreign = seen - owned
+    if foreign:
+        raise HTTPException(
+            status_code=403,
+            detail=f"secret(s) non accessible(s) (autre propriétaire ou inexistant) : "
+            f"{', '.join(str(s) for s in sorted(foreign))}",
+        )
 
 
 async def resolve_user_secret_value(
@@ -283,17 +328,13 @@ async def resolve_user_secret_value(
     par id global, côté serveur — la valeur n'est jamais renvoyée à l'API.
     """
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT value_enc FROM user_secret WHERE id = $1", secret_id
-        )
+        row = await conn.fetchrow("SELECT value_enc FROM user_secret WHERE id = $1", secret_id)
     if row is None:
         return None
     return decrypt_str(enc_key, row["value_enc"])
 
 
-async def resolve_hmac_value(
-    pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str
-) -> str | None:
+async def resolve_hmac_value(pool: asyncpg.Pool, secret_id: uuid.UUID, enc_key: str) -> str | None:
     """Résout la valeur d'un secret HMAC par son id (sans contexte utilisateur).
 
     Utilisé par le résolveur `${hmac://<uuid>}` (worker d'émission) : la

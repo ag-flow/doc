@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+import asyncpg
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
@@ -10,14 +11,30 @@ from docflow.automations import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.automations import (
     AutomationCreate,
+    AutomationHeaderIn,
     AutomationOrderIn,
     AutomationOut,
     AutomationRunOut,
     AutomationUpdate,
 )
+from docflow.vault import service as vault_svc
 from docflow.workspaces.access import assert_ws_access, require_ws_access
 
 router = APIRouter(tags=["automations"], dependencies=[Depends(require_ws_access)])
+
+
+async def _assert_header_secrets_owned(
+    pool: asyncpg.Pool, headers: list[AutomationHeaderIn] | None, owner_id: uuid.UUID
+) -> None:
+    """Isolation des secrets (STANDARD Gestion des secrets §1/§6) : une réf
+    ${secret://}/${hmac://} d'un header d'automate doit appartenir à l'agissant.
+    Point d'application = ce routeur (l'identité y est présente ; la résolution
+    ultérieure vit dans le worker, sans contexte requête). None = pas de headers
+    dans le body (update partiel) → rien à valider."""
+    if headers is None:
+        return
+    await vault_svc.assert_refs_owned(pool, [h.secret_ref for h in headers], owner_id)
+
 
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"
@@ -81,9 +98,10 @@ async def reorder_all_automations(
 
 @router.post("/automations", response_model=AutomationOut, status_code=201)
 async def create_automation_global(
-    body: AutomationCreate, request: Request, _: AuthUser = _Admin
+    body: AutomationCreate, request: Request, user: AuthUser = _Admin
 ) -> AutomationOut:
     """Création hors workspace : `workspace_slugs` obligatoire (422 sinon)."""
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.create_automation(request.app.state.pool, None, body)
 
 
@@ -99,8 +117,9 @@ async def update_automation_global(
     automation_id: uuid.UUID,
     body: AutomationUpdate,
     request: Request,
-    _: AuthUser = _Admin,
+    user: AuthUser = _Admin,
 ) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.update_automation(request.app.state.pool, None, automation_id, body)
 
 
@@ -193,8 +212,9 @@ async def reorder_automations(
 
 @router.post(_WS + "/automations", response_model=AutomationOut, status_code=201)
 async def create_automation(
-    ws_slug: str, body: AutomationCreate, request: Request, _: AuthUser = _Auth
+    ws_slug: str, body: AutomationCreate, request: Request, user: AuthUser = _Auth
 ) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.create_automation(request.app.state.pool, ws_slug, body)
 
 
@@ -211,8 +231,9 @@ async def update_automation(
     automation_id: uuid.UUID,
     body: AutomationUpdate,
     request: Request,
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.update_automation(request.app.state.pool, ws_slug, automation_id, body)
 
 
