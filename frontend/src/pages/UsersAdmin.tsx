@@ -197,7 +197,7 @@ export function UsersAdmin() {
         </Button>
       </SectionHead>
       <p className="mb-8 max-w-[64ch] text-[16px] leading-[1.6] text-ink/[0.68]">
-        Les utilisateurs qui se connectent via Keycloak arrivent en attente de validation :
+        Les utilisateurs qui se connectent via le fournisseur OIDC arrivent en attente de validation :
         validez-les pour leur donner accès. L'accès aux contenus se donne workspace par
         workspace (membre ou propriétaire) ; un administrateur voit tout.
       </p>

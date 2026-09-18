@@ -196,7 +196,7 @@ export function OidcAdmin() {
         </p>
       )}
 
-      <KeycloakGuide />
+      <OidcSetupGuide />
     </div>
   )
 }
@@ -231,15 +231,15 @@ function Block({ children }: { children: string }) {
   )
 }
 
-function KeycloakGuide() {
+function OidcSetupGuide() {
   return (
     <details className="mt-14" open>
       <summary className="cursor-pointer select-none text-[11px] font-[600] uppercase tracking-[0.08em] text-ink/[0.5] hover:text-accent-700">
-        Procédure — Créer le client Keycloak
+        Procédure — Créer le client OIDC (exemple : Keycloak, IdP de référence)
       </summary>
 
       <div className="mt-5 max-w-[720px] space-y-6 border-t border-[var(--color-divider)] pt-5">
-        <Step n={1} title="Ouvrir la console d'administration Keycloak">
+        <Step n={1} title="Ouvrir la console d'administration de votre IdP">
           <p>
             Connectez-vous sur{' '}
             <a
@@ -337,7 +337,7 @@ function KeycloakGuide() {
 
         <div className="border-l-2 border-accent pl-4 text-[14px] leading-[1.6] text-ink/[0.7]">
           <strong>Break-glass :</strong> le compte admin local reste opérationnel même avec
-          l'OIDC activé. En cas de panne Keycloak, connectez-vous via{' '}
+          l'OIDC activé. En cas de panne du fournisseur OIDC, connectez-vous via{' '}
           <Code>POST /api/auth/login</Code> avec les identifiants bootstrap.
         </div>
       </div>

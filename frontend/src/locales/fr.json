@@ -457,9 +457,9 @@
   },
   "oidc": {
     "title": "Configuration OIDC",
-    "subtitle": "Keycloak SSO — paramètres de connexion (superadmin uniquement).",
+    "subtitle": "SSO OIDC — paramètres de connexion (superadmin uniquement).",
     "issuer": "Issuer (realm URL)",
-    "issuerHint": "URL du realm Keycloak, ex. https://security.yoops.org/realms/yoops",
+    "issuerHint": "URL de l'émetteur OIDC (issuer), ex. https://security.yoops.org/realms/yoops",
     "clientId": "Client ID",
     "secretRef": "Référence vault du client secret",
     "secretRefHint": "Référence Harpocrate, ex. ${vault://docflow/oidc_client_secret}",
