@@ -77,7 +77,7 @@ function FieldGrid({ schema, onChange }: GridProps) {
 
   return (
     <table
-      className="w-full min-w-[34rem] border-collapse text-sm"
+      className="w-full min-w-[34rem] border-collapse text-[15px]"
       data-testid="field-grid"
     >
       <thead>
@@ -161,12 +161,12 @@ function EntityView({ schema, onChange, description }: EntityViewProps) {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row" data-testid="table-schema-surface">
-      {/* Deux tiers pour la grille, un tiers pour la description : la grille
-          porte l'essentiel du travail, mais la description reste un texte qu'on
-          doit pouvoir écrire sans se sentir à l'étroit. `min-w-0` seul laissait
-          la grille se réduire jusqu'à tronquer ses colonnes ; le conteneur
-          défile horizontalement si la place manque vraiment. */}
-      <div className="min-w-0 flex-[2] overflow-x-auto rounded border border-gray-200 bg-white">
+      {/* Part égale : la grille a peu de colonnes et n'a pas besoin de plus,
+          tandis que la description est de la prose — c'est elle qu'on écrit au
+          long, et c'est par elle qu'on retrouve une entité dans la recherche.
+          `min-w-0` seul laissait la grille se réduire jusqu'à tronquer ses
+          colonnes ; le conteneur défile si la place manque vraiment. */}
+      <div className="min-w-0 flex-1 overflow-x-auto rounded border border-gray-200 bg-white">
         <FieldGrid schema={schema} onChange={onChange} />
         {!readOnly && (
           <button
