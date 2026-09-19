@@ -59,3 +59,9 @@ Après compaction de contexte, re-lire la cible avant toute édition.
 
 ## [deploy] Bit exécutable committé + redéploiement obligatoire
 Script shell : `git update-index --chmod=+x`. Un push seul ne montre rien : `sudo ./dev-deploy.sh dev` sur la VM.
+
+## [livraison] Pousser sur `dev` systématiquement, et crier si c'est bloqué
+`dev` = libre (commit ET push, sans demander). `main` = jamais. Un commit non
+poussé n'existe pour personne : l'utilisateur redéploie du code inchangé et voit
+« aucune différence ». Si un push est refusé, le dire en PREMIÈRE LIGNE, pas en
+bas d'un récapitulatif.
