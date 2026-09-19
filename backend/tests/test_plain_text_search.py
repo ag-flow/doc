@@ -178,7 +178,7 @@ async def test_backfill_traite_plusieurs_lots(
 # ── Repli sur type de contenu inconnu ────────────────────────────────────────
 
 
-@pytest.mark.parametrize("unknown", ["table-schema", "model-layout"])
+@pytest.mark.parametrize("unknown", ["model-layout", "type-jamais-enregistre"])
 async def test_type_inconnu_projette_le_contenu_tel_quel(
     db_pool: asyncpg.Pool,
     test_workspace: dict[str, object],

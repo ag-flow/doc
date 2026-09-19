@@ -15,11 +15,13 @@ from typing import Any
 
 import asyncpg
 
-from docflow.codecs.base import ContentCodec, DocumentReferences
+from docflow.codecs.base import CodecError, ContentCodec, DocumentReferences
 from docflow.codecs.markdown import MarkdownCodec
 from docflow.codecs.plain import PlainTextCodec
+from docflow.codecs.table_schema import TableSchemaCodec
 
 __all__ = [
+    "CodecError",
     "ContentCodec",
     "DocumentReferences",
     "FALLBACK",
@@ -30,12 +32,14 @@ __all__ = [
 
 #: Codecs instanciés une fois (ils sont sans état).
 _MARKDOWN = MarkdownCodec()
+_TABLE_SCHEMA = TableSchemaCodec()
 
 #: Repli pour tout type inconnu du registre.
 FALLBACK: ContentCodec[Any] = PlainTextCodec()
 
 REGISTRY: dict[str, ContentCodec[Any]] = {
     _MARKDOWN.content_type: _MARKDOWN,
+    _TABLE_SCHEMA.content_type: _TABLE_SCHEMA,
 }
 
 

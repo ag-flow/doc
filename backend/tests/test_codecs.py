@@ -20,9 +20,16 @@ def test_markdown_est_servi_par_son_codec() -> None:
     assert codec_for("md") is REGISTRY["md"]
 
 
-@pytest.mark.parametrize("unknown", ["table-schema", "model-layout", "n-importe-quoi", ""])
+# Types volontairement ABSENTS du registre. `model-layout` y entrera avec F7 :
+# le garde ci-dessous fait échouer ce test le jour où il sera enregistré, pour
+# qu'on retire l'entrée plutôt que de laisser un test qui n'affirme plus rien.
+UNREGISTERED = ("model-layout", "n-importe-quoi", "")
+
+
+@pytest.mark.parametrize("unknown", UNREGISTERED)
 def test_type_inconnu_retombe_sur_le_repli(unknown: str) -> None:
     """Exigence : un type inconnu ne casse jamais la page."""
+    assert unknown not in REGISTRY, f"« {unknown} » est désormais servi : retirer d'UNREGISTERED"
     assert codec_for(unknown) is FALLBACK
     assert isinstance(codec_for(unknown), PlainTextCodec)
 

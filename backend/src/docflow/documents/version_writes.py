@@ -29,21 +29,28 @@ async def insert_document_version(
     title: str,
     content: str | None,
 ) -> None:
-    """Insère une révision et sa projection texte.
+    """Canonicalise le contenu, puis insère la révision et sa projection texte.
 
     À appeler dans la transaction du save. Le codec est résolu depuis
     `document.type`, donc la ligne `document` doit déjà exister (c'est le cas
     aux quatre sites d'écriture, y compris à la création).
 
-    Un type de contenu inconnu retombe sur le codec de repli, dont la projection
-    est le contenu tel quel : la recherche reste exactement ce qu'elle était.
+    C'est ici qu'a lieu la **canonicalisation côté serveur** : forme figée et
+    identifiants stables alloués, quel que soit l'auteur ou l'outil d'écriture.
+    Elle ne détruit jamais — un contenu illisible est enregistré tel quel (cf.
+    `ContentCodec.canonicalize`), le refus étant du ressort de l'API.
+
+    Un type de contenu inconnu retombe sur le codec de repli : ni
+    canonicalisation ni projection particulière, le comportement reste celui
+    d'avant l'introduction des codecs.
     """
     codec = await codec_for_document(conn, doc_id)
+    canonical = codec.canonicalize(content) if content is not None else None
     await conn.execute(
         _INSERT_SQL,
         doc_id,
         version_number,
         title,
-        content,
-        codec.to_plain_text(content),
+        canonical,
+        codec.to_plain_text(canonical),
     )

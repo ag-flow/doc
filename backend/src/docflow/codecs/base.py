@@ -26,6 +26,29 @@ from typing import ClassVar
 
 
 @dataclass(frozen=True)
+class CodecError:
+    """Une erreur empêchant d'accepter un contenu.
+
+    Pensée pour être **actionnable par un agent** autant que par un humain : on
+    ne dit pas seulement « invalide », on dit OÙ, POURQUOI, et ce qui aurait été
+    accepté. Un appelant qui reçoit la liste complète peut corriger en une
+    passe au lieu de découvrir les erreurs une par une.
+    """
+
+    #: Chemin dans le document, en notation pointée/indicée : `fields[2].type`.
+    #: Chaîne vide = l'erreur porte sur le document entier.
+    path: str
+    #: Message lisible, en français, explicitant le problème.
+    message: str
+    #: Code stable pour un traitement automatique (ex. `unknown_type`).
+    code: str
+    #: Vocabulaire accepté à cet endroit, quand l'erreur est un mot inconnu.
+    allowed: tuple[str, ...] = ()
+    #: Pointeur vers l'article de grammaire, pour que l'appelant puisse lire la règle.
+    doc: str | None = None
+
+
+@dataclass(frozen=True)
 class DocumentReferences:
     """Liens sortants portés par un contenu.
 
@@ -92,3 +115,34 @@ class ContentCodec[M](ABC):
         jamais d'extraction hasardeuse sur une syntaxe étrangère.
         """
         return DocumentReferences.empty()
+
+    def canonicalize(self, content: str | None) -> str:
+        """Contenu → forme canonique à enregistrer.
+
+        Appelé côté serveur juste avant l'écriture d'une révision. Une grammaire
+        stricte s'en sert pour figer sa forme (ordre des clés, indentation) et
+        allouer ses identifiants stables ; une grammaire libre n'y touche pas.
+
+        **Contrat impératif : ne jamais détruire.** Un contenu illisible doit
+        être rendu tel quel. On est ici sur le chemin de sauvegarde, où perdre
+        du texte utilisateur est pire que le garder mal formé ; le refus est le
+        rôle de ``validate``, à la frontière de l'API.
+        """
+        return content or ""
+
+    def validate(self, content: str | None) -> list[CodecError]:
+        """Erreurs empêchant d'ACCEPTER ce contenu. Vide = contenu valide.
+
+        Séparé de ``parse`` à dessein, parce que lecture et écriture n'ont pas
+        les mêmes exigences :
+
+        - ``parse`` / ``to_plain_text`` / ``references`` sont sur le chemin de
+          LECTURE et de sauvegarde : ils ne lèvent jamais, un contenu abîmé
+          doit rester affichable et cherchable ;
+        - ``validate`` est sur le chemin d'ÉCRITURE : c'est là qu'un contenu mal
+          formé doit être refusé, avant d'entrer en base.
+
+        Défaut : aucune erreur. Une grammaire libre (markdown) n'a rien à
+        refuser — on n'invente pas de rejet là où tout est acceptable.
+        """
+        return []
