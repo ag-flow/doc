@@ -94,7 +94,11 @@ export default function WorkspaceList() {
     : workspaces
 
   return (
-    <div className="mx-auto max-w-[1000px] px-6 pt-11 pb-24" data-testid="workspace-list">
+    // La liste est un TABLEAU de workspaces, pas de la prose : la mesure de
+    // lecture ne s'y applique pas. Plus large, chaque ligne tient sur un seul
+    // niveau — nom, slug, description, volumétrie et fraîcheur alignés — au lieu
+    // d'empiler deux étages et de laisser la moitié de l'écran vide.
+    <div className="mx-auto max-w-[1600px] px-6 pt-11 pb-24" data-testid="workspace-list">
       <SectionHead kicker={t('ws.kicker')} title={t('ws.title')}>
         {/* Filtre en simple soulignement : un champ encadré ferait boîte. */}
         <Input
@@ -256,23 +260,25 @@ function WorkspaceRow({ ws, index, onOpen, onArchive, archiving, onDelete }: {
         type="button"
         onClick={onOpen}
         data-testid={`ws-row-${ws.slug}`}
-        className={`grid w-full grid-cols-[36px_1fr] items-baseline gap-5 px-1 py-4 text-left
-          transition-colors hover:bg-ink/[0.04] sm:grid-cols-[36px_1fr_260px_130px]
+        className={`grid w-full grid-cols-[36px_1fr] items-baseline gap-5 px-1 py-2 text-left
+          transition-colors hover:bg-ink/[0.04]
+          sm:grid-cols-[36px_minmax(0,1fr)_minmax(0,1.4fr)_150px_120px]
           ${ws.archived_at ? 'opacity-50' : ''}`}
       >
         <span className="text-right text-[15px] font-[600] text-ink/[0.38] [font-family:var(--font-heading)]">
           {String(index).padStart(2, '0')}
         </span>
-        <span className="min-w-0">
-          <span className="block truncate text-[22px] font-[600] [font-family:var(--font-heading)]">
+        {/* Nom et slug sur UNE ligne : le slug est une précision du nom, pas une
+            information d'un autre ordre — l'empiler doublait la hauteur de
+            chaque ligne pour rien. */}
+        <span className="flex min-w-0 items-baseline gap-2.5">
+          <span className="truncate text-[18px] font-[600] leading-tight [font-family:var(--font-heading)]">
             {ws.label}
-            {ws.archived_at && (
-              <span className="tag tag-neutral ml-2.5 align-middle">{t('ws.archivedBadge')}</span>
-            )}
           </span>
-          <span className="mt-0.5 block text-[12px] tracking-[0.04em] text-accent-700">
-            {ws.slug}
-          </span>
+          <span className="shrink-0 text-[12px] tracking-[0.04em] text-accent-700">{ws.slug}</span>
+          {ws.archived_at && (
+            <span className="tag tag-neutral shrink-0 align-middle">{t('ws.archivedBadge')}</span>
+          )}
         </span>
         <span className="hidden truncate text-[14px] text-ink/[0.62] sm:block">
           {ws.description}
@@ -284,9 +290,12 @@ function WorkspaceRow({ ws, index, onOpen, onArchive, archiving, onDelete }: {
             group-hover:opacity-0 group-focus-within:opacity-0 sm:block"
         >
           {counts}
-          <span className="block text-[12px] text-ink/[0.4]">
-            {ws.last_activity_at ? relativeDate(ws.last_activity_at) : t('ws.noActivity')}
-          </span>
+        </span>
+        <span
+          className="hidden text-right text-[12px] text-ink/[0.4] transition-opacity
+            group-hover:opacity-0 group-focus-within:opacity-0 sm:block"
+        >
+          {ws.last_activity_at ? relativeDate(ws.last_activity_at) : t('ws.noActivity')}
         </span>
       </button>
 

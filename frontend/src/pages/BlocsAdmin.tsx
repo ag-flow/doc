@@ -143,13 +143,15 @@ function BlocsTable({ blocs, wsSlug }: { blocs: DataBlockOut[]; wsSlug: string }
       <table className="table" data-testid="blocs-table">
         <thead>
           <tr>
-            <th>{t('blocs.colBloc')}</th>
-            <th>{t('blocs.colSlug')}</th>
-            <th>{t('blocs.colType')}</th>
-            <th>{t('blocs.colDocs')}</th>
-            <th>{t('blocs.colBroken')}</th>
-            <th>{t('blocs.colLastWrite')}</th>
-            <th>{t('blocs.colExposed')}</th>
+            {/* Le nom et le slug portent l'information qu'on lit ; les
+                colonnes de chiffres n'ont pas besoin de s'étaler. */}
+            <th className="w-[26%]">{t('blocs.colBloc')}</th>
+            <th className="w-[18%]">{t('blocs.colSlug')}</th>
+            <th className="w-[14%]">{t('blocs.colType')}</th>
+            <th className="w-[8%]">{t('blocs.colDocs')}</th>
+            <th className="w-[8%]">{t('blocs.colBroken')}</th>
+            <th className="w-[12%]">{t('blocs.colLastWrite')}</th>
+            <th className="w-[9%]">{t('blocs.colExposed')}</th>
             <th />
           </tr>
         </thead>
@@ -355,7 +357,10 @@ export function BlocsAdmin() {
   }
 
   return (
-    <div className="mx-auto max-w-[1000px] px-6 pt-11 pb-24" data-testid="blocs-admin">
+    // Tableau d'administration, pas de la prose : la mesure de lecture ne s'y
+    // applique pas. Élargi, le nom et le slug respirent au lieu d'être
+    // comprimés par les colonnes de chiffres.
+    <div className="mx-auto max-w-[1600px] px-6 pt-11 pb-24" data-testid="blocs-admin">
       <SectionHead kicker={wsSlug ?? ''} title={t('blocs.title')}>
         <Button variant="secondary" onClick={handleExport} data-testid="export-workspace-btn">
           <Export size={16} weight="duotone" /> {t('blocs.export', 'Exporter (markdown)')}
