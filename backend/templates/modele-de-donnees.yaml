@@ -1,0 +1,125 @@
+# Template global « Modèle de données » (épic MLD — F8).
+#
+# Importable par `import_template`. Il pose les types fonctionnels d'un modèle
+# de données : un MODÈLE (le document contexte, qui porte la mise en page du
+# diagramme) et ses ENTITÉS (ses documents enfants, qui portent la sémantique).
+#
+# Vocabulaire — deux choix imposés par le cadrage :
+#   * `entite`, et non `table` : on décrit un modèle LOGIQUE, pas un schéma
+#     physique. Nommer le type « table » inviterait à y penser en SGBD, ce que
+#     la grammaire `table-schema` refuse déjà (types logiques, jamais physiques).
+#   * on évite `context`, déjà pris par le vocabulaire des workflows : deux sens
+#     différents sous un même mot rendraient les deux illisibles.
+#
+# Rappel de l'architecture : ces types portent le sens MÉTIER du document, pas
+# la grammaire de son corps. Celle-ci est le TYPE DE CONTENU, indépendant :
+# `model-layout` pour un modèle, `table-schema` pour une entité.
+
+version: 1
+template: modele-de-donnees
+label: Modèle de données
+
+functional_types:
+  # ── Le document contexte ────────────────────────────────────────────────────
+  - slug: modele
+    label: Modèle de données
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - slug: brouillon
+            label: Brouillon
+            position: 0
+            color: "#9ca3af"
+          - slug: en_revue
+            label: En revue
+            position: 1
+            color: "#f59e0b"
+          - slug: valide
+            label: Validé
+            position: 2
+            color: "#10b981"
+          - slug: obsolete
+            label: Obsolète
+            position: 3
+            color: "#6b7280"
+
+      - slug: domaine
+        label: Domaine fonctionnel
+        type: text
+        constraints:
+          - kind: max_length
+            value: "80"
+            message: 80 caractères au maximum.
+
+      - slug: proprietaire
+        label: Propriétaire
+        type: text
+
+      - slug: mis_a_jour_le
+        label: Mis à jour le
+        type: date
+        behavior: auto_now
+
+  # ── Les entités du modèle (documents enfants) ───────────────────────────────
+  - slug: entite
+    label: Entité
+    parent: modele
+    properties:
+      - slug: statut
+        label: Statut
+        type: restricted_list
+        required: true
+        default: brouillon
+        allowed_values:
+          - slug: brouillon
+            label: Brouillon
+            position: 0
+            color: "#9ca3af"
+          - slug: valide
+            label: Validée
+            position: 1
+            color: "#10b981"
+          - slug: obsolete
+            label: Obsolète
+            position: 2
+            color: "#6b7280"
+
+      # Distingue ce qui porte le métier de ce qui n'existe que pour le
+      # rattachement : utile pour lire un grand modèle d'un coup d'œil.
+      - slug: nature
+        label: Nature
+        type: restricted_list
+        allowed_values:
+          - slug: principale
+            label: Entité principale
+            position: 0
+          - slug: reference
+            label: Table de référence
+            position: 1
+          - slug: association
+            label: Table d'association
+            position: 2
+          - slug: technique
+            label: Entité technique
+            position: 3
+
+      - slug: cle_naturelle
+        label: Clé naturelle
+        type: text
+
+      - slug: volumetrie_estimee
+        label: Volumétrie estimée
+        type: int
+        constraints:
+          - kind: min
+            value: "0"
+            message: Une volumétrie ne peut pas être négative.
+
+      - slug: mis_a_jour_le
+        label: Mis à jour le
+        type: date
+        behavior: auto_now
