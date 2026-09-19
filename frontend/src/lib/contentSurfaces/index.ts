@@ -19,6 +19,7 @@ import type { ForwardRefExoticComponent, RefAttributes } from 'react'
 import { markdownSurface } from './markdown'
 import { modelLayoutSurface } from './modelLayout'
 import { plainTextSurface } from './plainText'
+import { tableSchemaSurface } from './tableSchema'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,7 @@ export const FALLBACK_SURFACE: ContentSurface = plainTextSurface
 export const SURFACES: Record<string, ContentSurface> = {
   [markdownSurface.contentType]: markdownSurface,
   [modelLayoutSurface.contentType]: modelLayoutSurface,
+  [tableSchemaSurface.contentType]: tableSchemaSurface,
 }
 
 /** Surface servant ce type de contenu, ou le repli si le type est inconnu. */
@@ -94,4 +96,4 @@ export function surfaceFor(contentType: string | null | undefined): ContentSurfa
   return SURFACES[contentType] ?? FALLBACK_SURFACE
 }
 
-export { markdownSurface, modelLayoutSurface, plainTextSurface }
+export { markdownSurface, modelLayoutSurface, plainTextSurface, tableSchemaSurface }

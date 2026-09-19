@@ -51,6 +51,7 @@ export interface TableSchemaRelation {
 export interface TableSchema {
   name?: string
   title?: string
+  description?: string
   fields?: TableSchemaField[]
   'docflow.relations'?: TableSchemaRelation[]
 }

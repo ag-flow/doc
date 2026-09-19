@@ -712,6 +712,13 @@
     }
   },
   "mld": {
-    "noEntities": "Ce modèle ne contient encore aucune entité. Ajoutez un document enfant de type « table-schema » pour la voir apparaître sur le diagramme."
+    "noEntities": "Ce modèle ne contient encore aucune entité. Ajoutez un document enfant de type « table-schema » pour la voir apparaître sur le diagramme.",
+    "fieldName": "Nom",
+    "fieldType": "Type",
+    "fieldTitle": "Libellé",
+    "addField": "Ajouter un champ",
+    "removeField": "Retirer ce champ",
+    "description": "Description",
+    "descriptionHint": "C'est par la description qu'on retrouve une entité dans la recherche."
   }
 }
