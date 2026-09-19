@@ -21,6 +21,20 @@ export interface OrthogonalEdgeData extends Record<string, unknown> {
   /** Remonte une modification des coudes au document (persistance). */
   onWaypointsChange?: (edgeId: string, waypoints: Point[]) => void
   label?: string
+  /** Famille du lien — pour un modèle de données, sa cardinalité. */
+  kind?: string
+}
+
+/** Cardinalité → notation lue à chaque extrémité.
+ *
+ *  On écrit la multiplicité DU CÔTÉ où elle se lit : « une commande appartient à
+ *  UN client, un client a N commandes ». Sans ces marques, un lien ne dit pas
+ *  dans quel sens il se lit — c'est l'information la plus utile d'un MLD. */
+const CARDINALITY_ENDS: Record<string, [string, string]> = {
+  'one-to-one': ['1', '1'],
+  'one-to-many': ['1', 'n'],
+  'many-to-one': ['n', '1'],
+  'many-to-many': ['n', 'n'],
 }
 
 /** Position d'ancrage → côté, tel que le moteur de rendu l'a résolu. */
@@ -49,7 +63,8 @@ function OrthogonalEdgeImpl({
   markerEnd,
   style,
 }: EdgeProps) {
-  const { waypoints, onWaypointsChange, label } = (data ?? {}) as OrthogonalEdgeData
+  const { waypoints, onWaypointsChange, label, kind } = (data ?? {}) as OrthogonalEdgeData
+  const ends = kind ? CARDINALITY_ENDS[kind] : undefined
   // Conversion écran → canvas : les coudes sont stockés en coordonnées du
   // document, pas en pixels d'écran, sinon ils bougeraient avec le zoom.
   const transform = useStore((s) => s.transform)
@@ -104,6 +119,34 @@ function OrthogonalEdgeImpl({
         style={{ cursor: onWaypointsChange ? 'crosshair' : undefined }}
       />
       <EdgeLabelRenderer>
+        {/* Multiplicités, posées juste après le moignon de chaque extrémité :
+            assez près du nœud pour qu'on sache à qui elles se rapportent. */}
+        {ends && (
+          <>
+            <div
+              data-testid={`edge-card-source-${id}`}
+              className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
+              style={{
+                transform: `translate(-50%, -50%) translate(${points[1]?.x ?? sourceX}px, ${
+                  (points[1]?.y ?? sourceY) - 10
+                }px)`,
+              }}
+            >
+              {ends[0]}
+            </div>
+            <div
+              data-testid={`edge-card-target-${id}`}
+              className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
+              style={{
+                transform: `translate(-50%, -50%) translate(${
+                  points[points.length - 2]?.x ?? targetX
+                }px, ${(points[points.length - 2]?.y ?? targetY) - 10}px)`,
+              }}
+            >
+              {ends[1]}
+            </div>
+          </>
+        )}
         {(waypoints ?? []).map((w, i) => (
           <div
             key={`${w.x}:${w.y}:${i}`}

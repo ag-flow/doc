@@ -112,6 +112,12 @@ describe('toCanvas — relations', () => {
     })
   })
 
+  it('porte la cardinalité, qui dit dans quel sens le lien se lit', () => {
+    // Sans elle, un lien ne dit pas si une commande a un client ou l'inverse —
+    // c'est l'information la plus utile d'un modèle de données.
+    expect(toCanvas([COMMANDE, CLIENT]).edges[0].kind).toBe('many-to-one')
+  })
+
   it('ne dessine pas une relation dont la cible est hors du modèle', () => {
     // On n'invente pas de nœud fantôme pour une table d'un autre diagramme.
     const doc = toCanvas([COMMANDE])

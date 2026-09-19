@@ -148,10 +148,12 @@ function EntityView({ schema, onChange }: EntityViewProps) {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row" data-testid="table-schema-surface">
-      {/* `min-w-0` laisserait la grille se réduire jusqu'à tronquer ses colonnes
-          quand la place manque : on lui impose une largeur plancher, et c'est le
-          conteneur qui défile horizontalement si nécessaire. */}
-      <div className="min-w-0 flex-1 overflow-x-auto rounded border border-gray-200 bg-white">
+      {/* Deux tiers pour la grille, un tiers pour la description : la grille
+          porte l'essentiel du travail, mais la description reste un texte qu'on
+          doit pouvoir écrire sans se sentir à l'étroit. `min-w-0` seul laissait
+          la grille se réduire jusqu'à tronquer ses colonnes ; le conteneur
+          défile horizontalement si la place manque vraiment. */}
+      <div className="min-w-0 flex-[2] overflow-x-auto rounded border border-gray-200 bg-white">
         <FieldGrid schema={schema} onChange={onChange} />
         {!readOnly && (
           <button
@@ -169,7 +171,7 @@ function EntityView({ schema, onChange }: EntityViewProps) {
 
       {/* Panneau latéral : la description est du texte libre, elle ne tient pas
           dans une colonne de la grille sans la rendre illisible. */}
-      <aside className="w-full shrink-0 lg:w-80" data-testid="description-panel">
+      <aside className="w-full min-w-0 lg:flex-1" data-testid="description-panel">
         <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor="entity-description">
           {t('mld.description')}
         </label>

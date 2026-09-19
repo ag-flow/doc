@@ -86,16 +86,43 @@ function useModelCanvas(content: string, docId: string | undefined) {
 
   const isLoading = listing || bodies.some((q) => q.isLoading)
 
-  const initial = useMemo(
-    () => toCanvas(entities, safeParse<ModelLayout>(content, {})),
-    [entities, content],
-  )
-
+  // On ne garde en état QUE la mise en page. Retenir le canvas entier le
+  // figerait avec les entités connues à l'instant du premier changement — et le
+  // moteur de rendu en émet un dès le montage, pour mesurer les nœuds, donc
+  // AVANT que les corps soient chargés. Les entités arrivées ensuite étaient
+  // alors ignorées : on voyait des boîtes sans liens (une relation dont la
+  // cible manque n'est pas dessinée). La sémantique vient toujours de la
+  // requête, jamais d'un état local.
+  //
   // `null` tant que l'utilisateur n'a rien bougé : c'est ce qui permet de rendre
   // le contenu d'origine intact à la sauvegarde, sans diff gratuit.
-  const [edited, setEdited] = useState<CanvasDoc | null>(null)
+  const [editedLayout, setEditedLayout] = useState<ModelLayout | null>(null)
 
-  return { entities, isLoading, doc: edited ?? initial, edited, setEdited }
+  const layout = useMemo(
+    () => editedLayout ?? safeParse<ModelLayout>(content, {}),
+    [editedLayout, content],
+  )
+  const doc = useMemo(() => toCanvas(entities, layout), [entities, layout])
+
+  /** Le canvas remonte un document complet ; on n'en retient que la présentation.
+   *
+   *  Rend `true` seulement si la mise en page a RÉELLEMENT changé. Le moteur de
+   *  rendu émet des changements de lui-même — mesure des nœuds au montage,
+   *  restauration du viewport, re-rendu après sauvegarde — et les signaler
+   *  comme des modifications de l'utilisateur rallumait « modifications non
+   *  enregistrées » juste après un enregistrement réussi.
+   */
+  const applyChange = useCallback(
+    (next: CanvasDoc): boolean => {
+      const proposed = toLayout(next)
+      if (stringifyYaml(proposed) === stringifyYaml(layout)) return false
+      setEditedLayout(proposed)
+      return true
+    },
+    [layout],
+  )
+
+  return { entities, isLoading, doc, editedLayout, applyChange }
 }
 
 interface DiagramProps {
@@ -134,7 +161,10 @@ function Diagram({ doc, onChange, empty, loading, readOnly }: DiagramProps) {
 /** Surface d'ÉDITION — rend la mise en page courante à la sauvegarde. */
 export const ModelLayoutEditor = forwardRef<ContentEditorHandle, ContentEditorProps>(
   ({ initialContent, onDirty, docId }, ref) => {
-    const { entities, isLoading, doc, edited, setEdited } = useModelCanvas(initialContent, docId)
+    const { entities, isLoading, doc, editedLayout, applyChange } = useModelCanvas(
+      initialContent,
+      docId,
+    )
 
     useImperativeHandle(
       ref,
@@ -142,17 +172,19 @@ export const ModelLayoutEditor = forwardRef<ContentEditorHandle, ContentEditorPr
         getContent: async () =>
           // Rien n'a bougé → on rend le contenu d'origine TEL QUEL. Le
           // re-sérialiser produirait un diff sans changement de sens.
-          edited ? stringifyYaml(toLayout(edited)) : initialContent,
+          editedLayout ? stringifyYaml(editedLayout) : initialContent,
       }),
-      [edited, initialContent],
+      [editedLayout, initialContent],
     )
 
     const handleChange = useCallback(
       (next: CanvasDoc) => {
-        setEdited(next)
-        onDirty()
+        // `onDirty` UNIQUEMENT si la mise en page a bougé : sinon le moteur de
+        // rendu rallume l'indicateur tout seul, y compris juste après une
+        // sauvegarde réussie.
+        if (applyChange(next)) onDirty()
       },
-      [onDirty, setEdited],
+      [onDirty, applyChange],
     )
 
     return (

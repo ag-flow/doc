@@ -73,6 +73,7 @@ function toRenderEdges(
       waypoints: e.waypoints,
       onWaypointsChange,
       label: e.label,
+      kind: e.kind,
     } satisfies OrthogonalEdgeData,
   }))
 }

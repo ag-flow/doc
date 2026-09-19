@@ -206,6 +206,53 @@ describe('ModelLayoutSurface — sauvegarde', () => {
     expect(layout.entities?.[0]).toMatchObject({ id: 'doc-commande', x: 99, y: 77 })
   })
 
+  it('ne signale PAS une modification quand la mise en page n\'a pas bougé', async () => {
+    // Régression : le moteur de rendu émet des changements de lui-même (mesure
+    // des nœuds au montage, restauration du viewport, re-rendu après
+    // sauvegarde). Les traiter comme des gestes de l'utilisateur rallumait
+    // « modifications non enregistrées » juste après un enregistrement réussi.
+    const onDirty = vi.fn()
+    renderSurface(
+      <ModelLayoutEditor
+        initialContent="entities:\n  - id: doc-commande\n    x: 10\n    y: 20\n"
+        onDirty={onDirty}
+        docId={MODEL_ID}
+      />,
+    )
+    await screen.findByTestId('canvas-node-doc-commande')
+
+    expect(onDirty).not.toHaveBeenCalled()
+  })
+
+  it('garde les entités quand un changement survient AVANT leur chargement', async () => {
+    // Régression : la surface retenait le canvas entier en état. Le moteur de
+    // rendu émet un changement dès le montage (mesure des nœuds), donc avant
+    // que les corps soient arrivés — l'état figeait alors un modèle sans
+    // entités, et les liens n'apparaissaient plus jamais en ÉDITION (en
+    // lecture, aucun changement n'est émis, d'où la différence).
+    let resolveBody: ((d: DocumentOut) => void) | undefined
+    vi.mocked(docsApi.getDocument).mockImplementation(
+      (_ws: string, id: string) =>
+        new Promise<DocumentOut>((resolve) => {
+          if (id === 'doc-client') resolveBody = resolve
+          else resolve(COMMANDE)
+        }),
+    )
+
+    const ref = createRef<ContentEditorHandle>()
+    const onDirty = vi.fn()
+    renderSurface(
+      <ModelLayoutEditor ref={ref} initialContent="" onDirty={onDirty} docId={MODEL_ID} />,
+    )
+    await waitFor(() => expect(resolveBody).toBeDefined())
+
+    // L'entité manquante arrive APRÈS : elle doit quand même être dessinée.
+    resolveBody!(CLIENT)
+
+    expect(await screen.findByText('Client')).toBeInTheDocument()
+    expect(screen.getByText('Commande')).toBeInTheDocument()
+  })
+
   it('ne remonte aucune sémantique dans la mise en page', async () => {
     const ref = createRef<ContentEditorHandle>()
     renderSurface(<ModelLayoutEditor ref={ref} initialContent="" onDirty={() => {}} docId={MODEL_ID} />)

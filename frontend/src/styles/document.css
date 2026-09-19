@@ -126,6 +126,16 @@
    typographiques (calibrées pour du texte, pas pour un plan de travail). */
 .doc-sheet-wide { padding: 20px 24px; }
 .doc-sheet-wide > * { max-width: none; }
+/* Un tableau de PROSE est mis en `display: block` pour défiler horizontalement
+   sans déborder de la feuille. Une grille d'interface, elle, doit occuper la
+   largeur qu'on lui donne : en `block`, elle se réduit à son contenu et laisse
+   un grand vide à sa droite. Le défilement est assuré par son conteneur. */
+.doc-sheet-wide table {
+  display: table;
+  width: 100%;
+  overflow-x: visible;
+  font-size: inherit;
+}
 
 /* Mesure de lecture bornée pour le TEXTE courant : quand un panneau est replié,
    la feuille s'élargit mais le texte ne s'étire pas au-delà d'une mesure
