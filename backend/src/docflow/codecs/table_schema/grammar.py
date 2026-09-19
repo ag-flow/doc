@@ -22,7 +22,8 @@ ID_KEY = f"{NS}id"
 RELATIONS_KEY = f"{NS}relations"
 
 #: Article de grammaire, cité dans chaque erreur pour que l'appelant lise la règle.
-GRAMMAR_DOC = "docflow://documentation/grammaire-table-schema"
+#: « 5.8 Grammaire table-schema », bloc Documentation du workspace docflow.
+GRAMMAR_DOC = "docflow://doc/e29576c2-eaf7-4cc4-844c-b5db356f9dc7"
 
 #: Types LOGIQUES acceptés. Sous-ensemble curaté de Table Schema, plus `uuid`
 #: (omniprésent dans docflow) et `text` (distinction long/court, utile au MLD).
