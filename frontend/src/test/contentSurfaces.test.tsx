@@ -24,9 +24,14 @@ describe('registre de surfaces', () => {
     expect(SURFACES['md']).toBe(markdownSurface)
   })
 
-  it.each(['table-schema', 'model-layout', 'nimportequoi', ''])(
-    'retombe sur le repli pour le type inconnu « %s »',
+  // Types sans surface dédiée. Le garde ci-dessous fait échouer ce test le jour
+  // où l'un d'eux en reçoit une, pour qu'on retire l'entrée plutôt que de
+  // laisser un test qui n'affirme plus rien. (C'est ce qui est arrivé à
+  // `model-layout` en F7.)
+  it.each(['table-schema', 'nimportequoi', ''])(
+    'retombe sur le repli pour le type sans surface « %s »',
     (unknown) => {
+      expect(SURFACES[unknown]).toBeUndefined()
       expect(surfaceFor(unknown)).toBe(FALLBACK_SURFACE)
     },
   )

@@ -508,6 +508,7 @@ export function DocumentEditor() {
       initialContent={doc.content ?? ''}
       onDirty={markDirty}
       wsSlug={ws}
+      docId={docId}
     />
   )
 

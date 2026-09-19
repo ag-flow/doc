@@ -68,8 +68,9 @@ async def test_un_type_inconnu_est_accepte_et_retombe_sur_le_repli(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
 ) -> None:
     """Fail-soft : un type hors registre ne casse pas la création, il ne valide rien."""
-    doc = await _create(db_pool, test_block, "Type futur", "n'importe quoi", "model-layout")
-    assert await _stored_type(db_pool, doc.doc_technical_key) == "model-layout"
+    futur = "type-pas-encore-ecrit"
+    doc = await _create(db_pool, test_block, "Type futur", "n'importe quoi", futur)
+    assert await _stored_type(db_pool, doc.doc_technical_key) == futur
 
 
 # ── Refus structuré ──────────────────────────────────────────────────────────

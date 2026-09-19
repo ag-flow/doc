@@ -136,7 +136,7 @@ function collectFlowBlocks(section: HTMLElement): FlowBlock[] {
  *  (lot F4d), volontairement hors du périmètre de F4a. */
 function PrintViewer({ doc }: { doc: DocumentOut }) {
   const { Viewer } = surfaceFor(doc.type)
-  return <Viewer content={stripTitleHeading(doc.content ?? '', doc.title)} bare />
+  return <Viewer content={stripTitleHeading(doc.content ?? '', doc.title)} bare docId={doc.doc_technical_key} />
 }
 
 export function PrintDocumentPage() {

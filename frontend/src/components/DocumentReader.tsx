@@ -350,7 +350,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
       >
         {hasContent ? (
-          <Viewer ref={viewerRef} content={displayContent} bare />
+          <Viewer ref={viewerRef} content={displayContent} bare docId={docId} />
         ) : (
           <p className="text-muted italic">{t('editor.readEmpty')}</p>
         )}

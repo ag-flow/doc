@@ -710,5 +710,8 @@
         "body": "Gérez votre compte et vos préférences. Vous pouvez rouvrir ou désactiver ce guide à tout moment."
       }
     }
+  },
+  "mld": {
+    "noEntities": "Ce modèle ne contient encore aucune entité. Ajoutez un document enfant de type « table-schema » pour la voir apparaître sur le diagramme."
   }
 }

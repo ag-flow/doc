@@ -77,7 +77,7 @@ export function PublicDocumentViewer() {
       <main className="mx-auto max-w-4xl px-6 py-8">
         <h1 className="mb-6 text-2xl font-bold text-gray-900">{doc.title}</h1>
         {doc.content ? (
-          <PublicViewer key={docId} content={doc.content} />
+          <PublicViewer key={docId} content={doc.content} docId={docId} />
         ) : (
           <p className="text-sm text-gray-400 italic">Aucun contenu.</p>
         )}

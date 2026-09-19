@@ -17,6 +17,7 @@
 
 import type { ForwardRefExoticComponent, RefAttributes } from 'react'
 import { markdownSurface } from './markdown'
+import { modelLayoutSurface } from './modelLayout'
 import { plainTextSurface } from './plainText'
 
 // ── Contrat ───────────────────────────────────────────────────────────────────
@@ -30,6 +31,13 @@ export interface ContentEditorProps {
   onDirty: () => void
   /** Workspace courant — upload d'artefacts, recherche de documents liés. */
   wsSlug?: string
+  /** Identité du document affiché.
+   *
+   *  Nécessaire aux surfaces dont le contenu ne se suffit pas à lui-même : le
+   *  diagramme de modèle de données (F7) tire ses entités des documents ENFANTS,
+   *  puisque l'appartenance au modèle est l'arborescence et non le corps du
+   *  document. Optionnel — une surface autonome (markdown) l'ignore. */
+  docId?: string
 }
 
 export interface ContentEditorHandle {
@@ -41,6 +49,8 @@ export interface ContentViewerProps {
   content: string
   /** Rendu sans cadre (bordure / fond) — pour la lecture prose « wiki ». */
   bare?: boolean
+  /** Identité du document affiché — même rôle que côté éditeur. */
+  docId?: string
 }
 
 export interface ContentViewerHandle {
@@ -75,6 +85,7 @@ export const FALLBACK_SURFACE: ContentSurface = plainTextSurface
 
 export const SURFACES: Record<string, ContentSurface> = {
   [markdownSurface.contentType]: markdownSurface,
+  [modelLayoutSurface.contentType]: modelLayoutSurface,
 }
 
 /** Surface servant ce type de contenu, ou le repli si le type est inconnu. */
@@ -83,4 +94,4 @@ export function surfaceFor(contentType: string | null | undefined): ContentSurfa
   return SURFACES[contentType] ?? FALLBACK_SURFACE
 }
 
-export { markdownSurface, plainTextSurface }
+export { markdownSurface, modelLayoutSurface, plainTextSurface }
