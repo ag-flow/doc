@@ -13,6 +13,7 @@ from docflow.artifacts.service import (
     collect_subtree_artifacts,
     purge_unreferenced,
 )
+from docflow.codecs import codec_for, codec_for_document
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
@@ -22,6 +23,7 @@ from docflow.documents.block_ops import (
 )
 from docflow.documents.changelog import log_change
 from docflow.documents.content_refs import refresh_content_references
+from docflow.documents.content_validation import ensure_valid
 from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
 from docflow.documents.version_writes import insert_document_version
@@ -353,8 +355,8 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
 _DOC_INSERT_SQL = """
 INSERT INTO document
     (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref,
-     exposed, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     exposed, updated_by, type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, 'md'))
 RETURNING doc_technical_key, title, type, version, parent,
           data_block_ref, exposed, slug, created_at, updated_at
 """
@@ -386,6 +388,7 @@ async def _insert_document(
                 data.block_id,
                 parent_exposed,
                 author,
+                data.content_type,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -411,6 +414,7 @@ async def _insert_document(
                     data.block_id,
                     parent_exposed,
                     author,
+                    data.content_type,
                 )
         except asyncpg.UniqueViolationError:
             i = 2 if i == 0 else i + 1
@@ -463,6 +467,8 @@ async def create_document(
             await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
+            # Refus AVANT écriture : le type demandé décide de la grammaire.
+            ensure_valid(codec_for(data.content_type), initial_content)
             row = await _insert_document(conn, wk, data, ft_id, parent_exposed, author)
             await insert_document_version(
                 conn, row["doc_technical_key"], 1, data.title, initial_content
@@ -610,6 +616,7 @@ async def update_document(
                     new_content: str | None = prev["content"] if prev else None
                 else:
                     new_content = raw.get("content")
+                ensure_valid(await codec_for_document(conn, doc_id), new_content)
                 await insert_document_version(conn, doc_id, new_v, new_title, new_content)
                 await conn.execute(
                     "UPDATE document SET version = $1, title = $2, updated_at = now(), "
@@ -797,6 +804,7 @@ async def append_to_document(
             )
             new_content = _concat_append(prev["content"] if prev else None, content, position)
             new_v = current_v + 1
+            ensure_valid(await codec_for_document(conn, doc_id), new_content)
             await insert_document_version(conn, doc_id, new_v, head["title"], new_content)
             await conn.execute(
                 "UPDATE document SET version = $1, updated_at = now(), "

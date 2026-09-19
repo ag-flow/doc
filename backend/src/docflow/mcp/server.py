@@ -167,6 +167,19 @@ _TOOLS: list[Tool] = [
                         "Type fonctionnel à associer (optionnel, doit exister dans le workspace)"
                     ),
                 },
+                "content_type": {
+                    "type": "string",
+                    "description": (
+                        "Type de CONTENU du corps, c'est-à-dire sa grammaire — à ne pas "
+                        "confondre avec functional_type_slug, qui dit ce que le document "
+                        "représente métier. Optionnel, défaut 'md' (markdown). "
+                        "'table-schema' = modèle de données (voir l'article « 5.8 Grammaire "
+                        "table-schema » du bloc Documentation). Positionnable UNIQUEMENT à la "
+                        "création : changer la grammaire d'un document existant est une "
+                        "opération à part. Un contenu qui ne respecte pas la grammaire du type "
+                        "demandé est REFUSÉ (content_unparseable / content_invalid)."
+                    ),
+                },
                 "parent_id": {
                     "type": "string",
                     "format": "uuid",
@@ -1580,6 +1593,7 @@ async def _get_document(
             """
             SELECT d.doc_technical_key::text AS id, d.title, d.version AS current_version,
                    dv.content AS contenu,
+                   d.type AS content_type,
                    ft.slug AS functional_type_slug
             FROM document d
             LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
@@ -1603,6 +1617,7 @@ async def _get_document(
                 "id": head["id"],
                 "title": head["title"],
                 "contenu": head["contenu"],
+                "content_type": head["content_type"],
                 "functional_type_slug": head["functional_type_slug"],
                 "version": current_version,
                 "is_current": True,
@@ -1666,6 +1681,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     title = str(args.get("title", ""))
     contenu = str(args["contenu"]) if "contenu" in args else None
     type_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
+    content_type = str(args["content_type"]) if "content_type" in args else None
     try:
         parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
     except ValueError:
@@ -1696,6 +1712,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             block_id=block_id,
             content=contenu,
             functional_type_slug=type_slug,
+            content_type=content_type,
             parent_id=parent_id,
             properties=properties,
         )

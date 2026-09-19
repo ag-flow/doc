@@ -8,6 +8,8 @@ document markdown ».
 from __future__ import annotations
 
 import asyncpg
+import pytest
+from fastapi import HTTPException
 
 from docflow.codecs.table_schema import grammar, ids
 from docflow.documents import service as doc_svc
@@ -133,11 +135,18 @@ async def test_les_backlinks_fonctionnent_comme_pour_un_markdown(
     assert [b.source_id for b in backlinks] == [source.doc_technical_key]
 
 
-async def test_un_contenu_illisible_est_enregistre_tel_quel(
+async def test_un_contenu_illisible_est_refuse_avant_d_atteindre_le_stockage(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
 ) -> None:
-    """La sauvegarde ne détruit jamais : le refus appartient à l'API (F9)."""
-    casse = "name: t\n  fields: [oups\n"
-    doc = await _create_schema_doc(db_pool, test_block, "Commande cassée", casse)
+    """Depuis F9, le refus a lieu à la frontière de l'API.
 
-    assert await _current_content(db_pool, doc.doc_technical_key) == casse
+    Le garde « la couche de stockage ne détruit jamais » reste vrai et reste
+    testé au niveau du codec (`test_codec_table_schema`) : les deux règles se
+    complètent — on refuse en amont, et si jamais un contenu illisible passait,
+    il serait conservé plutôt qu'effacé.
+    """
+    with pytest.raises(HTTPException) as exc:
+        await _create_schema_doc(db_pool, test_block, "Commande cassée", "name: t\n  f: [oups\n")
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "content_unparseable"

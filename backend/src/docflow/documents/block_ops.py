@@ -7,10 +7,12 @@ import uuid
 import asyncpg
 from fastapi import HTTPException
 
+from docflow.codecs import codec_for
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
 from docflow.documents.content_refs import refresh_content_references
+from docflow.documents.content_validation import ensure_valid
 from docflow.documents.template_apply import compute_initial_content
 from docflow.documents.version_writes import insert_document_version
 from docflow.events import outbox
@@ -346,8 +348,8 @@ async def create_document_in_block(
                     """
                     INSERT INTO document
                         (title, slug, parent, functional_type_ref, workspace_technical_key,
-                         data_block_ref, exposed)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                         data_block_ref, exposed, type)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, coalesce($8, 'md'))
                     RETURNING doc_technical_key, title, type, version, parent,
                               data_block_ref, exposed, slug, created_at, updated_at
                     """,
@@ -358,6 +360,7 @@ async def create_document_in_block(
                     wk,
                     block_id,
                     parent_exposed,
+                    body.content_type,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise HTTPException(
@@ -369,6 +372,7 @@ async def create_document_in_block(
 
             # Appliquer le content_template du type (DOC-14 #1)
             initial_content = await compute_initial_content(conn, ft_id, body.title)
+            ensure_valid(codec_for(body.content_type), initial_content)
             await insert_document_version(conn, doc_id, 1, body.title, initial_content)
             # Un template de contenu peut porter des références d'artefacts ou de
             # documents ([[doc]]) : les tracer dès la création pour que le
