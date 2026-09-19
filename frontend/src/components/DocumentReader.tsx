@@ -20,7 +20,7 @@ import { useReadingPrefs } from '../hooks/useReadingPrefs'
 import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { stripTitleHeading } from '../lib/markdownTitle'
-import { MarkdownViewer, type MarkdownViewerHandle } from './MarkdownViewer'
+import { surfaceFor, type ContentViewerHandle } from '../lib/contentSurfaces'
 import { DocumentChildrenPanel } from './DocumentChildrenPanel'
 import { BacklinksPanel } from './BacklinksPanel'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -50,7 +50,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   const [copiedDoc, setCopiedDoc] = useState(false)
   const [richState, setRichState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const [exportOpen, setExportOpen] = useState(false)
-  const viewerRef = useRef<MarkdownViewerHandle>(null)
+  const viewerRef = useRef<ContentViewerHandle>(null)
   const readerRef = useRef<HTMLDivElement>(null)
 
   // Copie riche (texte + composants en images) : la rasterisation prend un
@@ -58,7 +58,9 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   async function copyRich() {
     setRichState('busy')
     try {
-      await viewerRef.current?.copyRich()
+      // Optionnel au contrat : une surface opaque (texte brut) n'a pas de
+      // représentation riche. Le bouton n'est d'ailleurs pas proposé dans ce cas.
+      await viewerRef.current?.copyRich?.()
       setRichState('done')
       setTimeout(() => setRichState('idle'), 1500)
     } catch {
@@ -144,6 +146,8 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   // Beaucoup de documents commencent par « # <titre> » (modèles de contenu) :
   // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
   // (le contenu en base n'est jamais modifié ; l'édition montre tout).
+  // Surface de lecture choisie par le type de contenu (repli texte brut si inconnu).
+  const { Viewer, supportsRichCopy } = surfaceFor(doc.type)
   const displayContent = stripTitleHeading(doc.content ?? '', doc.title)
   const hasContent = Boolean(displayContent.trim())
 
@@ -206,27 +210,29 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
               {copiedDoc ? <Check size={14} weight="bold" /> : <Copy size={14} weight="duotone" />}
               {copiedDoc ? t('editor.copyDocumentDone') : t('editor.copyLabel')}
             </button>
-            <button
-              type="button"
-              onClick={() => void copyRich()}
-              disabled={richState === 'busy'}
-              title={t('editor.copyRichHint')}
-              data-testid="copy-rich-btn"
-              className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700 disabled:cursor-wait"
-            >
-              {richState === 'busy' ? (
-                <SpinnerGap size={14} weight="bold" className="animate-spin" />
-              ) : richState === 'done' ? (
-                <Check size={14} weight="bold" />
-              ) : (
-                <Images size={14} weight="duotone" />
-              )}
-              {richState === 'done'
-                ? t('editor.copyRichDone')
-                : richState === 'error'
-                  ? t('editor.copyRichError')
-                  : t('editor.copyRich')}
-            </button>
+            {supportsRichCopy && (
+              <button
+                type="button"
+                onClick={() => void copyRich()}
+                disabled={richState === 'busy'}
+                title={t('editor.copyRichHint')}
+                data-testid="copy-rich-btn"
+                className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700 disabled:cursor-wait"
+              >
+                {richState === 'busy' ? (
+                  <SpinnerGap size={14} weight="bold" className="animate-spin" />
+                ) : richState === 'done' ? (
+                  <Check size={14} weight="bold" />
+                ) : (
+                  <Images size={14} weight="duotone" />
+                )}
+                {richState === 'done'
+                  ? t('editor.copyRichDone')
+                  : richState === 'error'
+                    ? t('editor.copyRichError')
+                    : t('editor.copyRich')}
+              </button>
+            )}
             <span className="flex-1" />
             {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
           </>
@@ -344,7 +350,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         }
       >
         {hasContent ? (
-          <MarkdownViewer ref={viewerRef} content={displayContent} bare />
+          <Viewer ref={viewerRef} content={displayContent} bare />
         ) : (
           <p className="text-muted italic">{t('editor.readEmpty')}</p>
         )}

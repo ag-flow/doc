@@ -203,14 +203,12 @@
     "docsCount_other": "{{count}} docs",
     "addProperty": "Ajouter une propriété",
     "propLabel": "Libellé",
-    "propType": "Type scalaire",
+    "propType": "Type",
     "propRequired": "Obligatoire",
     "requiredWarn_one": "{{count}} document de ce type deviendra incomplet (propriété obligatoire non renseignée).",
     "requiredWarn_other": "{{count}} documents de ce type deviendront incomplets (propriété obligatoire non renseignée).",
     "editPropTitle": "Modifier la propriété",
     "slugImmutable": "Le slug est définitif — il ne se modifie pas après création.",
-    "propLabel": "Libellé",
-    "propType": "Type",
     "typeChangeHint": "Libre si la propriété n'a aucune donnée ; sinon seules les transitions cohérentes sont acceptées (ex. text → url ou liste fermée).",
     "deletePropTitle": "Supprimer la propriété",
     "deletePropMsg": "Supprimer la propriété « {{label}} » ? Les valeurs saisies sur les documents seront supprimées avec elle.",
@@ -341,7 +339,9 @@
     "slugSet": "Définir le slug pour la synchro git",
     "slugAdd": "ajouter un slug",
     "slugInvalid": "Minuscules, chiffres, tirets — 2 à 80 caractères",
-    "properties": "Propriétés"
+    "properties": "Propriétés",
+    "unknownContentType": "Type de contenu non reconnu — affichage en texte brut.",
+    "plainTextBody": "Contenu du document (texte brut)"
   },
   "properties": {
     "title": "Propriétés",

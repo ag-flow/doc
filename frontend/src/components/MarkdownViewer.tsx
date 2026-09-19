@@ -7,22 +7,21 @@ import { docflowSchema, parseMarkdownWithCodecs, type CodecEditorApi } from '../
 import { resolveArtifactUrl } from '../lib/artifacts'
 import { referencesApi, artifactsApi } from '../lib/api'
 import { useWorkspaceSlugOrNull } from '../contexts/WorkspaceContext'
+import type { ContentViewerHandle, ContentViewerProps } from '../lib/contentSurfaces'
 import {
   documentToRichHtml,
   writeRichClipboard,
   type RichCopyEditor,
 } from '../lib/richClipboard'
 
-interface MarkdownViewerProps {
-  content: string
-  /** Rendu sans cadre (bordure / fond) — pour la lecture prose « wiki ». */
-  bare?: boolean
-}
+type MarkdownViewerProps = ContentViewerProps
 
-/** Handle impératif : copie riche (texte HTML + composants en images). */
-export interface MarkdownViewerHandle {
-  copyRich: () => Promise<void>
-}
+/** Handle impératif : copie riche (texte HTML + composants en images).
+ *  Le type reste celui du contrat générique — le resserrer à `copyRich`
+ *  OBLIGATOIRE rendrait cette surface non assignable au registre (la `ref` est
+ *  contravariante). Cette surface fournit toujours `copyRich` ; l'appelant, lui,
+ *  doit le traiter comme optionnel puisqu'il parle à une surface quelconque. */
+export type MarkdownViewerHandle = ContentViewerHandle
 
 const DOC_LINK = /^docflow:\/\/doc\/([0-9a-fA-F-]{36})$/
 const UUID = '[0-9a-fA-F-]{36}'

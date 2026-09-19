@@ -4,7 +4,7 @@ import { useQueries } from '@tanstack/react-query'
 import { Printer } from '@phosphor-icons/react'
 import { docsApi, type DocumentOut } from '../lib/api'
 import { useWorkspace } from '../contexts/WorkspaceContext'
-import { MarkdownViewer } from '../components/MarkdownViewer'
+import { surfaceFor } from '../lib/contentSurfaces'
 import { stripTitleHeading } from '../lib/markdownTitle'
 import { Button } from '../components/ui/button'
 import { SheetSkeleton } from '../components/ui/states'
@@ -127,6 +127,18 @@ function collectFlowBlocks(section: HTMLElement): FlowBlock[] {
  * porte des repères de coupure de page ; l'utilisateur vérifie puis déclenche
  * l'impression du navigateur (destination « Enregistrer en PDF »).
  */
+/** Feuille de contenu d'un document, rendue dans la surface de son type de
+ *  contenu (repli texte brut si le type est inconnu).
+ *
+ *  NOTE : la pagination d'impression (`collectFlowBlocks`) interroge encore le
+ *  DOM de BlockNote (`.bn-block-outer`). Elle reste donc juste pour le type
+ *  `md` uniquement — le découplage de l'impression est un chantier distinct
+ *  (lot F4d), volontairement hors du périmètre de F4a. */
+function PrintViewer({ doc }: { doc: DocumentOut }) {
+  const { Viewer } = surfaceFor(doc.type)
+  return <Viewer content={stripTitleHeading(doc.content ?? '', doc.title)} bare />
+}
+
 export function PrintDocumentPage() {
   const { wsSlug: ws, docId } = useParams<{ wsSlug: string; blocSlug: string; docId: string }>()
   const [params] = useSearchParams()
@@ -303,7 +315,7 @@ export function PrintDocumentPage() {
                 </div>
               ))}
               <h1>{d.title}</h1>
-              <MarkdownViewer content={stripTitleHeading(d.content ?? '', d.title)} bare />
+              <PrintViewer doc={d} />
             </section>
             </Fragment>
           ))}

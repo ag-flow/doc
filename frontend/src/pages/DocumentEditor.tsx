@@ -15,7 +15,7 @@ import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
 import { ConflictResolver } from './ConflictResolver'
 import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
-import { MarkdownEditor, type MarkdownEditorHandle } from '../components/MarkdownEditor'
+import { surfaceFor, type ContentEditorHandle } from '../lib/contentSurfaces'
 import { ReactionBar } from '../components/ReactionBar'
 import { CommentsPanel } from '../components/CommentsPanel'
 import { BacklinksPanel } from '../components/BacklinksPanel'
@@ -43,7 +43,7 @@ export function DocumentEditor() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const editorRef = useRef<MarkdownEditorHandle>(null)
+  const editorRef = useRef<ContentEditorHandle>(null)
   const expectedVersion = useRef<number>(0)
   // Garde de réentrance de `doSave` (bug double Cmd+S) — cf. commentaire sur `doSave`.
   const savingRef = useRef(false)
@@ -183,7 +183,7 @@ export function DocumentEditor() {
     // appels concurrents à `doSave` sans dépendre d'un re-rendu React.
     if (savingRef.current) return false
     savingRef.current = true
-    const content = await editorRef.current.getMarkdown()
+    const content = await editorRef.current.getContent()
     setStatus('saving')
     setErrorMsg(null)
     try {
@@ -495,8 +495,14 @@ export function DocumentEditor() {
     </>
   )
 
+  // La surface d'édition est choisie par le TYPE DE CONTENU du document, pas
+  // câblée en dur : un type inconnu retombe sur le repli texte brut. Toute la
+  // coquille ci-dessous (titre, propriétés, commentaires, save) est identique
+  // quelle que soit la surface.
+  const { Editor } = surfaceFor(doc.type)
+
   const editorSheet = (
-    <MarkdownEditor
+    <Editor
       key={`${docId}:${editorEpoch}`}
       ref={editorRef}
       initialContent={doc.content ?? ''}

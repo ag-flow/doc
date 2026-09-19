@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, FolderOpen, Search } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import {
   api,
   docsApi,
-  referencesApi,
   type DataBlockOut,
   type DocumentOut,
   type DocumentSearchResult,
   type WorkspaceOut,
 } from '../lib/api'
+import { useDocumentPicker } from '../hooks/useDocumentPicker'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -159,12 +159,16 @@ interface LinkSearchPopupProps {
 
 export function LinkSearchPopup({ wsSlug, onSelect, onClose }: LinkSearchPopupProps) {
   const [mode, setMode] = useState<'search' | 'browse'>('search')
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<DocumentSearchResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [selected, setSelected] = useState(0)
   const [expandedWs, setExpandedWs] = useState<Set<string>>(new Set([wsSlug]))
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Recherche + navigation clavier : service headless, réutilisable hors de
+  // cette modale (cf. hooks/useDocumentPicker).
+  const { query, setQuery, results, loading, selected, handleKey } = useDocumentPicker({
+    wsSlug,
+    onSelect,
+    onClose,
+  })
 
   const { data: workspaces = [] } = useQuery<WorkspaceOut[]>({
     queryKey: ['workspaces'],
@@ -176,30 +180,6 @@ export function LinkSearchPopup({ wsSlug, onSelect, onClose }: LinkSearchPopupPr
   useEffect(() => {
     if (mode === 'search') inputRef.current?.focus()
   }, [mode])
-
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); setLoading(false); return }
-    setLoading(true)
-    let cancelled = false
-    const t = setTimeout(() => {
-      referencesApi
-        .searchDocuments(wsSlug, query)
-        .then((r) => { if (cancelled) return; setResults(r); setSelected(0) })
-        .catch(() => { if (!cancelled) setResults([]) })
-        .finally(() => { if (!cancelled) setLoading(false) })
-    }, 200)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [query, wsSlug])
-
-  const handleKey = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose() }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, results.length - 1)) }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((s) => Math.max(s - 1, 0)) }
-      if (e.key === 'Enter' && results[selected]) { e.preventDefault(); onSelect(results[selected]) }
-    },
-    [results, selected, onClose, onSelect],
-  )
 
   const toggleWs = (slug: string) =>
     setExpandedWs((prev) => {

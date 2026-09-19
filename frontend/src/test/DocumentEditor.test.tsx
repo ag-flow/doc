@@ -14,11 +14,11 @@ vi.mock('../components/MarkdownEditor', () => ({
   MarkdownEditor: React.forwardRef(
     (
       { initialContent }: { initialContent?: string; onDirty?: () => void },
-      ref: React.Ref<{ getMarkdown: () => Promise<string> }>,
+      ref: React.Ref<{ getContent: () => Promise<string> }>,
     ) => {
       const [content] = React.useState(initialContent ?? '')
       React.useImperativeHandle(ref, () => ({
-        getMarkdown: () => Promise.resolve(content),
+        getContent: () => Promise.resolve(content),
       }))
       return <div data-testid="markdown-editor-mock">{content}</div>
     },
@@ -120,7 +120,7 @@ async function enterEditMode() {
 const doc: DocumentOut = {
   doc_technical_key: 'd1',
   title: 'Mon document',
-  type: 'page',
+  type: 'md',
   slug: null,
   content: '# Hello',
   version: 3,

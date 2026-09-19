@@ -19,6 +19,7 @@ import {
   type SlashContext,
 } from '../lib/blockCodecs'
 import { type DocumentSearchResult } from '../lib/api'
+import type { ContentEditorHandle, ContentEditorProps } from '../lib/contentSurfaces'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
 import { EditorFilePanel } from './editorFilePanel'
@@ -37,9 +38,10 @@ function filterItems<T extends { title: string; aliases?: string[] }>(
   )
 }
 
-export interface MarkdownEditorHandle {
-  getMarkdown: () => Promise<string>
-}
+/** Surface du type de contenu `md` — cf. `lib/contentSurfaces`. Le handle et les
+ *  props suivent le contrat générique : la page ne sait pas qu'elle parle à
+ *  BlockNote. */
+export type MarkdownEditorHandle = ContentEditorHandle
 
 /**
  * Collage : garder le HTML quand il existe. Le défaut BlockNote
@@ -61,11 +63,7 @@ export function docflowPasteHandler({
   return defaultPasteHandler({ prioritizeMarkdownOverHTML: false })
 }
 
-interface MarkdownEditorProps {
-  initialContent: string
-  onDirty: () => void
-  wsSlug?: string
-}
+type MarkdownEditorProps = ContentEditorProps
 
 // ── Éditeur principal ─────────────────────────────────────────────────────────
 
@@ -110,7 +108,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     }, [editor, initialContent])
 
     useImperativeHandle(ref, () => ({
-      getMarkdown: () => serializeMarkdownWithCodecs(editor as unknown as CodecEditorApi),
+      getContent: () => serializeMarkdownWithCodecs(editor as unknown as CodecEditorApi),
     }), [editor])
 
     const handleLinkSelect = useCallback((doc: DocumentSearchResult) => {

@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, FileText } from 'lucide-react'
 import { publicApi, type DocumentOut } from '../lib/api'
-import { MarkdownViewer } from '../components/MarkdownViewer'
+import { surfaceFor } from '../lib/contentSurfaces'
 
 function AncestorChain({ docId }: { docId: string }) {
   const { data: doc } = useQuery<DocumentOut>({
@@ -59,6 +59,9 @@ export function PublicDocumentViewer() {
     )
   }
 
+  // Surface de lecture choisie par le type de contenu (repli texte brut si inconnu).
+  const { Viewer: PublicViewer } = surfaceFor(doc.type)
+
   return (
     <div className="min-h-screen bg-white">
       {/* En-tête fil de hiérarchie */}
@@ -74,7 +77,7 @@ export function PublicDocumentViewer() {
       <main className="mx-auto max-w-4xl px-6 py-8">
         <h1 className="mb-6 text-2xl font-bold text-gray-900">{doc.title}</h1>
         {doc.content ? (
-          <MarkdownViewer key={docId} content={doc.content} />
+          <PublicViewer key={docId} content={doc.content} />
         ) : (
           <p className="text-sm text-gray-400 italic">Aucun contenu.</p>
         )}
