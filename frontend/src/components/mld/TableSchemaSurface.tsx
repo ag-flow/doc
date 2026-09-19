@@ -16,7 +16,15 @@
  *    d'édition ne doit jamais détruire ce qu'elle ne sait pas montrer.
  */
 
-import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type {
@@ -26,6 +34,8 @@ import type {
   ContentViewerProps,
 } from '../../lib/contentSurfaces'
 import type { TableSchema, TableSchemaField } from '../../lib/mld/adapter'
+import { MarkdownEditor } from '../MarkdownEditor'
+import { MarkdownViewer } from '../MarkdownViewer'
 
 /** Vocabulaire logique servi par le codec (cf. article 5.8). */
 const FIELD_TYPES = [
@@ -140,9 +150,12 @@ function FieldGrid({ schema, onChange }: GridProps) {
 interface EntityViewProps {
   schema: TableSchema
   onChange?: (schema: TableSchema) => void
+  /** Rédaction de la description — l'éditeur markdown complet, monté par
+   *  l'appelant qui en tient la référence pour la sauvegarde. */
+  description?: ReactNode
 }
 
-function EntityView({ schema, onChange }: EntityViewProps) {
+function EntityView({ schema, onChange, description }: EntityViewProps) {
   const { t } = useTranslation()
   const readOnly = !onChange
 
@@ -172,17 +185,8 @@ function EntityView({ schema, onChange }: EntityViewProps) {
       {/* Panneau latéral : la description est du texte libre, elle ne tient pas
           dans une colonne de la grille sans la rendre illisible. */}
       <aside className="w-full min-w-0 lg:flex-1" data-testid="description-panel">
-        <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor="entity-description">
-          {t('mld.description')}
-        </label>
-        <textarea
-          id="entity-description"
-          value={schema.description ?? ''}
-          readOnly={readOnly}
-          onChange={(e) => onChange?.({ ...schema, description: e.target.value })}
-          rows={8}
-          className="w-full rounded border border-gray-200 bg-white p-2 text-sm outline-none"
-        />
+        <div className="mb-1 text-xs font-medium text-gray-600">{t('mld.description')}</div>
+        {description}
         <p className="mt-1 text-xs text-gray-500">{t('mld.descriptionHint')}</p>
       </aside>
     </div>
@@ -190,19 +194,31 @@ function EntityView({ schema, onChange }: EntityViewProps) {
 }
 
 export const TableSchemaEditor = forwardRef<ContentEditorHandle, ContentEditorProps>(
-  ({ initialContent, onDirty }, ref) => {
+  ({ initialContent, onDirty, wsSlug }, ref) => {
     const parsed = useMemo(() => safeParse(initialContent), [initialContent])
     const [schema, setSchema] = useState<TableSchema | null>(null)
+    // La description est rédigée dans l'éditeur markdown complet, qui est NON
+    // CONTRÔLÉ : on ne la lit qu'au moment de la sauvegarde, par sa référence.
+    const descriptionRef = useRef<ContentEditorHandle>(null)
+    const [descriptionTouched, setDescriptionTouched] = useState(false)
 
     useImperativeHandle(
       ref,
       () => ({
-        // Rien n'a bougé → contenu d'origine intact : une sauvegarde ne doit pas
-        // produire un diff gratuit (ni perdre les commentaires YAML de l'auteur
-        // avant que la canonicalisation serveur ne s'en charge).
-        getContent: async () => (schema ? stringifyYaml(schema) : initialContent),
+        getContent: async () => {
+          // Rien n'a bougé → contenu d'origine intact : une sauvegarde ne doit
+          // pas produire un diff gratuit (ni perdre les commentaires YAML de
+          // l'auteur avant que la canonicalisation serveur ne s'en charge).
+          if (!schema && !descriptionTouched) return initialContent
+
+          const next: TableSchema = { ...(schema ?? parsed) }
+          const written = (await descriptionRef.current?.getContent())?.trim()
+          if (written) next.description = written
+          else delete next.description
+          return stringifyYaml(next)
+        },
       }),
-      [schema, initialContent],
+      [schema, descriptionTouched, parsed, initialContent],
     )
 
     const handleChange = useCallback(
@@ -213,15 +229,42 @@ export const TableSchemaEditor = forwardRef<ContentEditorHandle, ContentEditorPr
       [onDirty],
     )
 
-    return <EntityView schema={schema ?? parsed} onChange={handleChange} />
+    const handleDescriptionDirty = useCallback(() => {
+      setDescriptionTouched(true)
+      onDirty()
+    }, [onDirty])
+
+    return (
+      <EntityView
+        schema={schema ?? parsed}
+        onChange={handleChange}
+        description={
+          <MarkdownEditor
+            ref={descriptionRef}
+            initialContent={parsed.description ?? ''}
+            onDirty={handleDescriptionDirty}
+            wsSlug={wsSlug}
+          />
+        }
+      />
+    )
   },
 )
 TableSchemaEditor.displayName = 'TableSchemaEditor'
 
 export const TableSchemaViewer = forwardRef<ContentViewerHandle, ContentViewerProps>(
   ({ content }, ref) => {
+    const schema = useMemo(() => safeParse(content), [content])
     useImperativeHandle(ref, () => ({}), [])
-    return <EntityView schema={safeParse(content)} />
+
+    return (
+      <EntityView
+        schema={schema}
+        description={
+          schema.description ? <MarkdownViewer content={schema.description} bare /> : null
+        }
+      />
+    )
   },
 )
 TableSchemaViewer.displayName = 'TableSchemaViewer'

@@ -3,12 +3,40 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createRef } from 'react'
+import React, { createRef } from 'react'
 import { parse as parseYaml } from 'yaml'
 import { TableSchemaEditor, TableSchemaViewer } from '../components/mld/TableSchemaSurface'
 import type { ContentEditorHandle } from '../lib/contentSurfaces'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
+
+// La description est rédigée dans l'éditeur markdown complet. On le remplace par
+// un substitut au contrat identique : BlockNote n'est pas déterministe en jsdom,
+// et ce n'est pas lui qu'on teste ici.
+vi.mock('../components/MarkdownEditor', () => ({
+  MarkdownEditor: React.forwardRef(
+    (
+      { initialContent, onDirty }: { initialContent?: string; onDirty?: () => void },
+      ref: React.Ref<{ getContent: () => Promise<string> }>,
+    ) => {
+      const [value, setValue] = React.useState(initialContent ?? '')
+      React.useImperativeHandle(ref, () => ({ getContent: async () => value }), [value])
+      return (
+        <textarea
+          aria-label="description"
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            onDirty?.()
+          }}
+        />
+      )
+    },
+  ),
+}))
+vi.mock('../components/MarkdownViewer', () => ({
+  MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
+}))
 
 const SCHEMA = `name: commande
 title: Commande
@@ -58,7 +86,7 @@ describe('TableSchemaSurface — rendu', () => {
     renderEditor()
     const panel = screen.getByTestId('description-panel')
     expect(panel).toHaveTextContent('mld.description')
-    expect(screen.getByDisplayValue('Une commande passée par un client.')).toBeInTheDocument()
+    expect(screen.getByLabelText('description')).toHaveValue('Une commande passée par un client.')
   })
 
   it('rend un schéma illisible sans casser', () => {
@@ -110,9 +138,9 @@ describe('TableSchemaSurface — édition', () => {
     expect(schema.fields[0].name).toBe('montant')
   })
 
-  it('édite la description', async () => {
+  it('édite la description dans l\'éditeur markdown', async () => {
     const { ref } = renderEditor()
-    const area = screen.getByDisplayValue('Une commande passée par un client.')
+    const area = screen.getByLabelText('description')
 
     await userEvent.clear(area)
     await userEvent.type(area, 'Nouvelle description.')
