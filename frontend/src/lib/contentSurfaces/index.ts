@@ -77,6 +77,12 @@ export interface ContentSurface {
    *  Déclaratif : la page doit décider d'afficher l'action AVANT le montage,
    *  quand la `ref` est encore nulle. Défaut : non. */
   supportsRichCopy?: boolean
+  /** La surface n'est pas de la prose : elle veut toute la largeur de la feuille.
+   *
+   *  La mesure de lecture (~72ch) est faite pour du texte. Un diagramme ou une
+   *  grille de champs s'y retrouvent enfermés dans une colonne étroite — au
+   *  point de tronquer les colonnes d'un tableau. Défaut : non (prose). */
+  fullWidth?: boolean
 }
 
 // ── Registre ──────────────────────────────────────────────────────────────────

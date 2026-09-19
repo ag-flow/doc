@@ -18,6 +18,12 @@ interface Props {
   children: ReactNode
   /** Sous la feuille, pleine mesure : enfants, réactions, commentaires. */
   footer?: ReactNode
+  /** La feuille porte une surface NON textuelle (diagramme, grille de champs).
+   *
+   *  La mesure de lecture (~72ch) et les marges de la feuille sont calibrées
+   *  pour du texte : appliquées à un plan de travail, elles l'enferment dans une
+   *  colonne étroite. Une surface qui n'est pas de la prose le déclare ici. */
+  wide?: boolean
 }
 
 /**
@@ -26,7 +32,17 @@ interface Props {
  * de l'une à l'autre ne déplace pas le texte d'un pixel — deux implémentations
  * parallèles dériveraient au premier ajustement.
  */
-export function DocumentShell({ kicker, title, meta, actions, aside, nav, children, footer }: Props) {
+export function DocumentShell({
+  kicker,
+  title,
+  meta,
+  actions,
+  aside,
+  nav,
+  children,
+  footer,
+  wide,
+}: Props) {
   return (
     <div className={`doc-shell${nav ? ' doc-shell-nav' : ''}${aside ? ' doc-shell-aside' : ''}`}>
       {actions && <HeaderActions>{actions}</HeaderActions>}
@@ -42,7 +58,7 @@ export function DocumentShell({ kicker, title, meta, actions, aside, nav, childr
       <div className={`doc-grid${aside ? ' doc-grid-aside' : ''}${nav ? ' doc-grid-nav' : ''}`}>
         {nav && <div className="doc-nav-col">{nav}</div>}
         <div className="min-w-0">
-          <div className="doc-sheet wiki-prose">{children}</div>
+          <div className={`doc-sheet${wide ? ' doc-sheet-wide' : ' wiki-prose'}`}>{children}</div>
           {footer}
         </div>
         {aside && <aside className="doc-aside">{aside}</aside>}

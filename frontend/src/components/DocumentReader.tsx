@@ -147,13 +147,14 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
   // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
   // (le contenu en base n'est jamais modifié ; l'édition montre tout).
   // Surface de lecture choisie par le type de contenu (repli texte brut si inconnu).
-  const { Viewer, supportsRichCopy } = surfaceFor(doc.type)
+  const { Viewer, supportsRichCopy, fullWidth } = surfaceFor(doc.type)
   const displayContent = stripTitleHeading(doc.content ?? '', doc.title)
   const hasContent = Boolean(displayContent.trim())
 
   return (
     <div data-testid="document-reader" ref={readerRef}>
       <DocumentShell
+        wide={fullWidth}
         kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
         title={
           <h1 className="m-0 text-[42px] leading-[1.08] tracking-[-0.03em]">{doc.title}</h1>

@@ -46,4 +46,5 @@ export const tableSchemaSurface: ContentSurface = {
   Editor,
   Viewer,
   supportsRichCopy: false,
+  fullWidth: true,
 }

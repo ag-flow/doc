@@ -499,7 +499,7 @@ export function DocumentEditor() {
   // câblée en dur : un type inconnu retombe sur le repli texte brut. Toute la
   // coquille ci-dessous (titre, propriétés, commentaires, save) est identique
   // quelle que soit la surface.
-  const { Editor } = surfaceFor(doc.type)
+  const { Editor, fullWidth } = surfaceFor(doc.type)
 
   const editorSheet = (
     <Editor
@@ -542,6 +542,7 @@ export function DocumentEditor() {
   return (
     <div data-testid="document-editor">
       <DocumentShell
+        wide={fullWidth}
         kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
         title={
           <Input

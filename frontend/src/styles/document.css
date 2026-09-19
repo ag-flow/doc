@@ -119,6 +119,14 @@
 }
 .doc-sheet > * { max-width: var(--reading-measure, 72ch); }
 
+/* Surface NON textuelle (diagramme, grille de champs) : la mesure de lecture
+   n'a pas de sens pour elle — un canvas bridé à 72ch se retrouve dans une
+   colonne étroite, et une grille s'y écrase jusqu'à tronquer ses colonnes.
+   Elle prend toute la largeur de la feuille, qui perd aussi ses marges
+   typographiques (calibrées pour du texte, pas pour un plan de travail). */
+.doc-sheet-wide { padding: 20px 24px; }
+.doc-sheet-wide > * { max-width: none; }
+
 /* Mesure de lecture bornée pour le TEXTE courant : quand un panneau est replié,
    la feuille s'élargit mais le texte ne s'étire pas au-delà d'une mesure
    confortable (on ne veut pas d'une ligne sur 2000 px). L'unité `ch` suit la

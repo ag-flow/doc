@@ -10,7 +10,7 @@ import { surfaceFor, type ContentEditorHandle } from '../lib/contentSurfaces'
 import { docsApi, type DocumentOut } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
-  docsApi: { listDocuments: vi.fn() },
+  docsApi: { listDocuments: vi.fn(), getDocument: vi.fn() },
 }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 vi.mock('../contexts/WorkspaceContext', () => ({ useWorkspaceSlugOrNull: () => 'ws' }))
@@ -73,8 +73,19 @@ function renderSurface(ui: React.ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
 }
 
+/** `listDocuments` rend des TÊTES : l'API ne peuple JAMAIS `content` sur la
+ *  liste. Le mock doit le refléter — un mock qui rend le corps ici avait laissé
+ *  passer un bug où le diagramme s'affichait sans titres, sans champs et sans
+ *  relations. */
+const asHead = (d: DocumentOut): DocumentOut => ({ ...d, content: null })
+
 beforeEach(() => {
-  vi.mocked(docsApi.listDocuments).mockResolvedValue([COMMANDE, CLIENT])
+  vi.mocked(docsApi.listDocuments).mockResolvedValue([COMMANDE, CLIENT].map(asHead))
+  vi.mocked(docsApi.getDocument).mockImplementation(async (_ws: string, id: string) => {
+    const found = [COMMANDE, CLIENT].find((d) => d.doc_technical_key === id)
+    if (!found) throw new Error(`document ${id} introuvable`)
+    return found
+  })
 })
 
 // ── Le registre mène bien ici ─────────────────────────────────────────────────
@@ -100,6 +111,32 @@ describe('ModelLayoutSurface — rendu', () => {
     expect(screen.getByTestId('canvas-node-doc-client')).toBeInTheDocument()
   })
 
+  it('affiche le TITRE de l\'entité, pas son identifiant', async () => {
+    // Régression : `listDocuments` ne peuple pas `content`. La surface lisait
+    // donc des schémas vides, et retombait sur l'UUID du document — un
+    // diagramme de boîtes nommées « c49ec8cf-3acd-44f8-… ».
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
+
+    expect(await screen.findByText('Commande')).toBeInTheDocument()
+    expect(screen.getByText('Client')).toBeInTheDocument()
+    expect(screen.queryByText(/doc-commande/)).not.toBeInTheDocument()
+  })
+
+  it('dessine les champs en ports — donc le corps des entités est bien chargé', async () => {
+    // Même régression : sans le corps des entités, il n'y avait ni champ ni
+    // relation — le diagramme se réduisait à des boîtes vides sans lien.
+    //
+    // La présence d'un port prouve que le schéma a été lu. Le TRACÉ de la
+    // relation, lui, n'est pas vérifiable ici : le moteur de rendu ne peint les
+    // liens qu'une fois les nœuds mesurés, et jsdom ne mesure rien. La
+    // production de l'arête est couverte à l'unité dans `mldAdapter.test.ts`.
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
+
+    expect(
+      await screen.findByTestId('canvas-port-doc-commande-fld_aaaaaaaaaaaa'),
+    ).toBeInTheDocument()
+  })
+
   it('annonce un modèle sans entité au lieu d\'une page vide', async () => {
     vi.mocked(docsApi.listDocuments).mockResolvedValue([])
     renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
@@ -110,7 +147,7 @@ describe('ModelLayoutSurface — rendu', () => {
   it('ignore les documents qui ne sont pas des entités de CE modèle', async () => {
     const etranger = { ...entityDoc('doc-autre', 'Autre', 'name: autre'), parent_id: 'autre-modele' }
     const page = { ...entityDoc('doc-page', 'Page', '# markdown'), type: 'md' }
-    vi.mocked(docsApi.listDocuments).mockResolvedValue([COMMANDE, etranger, page])
+    vi.mocked(docsApi.listDocuments).mockResolvedValue([COMMANDE, etranger, page].map(asHead))
 
     renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
 

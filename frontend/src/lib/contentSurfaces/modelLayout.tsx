@@ -53,4 +53,5 @@ export const modelLayoutSurface: ContentSurface = {
   Viewer,
   // Un diagramme n'a pas de représentation HTML fidèle à mettre au presse-papiers.
   supportsRichCopy: false,
+  fullWidth: true,
 }

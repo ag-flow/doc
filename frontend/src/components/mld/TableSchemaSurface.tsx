@@ -66,11 +66,14 @@ function FieldGrid({ schema, onChange }: GridProps) {
     })
 
   return (
-    <table className="w-full border-collapse text-sm" data-testid="field-grid">
+    <table
+      className="w-full min-w-[34rem] border-collapse text-sm"
+      data-testid="field-grid"
+    >
       <thead>
         <tr className="border-b border-gray-200 text-left text-xs text-gray-600">
-          <th className="px-2 py-1 font-medium">{t('mld.fieldName')}</th>
-          <th className="px-2 py-1 font-medium">{t('mld.fieldType')}</th>
+          <th className="w-[30%] px-2 py-1 font-medium">{t('mld.fieldName')}</th>
+          <th className="w-[22%] px-2 py-1 font-medium">{t('mld.fieldType')}</th>
           <th className="px-2 py-1 font-medium">{t('mld.fieldTitle')}</th>
           {!readOnly && <th className="w-8" />}
         </tr>
@@ -145,7 +148,10 @@ function EntityView({ schema, onChange }: EntityViewProps) {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row" data-testid="table-schema-surface">
-      <div className="min-w-0 flex-1 rounded border border-gray-200 bg-white">
+      {/* `min-w-0` laisserait la grille se réduire jusqu'à tronquer ses colonnes
+          quand la place manque : on lui impose une largeur plancher, et c'est le
+          conteneur qui défile horizontalement si nécessaire. */}
+      <div className="min-w-0 flex-1 overflow-x-auto rounded border border-gray-200 bg-white">
         <FieldGrid schema={schema} onChange={onChange} />
         {!readOnly && (
           <button
@@ -154,7 +160,7 @@ function EntityView({ schema, onChange }: EntityViewProps) {
             onClick={() =>
               onChange?.({ ...schema, fields: [...fieldsOf(schema), { name: '', type: 'string' }] })
             }
-            className="w-full cursor-pointer border-0 border-t border-gray-200 bg-transparent px-2 py-1.5 text-left text-sm text-gray-600 hover:text-accent-700"
+            className="w-full cursor-pointer whitespace-nowrap border-0 border-t border-gray-200 bg-transparent px-2 py-1.5 text-left text-sm text-gray-600 hover:text-accent-700"
           >
             + {t('mld.addField')}
           </button>
@@ -163,7 +169,7 @@ function EntityView({ schema, onChange }: EntityViewProps) {
 
       {/* Panneau latéral : la description est du texte libre, elle ne tient pas
           dans une colonne de la grille sans la rendre illisible. */}
-      <aside className="w-full shrink-0 lg:w-72" data-testid="description-panel">
+      <aside className="w-full shrink-0 lg:w-80" data-testid="description-panel">
         <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor="entity-description">
           {t('mld.description')}
         </label>
