@@ -28,6 +28,23 @@ respectives. Les mentions ci-dessous sont requises par ces licences.
     La MPL-2.0 est une licence copyleft « au fichier » : le code source des
     fichiers couverts par la MPL reste disponible sous MPL-2.0.
 
+Canvas de diagramme (frontend)
+  - @xyflow/react (React Flow) — MIT
+    Copyright (c) webkid GmbH. Source : https://github.com/xyflow/xyflow
+
+  - elkjs (Eclipse Layout Kernel) — DOUBLE LICENCE : EPL-2.0 OR GPL-3.0-or-later
+    Source : https://github.com/kieler/elkjs
+
+    ÉLECTION EXPLICITE : docflow retient l'option **EPL-2.0** (Eclipse Public
+    License 2.0). La licence étant disjonctive, ce choix nous appartient et il
+    est exercé ici sans ambiguïté — l'option GPL-3.0-or-later n'est PAS retenue
+    et ne s'applique donc pas à docflow.
+
+    L'EPL-2.0 est un copyleft « au fichier » : ses obligations portent sur les
+    fichiers d'elkjs eux-mêmes, qui restent disponibles sous EPL-2.0. elkjs est
+    utilisé TEL QUEL depuis npm, sans modification de son code source, et
+    s'exécute côté navigateur. Aucune obligation ne s'étend au code de docflow.
+
 Bibliothèques transitives sous licences permissives
   - ProseMirror (prosemirror-*) — MIT
   - Mantine (@mantine/*) — MIT
@@ -35,12 +52,15 @@ Bibliothèques transitives sous licences permissives
   - FastAPI, Starlette, pydantic, Uvicorn, httpx, croniter, markdown — MIT / BSD
   - asyncpg, structlog, cryptography — Apache-2.0 / BSD
   - argon2-cffi, Authlib, joserfc, GitPython, WeasyPrint, PyYAML — MIT / BSD
+  - ruamel.yaml — MIT
   - MCP Python SDK — MIT
 
 Copyleft faible (compatible, usage bibliothèque)
   - Paramiko — LGPL-2.1-or-later
     Utilisé comme bibliothèque (liaison dynamique) ; aucune modification de son
     code source. La LGPL n'étend pas ses obligations copyleft à docflow.
+  - elkjs — EPL-2.0 (cf. élection ci-dessus)
 
-Aucune dépendance sous copyleft fort (GPL / AGPL) n'est présente dans l'arbre
-de dépendances de production.
+Aucune dépendance sous copyleft fort (GPL / AGPL) n'est retenue dans l'arbre de
+dépendances de production. elkjs offre une option GPL-3.0-or-later : elle est
+explicitement écartée au profit de l'EPL-2.0.
