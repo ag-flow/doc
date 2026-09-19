@@ -28,6 +28,10 @@ import { CANVAS_SCHEMA_VERSION } from '../canvas'
 export interface Entity {
   /** UUID du document — c'est lui qui identifie l'entité, pas son nom. */
   docId: string
+  /** Titre du DOCUMENT. C'est le nom que l'utilisateur voit et renomme dans la
+   *  page ; il prime sur le `title` du schéma, sinon renommer une entité ne
+   *  changerait rien au diagramme. */
+  title?: string
   /** Schéma parsé (grammaire `table-schema`, cf. article 5.8). */
   schema: TableSchema
 }
@@ -147,7 +151,7 @@ export function toCanvas(entities: Entity[], layout: ModelLayout = {}): CanvasDo
       },
       collapsed: saved?.collapsed,
       ports: portsOf(entity.schema),
-      data: { label: entity.schema.title ?? entity.schema.name ?? entity.docId },
+      data: { label: entity.title ?? entity.schema.title ?? entity.schema.name ?? entity.docId },
     }
   })
 

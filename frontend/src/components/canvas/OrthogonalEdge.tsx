@@ -14,7 +14,7 @@ import { memo, useCallback } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react'
 import type { Anchor } from '../../lib/canvas/anchor'
 import type { Point, Side } from '../../lib/canvas/model'
-import { orthogonalRoute, toSvgPath } from '../../lib/canvas/route'
+import { midpointOf, orthogonalRoute, toSvgPath } from '../../lib/canvas/route'
 
 export interface OrthogonalEdgeData extends Record<string, unknown> {
   waypoints?: Point[]
@@ -160,8 +160,8 @@ function OrthogonalEdgeImpl({
           <div
             className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-xs"
             style={{
-              transform: `translate(-50%, -50%) translate(${points[Math.floor(points.length / 2)]?.x ?? 0}px, ${
-                points[Math.floor(points.length / 2)]?.y ?? 0
+              transform: `translate(-50%, -50%) translate(${midpointOf(points).x}px, ${
+                midpointOf(points).y
               }px)`,
             }}
           >

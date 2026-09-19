@@ -719,6 +719,14 @@
     "addField": "Ajouter un champ",
     "removeField": "Retirer ce champ",
     "description": "Description",
-    "descriptionHint": "C'est par la description qu'on retrouve une entité dans la recherche."
+    "descriptionHint": "C'est par la description qu'on retrouve une entité dans la recherche.",
+    "relations": "Relations",
+    "relationName": "Nom de la relation",
+    "relationCardinality": "Cardinalité",
+    "relationFrom": "depuis",
+    "relationTarget": "entité cible",
+    "relationTargetField": "champ cible",
+    "addRelation": "Ajouter une relation",
+    "removeRelation": "Retirer cette relation"
   }
 }

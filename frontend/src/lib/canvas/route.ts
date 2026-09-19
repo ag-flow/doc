@@ -108,6 +108,39 @@ export function orthogonalRoute(
   return simplify([start, startStub, ...elbow(startStub, endStub, axis).slice(1), end])
 }
 
+/**
+ * Milieu du tracé, mesuré en LONGUEUR PARCOURUE et non en nombre de points.
+ *
+ * Prendre le point du milieu de la liste place l'étiquette là où les coudes
+ * sont denses — c'est-à-dire collée à l'une des deux boîtes. En suivant la
+ * longueur, elle tombe au milieu visuel du lien.
+ */
+export function midpointOf(points: Point[]): Point {
+  if (points.length === 0) return { x: 0, y: 0 }
+  if (points.length === 1) return points[0]
+
+  const lengths: number[] = []
+  let total = 0
+  for (let i = 1; i < points.length; i++) {
+    const d = Math.abs(points[i].x - points[i - 1].x) + Math.abs(points[i].y - points[i - 1].y)
+    lengths.push(d)
+    total += d
+  }
+  if (total === 0) return points[0]
+
+  let walked = 0
+  for (let i = 0; i < lengths.length; i++) {
+    if (walked + lengths[i] >= total / 2) {
+      const ratio = lengths[i] === 0 ? 0 : (total / 2 - walked) / lengths[i]
+      const a = points[i]
+      const b = points[i + 1]
+      return { x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio }
+    }
+    walked += lengths[i]
+  }
+  return points[points.length - 1]
+}
+
 /** Suite de points → attribut `d` d'un `<path>` SVG. */
 export function toSvgPath(points: Point[]): string {
   if (points.length === 0) return ''

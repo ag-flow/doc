@@ -25,7 +25,7 @@ export {
 } from './model'
 
 export { anchorPoint, sidesFor, type Anchor, type AnchorContext } from './anchor'
-export { orthogonalRoute, simplify, toSvgPath, STUB } from './route'
+export { midpointOf, orthogonalRoute, simplify, toSvgPath, STUB } from './route'
 export { detailFor, portsVisibleAt, DETAIL_THRESHOLDS, type DetailLevel } from './detail'
 export { autoArrange } from './layout'
 export { Canvas, type CanvasProps } from '../../components/canvas/Canvas'

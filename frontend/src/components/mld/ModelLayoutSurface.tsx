@@ -80,7 +80,11 @@ function useModelCanvas(content: string, docId: string | undefined) {
       bodies
         .map((q) => q.data)
         .filter((d): d is DocumentOut => Boolean(d))
-        .map((d) => ({ docId: d.doc_technical_key, schema: safeParse(d.content, {}) })),
+        .map((d) => ({
+          docId: d.doc_technical_key,
+          title: d.title,
+          schema: safeParse(d.content, {}),
+        })),
     [bodies],
   )
 

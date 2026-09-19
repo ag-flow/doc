@@ -33,7 +33,7 @@ import type {
   ContentViewerHandle,
   ContentViewerProps,
 } from '../../lib/contentSurfaces'
-import type { TableSchema, TableSchemaField } from '../../lib/mld/adapter'
+import type { TableSchema, TableSchemaField, TableSchemaRelation } from '../../lib/mld/adapter'
 import { MarkdownEditor } from '../MarkdownEditor'
 import { MarkdownViewer } from '../MarkdownViewer'
 
@@ -54,6 +54,25 @@ function safeParse(raw: string | null | undefined): TableSchema {
 
 function fieldsOf(schema: TableSchema): TableSchemaField[] {
   return Array.isArray(schema.fields) ? schema.fields : []
+}
+
+const RELATIONS_KEY = 'docflow.relations' as const
+
+/** Cardinalités servies par le codec, avec leur lecture en clair. */
+const CARDINALITIES = [
+  { value: 'many-to-one', hint: 'n → 1' },
+  { value: 'one-to-many', hint: '1 → n' },
+  { value: 'one-to-one', hint: '1 → 1' },
+  { value: 'many-to-many', hint: 'n → n' },
+] as const
+
+function relationsOf(schema: TableSchema): TableSchemaRelation[] {
+  const rels = schema[RELATIONS_KEY]
+  return Array.isArray(rels) ? rels : []
+}
+
+function firstOf(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? ''
 }
 
 // ── Grille ────────────────────────────────────────────────────────────────────
@@ -145,6 +164,128 @@ function FieldGrid({ schema, onChange }: GridProps) {
   )
 }
 
+// ── Relations ─────────────────────────────────────────────────────────────────
+
+/**
+ * Édition des relations sortantes de l'entité.
+ *
+ * Sans elle, une relation n'était plus modifiable nulle part : la grille avait
+ * remplacé la vue YAML brute, qui était jusque-là le seul moyen d'y toucher.
+ *
+ * `docflow.id` n'est jamais exposé ni touché — c'est lui qui rattache les coudes
+ * persistés du diagramme à la relation.
+ */
+function RelationGrid({ schema, onChange }: GridProps) {
+  const { t } = useTranslation()
+  const relations = relationsOf(schema)
+  const readOnly = !onChange
+
+  const patch = (index: number, change: Partial<TableSchemaRelation>) =>
+    onChange?.({
+      ...schema,
+      [RELATIONS_KEY]: relations.map((r, i) => (i === index ? { ...r, ...change } : r)),
+    })
+
+  if (readOnly && relations.length === 0) return null
+
+  return (
+    <div className="mt-4 rounded border border-gray-200 bg-white" data-testid="relation-grid">
+      <div className="border-b border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-600">
+        {t('mld.relations')}
+      </div>
+
+      {relations.map((rel, i) => (
+        <div
+          key={rel['docflow.id'] ?? i}
+          data-testid={`relation-row-${i}`}
+          className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-2 py-1.5 text-[15px]"
+        >
+          <input
+            value={rel.name ?? ''}
+            readOnly={readOnly}
+            aria-label={t('mld.relationName')}
+            placeholder={t('mld.relationName')}
+            onChange={(e) => patch(i, { name: e.target.value })}
+            className="w-36 bg-transparent font-mono outline-none"
+          />
+          <select
+            value={rel.cardinality ?? 'many-to-one'}
+            disabled={readOnly}
+            aria-label={t('mld.relationCardinality')}
+            onChange={(e) => patch(i, { cardinality: e.target.value })}
+            className="bg-transparent font-mono text-sm outline-none"
+          >
+            {CARDINALITIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.hint}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-gray-500">{t('mld.relationFrom')}</span>
+          <input
+            value={firstOf(rel.from)}
+            readOnly={readOnly}
+            aria-label={t('mld.relationFrom')}
+            onChange={(e) => patch(i, { from: e.target.value })}
+            className="w-28 bg-transparent font-mono outline-none"
+          />
+          <span className="text-xs text-gray-500">→</span>
+          <input
+            value={rel.to?.resource ?? ''}
+            readOnly={readOnly}
+            aria-label={t('mld.relationTarget')}
+            placeholder={t('mld.relationTarget')}
+            onChange={(e) => patch(i, { to: { ...rel.to, resource: e.target.value } })}
+            className="w-28 bg-transparent font-mono outline-none"
+          />
+          <input
+            value={firstOf(rel.to?.fields)}
+            readOnly={readOnly}
+            aria-label={t('mld.relationTargetField')}
+            onChange={(e) => patch(i, { to: { ...rel.to, fields: e.target.value } })}
+            className="w-24 bg-transparent font-mono outline-none"
+          />
+          {!readOnly && (
+            <button
+              type="button"
+              aria-label={t('mld.removeRelation')}
+              data-testid={`relation-remove-${i}`}
+              onClick={() =>
+                onChange?.({
+                  ...schema,
+                  [RELATIONS_KEY]: relations.filter((_, j) => j !== i),
+                })
+              }
+              className="ml-auto cursor-pointer border-0 bg-transparent px-1 text-gray-400 hover:text-red-600"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      ))}
+
+      {!readOnly && (
+        <button
+          type="button"
+          data-testid="relation-add"
+          onClick={() =>
+            onChange?.({
+              ...schema,
+              [RELATIONS_KEY]: [
+                ...relations,
+                { name: '', cardinality: 'many-to-one', from: '', to: { resource: '', fields: '' } },
+              ],
+            })
+          }
+          className="w-full cursor-pointer whitespace-nowrap border-0 bg-transparent px-2 py-1.5 text-left text-sm text-gray-600 hover:text-accent-700"
+        >
+          + {t('mld.addRelation')}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── Surface ───────────────────────────────────────────────────────────────────
 
 interface EntityViewProps {
@@ -180,6 +321,7 @@ function EntityView({ schema, onChange, description }: EntityViewProps) {
             + {t('mld.addField')}
           </button>
         )}
+        <RelationGrid schema={schema} onChange={onChange} />
       </div>
 
       {/* Panneau latéral : la description est du texte libre, elle ne tient pas

@@ -149,6 +149,64 @@ describe('TableSchemaSurface — édition', () => {
   })
 })
 
+// ── Relations ─────────────────────────────────────────────────────────────────
+
+describe('TableSchemaSurface — relations', () => {
+  it('affiche les relations de l\'entité', () => {
+    renderEditor()
+    expect(screen.getByTestId('relation-row-0')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('passee_par')).toBeInTheDocument()
+  })
+
+  it('renomme une relation', async () => {
+    const { ref } = renderEditor()
+    const nom = within(screen.getByTestId('relation-row-0')).getByLabelText('mld.relationName')
+
+    await userEvent.clear(nom)
+    await userEvent.type(nom, 'rattachee_a')
+
+    expect((await contentOf(ref))['docflow.relations'][0].name).toBe('rattachee_a')
+  })
+
+  it('change la cardinalité', async () => {
+    const { ref } = renderEditor()
+    const card = within(screen.getByTestId('relation-row-0')).getByLabelText(
+      'mld.relationCardinality',
+    )
+
+    await userEvent.selectOptions(card, 'one-to-many')
+
+    expect((await contentOf(ref))['docflow.relations'][0].cardinality).toBe('one-to-many')
+  })
+
+  it('ajoute et retire une relation', async () => {
+    const { ref } = renderEditor()
+
+    await userEvent.click(screen.getByTestId('relation-add'))
+    expect((await contentOf(ref))['docflow.relations']).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('relation-remove-1'))
+    expect((await contentOf(ref))['docflow.relations']).toHaveLength(1)
+  })
+
+  it('préserve l\'identifiant stable d\'une relation qu\'on renomme', async () => {
+    // `docflow.id` rattache les coudes persistés du diagramme à la relation :
+    // le perdre les détacherait.
+    const { ref } = renderEditor()
+    const nom = within(screen.getByTestId('relation-row-0')).getByLabelText('mld.relationName')
+
+    await userEvent.clear(nom)
+
+    expect((await contentOf(ref))['docflow.relations'][0]['docflow.id']).toBe('rel_cccccccccccc')
+  })
+
+  it('la vue lecture n\'offre ni ajout ni suppression', () => {
+    render(<TableSchemaViewer content={SCHEMA} />)
+    expect(screen.queryByTestId('relation-add')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('relation-remove-0')).not.toBeInTheDocument()
+  })
+})
+
 // ── Ce que l'édition ne doit JAMAIS détruire ─────────────────────────────────
 
 describe('TableSchemaSurface — préservation', () => {
@@ -157,7 +215,10 @@ describe('TableSchemaSurface — préservation', () => {
     // relations qui s'y accrochent et les positions du diagramme.
     const { ref } = renderEditor()
 
-    await userEvent.clear(screen.getByDisplayValue('id'))
+    // Ciblé par sa LIGNE : « id » apparaît aussi dans les extrémités de relation.
+    await userEvent.clear(
+      within(screen.getByTestId('field-row-0')).getByLabelText('mld.fieldName'),
+    )
     const schema = await contentOf(ref)
 
     expect(schema.fields[0]['docflow.id']).toBe('fld_aaaaaaaaaaaa')
