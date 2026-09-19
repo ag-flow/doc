@@ -12,6 +12,7 @@ from docflow.documents import property_writes as prop_writes
 from docflow.documents.changelog import log_change
 from docflow.documents.content_refs import refresh_content_references
 from docflow.documents.template_apply import compute_initial_content
+from docflow.documents.version_writes import insert_document_version
 from docflow.events import outbox
 from docflow.schemas.document import DocumentCreateInBlock, DocumentOut
 
@@ -368,13 +369,7 @@ async def create_document_in_block(
 
             # Appliquer le content_template du type (DOC-14 #1)
             initial_content = await compute_initial_content(conn, ft_id, body.title)
-            await conn.execute(
-                "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, 1, $2, $3)",
-                doc_id,
-                body.title,
-                initial_content,
-            )
+            await insert_document_version(conn, doc_id, 1, body.title, initial_content)
             # Un template de contenu peut porter des références d'artefacts ou de
             # documents ([[doc]]) : les tracer dès la création pour que le
             # refcount et document_reference soient justes immédiatement.

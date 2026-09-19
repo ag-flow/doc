@@ -24,6 +24,7 @@ from docflow.documents.changelog import log_change
 from docflow.documents.content_refs import refresh_content_references
 from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
+from docflow.documents.version_writes import insert_document_version
 from docflow.errors import DependentsConflictError
 from docflow.events import outbox
 from docflow.schemas.document import (
@@ -463,12 +464,8 @@ async def create_document(
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
             row = await _insert_document(conn, wk, data, ft_id, parent_exposed, author)
-            await conn.execute(
-                "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, 1, $2, $3)",
-                row["doc_technical_key"],
-                data.title,
-                initial_content,
+            await insert_document_version(
+                conn, row["doc_technical_key"], 1, data.title, initial_content
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
             await refresh_content_references(
@@ -613,14 +610,7 @@ async def update_document(
                     new_content: str | None = prev["content"] if prev else None
                 else:
                     new_content = raw.get("content")
-                await conn.execute(
-                    "INSERT INTO document_version (document_ref, version_number, title, content) "
-                    "VALUES ($1, $2, $3, $4)",
-                    doc_id,
-                    new_v,
-                    new_title,
-                    new_content,
-                )
+                await insert_document_version(conn, doc_id, new_v, new_title, new_content)
                 await conn.execute(
                     "UPDATE document SET version = $1, title = $2, updated_at = now(), "
                     "updated_by = coalesce($4, updated_by) "
@@ -807,14 +797,7 @@ async def append_to_document(
             )
             new_content = _concat_append(prev["content"] if prev else None, content, position)
             new_v = current_v + 1
-            await conn.execute(
-                "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, $2, $3, $4)",
-                doc_id,
-                new_v,
-                head["title"],
-                new_content,
-            )
+            await insert_document_version(conn, doc_id, new_v, head["title"], new_content)
             await conn.execute(
                 "UPDATE document SET version = $1, updated_at = now(), "
                 "updated_by = coalesce($3, updated_by) "

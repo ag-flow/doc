@@ -343,7 +343,7 @@ async def search_documents_global(
             LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
             LEFT JOIN data_block b ON b.id = d.data_block_ref
             WHERE (d.title ILIKE '%' || $1 || '%'
-                   OR dv.content ILIKE '%' || $1 || '%')
+                   OR COALESCE(dv.plain_text, dv.content) ILIKE '%' || $1 || '%')
               AND ($2::text[] IS NULL OR w.slug = ANY($2::text[]))
             ORDER BY (d.title ILIKE '%' || $1 || '%') DESC,
                      similarity(d.title, $1) DESC
