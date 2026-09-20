@@ -1,67 +1,33 @@
 # LESSONS — docflow
 
-## [env] Capacités du sandbox : vérifier, ne pas présumer
-GitHub, Docker/Postgres local et SSH test1 varient selon le sandbox. Vérifier au début (git push --dry-run, psql) au lieu de rejouer un contournement passé. Pas de Postgres local : conteneur éphémère sur la VM + tunnel SSH ; tests full-app exigent `/data` inscriptible.
+Format : `- [module] erreur observée → bonne pratique`. Une leçon par ligne, 50 lignes au plus — au-delà, consolider.
 
-## [frontend] SecretInput : toutes les clés à sécuriser passent par lui
-Jamais un `<Input type="password">` brut pour un secret. Wallet → `${vault://walletname:/chemin}` ; local → chiffré en DB.
-
-## [frontend] Typecheck : `npx tsc -b` depuis frontend/, jamais `--noEmit` ni depuis la racine
-Le tsconfig racine est une « solution » : `--noEmit` ne vérifie rien. À la racine du repo, vitest tourne sans jsdom (« document is not defined ») et npx résout un faux paquet `tsc`. Toute propriété requise ajoutée à une interface se répercute dans les fixtures de test.
-
-## [frontend] Onglets à montage conditionnel : jamais de valeur de submit dans un ref d'enfant
-Un champ monté conditionnellement perd sa valeur au démontage → submit null → effacement silencieux (bug body_template). Toute valeur soumise vit dans le state du parent.
-
-## [frontend] Committer package.json ET package-lock.json après npm install
-`docker compose build` fait `npm ci`, qui échoue si le lock diverge.
-
-## [css] Le CSS non-layered bat TOUJOURS les utilitaires Tailwind (@layer)
-`.dialog{width:min(440px,100%)}`, `.input{width:100%}` : les `w-*`/`!max-w-*` posés sur l'élément perdent. Largeur voulue → la poser sur un CONTENEUR, ou écrire la règle globale en `width:100%` + `max-width` surchargeable.
-
-## [react] Tableau par défaut (`data ?? []`) + setState dans useEffect = boucle sous act()
-L'identité change à chaque rendu ; un setState inconditionnel gèle vitest en boucle synchrone. Garder `if (data.length === 0) return`.
-
-## [templates] Lire le code existant avant de bâtir du neuf ; no_op après le diff
-La galerie distante existe (`templates/gallery.py`). Dans `importer.py`, calculer le diff AVANT le check no_op, sinon ré-import bloqué après suppression des types.
-
-## [tests] Suite ENTIÈRE avant de chiffrer un scope ; conteneur pytest = repo entier
-Un sous-ensemble masque l'essentiel. Monter tout le repo (tests templates lisent `templates/*.yaml`) et installer `git`.
-
-## [migrations] Numérotation et intentions : lire avant d'écrire
-Lister `backend/migrations/` avant d'assigner un numéro. Un test cassé après migration reflète parfois un changement voulu (0010/0011/0027) — lire le commentaire SQL, adapter le test.
-
-## [security] Jamais un secret dans la sortie d'une commande, même « pour vérifier »
-Écrire directement dans le fichier cible (heredoc, `>`), sans transit par un terminal capturé.
-
-## [harpocrate] SDK Python synchrone — asyncio.to_thread
-Jamais d'appel direct dans un handler async. Référence `${vault://wallet:/chemin}` via `VaultClient(...).secrets.get(...)`.
-
-## [fastapi] Routes statiques avant routes paramétriques dans le même préfixe
-`/documents/{doc_id: UUID}` déclaré avant `/documents/search` capture « search » → 422.
-
-## [auth] AuthUser : id, is_admin, validated (migration 0027)
-Compte OIDC auto-provisionné → 403 PendingValidation tant que non validé. Bootstrap via `POST /api/setup/init-admin`.
-
-## [filter_engine] Renumérotation des placeholders $n : fragile
-`$1`→`$11` matche `$10`. Construire la liste de params en séquence, sans renumérotation.
-
-## [artifacts] Nouvelle forme de référence ⇒ mettre à jour le parser de refcount
-`extract_artifact_ids` (artifacts/parser.py) alimente le refcount ; un artefact à refcount 0 est purgé. En ajoutant le schéma `artifact://uuid` (puces), il a fallu l'ajouter au motif — sinon fichier attaché en puce purgé après quelques heures. Toute nouvelle syntaxe de référence se répercute dans le parser ET un test de refcount.
-
-## [automations] Le contenu document vit dans document_version, pas document
-Contenu courant = `document_version.content` à `version_number = document.version` (JOIN).
-
-## [git] git add multi-chemins : un pathspec invalide annule TOUT le add
-Le commit chaîné embarque alors le staging partiel précédent. `git add -A` ou `git status --short` avant commit.
-
-## [tools] Lire le fichier avant Edit
-Après compaction de contexte, re-lire la cible avant toute édition.
-
-## [deploy] Bit exécutable committé + redéploiement obligatoire
-Script shell : `git update-index --chmod=+x`. Un push seul ne montre rien : `sudo ./dev-deploy.sh dev` sur la VM.
-
-## [livraison] Pousser sur `dev` systématiquement, et crier si c'est bloqué
-`dev` = libre (commit ET push, sans demander). `main` = jamais. Un commit non
-poussé n'existe pour personne : l'utilisateur redéploie du code inchangé et voit
-« aucune différence ». Si un push est refusé, le dire en PREMIÈRE LIGNE, pas en
-bas d'un récapitulatif.
+- [env] Les capacités du sandbox (GitHub, Docker/Postgres local, SSH test1) varient → les vérifier au début (`git push --dry-run`, `psql`) au lieu de rejouer un contournement passé. Sans Postgres local : conteneur éphémère sur la VM + tunnel SSH ; les tests full-app exigent `/data` inscriptible.
+- [livraison] Un commit non poussé n'existe pour personne : l'utilisateur redéploie du code inchangé et voit « aucune différence » → pousser sur `dev` systématiquement (commit ET push, sans demander), jamais sur `main`, et si un push est refusé le dire en PREMIÈRE LIGNE, pas en bas d'un récapitulatif.
+- [deploy] Un push seul ne montre rien → `sudo ./dev-deploy.sh dev` sur la VM. Bit exécutable d'un script : `git update-index --chmod=+x`.
+- [git] Un pathspec invalide annule TOUT le `git add`, et le commit chaîné embarque le staging partiel précédent → `git add -A`, ou `git status --short` avant commit.
+- [tools] Après compaction de contexte, l'état d'un fichier n'est plus fiable → le relire avant toute édition.
+- [tests] Un sous-ensemble de tests masque l'essentiel → jouer la suite ENTIÈRE avant de chiffrer un scope. Le conteneur pytest monte le repo entier (les tests de templates lisent `templates/*.yaml`) et a besoin de `git`.
+- [tests] Un mock qui ment cache un bug : `listDocuments` rend des TÊTES (`content` toujours `null`) → le mock doit refléter l'API réelle, sinon il masque un diagramme sans titres, sans champs et sans relations.
+- [tests] Ce qui n'est pas observable au rendu sous jsdom (géométrie, choix d'un côté d'ancrage) → le tester sur la fonction pure qui le décide, sinon l'appel peut disparaître sans qu'aucun test ne tombe.
+- [css] Le CSS non-layered bat TOUJOURS les utilitaires Tailwind (`@layer`) → une largeur voulue se pose sur un CONTENEUR, ou la règle globale s'écrit `width:100%` + `max-width` surchargeable.
+- [css] À spécificité égale, la dernière règle du fichier gagne : `.doc-sheet table` neutralisait `.doc-sheet-wide table` → une variante qui doit gagner se décide par la SPÉCIFICITÉ (`.doc-sheet.doc-sheet-wide table`), jamais par l'ordre des lignes, et se verrouille par un test sur la feuille produite.
+- [css] Tailwind v4 a retiré `cursor: pointer` des boutons de son preflight → un élément cliquable doit le déclarer ; le poser une fois en base d'élément plutôt que classe par classe.
+- [frontend] Jamais un `<Input type="password">` brut pour un secret → passer par `SecretInput`. Wallet = `${vault://walletname:/chemin}` ; local = chiffré en DB.
+- [frontend] `npx tsc -b` depuis `frontend/`, jamais `--noEmit` depuis la racine : le tsconfig racine est une « solution » et ne vérifie rien ; à la racine, vitest tourne sans jsdom et npx résout un faux paquet `tsc`.
+- [frontend] Un champ monté conditionnellement perd sa valeur au démontage → submit `null` → effacement silencieux (bug `body_template`) : toute valeur soumise vit dans le state du parent, jamais dans un ref d'enfant.
+- [frontend] Committer `package.json` ET `package-lock.json` : `docker compose build` fait `npm ci`, qui échoue si le lock diverge.
+- [frontend] Un `<select>` reconstruit depuis une liste d'options perd une valeur absente de cette liste au premier rendu → conserver la valeur inconnue et la signaler, sinon afficher le formulaire réécrit la donnée.
+- [react] `data ?? []` + setState inconditionnel dans un `useEffect` = boucle synchrone sous `act()` (l'identité du tableau change à chaque rendu) → garder `if (data.length === 0) return`.
+- [react] Figer un document dérivé dans un state le fige avec les données connues au premier changement émis par le moteur de rendu (avant chargement) → ne garder en state que ce que l'utilisateur modifie ; la sémantique vient toujours de la requête.
+- [migrations] Lister `backend/migrations/` avant d'assigner un numéro. Un test cassé après migration reflète parfois un changement voulu (0010/0011/0027) → lire le commentaire SQL, adapter le test.
+- [security] Jamais un secret dans la sortie d'une commande, même « pour vérifier » → écrire directement dans le fichier cible (heredoc, `>`), sans transit par un terminal capturé.
+- [harpocrate] SDK Python synchrone → `asyncio.to_thread`, jamais d'appel direct dans un handler async. Référence `${vault://wallet:/chemin}` via `VaultClient(...).secrets.get(...)`.
+- [fastapi] Routes statiques AVANT routes paramétriques dans un même préfixe : `/documents/{doc_id:UUID}` déclaré avant `/documents/search` capture « search » → 422.
+- [auth] `AuthUser` : id, is_admin, validated (migration 0027). Compte OIDC auto-provisionné → 403 PendingValidation tant que non validé ; bootstrap via `POST /api/setup/init-admin`.
+- [filter_engine] Renumérotation des placeholders `$n` fragile (`$1`→`$11` matche `$10`) → construire la liste de params en séquence, sans renumérotation.
+- [artifacts] Toute nouvelle syntaxe de référence se répercute dans `extract_artifact_ids` (artifacts/parser.py) ET dans un test de refcount → sinon l'artefact tombe à refcount 0 et est purgé (cas `artifact://uuid` en puce).
+- [automations] Le contenu courant d'un document vit dans `document_version.content` à `version_number = document.version` (JOIN), pas dans `document`.
+- [templates] Lire le code existant avant de bâtir du neuf (la galerie distante existe : `templates/gallery.py`). Dans `importer.py`, calculer le diff AVANT le check no_op, sinon le ré-import est bloqué après suppression des types.
+- [logs] Le label Loki de la stack est `compose_project="deploy"`, pas `"docflow"` → une requête sur le mauvais label rend un résultat vide, qui ressemble à « pas de log » plutôt qu'à « mauvaise question ».
+- [mld] Une fonction pure écrite, exportée et testée peut n'être appelée par personne (`sidesFor`) → vérifier l'usage réel, pas seulement l'existence ; un test d'unité ne prouve pas le câblage.
