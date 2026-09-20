@@ -295,6 +295,18 @@ describe('feuille document — aucun débordement horizontal possible', () => {
     expect(css).toMatch(/\.doc-sheet pre\s*\{[^}]*overflow-x:\s*auto/)
     expect(css).toMatch(/\.doc-sheet img\s*\{[^}]*max-width:\s*100%/)
   })
+
+  it('la feuille LARGE rend ses grilles en tableau pleine largeur, et gagne', () => {
+    // La feuille porte les DEUX classes. À spécificité égale, `.doc-sheet table`
+    // — plus bas dans le fichier — reprenait la main : la grille restait en
+    // `display: block`, tassée à gauche, police clouée à celle de la prose.
+    // Le sélecteur doublé rend la variante indépendante de l'ordre des lignes.
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*display:\s*table/)
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*width:\s*100%/)
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*font-size:\s*inherit/)
+    // Un sélecteur simple se ferait battre : il ne doit plus en rester.
+    expect(css).not.toMatch(/(^|[^.\w])\.doc-sheet-wide table\s*\{/m)
+  })
 })
 
 describe('lecture — pas de titre en double', () => {

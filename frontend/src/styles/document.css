@@ -127,10 +127,17 @@
 .doc-sheet-wide { padding: 20px 24px; }
 .doc-sheet-wide > * { max-width: none; }
 /* Un tableau de PROSE est mis en `display: block` pour défiler horizontalement
-   sans déborder de la feuille. Une grille d'interface, elle, doit occuper la
-   largeur qu'on lui donne : en `block`, elle se réduit à son contenu et laisse
-   un grand vide à sa droite. Le défilement est assuré par son conteneur. */
-.doc-sheet-wide table {
+   sans déborder de la feuille (`.doc-sheet table`, plus bas). Une grille
+   d'interface, elle, doit occuper la largeur qu'on lui donne : en `block`, elle
+   se réduit à son contenu et laisse un grand vide à sa droite. Le défilement est
+   assuré par son conteneur.
+
+   Sélecteur DOUBLÉ à dessein : la feuille porte les deux classes, et
+   `.doc-sheet table` — à spécificité égale, mais plus bas dans le fichier —
+   reprenait la main. La grille restait donc en `display: block`, tassée à
+   gauche, et sa police clouée à celle de la prose. Une variante ne doit pas
+   dépendre de l'ordre des lignes pour gagner. */
+.doc-sheet.doc-sheet-wide table {
   display: table;
   width: 100%;
   overflow-x: visible;

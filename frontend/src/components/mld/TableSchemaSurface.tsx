@@ -161,13 +161,16 @@ function FieldGrid({ schema, onChange }: GridProps) {
 
   return (
     <table
-      className="w-full min-w-[34rem] border-collapse text-[15px]"
+      className="w-full min-w-[34rem] border-collapse text-[17px]"
       data-testid="field-grid"
     >
       <thead>
-        <tr className="border-b border-gray-200 text-left text-xs text-gray-600">
-          <th className="w-[30%] px-2 py-1 font-medium">{t('mld.fieldName')}</th>
-          <th className="w-[22%] px-2 py-1 font-medium">{t('mld.fieldType')}</th>
+        <tr className="border-b border-gray-200 text-left text-[13px] text-gray-600">
+          {/* Le nom est un identifiant technique, souvent long (`libelle_article`) :
+              il lui faut de quoi se lire sans troncature. */}
+          <th className="w-[calc(30%+3cm)] px-2 py-1 font-medium">{t('mld.fieldName')}</th>
+          <th className="w-[9rem] px-2 py-1 font-medium">{t('mld.fieldType')}</th>
+          {/* Sans largeur : le libellé prend tout ce qui reste, jusqu'au bord. */}
           <th className="px-2 py-1 font-medium">{t('mld.fieldTitle')}</th>
           {!readOnly && <th className="w-8" />}
         </tr>
@@ -285,7 +288,7 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
 
   return (
     <div className="mt-4 rounded border border-gray-200 bg-white" data-testid="relation-grid">
-      <div className="border-b border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-600">
+      <div className="border-b border-gray-200 px-2 py-1.5 text-[13px] font-medium text-gray-600">
         {t('mld.relations')}
       </div>
 
@@ -293,7 +296,7 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
         <div
           key={rel['docflow.id'] ?? i}
           data-testid={`relation-row-${i}`}
-          className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-2 py-1.5 text-[15px]"
+          className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-2 py-1.5 text-[17px]"
         >
           <input
             value={rel.name ?? ''}
@@ -301,14 +304,14 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
             aria-label={t('mld.relationName')}
             placeholder={t('mld.relationName')}
             onChange={(e) => patch(i, { name: e.target.value })}
-            className="w-36 bg-transparent font-mono outline-none"
+            className="w-44 bg-transparent font-mono outline-none"
           />
           <select
             value={rel.cardinality ?? 'many-to-one'}
             disabled={readOnly}
             aria-label={t('mld.relationCardinality')}
             onChange={(e) => patch(i, { cardinality: e.target.value })}
-            className="bg-transparent font-mono text-sm outline-none"
+            className="bg-transparent font-mono outline-none"
           >
             {CARDINALITIES.map((c) => (
               <option key={c.value} value={c.value}>
@@ -327,7 +330,7 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
               label={t('mld.relationFrom')}
               placeholder={t('mld.relationFrom')}
               unknownSuffix={t('mld.unknownValue')}
-              className="w-32 bg-transparent font-mono text-sm outline-none"
+              className="w-36 bg-transparent font-mono outline-none"
             />
           )}
           <span className="text-xs text-gray-500">→</span>
@@ -343,7 +346,7 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
               label={t('mld.relationTarget')}
               placeholder={t('mld.relationTarget')}
               unknownSuffix={t('mld.unknownValue')}
-              className="w-40 bg-transparent font-mono text-sm outline-none"
+              className="w-48 bg-transparent font-mono outline-none"
             />
           )}
           {readOnly ? (
@@ -356,7 +359,7 @@ function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
               label={t('mld.relationTargetField')}
               placeholder={t('mld.relationTargetField')}
               unknownSuffix={t('mld.unknownValue')}
-              className="w-32 bg-transparent font-mono text-sm outline-none"
+              className="w-36 bg-transparent font-mono outline-none"
             />
           )}
           {!readOnly && (
