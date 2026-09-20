@@ -44,7 +44,7 @@ import { EmptyState, TableSkeleton } from '../components/ui/states'
 import { ReparentDialog } from '../components/ReparentDialog'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
-import { HeaderFilterPopover } from '../components/HeaderFilterPopover'
+import { HeaderFilterPopover, type FilterColumn } from '../components/HeaderFilterPopover'
 import { InlinePropertyCell } from '../components/InlinePropertyCell'
 
 interface TreeRow {
@@ -244,7 +244,7 @@ export function BlockDocumentList() {
   >(null)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
-  const { spec, mode, setFilter, toggleSort, setProjection, loadSpec, reset } =
+  const { spec, mode, setFilter, setTypeSlugs, toggleSort, setProjection, loadSpec, reset } =
     useQuerySpecState()
 
   // Tri hiérarchique du mode browse (la pagination est gérée par useInfiniteQuery).
@@ -266,9 +266,10 @@ export function BlockDocumentList() {
     // source en navigateur, et la seule qui existe sous MemoryRouter (tests).
     const url = readUrlState(searchParams)
     setTreeMode(url.treeMode)
-    if (url.spec.filters.length > 0) {
+    if (url.spec.filters.length > 0 || (url.spec.type_slugs?.length ?? 0) > 0) {
       // Filtres présents → mode requête : le tri appartient au QuerySpec.
       loadSpec({
+        type_slugs: url.spec.type_slugs ?? null,
         filters: url.spec.filters,
         sort: url.spec.sort,
         projection: null,
@@ -290,6 +291,7 @@ export function BlockDocumentList() {
     if (hydratedFor.current !== `${ws}/${block}`) return
     const next = writeUrlState({
       spec: {
+        type_slugs: spec.type_slugs ?? null,
         filters: spec.filters,
         sort: mode === 'query' ? spec.sort : browseSort ? [browseSort] : [],
         page: 1, // « Charger plus » : la page n'est plus dans l'URL (accumulation).
@@ -456,7 +458,9 @@ export function BlockDocumentList() {
   // Mode requête (filtre/tri actif) : liste plate paginée serveur, ACCUMULÉE
   // par « Charger plus ». La clé exclut la page (gérée par l'infinite query) ;
   // filtres/tri/projection/taille de page la font repartir de la page 1.
-  const querySpecKey = { filters: spec.filters, sort: spec.sort, projection: spec.projection }
+  const querySpecKey = {
+    types: spec.type_slugs, filters: spec.filters, sort: spec.sort, projection: spec.projection,
+  }
   const queryInfinite = useInfiniteQuery<BlockObjectsPage>({
     queryKey: ['block-query', ws, block, querySpecKey, pageSize],
     queryFn: ({ pageParam }) =>
@@ -513,6 +517,31 @@ export function BlockDocumentList() {
   const propColById = useMemo(
     () => new Map(propColumns.map((p) => [`prop_${p.slug}`, p])),
     [propColumns],
+  )
+
+  /** Colonne de filtre du TYPE d'objet.
+   *
+   *  Le type n'est pas une propriété : il se filtre par `type_slugs` et non par
+   *  une clause. On réutilise pourtant le popover — il ne manipule que des
+   *  valeurs autorisées, ce dont il s'agit exactement. Les choix se bornent aux
+   *  types RÉELLEMENT présents dans le bloc : proposer un type sans document
+   *  offrirait un filtre dont on sait déjà qu'il ne rend rien. */
+  const typeFilterColumn = useMemo<FilterColumn>(() => {
+    const labelBySlug = new Map(types.map((ft) => [ft.slug, ft.label]))
+    return {
+      slug: 'type',
+      label: t('documents.type'),
+      type: 'restricted_list',
+      allowedValues: presentTypeSlugs.map((slug) => ({
+        slug,
+        label: labelBySlug.get(slug) ?? slug,
+      })),
+    }
+  }, [types, presentTypeSlugs, t])
+
+  const typeLabelOf = useCallback(
+    (slug: string) => types.find((ft) => ft.slug === slug)?.label ?? slug,
+    [types],
   )
 
   // Index type → (prop_slug → def) : donne, par ligne, les valeurs autorisées
@@ -831,7 +860,9 @@ export function BlockDocumentList() {
         spec={spec}
         labelOf={propLabelOf}
         valueLabelOf={propValueLabelOf}
+        typeLabelOf={typeLabelOf}
         onRemoveFilter={(prop) => setFilter(prop, null)}
+        onRemoveTypeFilter={() => setTypeSlugs(null)}
         onClearAll={reset}
         onSaveView={() => setShowSaveView(true)}
       />
@@ -929,6 +960,17 @@ export function BlockDocumentList() {
                             column={propCol}
                             clause={spec.filters.find((f) => f.prop === propCol.slug) ?? null}
                             onChange={(clause) => setFilter(propCol.slug, clause)}
+                          />
+                        )}
+                        {header.column.id === 'functional_type_slug' && (
+                          <HeaderFilterPopover
+                            column={typeFilterColumn}
+                            clause={
+                              spec.type_slugs && spec.type_slugs.length > 0
+                                ? { prop: 'type', op: 'in', values: spec.type_slugs }
+                                : null
+                            }
+                            onChange={(clause) => setTypeSlugs(clause?.values ?? null)}
                           />
                         )}
                       </span>

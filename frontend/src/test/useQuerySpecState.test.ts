@@ -7,6 +7,7 @@ describe('useQuerySpecState', () => {
     const { result } = renderHook(() => useQuerySpecState(100))
     expect(result.current.mode).toBe('browse')
     expect(result.current.spec).toEqual({
+      type_slugs: null,
       filters: [],
       sort: [],
       projection: null,
@@ -125,6 +126,32 @@ describe('useQuerySpecState', () => {
     expect(result.current.spec.projection).toEqual(['statut'])
   })
 
+  it('restreindre aux types bascule en mode requête et repart page 1', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setPage(3))
+    act(() => result.current.setTypeSlugs(['epic', 'feature']))
+    expect(result.current.mode).toBe('query')
+    expect(result.current.spec.type_slugs).toEqual(['epic', 'feature'])
+    expect(result.current.spec.page).toBe(1)
+  })
+
+  it('une liste de types vide ne filtre rien et ne bascule pas en requête', () => {
+    // Sinon décocher le dernier type laisserait l'écran en mode requête avec un
+    // filtre qui ne filtre rien — une liste plate sans raison.
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setTypeSlugs([]))
+    expect(result.current.spec.type_slugs).toBeNull()
+    expect(result.current.mode).toBe('browse')
+  })
+
+  it('reset efface aussi la restriction de type', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setTypeSlugs(['epic']))
+    act(() => result.current.reset())
+    expect(result.current.spec.type_slugs).toBeNull()
+    expect(result.current.mode).toBe('browse')
+  })
+
   it('reset clears filters/sort/projection and preserves page_size', () => {
     const { result } = renderHook(() => useQuerySpecState(100))
     act(() => result.current.setFilter('statut', { op: 'eq', value: 'done' }))
@@ -132,6 +159,7 @@ describe('useQuerySpecState', () => {
     act(() => result.current.reset())
     expect(result.current.mode).toBe('browse')
     expect(result.current.spec).toEqual({
+      type_slugs: null,
       filters: [],
       sort: [],
       projection: null,

@@ -14,7 +14,7 @@ import { memo, useCallback } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react'
 import type { Anchor } from '../../lib/canvas/anchor'
 import type { Point, Side } from '../../lib/canvas/model'
-import { midpointOf, orthogonalRoute, toSvgPath } from '../../lib/canvas/route'
+import { endMarkPoint, midpointOf, orthogonalRoute, toSvgPath } from '../../lib/canvas/route'
 
 export interface OrthogonalEdgeData extends Record<string, unknown> {
   waypoints?: Point[]
@@ -82,6 +82,8 @@ function OrthogonalEdgeImpl({
 
   const points = orthogonalRoute(source, target, waypoints)
   const path = toSvgPath(points)
+  const sourceMark = endMarkPoint(source.point, source.side)
+  const targetMark = endMarkPoint(target.point, target.side)
 
   const addWaypoint = useCallback(
     (event: React.MouseEvent) => {
@@ -118,29 +120,29 @@ function OrthogonalEdgeImpl({
         onDoubleClick={addWaypoint}
         style={{ cursor: onWaypointsChange ? 'crosshair' : undefined }}
       />
+      {/* Fond transparent sur tout le texte porté par un lien : une pastille
+          opaque posait un rectangle blanc sur le papier du canvas, visible même
+          là où elle ne masquait aucun trait. */}
       <EdgeLabelRenderer>
-        {/* Multiplicités, posées juste après le moignon de chaque extrémité :
-            assez près du nœud pour qu'on sache à qui elles se rapportent. */}
+        {/* Multiplicités, posées AU BORD de la boîte qu'elles qualifient : c'est
+            là qu'on les lit (« ce client a n commandes »). Le calcul est dans
+            `route`, avec le reste de la géométrie du lien. */}
         {ends && (
           <>
             <div
               data-testid={`edge-card-source-${id}`}
-              className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
+              className="nodrag nopan absolute px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
               style={{
-                transform: `translate(-50%, -50%) translate(${points[1]?.x ?? sourceX}px, ${
-                  (points[1]?.y ?? sourceY) - 10
-                }px)`,
+                transform: `translate(-50%, -50%) translate(${sourceMark.x}px, ${sourceMark.y}px)`,
               }}
             >
               {ends[0]}
             </div>
             <div
               data-testid={`edge-card-target-${id}`}
-              className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
+              className="nodrag nopan absolute px-1 text-[11px] font-medium text-[var(--diagram-text-muted,#52525b)]"
               style={{
-                transform: `translate(-50%, -50%) translate(${
-                  points[points.length - 2]?.x ?? targetX
-                }px, ${(points[points.length - 2]?.y ?? targetY) - 10}px)`,
+                transform: `translate(-50%, -50%) translate(${targetMark.x}px, ${targetMark.y}px)`,
               }}
             >
               {ends[1]}
@@ -158,7 +160,7 @@ function OrthogonalEdgeImpl({
         ))}
         {label && (
           <div
-            className="nodrag nopan absolute rounded bg-[var(--diagram-node-bg,#fff)] px-1 text-xs"
+            className="nodrag nopan absolute px-1 text-xs"
             style={{
               transform: `translate(-50%, -50%) translate(${midpointOf(points).x}px, ${
                 midpointOf(points).y

@@ -15,6 +15,7 @@
  */
 
 import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
@@ -132,12 +133,13 @@ function useModelCanvas(content: string, docId: string | undefined) {
 interface DiagramProps {
   doc: CanvasDoc
   onChange?: (doc: CanvasDoc) => void
+  onOpenEntity?: (docId: string) => void
   empty: boolean
   loading?: boolean
   readOnly?: boolean
 }
 
-function Diagram({ doc, onChange, empty, loading, readOnly }: DiagramProps) {
+function Diagram({ doc, onChange, onOpenEntity, empty, loading, readOnly }: DiagramProps) {
   const { t } = useTranslation()
 
   // Pendant le chargement des entités, ne PAS annoncer un modèle vide : le
@@ -157,7 +159,7 @@ function Diagram({ doc, onChange, empty, loading, readOnly }: DiagramProps) {
   }
   return (
     <div data-testid="mld-surface">
-      <Canvas doc={doc} onChange={onChange} readOnly={readOnly} />
+      <Canvas doc={doc} onChange={onChange} onNodeActivate={onOpenEntity} readOnly={readOnly} />
     </div>
   )
 }
@@ -203,14 +205,35 @@ export const ModelLayoutEditor = forwardRef<ContentEditorHandle, ContentEditorPr
 )
 ModelLayoutEditor.displayName = 'ModelLayoutEditor'
 
-/** Surface de LECTURE — même rendu, non modifiable. */
+/** Surface de LECTURE — même rendu, non modifiable.
+ *
+ *  Ici, et ici seulement, un clic sur une entité ouvre sa fiche : en lecture le
+ *  clic n'a pas d'autre emploi, alors qu'en édition il sélectionne et déplace. */
 export const ModelLayoutViewer = forwardRef<ContentViewerHandle, ContentViewerProps>(
   ({ content, docId }, ref) => {
     const { entities, isLoading, doc } = useModelCanvas(content, docId)
+    const navigate = useNavigate()
+    const { ws, block } = useParams()
     // Pas de copie riche : un diagramme n'a pas de représentation HTML fidèle.
     useImperativeHandle(ref, () => ({}), [])
 
-    return <Diagram doc={doc} empty={entities.length === 0} loading={isLoading} readOnly />
+    const openEntity = useCallback(
+      (entityDocId: string) => {
+        if (!ws || !block) return
+        void navigate(`/ws/${ws}/blocs/${block}/documents/${entityDocId}`)
+      },
+      [navigate, ws, block],
+    )
+
+    return (
+      <Diagram
+        doc={doc}
+        onOpenEntity={ws && block ? openEntity : undefined}
+        empty={entities.length === 0}
+        loading={isLoading}
+        readOnly
+      />
+    )
   },
 )
 ModelLayoutViewer.displayName = 'ModelLayoutViewer'

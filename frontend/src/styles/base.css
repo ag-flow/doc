@@ -43,6 +43,25 @@ figcaption {
 
 .text-muted { color: color-mix(in srgb, var(--color-ink) 55%, transparent); }
 
+/* Curseur de désignation sur tout ce qui se clique.
+ *
+ * Le navigateur donne à `<button>` la flèche, pas la main — et Tailwind v4 a
+ * retiré la règle de son preflight, contrairement à la v3. Résultat : chaque
+ * ligne de liste rendue en `<button>` (index des workspaces, tableau des blocs,
+ * listes de documents) ne se signalait plus comme cliquable.
+ *
+ * Posé ici, en base d'élément, plutôt qu'en `cursor-pointer` répété sur chaque
+ * ligne : c'est une propriété du fait d'être cliquable, pas une décision de mise
+ * en page. `@layer base` laisse gagner toute utilitaire `cursor-*` posée au cas
+ * par cas, et `:not(:disabled)` préserve les états désactivés. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary {
+    cursor: pointer;
+  }
+}
+
 /* Focus : aucun style natif ne subsiste. Anneau cyan 2px décalé de 2px, au
    clavier uniquement — un :focus au clic parasiterait chaque bouton. */
 :focus { outline: none; }

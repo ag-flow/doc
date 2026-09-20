@@ -18,10 +18,12 @@ export interface CanvasNodeData extends Record<string, unknown> {
   node: CanvasNode
   detail: DetailLevel
   label: string
+  /** Le clic ouvre ce que le nœud représente — se signale au curseur. */
+  activatable?: boolean
 }
 
 function CanvasNodeViewImpl({ data, selected }: NodeProps) {
-  const { node, detail, label } = data as unknown as CanvasNodeData
+  const { node, detail, label, activatable } = data as unknown as CanvasNodeData
   const showPorts = detail === 'fields' && !node.collapsed
   const showLabel = detail !== 'silhouette'
 
@@ -31,6 +33,7 @@ function CanvasNodeViewImpl({ data, selected }: NodeProps) {
       data-detail={detail}
       className={[
         'rounded border bg-[var(--diagram-node-bg,#fff)] text-sm shadow-sm',
+        activatable ? 'cursor-pointer' : '',
         selected
           ? 'border-[var(--diagram-node-selected,#2563eb)]'
           : 'border-[var(--diagram-node-border,#d4d4d8)]',

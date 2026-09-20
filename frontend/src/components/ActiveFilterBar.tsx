@@ -4,12 +4,16 @@ import type { BlockQueryBody, FilterClause } from '../lib/api'
 import { Button } from './ui/button'
 
 interface Props {
-  spec: Pick<BlockQueryBody, 'filters' | 'sort'>
+  spec: Pick<BlockQueryBody, 'filters' | 'sort' | 'type_slugs'>
   /** Libellé lisible d'une propriété (slug → label de colonne). */
   labelOf: (prop: string) => string
   /** Libellé d'une valeur de `restricted_list` (slug → label), sinon la valeur brute. */
   valueLabelOf: (prop: string, value: string) => string
+  /** Libellé d'un type d'objet (slug → label du type fonctionnel). */
+  typeLabelOf: (slug: string) => string
   onRemoveFilter: (prop: string) => void
+  /** Retire la restriction de type (`type_slugs`). */
+  onRemoveTypeFilter: () => void
   onClearAll: () => void
   onSaveView: () => void
 }
@@ -30,13 +34,32 @@ function clauseText(
  *  table. Rien ne s'affiche quand aucun filtre n'est posé — la barre n'est pas
  *  un bandeau permanent. */
 export function ActiveFilterBar({
-  spec, labelOf, valueLabelOf, onRemoveFilter, onClearAll, onSaveView,
+  spec, labelOf, valueLabelOf, typeLabelOf,
+  onRemoveFilter, onRemoveTypeFilter, onClearAll, onSaveView,
 }: Props) {
   const { t } = useTranslation()
-  if (spec.filters.length === 0) return null
+  const typeSlugs = spec.type_slugs ?? []
+  if (spec.filters.length === 0 && typeSlugs.length === 0) return null
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="active-filters">
+      {/* Le type d'objet en tête : c'est le filtre qui décide de QUOI on parle,
+          les autres ne font que restreindre à l'intérieur. */}
+      {typeSlugs.length > 0 && (
+        <span className="tag tag-accent gap-1.5" data-testid="filter-chip-type">
+          <span className="font-[600]">{t('documents.type')}</span>
+          {typeSlugs.map(typeLabelOf).join(', ')}
+          <button
+            type="button"
+            onClick={onRemoveTypeFilter}
+            aria-label={`${t('documents.filter.clear')} ${t('documents.type')}`}
+            data-testid="filter-chip-remove-type"
+            className="ml-0.5 border-0 bg-transparent p-0 text-inherit"
+          >
+            <X size={11} weight="bold" />
+          </button>
+        </span>
+      )}
       {spec.filters.map((f) => (
         <span key={f.prop} className="tag tag-accent gap-1.5" data-testid={`filter-chip-${f.prop}`}>
           <span className="font-[600]">{labelOf(f.prop)}</span>

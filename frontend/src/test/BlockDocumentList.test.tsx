@@ -366,6 +366,7 @@ describe('BlockDocumentList', () => {
 
     await waitFor(() => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -394,6 +395,89 @@ describe('BlockDocumentList', () => {
     expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
   })
 
+  // Le TYPE n'est pas une propriété : il se filtre par `type_slugs`, sur la
+  // colonne du document, sans passer par les valeurs de propriétés.
+  it('filtre sur le type d\'objet et bascule en mode requête', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'epic1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'feat1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'epic1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: 'epic',
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'epic1', title: 'Epic 1', functional_type_slug: 'epic',
+          updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+
+    await applyRestrictedFilter('type', ['epic'])
+
+    await waitFor(() => {
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: ['epic'],
+        filters: [],
+        sort: [],
+        projection: null,
+        page: 1,
+        page_size: 25,
+      })
+    })
+    // La chip porte le LIBELLÉ du type, pas son slug.
+    expect(screen.getByTestId('filter-chip-type')).toHaveTextContent('Épic')
+
+    // Retirer la chip repasse en navigation, sans requête qui ne filtre rien.
+    fireEvent.click(screen.getByTestId('filter-chip-remove-type'))
+    await waitFor(() => expect(screen.queryByTestId('filter-chip-type')).not.toBeInTheDocument())
+  })
+
+  it('ne propose au filtre de type que les types PRÉSENTS dans le bloc', async () => {
+    // Offrir un type sans document, c'est offrir un filtre dont on sait déjà
+    // qu'il ne rendra rien.
+    const docs = [
+      makeDoc({ doc_technical_key: 'epic1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-carte', slug: 'carte', label: 'Carte', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+    ])
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('filter-btn-type'))
+
+    await waitFor(() => expect(screen.getByTestId('filter-opt-type-epic')).toBeInTheDocument())
+    expect(screen.queryByTestId('filter-opt-type-carte')).not.toBeInTheDocument()
+  })
+
   it('in query mode, clicking the title header cycles server sort (asc → desc)', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
@@ -418,6 +502,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText('Titre'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
@@ -430,6 +515,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
@@ -463,6 +549,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('load-more-btn'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -577,6 +664,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('sort-header-statut'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
@@ -590,6 +678,7 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('sort-header-title'), { shiftKey: true })
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [
           { key: 'statut', dir: 'asc' },

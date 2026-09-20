@@ -49,7 +49,7 @@ function paramToClause(raw: string): FilterClause | null {
 }
 
 export interface UrlState {
-  spec: Pick<BlockQueryBody, 'filters' | 'sort' | 'page'>
+  spec: Pick<BlockQueryBody, 'filters' | 'sort' | 'page' | 'type_slugs'>
   /** Vue arbre (défaut) ou liste plate, en mode navigation. */
   treeMode: boolean
 }
@@ -72,7 +72,14 @@ export function readUrlState(params: URLSearchParams): UrlState {
 
   const page = Math.max(1, Number.parseInt(params.get('page') ?? '1', 10) || 1)
 
-  return { spec: { filters, sort, page }, treeMode: params.get('vue') !== 'liste' }
+  // Le type d'objet n'est pas une propriété : il a son propre paramètre (`t`),
+  // à l'image de `type_slugs` dans le QuerySpec.
+  const typeSlugs = (params.get('t') ?? '').split('|').filter(Boolean).map(unesc)
+
+  return {
+    spec: { filters, sort, page, type_slugs: typeSlugs.length > 0 ? typeSlugs : null },
+    treeMode: params.get('vue') !== 'liste',
+  }
 }
 
 /** État → params d'URL. Les valeurs par défaut ne sont PAS écrites : l'URL d'un
@@ -83,6 +90,9 @@ export function writeUrlState(state: UrlState): URLSearchParams {
     params.set('sort', state.spec.sort.map((s) => `${esc(s.key)}:${s.dir}`).join(','))
   }
   for (const f of state.spec.filters) params.append('f', clauseToParam(f))
+  if (state.spec.type_slugs && state.spec.type_slugs.length > 0) {
+    params.set('t', state.spec.type_slugs.map(esc).join('|'))
+  }
   if (state.spec.page > 1) params.set('page', String(state.spec.page))
   if (!state.treeMode) params.set('vue', 'liste')
   return params

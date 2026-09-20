@@ -1,9 +1,10 @@
 /** Surface `model-layout` : le point où tout l'épic MLD se rejoint (F7). */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRef } from 'react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { parse as parseYaml } from 'yaml'
 import { ModelLayoutEditor, ModelLayoutViewer } from '../components/mld/ModelLayoutSurface'
 import { surfaceFor, type ContentEditorHandle } from '../lib/contentSurfaces'
@@ -68,9 +69,28 @@ fields:
 `,
 )
 
+/** Sonde d'URL : la surface de lecture NAVIGUE (clic sur une entité), il faut
+ *  donc pouvoir observer où l'on a atterri. */
+function LocationProbe() {
+  return <span data-testid="pathname">{useLocation().pathname}</span>
+}
+
+/** La surface de lecture a besoin d'un routeur, et des params `ws` / `block`
+ *  pour construire le lien vers la fiche d'une entité. */
 function renderSurface(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[`/ws/ws/blocs/b1/documents/${MODEL_ID}`]}>
+        <Routes>
+          <Route
+            path="/ws/:ws/blocs/:block/documents/:id"
+            element={<>{ui}<LocationProbe /></>}
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 /** `listDocuments` rend des TÊTES : l'API ne peuple JAMAIS `content` sur la
@@ -172,6 +192,31 @@ describe('ModelLayoutSurface — rendu', () => {
     renderSurface(<ModelLayoutViewer content="entities: [oups" docId={MODEL_ID} />)
     // Contenu abîmé : on retombe sur un placement automatique, sans planter.
     expect(await screen.findByTestId('canvas-node-doc-commande')).toBeInTheDocument()
+  })
+})
+
+// ── Naviguer depuis le diagramme ─────────────────────────────────────────────
+
+describe('ModelLayoutSurface — ouvrir une entité', () => {
+  it('un clic sur une boîte ouvre la fiche de l\'entité', async () => {
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
+    fireEvent.click(await screen.findByTestId('canvas-node-doc-client'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('pathname')).toHaveTextContent(
+        '/ws/ws/blocs/b1/documents/doc-client',
+      ),
+    )
+  })
+
+  it('en ÉDITION le clic ne navigue pas — il sélectionne et déplace', async () => {
+    // Naviguer au premier clic rendrait le repositionnement impossible.
+    renderSurface(<ModelLayoutEditor initialContent="" docId={MODEL_ID} onDirty={vi.fn()} />)
+    fireEvent.click(await screen.findByTestId('canvas-node-doc-client'))
+
+    expect(screen.getByTestId('pathname')).toHaveTextContent(
+      `/ws/ws/blocs/b1/documents/${MODEL_ID}`,
+    )
   })
 })
 

@@ -2,7 +2,14 @@
 
 import { describe, it, expect } from 'vitest'
 import { anchorPoint, sidesFor } from '../lib/canvas/anchor'
-import { orthogonalRoute, simplify, toSvgPath, STUB } from '../lib/canvas/route'
+import {
+  endMarkPoint,
+  midpointOf,
+  orthogonalRoute,
+  simplify,
+  toSvgPath,
+  STUB,
+} from '../lib/canvas/route'
 import { detailFor, portsVisibleAt } from '../lib/canvas/detail'
 import type { CanvasNode } from '../lib/canvas/model'
 
@@ -184,6 +191,49 @@ describe('simplify', () => {
       { x: 10, y: 0 },
       { x: 10, y: 10 },
     ])
+  })
+})
+
+describe('midpointOf — milieu VISUEL du tracé', () => {
+  it('suit la longueur parcourue, pas le rang du point', () => {
+    // Coudes serrés au départ : le point du milieu de la LISTE (30,0) serait
+    // collé à la boîte source. Le milieu en longueur tombe à 50 sur 100.
+    expect(
+      midpointOf([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 30, y: 0 },
+        { x: 100, y: 0 },
+      ]),
+    ).toEqual({ x: 50, y: 0 })
+  })
+
+  it('dégrade sans planter sur un tracé vide ou ponctuel', () => {
+    expect(midpointOf([])).toEqual({ x: 0, y: 0 })
+    expect(midpointOf([{ x: 7, y: 7 }])).toEqual({ x: 7, y: 7 })
+  })
+})
+
+describe('endMarkPoint — multiplicité posée au bord', () => {
+  it('se place du côté par lequel le lien quitte la boîte', () => {
+    const at = { x: 100, y: 50 }
+    expect(endMarkPoint(at, 'right').x).toBeGreaterThan(at.x)
+    expect(endMarkPoint(at, 'left').x).toBeLessThan(at.x)
+    expect(endMarkPoint(at, 'top').y).toBeLessThan(at.y)
+    expect(endMarkPoint(at, 'bottom').y).toBeGreaterThan(at.y)
+  })
+
+  it('reste plus près du bord que le bout du moignon', () => {
+    // C'est tout l'objet de la correction : au bout du moignon, la marque
+    // flottait sans qu'on sache à quelle boîte la rattacher.
+    const at = { x: 100, y: 50 }
+    expect(endMarkPoint(at, 'right').x - at.x).toBeLessThan(STUB)
+  })
+
+  it('se décale de côté pour ne pas s\'asseoir sur le trait', () => {
+    const at = { x: 100, y: 50 }
+    expect(endMarkPoint(at, 'right').y).not.toBe(at.y)
+    expect(endMarkPoint(at, 'top').x).not.toBe(at.x)
   })
 })
 

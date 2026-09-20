@@ -15,6 +15,7 @@ describe('querySpecUrl', () => {
           { key: 'title', dir: 'desc' as const },
         ],
         page: 3,
+        type_slugs: null,
       },
       treeMode: false,
     }
@@ -29,8 +30,23 @@ describe('querySpecUrl', () => {
   })
 
   it('une URL vierge ne porte aucun paramètre', () => {
-    const params = writeUrlState({ spec: { filters: [], sort: [], page: 1 }, treeMode: true })
+    const params = writeUrlState({
+      spec: { filters: [], sort: [], page: 1, type_slugs: null },
+      treeMode: true,
+    })
     expect([...params.keys()]).toEqual([])
+  })
+
+  it('aller-retour de la restriction de type', () => {
+    // Un filtre qui ne survit ni au rechargement ni au partage du lien n'est
+    // qu'à moitié posé.
+    const state = {
+      spec: { filters: [], sort: [], page: 1, type_slugs: ['epic', 'feature'] },
+      treeMode: true,
+    }
+    const params = writeUrlState(state)
+    expect(params.get('t')).toBe('epic|feature')
+    expect(readUrlState(params)).toEqual(state)
   })
 
   it('valeurs contenant les séparateurs : échappées, jamais cassées', () => {
@@ -39,6 +55,7 @@ describe('querySpecUrl', () => {
         filters: [{ prop: 'a:b', op: 'eq' as const, value: 'x|y,z~w' }],
         sort: [],
         page: 1,
+        type_slugs: null,
       },
       treeMode: true,
     }
@@ -49,7 +66,7 @@ describe('querySpecUrl', () => {
   it('paramètres illisibles ignorés (dégradation, pas de plantage)', () => {
     const params = new URLSearchParams('sort=&f=nimportequoi&f=statut:bidon:x&page=zero')
     expect(readUrlState(params)).toEqual({
-      spec: { filters: [], sort: [], page: 1 },
+      spec: { filters: [], sort: [], page: 1, type_slugs: null },
       treeMode: true,
     })
   })

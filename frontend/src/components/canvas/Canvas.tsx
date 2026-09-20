@@ -40,17 +40,28 @@ export interface CanvasProps {
   onChange?: (doc: CanvasDoc) => void
   /** Étiquette d'un nœud — c'est l'adaptateur qui sait la produire. */
   labelOf?: (node: CanvasNode) => string
+  /** Clic sur un nœud : ouvrir ce qu'il représente.
+   *
+   *  Le canvas ne sait pas ce qu'« ouvrir » veut dire — il rend l'identifiant du
+   *  nœud, l'appelant navigue. À ne brancher que là où le clic n'a pas déjà un
+   *  sens : en édition, il sert à sélectionner et à déplacer. */
+  onNodeActivate?: (nodeId: string) => void
   readOnly?: boolean
   className?: string
 }
 
 /** Modèle → moteur de rendu. Confiné ici : rien ne fuit vers l'appelant. */
-function toRenderNodes(doc: CanvasDoc, detail: DetailLevel, labelOf: (n: CanvasNode) => string): Node[] {
+function toRenderNodes(
+  doc: CanvasDoc,
+  detail: DetailLevel,
+  labelOf: (n: CanvasNode) => string,
+  activatable: boolean,
+): Node[] {
   return doc.nodes.map((n) => ({
     id: n.id,
     type: 'canvasNode',
     position: n.position,
-    data: { node: n, detail, label: labelOf(n) } satisfies CanvasNodeData,
+    data: { node: n, detail, label: labelOf(n), activatable } satisfies CanvasNodeData,
     ...nodeSize(n),
   }))
 }
@@ -78,7 +89,7 @@ function toRenderEdges(
   }))
 }
 
-function CanvasInner({ doc, onChange, labelOf, readOnly, className }: CanvasProps) {
+function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, className }: CanvasProps) {
   const zoom = doc.viewport?.zoom ?? 1
   const detail = detailFor(zoom)
   const portsVisible = portsVisibleAt(zoom)
@@ -99,7 +110,10 @@ function CanvasInner({ doc, onChange, labelOf, readOnly, className }: CanvasProp
     [doc, onChange, readOnly],
   )
 
-  const nodes = useMemo(() => toRenderNodes(doc, detail, label), [doc, detail, label])
+  const nodes = useMemo(
+    () => toRenderNodes(doc, detail, label, Boolean(onNodeActivate)),
+    [doc, detail, label, onNodeActivate],
+  )
   const edges = useMemo(
     () => toRenderEdges(doc, portsVisible, readOnly ? undefined : setWaypoints),
     [doc, portsVisible, readOnly, setWaypoints],
@@ -135,6 +149,7 @@ function CanvasInner({ doc, onChange, labelOf, readOnly, className }: CanvasProp
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
         onNodesChange={onNodesChange}
+        onNodeClick={onNodeActivate ? (_, n) => onNodeActivate(n.id) : undefined}
         defaultViewport={doc.viewport ?? { x: 0, y: 0, zoom: 1 }}
         nodesDraggable={!readOnly}
         nodesConnectable={!readOnly}

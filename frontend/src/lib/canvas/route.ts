@@ -141,6 +141,31 @@ export function midpointOf(points: Point[]): Point {
   return points[points.length - 1]
 }
 
+/** Distance à laquelle se pose une marque d'extrémité : le long du lien depuis
+ *  le bord, puis décalée de côté pour ne pas s'asseoir sur le trait. */
+export const END_MARK_ALONG = 12
+export const END_MARK_ASIDE = 9
+
+/**
+ * Point où écrire une marque d'extrémité (la multiplicité d'un MLD).
+ *
+ * Elle se lit AU BORD de la boîte qu'elle qualifie : « ce client a n commandes »
+ * se lit du côté du client. Posée au bout du moignon (24 px), elle flottait au
+ * milieu de nulle part et on ne savait plus à quelle boîte la rattacher.
+ */
+export function endMarkPoint(at: Point, side: Side): Point {
+  switch (side) {
+    case 'left':
+      return { x: at.x - END_MARK_ALONG, y: at.y - END_MARK_ASIDE }
+    case 'right':
+      return { x: at.x + END_MARK_ALONG, y: at.y - END_MARK_ASIDE }
+    case 'top':
+      return { x: at.x + END_MARK_ASIDE, y: at.y - END_MARK_ALONG }
+    case 'bottom':
+      return { x: at.x + END_MARK_ASIDE, y: at.y + END_MARK_ALONG }
+  }
+}
+
 /** Suite de points → attribut `d` d'un `<path>` SVG. */
 export function toSvgPath(points: Point[]): string {
   if (points.length === 0) return ''
