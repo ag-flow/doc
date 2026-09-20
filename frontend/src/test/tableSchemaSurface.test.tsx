@@ -1,12 +1,19 @@
 /** Surface d'édition d'une entité `table-schema` (épic MLD — F7). */
 
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import React, { createRef } from 'react'
 import { parse as parseYaml } from 'yaml'
 import { TableSchemaEditor, TableSchemaViewer } from '../components/mld/TableSchemaSurface'
 import type { ContentEditorHandle } from '../lib/contentSurfaces'
+import { docsApi } from '../lib/api'
+
+vi.mock('../lib/api', () => ({
+  docsApi: { listDocuments: vi.fn(), getDocument: vi.fn() },
+}))
+vi.mock('../contexts/WorkspaceContext', () => ({ useWorkspaceSlugOrNull: () => 'ws' }))
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 
@@ -61,9 +68,63 @@ docflow.relations:
       fields: id
 `
 
+/** Entités voisines : la cible d'une relation se CHOISIT désormais dans la
+ *  liste des entités du bloc, ce qui fait de cette surface une consommatrice de
+ *  l'API. Les têtes ne portent pas de contenu — l'API ne le peuple jamais sur
+ *  une liste — les corps sont servis document par document. */
+const CLIENT = {
+  doc_technical_key: 'doc-client',
+  title: 'Client',
+  type: 'table-schema',
+  slug: null,
+  content: 'name: client\nfields:\n  - name: id\n    type: uuid\n  - name: email\n    title: E-mail\n',
+  version: 1,
+  parent_id: 'doc-modele',
+  functional_type_slug: 'entity',
+  workspace_slug: 'ws',
+  data_block_ref: 'b1',
+  exposed: false,
+  created_at: '',
+  updated_at: '',
+  updated_by: null,
+}
+const SELF = {
+  ...CLIENT,
+  doc_technical_key: 'doc-commande',
+  title: 'Commande',
+  content: 'name: commande\n',
+}
+const MODELE = {
+  ...CLIENT,
+  doc_technical_key: 'doc-modele',
+  title: 'Boutique',
+  type: 'model-layout',
+  functional_type_slug: 'model',
+  parent_id: null,
+  content: '',
+}
+
+beforeEach(() => {
+  vi.mocked(docsApi.listDocuments).mockResolvedValue(
+    [MODELE, SELF, CLIENT].map((d) => ({ ...d, content: null })) as never,
+  )
+  vi.mocked(docsApi.getDocument).mockImplementation((async (_ws: string, id: string) =>
+    [MODELE, SELF, CLIENT].find((d) => d.doc_technical_key === id)) as never)
+})
+
 function renderEditor(content = SCHEMA, onDirty = vi.fn()) {
   const ref = createRef<ContentEditorHandle>()
-  render(<TableSchemaEditor ref={ref} initialContent={content} onDirty={onDirty} />)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <TableSchemaEditor
+        ref={ref}
+        initialContent={content}
+        onDirty={onDirty}
+        docId="doc-commande"
+      />
+    </QueryClientProvider>,
+  )
   return { ref, onDirty }
 }
 
@@ -204,6 +265,71 @@ describe('TableSchemaSurface — relations', () => {
     render(<TableSchemaViewer content={SCHEMA} />)
     expect(screen.queryByTestId('relation-add')).not.toBeInTheDocument()
     expect(screen.queryByTestId('relation-remove-0')).not.toBeInTheDocument()
+  })
+})
+
+// ── Choix de la cible ────────────────────────────────────────────────────────
+
+describe('TableSchemaSurface — cible d\'une relation', () => {
+  function targetSelect() {
+    return within(screen.getByTestId('relation-row-0')).getByLabelText(
+      'mld.relationTarget',
+    ) as HTMLSelectElement
+  }
+
+  it('propose les entités du bloc, par leur TITRE', async () => {
+    // Saisir le `name` à la main ne produisait aucune erreur en cas de faute :
+    // la relation disparaissait simplement du diagramme.
+    renderEditor()
+    await waitFor(() =>
+      expect(within(targetSelect()).getByRole('option', { name: 'Client' })).toBeInTheDocument(),
+    )
+    // Un modèle n'est pas une entité : il ne peut pas être la cible.
+    expect(within(targetSelect()).queryByRole('option', { name: 'Boutique' })).toBeNull()
+  })
+
+  it('écrit le `name` du schéma, pas le titre affiché', async () => {
+    const { ref } = renderEditor()
+    await waitFor(() =>
+      expect(within(targetSelect()).getByRole('option', { name: 'Commande' })).toBeInTheDocument(),
+    )
+
+    await userEvent.selectOptions(targetSelect(), 'commande')
+
+    expect((await contentOf(ref))['docflow.relations'][0].to.resource).toBe('commande')
+  })
+
+  it('propose les champs de la cible choisie', async () => {
+    renderEditor()
+    const champ = within(screen.getByTestId('relation-row-0')).getByLabelText(
+      'mld.relationTargetField',
+    )
+    // La cible enregistrée est `client` : ce sont SES champs qu'on vise.
+    await waitFor(() =>
+      expect(within(champ).getByRole('option', { name: /email/ })).toBeInTheDocument(),
+    )
+  })
+
+  it('change de cible remet le champ visé à zéro', async () => {
+    // Le garder pointerait vers un champ d'une AUTRE entité, silencieusement.
+    const { ref } = renderEditor()
+    await waitFor(() =>
+      expect(within(targetSelect()).getByRole('option', { name: 'Commande' })).toBeInTheDocument(),
+    )
+
+    await userEvent.selectOptions(targetSelect(), 'commande')
+
+    expect((await contentOf(ref))['docflow.relations'][0].to.fields).toBe('')
+  })
+
+  it('conserve une cible introuvable au lieu de la remplacer', async () => {
+    // Cible d'un autre bloc, entité supprimée, relation écrite avant la liste :
+    // afficher le formulaire ne doit pas réécrire la relation.
+    const orphelin = SCHEMA.replace('resource: client', 'resource: disparue')
+    const { ref } = renderEditor(orphelin)
+
+    await waitFor(() => expect(targetSelect().value).toBe('disparue'))
+    expect((await contentOf(ref))['docflow.relations'][0].to.resource).toBe('disparue')
   })
 })
 

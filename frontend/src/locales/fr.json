@@ -727,6 +727,8 @@
     "relationTarget": "entité cible",
     "relationTargetField": "champ cible",
     "addRelation": "Ajouter une relation",
-    "removeRelation": "Retirer cette relation"
+    "removeRelation": "Retirer cette relation",
+    "relationTargetThisModel": "Ce modèle",
+    "unknownValue": "(introuvable)"
   }
 }

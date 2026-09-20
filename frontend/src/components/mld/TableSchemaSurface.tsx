@@ -34,6 +34,8 @@ import type {
   ContentViewerProps,
 } from '../../lib/contentSurfaces'
 import type { TableSchema, TableSchemaField, TableSchemaRelation } from '../../lib/mld/adapter'
+import type { EntityCandidate } from '../../lib/mld/candidates'
+import { useEntityCandidates } from './useEntityCandidates'
 import { MarkdownEditor } from '../MarkdownEditor'
 import { MarkdownViewer } from '../MarkdownViewer'
 
@@ -75,11 +77,74 @@ function firstOf(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? ''
 }
 
+/**
+ * Liste déroulante qui ne perd JAMAIS la valeur enregistrée.
+ *
+ * Une valeur absente des options — cible supprimée, champ renommé, relation
+ * écrite avant que la liste n'existe — est ajoutée en fin de liste et signalée.
+ * Sans cela, le simple affichage du formulaire réécrirait la relation avec la
+ * première option venue : une surface d'édition ne détruit pas ce qu'elle ne
+ * sait pas montrer.
+ */
+function PreservingSelect({
+  value, options, onChange, label, placeholder, className, unknownSuffix,
+}: {
+  value: string
+  options: { value: string; label: string; group?: string }[]
+  onChange: (value: string) => void
+  label: string
+  placeholder: string
+  className: string
+  unknownSuffix: string
+}) {
+  const known = options.some((o) => o.value === value)
+  const groups = useMemo(() => {
+    const out = new Map<string, { value: string; label: string }[]>()
+    for (const o of options) {
+      const key = o.group ?? ''
+      const list = out.get(key) ?? []
+      list.push(o)
+      out.set(key, list)
+    }
+    return [...out]
+  }, [options])
+
+  return (
+    <select
+      value={value}
+      aria-label={label}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+    >
+      <option value="">{placeholder}</option>
+      {groups.map(([group, items]) =>
+        group ? (
+          <optgroup key={group} label={group}>
+            {items.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </optgroup>
+        ) : (
+          items.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))
+        ),
+      )}
+      {value !== '' && !known && (
+        <option value={value}>{`${value} ${unknownSuffix}`}</option>
+      )}
+    </select>
+  )
+}
+
 // ── Grille ────────────────────────────────────────────────────────────────────
 
 interface GridProps {
   schema: TableSchema
   onChange?: (schema: TableSchema) => void
+  /** Entités désignables par une relation. Passées en PROP : la grille ne va
+   *  rien chercher elle-même, elle reste testable sans réseau. */
+  candidates?: EntityCandidate[]
 }
 
 function FieldGrid({ schema, onChange }: GridProps) {
@@ -175,10 +240,40 @@ function FieldGrid({ schema, onChange }: GridProps) {
  * `docflow.id` n'est jamais exposé ni touché — c'est lui qui rattache les coudes
  * persistés du diagramme à la relation.
  */
-function RelationGrid({ schema, onChange }: GridProps) {
+function RelationGrid({ schema, onChange, candidates = [] }: GridProps) {
   const { t } = useTranslation()
   const relations = relationsOf(schema)
   const readOnly = !onChange
+
+  /** Entités désignables, groupées par chemin. Le modèle courant n'est pas
+   *  étiqueté « autre part » : c'est le cas nominal, il vient en tête. */
+  const targetOptions = useMemo(
+    () =>
+      candidates.map((c) => ({
+        value: c.name,
+        label: c.title,
+        group: c.sameModel ? t('mld.relationTargetThisModel') : c.path.join(' / ') || '—',
+      })),
+    [candidates, t],
+  )
+
+  /** Champs de CETTE entité — l'extrémité de départ. */
+  const ownFieldOptions = useMemo(
+    () => fieldsOf(schema).filter((f) => f.name).map((f) => ({
+      value: f.name as string,
+      label: f.title ? `${f.name} · ${f.title}` : (f.name as string),
+    })),
+    [schema],
+  )
+
+  /** Champs de la cible choisie — vide tant qu'elle n'est pas résolue. */
+  const targetFieldOptions = (resource: string) => {
+    const found = candidates.find((c) => c.name === resource)
+    return (found?.fields ?? []).map((f) => ({
+      value: f.name,
+      label: f.title ? `${f.name} · ${f.title}` : f.name,
+    }))
+  }
 
   const patch = (index: number, change: Partial<TableSchemaRelation>) =>
     onChange?.({
@@ -222,29 +317,48 @@ function RelationGrid({ schema, onChange }: GridProps) {
             ))}
           </select>
           <span className="text-xs text-gray-500">{t('mld.relationFrom')}</span>
-          <input
-            value={firstOf(rel.from)}
-            readOnly={readOnly}
-            aria-label={t('mld.relationFrom')}
-            onChange={(e) => patch(i, { from: e.target.value })}
-            className="w-28 bg-transparent font-mono outline-none"
-          />
+          {readOnly ? (
+            <span className="w-28 font-mono">{firstOf(rel.from)}</span>
+          ) : (
+            <PreservingSelect
+              value={firstOf(rel.from)}
+              options={ownFieldOptions}
+              onChange={(v) => patch(i, { from: v })}
+              label={t('mld.relationFrom')}
+              placeholder={t('mld.relationFrom')}
+              unknownSuffix={t('mld.unknownValue')}
+              className="w-32 bg-transparent font-mono text-sm outline-none"
+            />
+          )}
           <span className="text-xs text-gray-500">→</span>
-          <input
-            value={rel.to?.resource ?? ''}
-            readOnly={readOnly}
-            aria-label={t('mld.relationTarget')}
-            placeholder={t('mld.relationTarget')}
-            onChange={(e) => patch(i, { to: { ...rel.to, resource: e.target.value } })}
-            className="w-28 bg-transparent font-mono outline-none"
-          />
-          <input
-            value={firstOf(rel.to?.fields)}
-            readOnly={readOnly}
-            aria-label={t('mld.relationTargetField')}
-            onChange={(e) => patch(i, { to: { ...rel.to, fields: e.target.value } })}
-            className="w-24 bg-transparent font-mono outline-none"
-          />
+          {readOnly ? (
+            <span className="w-28 font-mono">{rel.to?.resource ?? ''}</span>
+          ) : (
+            <PreservingSelect
+              value={rel.to?.resource ?? ''}
+              options={targetOptions}
+              // Changer de cible périme le champ visé : le garder pointerait
+              // vers un champ d'une AUTRE entité, silencieusement.
+              onChange={(v) => patch(i, { to: { resource: v, fields: '' } })}
+              label={t('mld.relationTarget')}
+              placeholder={t('mld.relationTarget')}
+              unknownSuffix={t('mld.unknownValue')}
+              className="w-40 bg-transparent font-mono text-sm outline-none"
+            />
+          )}
+          {readOnly ? (
+            <span className="w-24 font-mono">{firstOf(rel.to?.fields)}</span>
+          ) : (
+            <PreservingSelect
+              value={firstOf(rel.to?.fields)}
+              options={targetFieldOptions(rel.to?.resource ?? '')}
+              onChange={(v) => patch(i, { to: { ...rel.to, fields: v } })}
+              label={t('mld.relationTargetField')}
+              placeholder={t('mld.relationTargetField')}
+              unknownSuffix={t('mld.unknownValue')}
+              className="w-32 bg-transparent font-mono text-sm outline-none"
+            />
+          )}
           {!readOnly && (
             <button
               type="button"
@@ -291,12 +405,13 @@ function RelationGrid({ schema, onChange }: GridProps) {
 interface EntityViewProps {
   schema: TableSchema
   onChange?: (schema: TableSchema) => void
+  candidates?: EntityCandidate[]
   /** Rédaction de la description — l'éditeur markdown complet, monté par
    *  l'appelant qui en tient la référence pour la sauvegarde. */
   description?: ReactNode
 }
 
-function EntityView({ schema, onChange, description }: EntityViewProps) {
+function EntityView({ schema, onChange, candidates, description }: EntityViewProps) {
   const { t } = useTranslation()
   const readOnly = !onChange
 
@@ -321,7 +436,7 @@ function EntityView({ schema, onChange, description }: EntityViewProps) {
             + {t('mld.addField')}
           </button>
         )}
-        <RelationGrid schema={schema} onChange={onChange} />
+        <RelationGrid schema={schema} onChange={onChange} candidates={candidates} />
       </div>
 
       {/* Panneau latéral : la description est du texte libre, elle ne tient pas
@@ -336,8 +451,9 @@ function EntityView({ schema, onChange, description }: EntityViewProps) {
 }
 
 export const TableSchemaEditor = forwardRef<ContentEditorHandle, ContentEditorProps>(
-  ({ initialContent, onDirty, wsSlug }, ref) => {
+  ({ initialContent, onDirty, wsSlug, docId }, ref) => {
     const parsed = useMemo(() => safeParse(initialContent), [initialContent])
+    const candidates = useEntityCandidates(docId)
     const [schema, setSchema] = useState<TableSchema | null>(null)
     // La description est rédigée dans l'éditeur markdown complet, qui est NON
     // CONTRÔLÉ : on ne la lit qu'au moment de la sauvegarde, par sa référence.
@@ -380,6 +496,7 @@ export const TableSchemaEditor = forwardRef<ContentEditorHandle, ContentEditorPr
       <EntityView
         schema={schema ?? parsed}
         onChange={handleChange}
+        candidates={candidates}
         description={
           <MarkdownEditor
             ref={descriptionRef}
