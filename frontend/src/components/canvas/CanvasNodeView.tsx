@@ -9,10 +9,19 @@
  * plus dessinés — et les liens dégradent alors vers le bord (cf. `anchor.ts`).
  */
 
-import { memo } from 'react'
+import { Fragment, memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import type { CanvasNode } from '../../lib/canvas/model'
+import type { CanvasNode, Side } from '../../lib/canvas/model'
 import type { DetailLevel } from '../../lib/canvas/detail'
+import { BOX_PORT, PORT_SIDES, SIDES, handleId } from './handles'
+
+/** Côté du modèle → position du moteur de rendu. */
+const POSITION: Record<Side, Position> = {
+  left: Position.Left,
+  right: Position.Right,
+  top: Position.Top,
+  bottom: Position.Bottom,
+}
 
 export interface CanvasNodeData extends Record<string, unknown> {
   node: CanvasNode
@@ -54,27 +63,48 @@ function CanvasNodeViewImpl({ data, selected }: NodeProps) {
             className="truncate px-2 py-0.5 text-xs text-[var(--diagram-text-muted,#52525b)]"
           >
             {port.label ?? port.id}
-            {/* Un port s'accroche des deux côtés : une relation peut partir de
-                ce champ comme y arriver. */}
-            <Handle
-              type="source"
-              id={port.id}
-              position={Position.Right}
-              className="!h-2 !w-2 !border-0 !bg-[var(--diagram-edge,#71717a)]"
-            />
-            <Handle
-              type="target"
-              id={port.id}
-              position={Position.Left}
-              className="!h-2 !w-2 !border-0 !bg-[var(--diagram-edge,#71717a)]"
-            />
+            {/* Un port s'accroche des DEUX côtés, en départ comme en arrivée :
+                c'est le lien qui choisit le flanc d'après la position relative
+                des boîtes. Figer « source à droite, cible à gauche » forçait les
+                liens allant vers la gauche à contourner leur propre boîte. */}
+            {PORT_SIDES.map((side) => (
+              <Fragment key={side}>
+                <Handle
+                  type="source"
+                  id={handleId(port.id, side)}
+                  position={POSITION[side]}
+                  className="!h-2 !w-2 !border-0 !bg-[var(--diagram-edge,#71717a)]"
+                />
+                <Handle
+                  type="target"
+                  id={handleId(port.id, side)}
+                  position={POSITION[side]}
+                  className="!h-2 !w-2 !border-0 !bg-[var(--diagram-edge,#71717a)]"
+                />
+              </Fragment>
+            ))}
           </div>
         ))}
 
       {/* Ancrage dégradé : toujours présent, même quand les ports sont masqués,
-          pour qu'un lien ait toujours où se raccrocher. */}
-      <Handle type="source" id="__box" position={Position.Right} className="!opacity-0" />
-      <Handle type="target" id="__box" position={Position.Left} className="!opacity-0" />
+          pour qu'un lien ait toujours où se raccrocher — sur les quatre côtés,
+          deux boîtes l'une au-dessus de l'autre se reliant en haut/bas. */}
+      {SIDES.map((side) => (
+        <Fragment key={side}>
+          <Handle
+            type="source"
+            id={handleId(BOX_PORT, side)}
+            position={POSITION[side]}
+            className="!opacity-0"
+          />
+          <Handle
+            type="target"
+            id={handleId(BOX_PORT, side)}
+            position={POSITION[side]}
+            className="!opacity-0"
+          />
+        </Fragment>
+      ))}
     </div>
   )
 }

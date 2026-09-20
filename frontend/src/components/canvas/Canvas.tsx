@@ -25,11 +25,13 @@ import {
   type Viewport as RfViewport,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import type { CanvasDoc, CanvasEdge, CanvasNode, Point } from '../../lib/canvas/model'
-import { nodeSize } from '../../lib/canvas/model'
+import type { CanvasDoc, CanvasEdge, CanvasNode, Point, Side } from '../../lib/canvas/model'
+import { nodeById, nodeSize } from '../../lib/canvas/model'
+import { sidesFor } from '../../lib/canvas/anchor'
 import { detailFor, portsVisibleAt, type DetailLevel } from '../../lib/canvas/detail'
 import { CanvasNodeView, type CanvasNodeData } from './CanvasNodeView'
 import { OrthogonalEdge, type OrthogonalEdgeData } from './OrthogonalEdge'
+import { BOX_PORT, PORT_SIDES, handleId } from './handles'
 
 const NODE_TYPES = { canvasNode: CanvasNodeView }
 const EDGE_TYPES = { orthogonal: OrthogonalEdge }
@@ -66,27 +68,53 @@ function toRenderNodes(
   }))
 }
 
-function toRenderEdges(
+/** Exportée pour le test : le choix du côté d'accroche n'est pas observable au
+ *  rendu (jsdom ne mesure rien), et c'est précisément ce qui s'était perdu —
+ *  `sidesFor` existait, testée, mais n'était appelée par personne. Elle ne sort
+ *  PAS de `lib/canvas/index.ts` : la frontière d'abstraction reste intacte. */
+export function toRenderEdges(
   doc: CanvasDoc,
   portsVisible: boolean,
   onWaypointsChange?: (id: string, w: Point[]) => void,
 ): Edge[] {
-  return doc.edges.map((e) => ({
-    id: e.id,
-    type: 'orthogonal',
-    source: e.source.node,
-    target: e.target.node,
-    // Ancrage dégradé : sans port utilisable, on retombe sur la poignée de
-    // boîte — le lien ne disparaît jamais (cf. `anchor.ts`).
-    sourceHandle: portsVisible && e.source.port ? e.source.port : '__box',
-    targetHandle: portsVisible && e.target.port ? e.target.port : '__box',
-    data: {
-      waypoints: e.waypoints,
-      onWaypointsChange,
-      label: e.label,
-      kind: e.kind,
-    } satisfies OrthogonalEdgeData,
-  }))
+  /** Poignée d'une extrémité : le CÔTÉ vient de la position relative des deux
+   *  boîtes (`sidesFor`), le port du lien lui-même.
+   *
+   *  Sans ce choix de côté, une extrémité s'accrochait toujours au même flanc :
+   *  un lien dont la cible était à gauche ressortait à droite, repassait sous sa
+   *  propre boîte, et ses marques de cardinalité se retrouvaient posées à
+   *  l'opposé du trait visible — on lisait alors la multiplicité à l'envers.
+   *
+   *  En haut/bas, la hauteur d'un port n'a pas de sens : on retombe sur la
+   *  poignée de boîte, exactement comme `anchorPoint` dégrade. */
+  const handleFor = (port: string | undefined, side: Side): string =>
+    portsVisible && port && PORT_SIDES.includes(side)
+      ? handleId(port, side)
+      : handleId(BOX_PORT, side)
+
+  return doc.edges.map((e) => {
+    const source = nodeById(doc, e.source.node)
+    const target = nodeById(doc, e.target.node)
+    // Un nœud manquant (lien orphelin) : React Flow ne dessinera pas l'arête,
+    // on garde le cas nominal plutôt que de lever.
+    const [sourceSide, targetSide] =
+      source && target ? sidesFor(source, target) : (['right', 'left'] as [Side, Side])
+
+    return {
+      id: e.id,
+      type: 'orthogonal',
+      source: e.source.node,
+      target: e.target.node,
+      sourceHandle: handleFor(e.source.port, sourceSide),
+      targetHandle: handleFor(e.target.port, targetSide),
+      data: {
+        waypoints: e.waypoints,
+        onWaypointsChange,
+        label: e.label,
+        kind: e.kind,
+      } satisfies OrthogonalEdgeData,
+    }
+  })
 }
 
 function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, className }: CanvasProps) {

@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Canvas } from '../components/canvas/Canvas'
+import { Canvas, toRenderEdges } from '../components/canvas/Canvas'
 import { autoArrange } from '../lib/canvas/layout'
 import { emptyCanvas, type CanvasDoc } from '../lib/canvas/model'
 
@@ -138,5 +138,64 @@ describe('autoArrange', () => {
   it('accepte un document vide', async () => {
     const vide = emptyCanvas()
     expect(await autoArrange(vide)).toBe(vide)
+  })
+})
+
+// ── Côté d'accroche des liens ────────────────────────────────────────────────
+
+describe('toRenderEdges — le lien sort du BON côté', () => {
+  /** Même document, mais Client posé à GAUCHE de Commande. */
+  const clientAGauche: CanvasDoc = {
+    ...DOC,
+    nodes: [
+      { ...DOC.nodes[0], position: { x: 400, y: 0 } },
+      { ...DOC.nodes[1], position: { x: 0, y: 0 } },
+    ],
+  }
+
+  it('cas nominal : la cible est à droite, on sort à droite et on entre à gauche', () => {
+    const [edge] = toRenderEdges(DOC, true)
+    expect(edge.sourceHandle).toBe('client_id::right')
+    expect(edge.targetHandle).toBe('id::left')
+  })
+
+  it('cible à GAUCHE : le lien s\'inverse au lieu de contourner sa propre boîte', () => {
+    // Régression : les poignées étaient figées (source à droite, cible à
+    // gauche). Le lien ressortait à droite de Commande, repassait SOUS les deux
+    // boîtes, et les marques de cardinalité — posées à l'ancre, donc du bon
+    // côté — se retrouvaient à l'opposé du trait visible. On lisait alors la
+    // multiplicité en face de la mauvaise entité.
+    const [edge] = toRenderEdges(clientAGauche, true)
+    expect(edge.sourceHandle).toBe('client_id::left')
+    expect(edge.targetHandle).toBe('id::right')
+  })
+
+  it('boîtes empilées : accroche en haut/bas, sur la poignée de BOÎTE', () => {
+    // La hauteur d'un port n'a pas de sens sur un bord horizontal : on dégrade
+    // vers le bord, exactement comme `anchorPoint`.
+    const empile: CanvasDoc = {
+      ...DOC,
+      nodes: [
+        { ...DOC.nodes[0], position: { x: 0, y: 0 } },
+        { ...DOC.nodes[1], position: { x: 10, y: 500 } },
+      ],
+    }
+    const [edge] = toRenderEdges(empile, true)
+    expect(edge.sourceHandle).toBe('__box::bottom')
+    expect(edge.targetHandle).toBe('__box::top')
+  })
+
+  it('sous le palier de détail, dégrade vers la boîte en gardant le côté', () => {
+    const [edge] = toRenderEdges(DOC, false)
+    expect(edge.sourceHandle).toBe('__box::right')
+    expect(edge.targetHandle).toBe('__box::left')
+  })
+
+  it('lien orphelin : garde le cas nominal plutôt que de lever', () => {
+    const orphelin: CanvasDoc = {
+      ...DOC,
+      edges: [{ ...DOC.edges[0], target: { node: 'disparu', port: 'id' } }],
+    }
+    expect(() => toRenderEdges(orphelin, true)).not.toThrow()
   })
 })
