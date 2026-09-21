@@ -46,6 +46,28 @@
   border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 60%, transparent);
   pointer-events: none;
 }
+/* Repère de TUILE : un plan (canevas) ne se coupe pas, il se tuile. Le repère
+   marque le coin haut-gauche de chaque page et porte ses coordonnées, sans quoi
+   les feuilles imprimées ne se recollent pas. Aperçu seulement. */
+.tile-marker {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 60%, transparent);
+  border-left: 1px dashed color-mix(in srgb, var(--color-accent-2) 60%, transparent);
+  pointer-events: none;
+}
+.tile-marker-label {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--color-accent-2-700);
+}
+
 .page-marker-label {
   position: absolute;
   left: calc(100% + 8px);

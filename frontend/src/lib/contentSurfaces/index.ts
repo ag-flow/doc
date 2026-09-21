@@ -16,6 +16,7 @@
  */
 
 import type { ForwardRefExoticComponent, RefAttributes } from 'react'
+import type { PrintLayout } from '../print/layout'
 import { markdownSurface } from './markdown'
 import { modelLayoutSurface } from './modelLayout'
 import { plainTextSurface } from './plainText'
@@ -97,6 +98,12 @@ export interface ContentSurface {
    *  grille de champs s'y retrouvent enfermés dans une colonne étroite — au
    *  point de tronquer les colonnes d'un tableau. Défaut : non (prose). */
   fullWidth?: boolean
+  /** Régime de pagination à l'impression, mesuré sur le rendu de la surface.
+   *
+   *  Absent = repli `plane` mesuré sur la boîte : le contenu est tuilé plutôt
+   *  que tranché au hasard. Un repli qui tuile ne perd rien — au pire il
+   *  consomme du papier, ce qui se voit ; un repli qui tronque ne se voit pas. */
+  getPrintLayout?: (root: HTMLElement) => PrintLayout
 }
 
 // ── Registre ──────────────────────────────────────────────────────────────────
@@ -129,4 +136,5 @@ export function contentTypeLabelKey(contentType: string | null | undefined): str
   return SURFACES[contentType]?.labelKey ?? null
 }
 
+export type { FlowBlock, PrintLayout, Tile } from '../print/layout'
 export { markdownSurface, modelLayoutSurface, plainTextSurface, tableSchemaSurface }

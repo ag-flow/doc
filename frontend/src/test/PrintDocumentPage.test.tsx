@@ -107,6 +107,41 @@ describe('PrintDocumentPage', () => {
   })
 })
 
+describe('PrintDocumentPage — plusieurs types de contenu', () => {
+  it('la section porte son type de contenu et isole le contenu du titre', async () => {
+    // C'est ce marquage qui permet à la page de demander SON régime à la surface
+    // plutôt que de supposer que tout document est du markdown.
+    renderAt('/ws/w/blocs/b/documents/root/print')
+    const section = await screen.findByTestId('print-doc-root')
+
+    expect(section).toHaveAttribute('data-content-type', 'md')
+    // Le titre du document n'appartient pas à la surface : il est hors du
+    // conteneur que la surface mesure.
+    const content = section.querySelector('[data-print-content]')
+    expect(content).not.toBeNull()
+    expect(content!.querySelector('h1')).toBeNull()
+  })
+
+  it('un type de contenu INCONNU s\'imprime quand même, par la surface de repli', async () => {
+    // Le défaut réparé : ne rien savoir d'un type ne doit pas faire disparaître
+    // son contenu de la page imprimée.
+    vi.mocked(docsApi.getDocument).mockImplementation(async () => ({
+      ...doc('root', 'Exotique', 'contenu brut'),
+      type: 'widget-maison',
+    }))
+    renderAt('/ws/w/blocs/b/documents/root/print')
+
+    const section = await screen.findByTestId('print-doc-root')
+    expect(section).toHaveAttribute('data-content-type', 'widget-maison')
+    expect(section).toHaveTextContent('contenu brut')
+  })
+
+  it('annonce le nombre de pages', async () => {
+    renderAt('/ws/w/blocs/b/documents/root/print')
+    expect(await screen.findByTestId('print-page-count')).toHaveTextContent(/\d+ page/)
+  })
+})
+
 describe('fitFactor — réduction des composants plus hauts qu’une page', () => {
   it('tient sur la page → aucun zoom', () => {
     expect(fitFactor(500, 1000)).toBe(1)

@@ -13,6 +13,7 @@ import type {
   ContentViewerHandle,
   ContentViewerProps,
 } from './index'
+import type { FlowBlock, PrintLayout } from '../print/layout'
 
 export const TABLE_SCHEMA_CONTENT_TYPE = 'table-schema'
 
@@ -48,4 +49,26 @@ export const tableSchemaSurface: ContentSurface = {
   Viewer,
   supportsRichCopy: false,
   fullWidth: true,
+  /** Une entité est un FLUX : sa grille se coupe proprement entre deux champs.
+   *
+   *  Traitée en bloc insécable, une entité de cinquante champs serait réduite
+   *  jusqu'à l'illisible pour tenir sur une page. Chaque ligne est donc sécable,
+   *  et les en-têtes de section restent des titres — jamais seuls en bas de page. */
+  getPrintLayout: (root): PrintLayout => {
+    const rootTop = root.getBoundingClientRect().top
+    const rows = root.querySelectorAll<HTMLElement>(
+      '[data-testid^="field-row-"], [data-testid^="relation-row-"]',
+    )
+    const blocks: FlowBlock[] = []
+    root.querySelectorAll<HTMLElement>('thead, [data-testid="relation-grid"] > div:first-child')
+      .forEach((h) => {
+        const r = h.getBoundingClientRect()
+        blocks.push({ top: r.top - rootTop, bottom: r.bottom - rootTop, kind: 'heading' })
+      })
+    rows.forEach((row) => {
+      const r = row.getBoundingClientRect()
+      blocks.push({ top: r.top - rootTop, bottom: r.bottom - rootTop, kind: 'break' })
+    })
+    return { mode: 'flow', blocks: blocks.sort((a, b) => a.top - b.top) }
+  },
 }
