@@ -54,17 +54,17 @@ WITH RECURSIVE roots AS (
 ),
 tree AS (
     SELECT d.doc_technical_key, d.title, d.parent, d.functional_type_ref,
-           d.updated_at, d.updated_by, 0 AS depth
+           d.type, d.updated_at, d.updated_by, 0 AS depth
     FROM document d
     JOIN roots r ON r.doc_technical_key = d.doc_technical_key
     UNION ALL
     SELECT c.doc_technical_key, c.title, c.parent, c.functional_type_ref,
-           c.updated_at, c.updated_by, t.depth + 1
+           c.type, c.updated_at, c.updated_by, t.depth + 1
     FROM document c
     JOIN tree t ON c.parent = t.doc_technical_key
 ) CYCLE doc_technical_key SET is_cycle USING path
 SELECT t.doc_technical_key AS id, t.title, t.parent AS parent_id,
-       t.updated_at, t.updated_by,
+       t.type, t.updated_at, t.updated_by,
        ft.slug AS functional_type_slug, t.depth
 FROM tree t
 LEFT JOIN functional_type ft ON ft.id = t.functional_type_ref
@@ -102,6 +102,7 @@ def _build_tree(
             id=str(r["id"]),
             title=r["title"],
             functional_type_slug=r["functional_type_slug"],
+            type=r["type"],
             parent_id=str(r["parent_id"]) if r["parent_id"] is not None else None,
             updated_at=r["updated_at"],
             updated_by=r["updated_by"],

@@ -43,6 +43,7 @@ Viewer.displayName = 'TableSchemaViewerLazy'
 
 export const tableSchemaSurface: ContentSurface = {
   contentType: TABLE_SCHEMA_CONTENT_TYPE,
+  labelKey: 'contentType.tableSchema',
   Editor,
   Viewer,
   supportsRichCopy: false,

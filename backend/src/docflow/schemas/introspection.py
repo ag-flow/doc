@@ -65,6 +65,10 @@ class BlockObjectOut(BaseModel):
     id: str
     title: str
     functional_type_slug: str | None
+    # Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…) — la
+    # grammaire du document, à ne pas confondre avec son type FONCTIONNEL, qui
+    # dit ce qu'il représente métier.
+    type: str = "md"
     updated_at: datetime | None = None
     updated_by: str | None = None
     properties: list[PropertyValueBrief]

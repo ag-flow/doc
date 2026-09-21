@@ -17,7 +17,7 @@ import { DocumentToc, DocumentPrevNext } from '../components/DocumentTocNav'
 
 function node(id: string, title: string, children: BlockTreeNode[] = []): BlockTreeNode {
   return {
-    id, title, functional_type_slug: null, parent_id: null,
+    id, title, functional_type_slug: null, type: 'md', parent_id: null,
     properties: [], children, updated_at: null, updated_by: null,
   }
 }

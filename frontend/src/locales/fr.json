@@ -273,7 +273,8 @@
     "emptyFiltered": "Aucun document ne correspond aux filtres actifs.",
     "emptyBloc": "Ce bloc ne contient encore aucun document.",
     "public": "Public",
-    "private": "Privé"
+    "private": "Privé",
+    "contentType": "Type technique"
   },
   "docnav": {
     "toc": "Sommaire",
@@ -730,5 +731,11 @@
     "removeRelation": "Retirer cette relation",
     "relationTargetThisModel": "Ce modèle",
     "unknownValue": "(introuvable)"
+  },
+  "contentType": {
+    "markdown": "Markdown",
+    "modelLayout": "MCD",
+    "tableSchema": "MCD entité",
+    "plainText": "Texte"
   }
 }

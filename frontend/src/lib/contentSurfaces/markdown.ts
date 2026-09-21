@@ -9,6 +9,7 @@ export const MARKDOWN_CONTENT_TYPE = 'md'
 
 export const markdownSurface: ContentSurface = {
   contentType: MARKDOWN_CONTENT_TYPE,
+  labelKey: 'contentType.markdown',
   Editor: MarkdownEditor,
   Viewer: MarkdownViewer,
   supportsRichCopy: true,

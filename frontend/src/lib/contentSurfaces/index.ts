@@ -71,6 +71,12 @@ export type ContentViewerComponent = ForwardRefExoticComponent<
 export interface ContentSurface {
   /** Valeur de `DocumentOut.type` servie par cette surface. Unique dans le registre. */
   contentType: string
+  /** Clef i18n de l'étiquette lisible du type — ce qu'on affiche en liste.
+   *
+   *  Elle vit ICI et pas dans une table à part : le registre est déjà la source
+   *  de vérité des types de contenu, et une seconde table dériverait de lui dès
+   *  le premier type ajouté. */
+  labelKey: string
   Editor: ContentEditorComponent
   Viewer: ContentViewerComponent
   /** La surface sait produire une copie riche (HTML + composants en images).
@@ -100,6 +106,19 @@ export const SURFACES: Record<string, ContentSurface> = {
 export function surfaceFor(contentType: string | null | undefined): ContentSurface {
   if (!contentType) return FALLBACK_SURFACE
   return SURFACES[contentType] ?? FALLBACK_SURFACE
+}
+
+/**
+ * Clef i18n de l'étiquette d'un type de contenu, ou `null` s'il est inconnu.
+ *
+ * Volontairement SANS repli sur la surface de secours : un type non enregistré
+ * doit s'afficher tel quel, brut. Le masquer derrière « Texte » ferait passer un
+ * type qu'on ne sait pas servir pour un type ordinaire — l'appelant décide quoi
+ * en faire, il n'hérite pas d'un mensonge.
+ */
+export function contentTypeLabelKey(contentType: string | null | undefined): string | null {
+  if (!contentType) return null
+  return SURFACES[contentType]?.labelKey ?? null
 }
 
 export { markdownSurface, modelLayoutSurface, plainTextSurface, tableSchemaSurface }

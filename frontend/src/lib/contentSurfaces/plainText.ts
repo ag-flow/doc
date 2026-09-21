@@ -7,6 +7,7 @@ import type { ContentSurface } from './index'
 // registre pour toute valeur inconnue (y compris absente).
 export const plainTextSurface: ContentSurface = {
   contentType: '__plain__',
+  labelKey: 'contentType.plainText',
   Editor: PlainTextEditor,
   Viewer: PlainTextViewer,
 }

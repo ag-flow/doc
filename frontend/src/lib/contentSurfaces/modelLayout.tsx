@@ -49,6 +49,7 @@ Viewer.displayName = 'ModelLayoutViewerLazy'
 
 export const modelLayoutSurface: ContentSurface = {
   contentType: MODEL_LAYOUT_CONTENT_TYPE,
+  labelKey: 'contentType.modelLayout',
   Editor,
   Viewer,
   // Un diagramme n'a pas de représentation HTML fidèle à mettre au presse-papiers.

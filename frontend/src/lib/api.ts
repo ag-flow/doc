@@ -459,6 +459,8 @@ export interface BlockObjectOut {
   id: string
   title: string
   functional_type_slug: string | null
+  /** Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…). */
+  type: string
   properties: PropertyValueBrief[]
   updated_at: string | null
   updated_by: string | null
@@ -478,6 +480,8 @@ export interface BlockTreeNode {
   id: string
   title: string
   functional_type_slug: string | null
+  /** Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…). */
+  type: string
   parent_id: string | null
   properties: PropertyValueBrief[]
   children: BlockTreeNode[]

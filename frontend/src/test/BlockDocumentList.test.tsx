@@ -73,6 +73,7 @@ function makeTreePage(
     id: doc.doc_technical_key,
     title: doc.title,
     functional_type_slug: doc.functional_type_slug,
+    type: doc.type ?? 'md',
     parent_id: doc.parent_id,
     updated_at: null,
     updated_by: null,
@@ -350,6 +351,7 @@ describe('BlockDocumentList', () => {
           id: 'atdd1',
           title: 'ATDD done',
           functional_type_slug: 'atdd',
+          type: 'md',
           updated_at: null,
           updated_by: null,
           properties: [
@@ -395,6 +397,41 @@ describe('BlockDocumentList', () => {
     expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
   })
 
+  // ── Colonne « type technique » ────────────────────────────────────────────
+
+  it('affiche le type technique via la table de mapping, pas la clef brute', async () => {
+    // Le parent d'un MCD porte la mise en page, ses enfants les entités : deux
+    // types de contenu distincts, deux étiquettes distinctes.
+    const docs = [
+      makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout', parent_id: null }),
+      makeDoc({ doc_technical_key: 'e1', title: 'Client', type: 'table-schema', parent_id: 'm1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList('/ws/ws/blocs/b1/documents?vue=liste')
+
+    await waitFor(() => expect(screen.getByText('Boutique')).toBeInTheDocument())
+    expect(screen.getByText('MCD')).toBeInTheDocument()
+    expect(screen.getByText('MCD entité')).toBeInTheDocument()
+    // La clef brute ne s'affiche jamais quand le type est enregistré.
+    expect(screen.queryByText('model-layout')).not.toBeInTheDocument()
+    expect(screen.queryByText('table-schema')).not.toBeInTheDocument()
+  })
+
+  it('affiche TEL QUEL un type de contenu non enregistré', async () => {
+    // Le masquer derrière une étiquette générique ferait passer un type qu'on ne
+    // sait pas servir pour un type ordinaire : il doit se voir.
+    const docs = [makeDoc({ doc_technical_key: 'x1', title: 'Inconnu', type: 'widget-maison' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList()
+
+    await waitFor(() => expect(screen.getByText('Inconnu')).toBeInTheDocument())
+    expect(screen.getByText('widget-maison')).toBeInTheDocument()
+  })
+
   // Le TYPE n'est pas une propriété : il se filtre par `type_slugs`, sur la
   // colonne du document, sans passer par les valeurs de propriétés.
   it('filtre sur le type d\'objet et bascule en mode requête', async () => {
@@ -421,6 +458,7 @@ describe('BlockDocumentList', () => {
       objects: [
         {
           id: 'epic1', title: 'Epic 1', functional_type_slug: 'epic',
+          type: 'md',
           updated_at: null, updated_by: null, properties: [],
         },
       ],
@@ -489,7 +527,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -536,7 +574,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 250,
       has_next: true,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -645,6 +683,7 @@ describe('BlockDocumentList', () => {
       objects: [
         {
           id: 'e1',
+          type: 'md',
           title: 'Epic 1',
           updated_at: null,
           updated_by: null,
@@ -736,7 +775,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', updated_at: null, updated_by: null, properties: [statut('done')] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [statut('done')] }],
     })
 
     renderList()
@@ -858,6 +897,7 @@ describe('BlockDocumentList', () => {
       roots: docs.map((d) => ({
         id: d.doc_technical_key,
         title: d.title,
+        type: 'md',
         updated_at: null,
         updated_by: null,
         functional_type_slug: d.functional_type_slug,
@@ -1170,6 +1210,7 @@ describe('BlockDocumentList — tri, filtres et URL', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       objects: [{
         id: 'd1', title: 'Alpha', functional_type_slug: 'epic',
+        type: 'md',
         updated_at: null, updated_by: null,
         properties: [{
           prop_slug: 'statut', type: 'restricted_list', value: null,

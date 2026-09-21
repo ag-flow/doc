@@ -45,12 +45,16 @@ import { ReparentDialog } from '../components/ReparentDialog'
 import { AddDocumentDialog } from '../components/AddDocumentDialog'
 import { DeleteBlocDialog } from '../components/DeleteBlocDialog'
 import { HeaderFilterPopover, type FilterColumn } from '../components/HeaderFilterPopover'
+import { contentTypeLabelKey } from '../lib/contentSurfaces'
 import { InlinePropertyCell } from '../components/InlinePropertyCell'
 
 interface TreeRow {
   id: string
   title: string
   functional_type_slug: string | null
+  /** Type de CONTENU (`md`, `model-layout`…) — la grammaire du corps, à ne pas
+   *  confondre avec le type fonctionnel, qui dit ce qu'il représente métier. */
+  type?: string | null
   updated_at?: string | null
   updated_by?: string | null
   subRows: TreeRow[]
@@ -110,6 +114,7 @@ function treeNodeToRow(node: BlockTreeNode): TreeRow {
     id: node.id,
     title: node.title,
     functional_type_slug: node.functional_type_slug,
+    type: node.type,
     updated_at: node.updated_at,
     updated_by: node.updated_by,
     subRows: node.children.map(treeNodeToRow),
@@ -142,6 +147,7 @@ function flatRows(page: BlockObjectsPage): TreeRow[] {
     id: o.id,
     title: o.title,
     functional_type_slug: o.functional_type_slug,
+    type: o.type,
     updated_at: o.updated_at,
     updated_by: o.updated_by,
     subRows: [],
@@ -639,6 +645,24 @@ export function BlockDocumentList() {
         cell: ({ getValue }) => (
           <span className="font-mono text-xs text-gray-500">{String(getValue() ?? '—')}</span>
         ),
+      },
+      {
+        id: 'content_type',
+        accessorKey: 'type',
+        header: t('documents.contentType'),
+        cell: ({ getValue }) => {
+          // Passage par le REGISTRE : la clef brute (`model-layout`) n'est pas
+          // ce qu'on montre. Un type non enregistré s'affiche tel quel plutôt
+          // que déguisé en type ordinaire — il doit se voir.
+          const raw = getValue() as string | null | undefined
+          const key = contentTypeLabelKey(raw)
+          if (!raw) return <span className="text-ink/[0.4]">—</span>
+          return key ? (
+            <span className="tag tag-neutral">{t(key)}</span>
+          ) : (
+            <span className="font-mono text-xs text-ink/[0.55]">{raw}</span>
+          )
+        },
       },
       {
         id: 'updated',
