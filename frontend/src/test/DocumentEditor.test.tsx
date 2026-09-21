@@ -311,6 +311,57 @@ describe('DocumentEditor — mode focus', () => {
   })
 })
 
+describe('DocumentEditor — une seule coquille, un seul pied de page', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('le pied de page est monté une seule fois, en lecture comme en édition', async () => {
+    // Il était ÉCRIT deux fois, avec sa propre requête de réactions de chaque
+    // côté. Les deux copies n'avaient pas encore divergé — il s'agissait de les
+    // réunir avant que ça n'arrive.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getAllByTestId('document-footer')).toHaveLength(1)
+
+    await enterEditMode()
+    expect(screen.getAllByTestId('document-footer')).toHaveLength(1)
+  })
+
+  it('le mode focus passe par la coquille — plus de branche parallèle', async () => {
+    // C'est ce rapatriement qui empêche la divergence de revenir : la classe de
+    // feuille est calculée à un seul endroit pour les trois modes.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await enterEditMode()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-focus-btn'))
+    })
+
+    expect(screen.getByTestId('focus-sheet')).toBeInTheDocument()
+    // La coquille reste montée : le focus est un MODE, pas un écran à part.
+    expect(screen.getByTestId('document-editor')).toBeInTheDocument()
+  })
+})
+
+describe('règle de titre — différenciée À DESSEIN entre lecture et édition', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('l\'édition montre le corps RÉEL, titre dupliqué compris', async () => {
+    // Ce n'est pas un oubli : en édition on doit voir ce qu'on modifie. Retirer
+    // le doublon ferait éditer une projection. Le test acte la différence pour
+    // qu'elle ne dérive pas d'un côté ou de l'autre.
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      content: '# Mon document\n\nCorps.',
+    })
+    renderEditor()
+    await enterEditMode()
+
+    expect(screen.getByTestId('markdown-editor-mock')).toHaveTextContent('# Mon document')
+  })
+})
+
 describe('feuille document — aucun débordement horizontal possible', () => {
   // jsdom ne calcule pas de layout : on verrouille les règles CSS qui empêchent
   // le débordement, seul garde-fou automatisable.

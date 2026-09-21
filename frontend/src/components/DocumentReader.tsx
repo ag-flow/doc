@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   BookOpen,
@@ -17,15 +16,13 @@ import {
   TextAa,
 } from '@phosphor-icons/react'
 import { useReadingPrefs } from '../hooks/useReadingPrefs'
-import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
+import { type DocumentOut } from '../lib/api'
 import { relativeDate } from '../lib/relativeDate'
 import { stripTitleHeading } from '../lib/markdownTitle'
 import { surfaceFor, type ContentViewerHandle } from '../lib/contentSurfaces'
-import { DocumentChildrenPanel } from './DocumentChildrenPanel'
 import { BacklinksPanel } from './BacklinksPanel'
 import { PropertiesPanel } from './PropertiesPanel'
-import { ReactionBar } from './ReactionBar'
-import { CommentsPanel } from './CommentsPanel'
+import { DocumentFooter } from './DocumentFooter'
 import { DocumentShell } from './DocumentShell'
 import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
 import { ExportPdfDialog } from './ExportPdfDialog'
@@ -45,7 +42,6 @@ interface DocumentReaderProps {
  */
 export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentReaderProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
   const [copiedDoc, setCopiedDoc] = useState(false)
   const [richState, setRichState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
@@ -130,18 +126,6 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
     return () => el.removeEventListener('wheel', onWheel)
   }, [incScale, decScale])
 
-  const { data: reactions } = useQuery<ReactionOut>({
-    queryKey: ['doc-reactions', ws, docId],
-    queryFn: () => reactionsApi.getDocReactions(ws, docId),
-    staleTime: 30_000,
-  })
-
-  const reactDocMutation = useMutation({
-    mutationFn: (nature: 1 | -1) => reactionsApi.toggleDocReaction(ws, docId, nature),
-    onSuccess: (updated: ReactionOut) => {
-      queryClient.setQueryData(['doc-reactions', ws, docId], updated)
-    },
-  })
 
   // Beaucoup de documents commencent par « # <titre> » (modèles de contenu) :
   // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
@@ -332,21 +316,7 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
         footer={
           <>
             <DocumentPrevNext ws={ws} bloc={blocSlug} docId={docId} />
-            <div className="mt-8">
-              <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
-            </div>
-            <div className="mt-6 border-t border-[var(--color-divider)] pt-6">
-              {reactions && (
-                <div className="mb-4">
-                  <ReactionBar
-                    reactions={reactions}
-                    onReact={(n) => reactDocMutation.mutate(n)}
-                    disabled={reactDocMutation.isPending}
-                  />
-                </div>
-              )}
-              <CommentsPanel ws={ws} docId={docId} />
-            </div>
+            <DocumentFooter ws={ws} blocSlug={blocSlug} docId={docId} />
           </>
         }
       >

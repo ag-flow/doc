@@ -24,6 +24,16 @@ interface Props {
    *  pour du texte : appliquées à un plan de travail, elles l'enferment dans une
    *  colonne étroite. Une surface qui n'est pas de la prose le déclare ici. */
   wide?: boolean
+  /** Rédaction plein écran : calque, barre minimale, pas de colonnes.
+   *
+   *  Ce mode vivait AILLEURS, dans une branche de `DocumentEditor` qui
+   *  court-circuitait cette coquille. Il avait déjà dérivé : il codait
+   *  `wiki-prose` en dur et ignorait donc `wide`. Le rapatrier ici garantit que
+   *  la classe de la feuille est calculée à UN SEUL endroit, pour les trois
+   *  modes — c'est la seule façon d'empêcher la divergence de revenir. */
+  focus?: boolean
+  /** Barre du mode focus : titre lu, statut, enregistrer, sortir. */
+  focusBar?: ReactNode
 }
 
 /**
@@ -42,7 +52,25 @@ export function DocumentShell({
   children,
   footer,
   wide,
+  focus,
+  focusBar,
 }: Props) {
+  // UN seul calcul de la classe de feuille, partagé par les trois modes.
+  const sheetClass = `doc-sheet${wide ? ' doc-sheet-wide' : ' wiki-prose'}`
+
+  if (focus) {
+    return (
+      <div className="fixed inset-0 z-40 overflow-y-auto bg-paper">
+        <div className="sticky top-0 z-10 flex items-center gap-3 bg-paper px-[30px] py-3.5">
+          {focusBar}
+        </div>
+        <div className={`mx-auto px-6 pb-32 ${wide ? 'max-w-none' : 'max-w-[820px]'}`}>
+          <div className={sheetClass} data-testid="focus-sheet">{children}</div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`doc-shell${nav ? ' doc-shell-nav' : ''}${aside ? ' doc-shell-aside' : ''}`}>
       {actions && <HeaderActions>{actions}</HeaderActions>}
@@ -58,7 +86,7 @@ export function DocumentShell({
       <div className={`doc-grid${aside ? ' doc-grid-aside' : ''}${nav ? ' doc-grid-nav' : ''}`}>
         {nav && <div className="doc-nav-col">{nav}</div>}
         <div className="min-w-0">
-          <div className={`doc-sheet${wide ? ' doc-sheet-wide' : ' wiki-prose'}`}>{children}</div>
+          <div className={sheetClass}>{children}</div>
           {footer}
         </div>
         {aside && <aside className="doc-aside">{aside}</aside>}

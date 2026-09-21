@@ -6,7 +6,7 @@ import {
   ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, ClockCounterClockwise, Eye, EyeSlash,
   FloppyDisk, LinkSimple, Trash,
 } from '@phosphor-icons/react'
-import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
+import { ApiError, docsApi, type DocumentOut } from '../lib/api'
 
 const _SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
 import { Button } from '../components/ui/button'
@@ -14,12 +14,10 @@ import { ReparentDialog } from '../components/ReparentDialog'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
 import { ConflictResolver } from './ConflictResolver'
-import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
 import { surfaceFor, type ContentEditorHandle } from '../lib/contentSurfaces'
-import { ReactionBar } from '../components/ReactionBar'
-import { CommentsPanel } from '../components/CommentsPanel'
 import { BacklinksPanel } from '../components/BacklinksPanel'
 import { DocumentReader } from '../components/DocumentReader'
+import { DocumentFooter } from '../components/DocumentFooter'
 import { DocumentShell } from '../components/DocumentShell'
 import { VersionHistoryDialog } from '../components/VersionHistoryDialog'
 import { relativeDate } from '../lib/relativeDate'
@@ -80,19 +78,6 @@ export function DocumentEditor() {
 
   const [showReparent, setShowReparent] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
-  const { data: reactions } = useQuery<ReactionOut>({
-    queryKey: ['doc-reactions', ws, docId],
-    queryFn: () => reactionsApi.getDocReactions(ws!, docId!),
-    enabled: Boolean(ws && docId),
-    staleTime: 30_000,
-  })
-
-  const reactDocMutation = useMutation({
-    mutationFn: (nature: 1 | -1) => reactionsApi.toggleDocReaction(ws!, docId!, nature),
-    onSuccess: (updated: ReactionOut) => {
-      queryClient.setQueryData(['doc-reactions', ws, docId], updated)
-    },
-  })
 
   const { data: doc, isLoading } = useQuery<DocumentOut>({
     queryKey: ['document', ws, docId],
@@ -513,46 +498,32 @@ export function DocumentEditor() {
     />
   )
 
-  // Mode rédaction plein écran : la feuille et rien d'autre, mêmes métriques.
-  if (focusMode) {
-    return (
-      <div className="fixed inset-0 z-40 overflow-y-auto bg-paper" data-testid="document-editor">
-        <div className="sticky top-0 z-10 flex items-center gap-3 bg-paper px-[30px] py-3.5">
-          <span className="truncate text-[13px] text-ink/[0.5]">{title}</span>
-          {statusNote}
-          <span className="flex-1" />
-          <Button onClick={() => void doSave()} disabled={status !== 'dirty' && status !== 'error'}>
-            <FloppyDisk size={15} weight="duotone" /> {t('editor.save')}
-          </Button>
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={() => setFocusMode(false)}
-            title={t('editor.focusExit')}
-          >
-            <ArrowsIn size={14} weight="duotone" />
-          </Button>
-        </div>
-        {/* Le mode focus honore `fullWidth` comme la coquille normale. Il codait
-            `wiki-prose` en dur : un diagramme ou une grille de champs s'y
-            retrouvait enfermé dans la mesure de lecture de 72 caractères —
-            exactement le défaut que `fullWidth` existe pour éviter, reproduit
-            dans la branche oubliée. */}
-        <div className={`mx-auto px-6 pb-32 ${fullWidth ? 'max-w-none' : 'max-w-[820px]'}`}>
-          <div
-            className={`doc-sheet${fullWidth ? ' doc-sheet-wide' : ' wiki-prose'}`}
-            data-testid="focus-sheet"
-          >
-            {editorSheet}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Barre du mode focus — son CONTENU est propre à l'édition ; sa mise en page
+  // appartient à la coquille, comme celle des deux autres modes.
+  const focusBar = (
+    <>
+      <span className="truncate text-[13px] text-ink/[0.5]">{title}</span>
+      {statusNote}
+      <span className="flex-1" />
+      <Button onClick={() => void doSave()} disabled={status !== 'dirty' && status !== 'error'}>
+        <FloppyDisk size={15} weight="duotone" /> {t('editor.save')}
+      </Button>
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => setFocusMode(false)}
+        title={t('editor.focusExit')}
+      >
+        <ArrowsIn size={14} weight="duotone" />
+      </Button>
+    </>
+  )
 
   return (
     <div data-testid="document-editor">
       <DocumentShell
+        focus={focusMode}
+        focusBar={focusBar}
         wide={fullWidth}
         kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
         title={
@@ -624,21 +595,7 @@ export function DocumentEditor() {
         }
         footer={
           <>
-            <div className="mt-8">
-              <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
-            </div>
-            <div className="mt-6 border-t border-[var(--color-divider)] pt-6">
-              {reactions && (
-                <div className="mb-4">
-                  <ReactionBar
-                    reactions={reactions}
-                    onReact={(n) => reactDocMutation.mutate(n)}
-                    disabled={reactDocMutation.isPending}
-                  />
-                </div>
-              )}
-              <CommentsPanel ws={ws} docId={docId} />
-            </div>
+            <DocumentFooter ws={ws} blocSlug={blocSlug} docId={docId} />
           </>
         }
       >
