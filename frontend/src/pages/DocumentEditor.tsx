@@ -3,7 +3,7 @@ import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, ClockCounterClockwise, Eye, EyeSlash,
+  ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, Eye, EyeSlash,
   FloppyDisk, LinkSimple, Trash,
 } from '@phosphor-icons/react'
 import { ApiError, docsApi, type DocumentOut } from '../lib/api'
@@ -19,7 +19,7 @@ import { BacklinksPanel } from '../components/BacklinksPanel'
 import { DocumentReader } from '../components/DocumentReader'
 import { DocumentFooter } from '../components/DocumentFooter'
 import { DocumentShell } from '../components/DocumentShell'
-import { VersionHistoryDialog } from '../components/VersionHistoryDialog'
+import { DocumentHistoryAction } from '../components/DocumentHistoryAction'
 import { relativeDate } from '../lib/relativeDate'
 import { watchDocument } from '../lib/docWatch'
 import { threeWayMerge } from '../lib/merge3'
@@ -77,7 +77,6 @@ export function DocumentEditor() {
   })
 
   const [showReparent, setShowReparent] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
 
   const { data: doc, isLoading } = useQuery<DocumentOut>({
     queryKey: ['document', ws, docId],
@@ -441,15 +440,7 @@ export function DocumentEditor() {
       >
         {focusMode ? <ArrowsIn size={14} weight="duotone" /> : <ArrowsOut size={14} weight="duotone" />}
       </Button>
-      <Button
-        variant="icon"
-        size="sm"
-        onClick={() => setShowHistory(true)}
-        title={t('editor.history', 'Historique des versions')}
-        data-testid="document-history-btn"
-      >
-        <ClockCounterClockwise size={14} weight="duotone" />
-      </Button>
+      <DocumentHistoryAction ws={ws!} docId={docId!} currentVersion={doc.version} />
       <Button
         variant="icon"
         size="sm"
@@ -602,14 +593,6 @@ export function DocumentEditor() {
         {editorSheet}
       </DocumentShell>
 
-      {showHistory && ws && docId && (
-        <VersionHistoryDialog
-          ws={ws}
-          docId={docId}
-          currentVersion={doc.version}
-          onClose={() => setShowHistory(false)}
-        />
-      )}
 
       {showReparent && doc && (
         <ReparentDialog

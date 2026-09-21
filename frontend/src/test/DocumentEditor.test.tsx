@@ -344,6 +344,38 @@ describe('DocumentEditor — une seule coquille, un seul pied de page', () => {
   })
 })
 
+describe('actions de page — offertes dans les modes où elles ont du sens', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('l\'historique est offert en lecture ET en édition', async () => {
+    // Il n'existait qu'en édition — par oubli, pas par choix : c'est une action
+    // en LECTURE SEULE sur le document, rien ne s'opposait à l'offrir des deux
+    // côtés. Réunie en un composant, la prochaine évolution profitera aux deux.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getByTestId('document-history-btn')).toBeInTheDocument()
+
+    await enterEditMode()
+    expect(screen.getByTestId('document-history-btn')).toBeInTheDocument()
+  })
+
+  it('l\'export PDF reste réservé à la LECTURE, et c\'est délibéré', async () => {
+    // Il exporte la version ENREGISTRÉE. L'offrir en édition exporterait autre
+    // chose que ce qu'on a sous les yeux dès qu'il y a des modifications non
+    // sauvées — un piège silencieux. L'absence est ici une décision, plus un
+    // oubli de branche, et ce test l'acte.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('export-pdf-btn')).toBeInTheDocument())
+
+    await enterEditMode()
+    expect(screen.queryByTestId('export-pdf-btn')).not.toBeInTheDocument()
+  })
+})
+
 describe('règle de titre — différenciée À DESSEIN entre lecture et édition', () => {
   beforeEach(() => vi.clearAllMocks())
 

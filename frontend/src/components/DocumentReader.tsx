@@ -23,6 +23,7 @@ import { surfaceFor, type ContentViewerHandle } from '../lib/contentSurfaces'
 import { BacklinksPanel } from './BacklinksPanel'
 import { PropertiesPanel } from './PropertiesPanel'
 import { DocumentFooter } from './DocumentFooter'
+import { DocumentHistoryAction } from './DocumentHistoryAction'
 import { DocumentShell } from './DocumentShell'
 import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
 import { ExportPdfDialog } from './ExportPdfDialog'
@@ -294,6 +295,9 @@ export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentRea
             >
               <FilePdf size={14} weight="duotone" />
             </Button>
+            {/* Historique : lecture seule sur le document, donc offert dans les
+                deux modes. Il n'existait qu'en édition par oubli, pas par choix. */}
+            <DocumentHistoryAction ws={ws} docId={docId} currentVersion={doc.version} />
             <Button onClick={onEdit} data-testid="document-edit-btn">
               <PencilSimple size={14} weight="duotone" />
               {t('editor.edit')}
