@@ -137,9 +137,12 @@ interface DiagramProps {
   empty: boolean
   loading?: boolean
   readOnly?: boolean
+  forPrint?: boolean
 }
 
-function Diagram({ doc, onChange, onOpenEntity, empty, loading, readOnly }: DiagramProps) {
+function Diagram({
+  doc, onChange, onOpenEntity, empty, loading, readOnly, forPrint,
+}: DiagramProps) {
   const { t } = useTranslation()
 
   // Pendant le chargement des entités, ne PAS annoncer un modèle vide : le
@@ -159,7 +162,13 @@ function Diagram({ doc, onChange, onOpenEntity, empty, loading, readOnly }: Diag
   }
   return (
     <div data-testid="mld-surface">
-      <Canvas doc={doc} onChange={onChange} onNodeActivate={onOpenEntity} readOnly={readOnly} />
+      <Canvas
+        doc={doc}
+        onChange={onChange}
+        onNodeActivate={onOpenEntity}
+        readOnly={readOnly}
+        forPrint={forPrint}
+      />
     </div>
   )
 }
@@ -210,7 +219,7 @@ ModelLayoutEditor.displayName = 'ModelLayoutEditor'
  *  Ici, et ici seulement, un clic sur une entité ouvre sa fiche : en lecture le
  *  clic n'a pas d'autre emploi, alors qu'en édition il sélectionne et déplace. */
 export const ModelLayoutViewer = forwardRef<ContentViewerHandle, ContentViewerProps>(
-  ({ content, docId }, ref) => {
+  ({ content, docId, forPrint }, ref) => {
     const { entities, isLoading, doc } = useModelCanvas(content, docId)
     const navigate = useNavigate()
     const { ws, block } = useParams()
@@ -228,10 +237,12 @@ export const ModelLayoutViewer = forwardRef<ContentViewerHandle, ContentViewerPr
     return (
       <Diagram
         doc={doc}
-        onOpenEntity={ws && block ? openEntity : undefined}
+        // À l'impression, un clic n'existe pas : ne pas armer la navigation.
+        onOpenEntity={forPrint || !ws || !block ? undefined : openEntity}
         empty={entities.length === 0}
         loading={isLoading}
         readOnly
+        forPrint={forPrint}
       />
     )
   },

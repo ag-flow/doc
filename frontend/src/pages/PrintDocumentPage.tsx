@@ -130,13 +130,24 @@ function collectFlowBlocks(section: HTMLElement): FlowBlock[] {
 /** Feuille de contenu d'un document, rendue dans la surface de son type de
  *  contenu (repli texte brut si le type est inconnu).
  *
- *  NOTE : la pagination d'impression (`collectFlowBlocks`) interroge encore le
- *  DOM de BlockNote (`.bn-block-outer`). Elle reste donc juste pour le type
- *  `md` uniquement — le découplage de l'impression est un chantier distinct
- *  (lot F4d), volontairement hors du périmètre de F4a. */
+ *  `forPrint` est ce qui rend l'impression HONNÊTE pour une surface qui n'offre
+ *  normalement qu'une fenêtre de visualisation : elle rend alors son contenu
+ *  entier. Sans lui, un diagramme n'imprimait que son hublot — et aucune
+ *  pagination n'aurait pu rattraper ce qui n'était pas dans le DOM.
+ *
+ *  NOTE : la pagination (`collectFlowBlocks`) interroge encore le DOM de
+ *  BlockNote (`.bn-block-outer`) — son déménagement vers la surface markdown
+ *  est la suite du lot F4d. */
 function PrintViewer({ doc }: { doc: DocumentOut }) {
   const { Viewer } = surfaceFor(doc.type)
-  return <Viewer content={stripTitleHeading(doc.content ?? '', doc.title)} bare docId={doc.doc_technical_key} />
+  return (
+    <Viewer
+      content={stripTitleHeading(doc.content ?? '', doc.title)}
+      bare
+      docId={doc.doc_technical_key}
+      forPrint
+    />
+  )
 }
 
 export function PrintDocumentPage() {

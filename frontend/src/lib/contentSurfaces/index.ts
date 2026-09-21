@@ -52,6 +52,14 @@ export interface ContentViewerProps {
   bare?: boolean
   /** Identité du document affiché — même rôle que côté éditeur. */
   docId?: string
+  /** Rendu pour IMPRESSION : la surface rend son contenu ENTIER — ni fenêtre de
+   *  visualisation, ni zoom, ni défilement.
+   *
+   *  Sans ce signal, une surface qui n'offre qu'un hublot (un canevas) ne met
+   *  dans le DOM que ce que ce hublot montre : le reste est perdu à l'impression,
+   *  et AUCUNE stratégie de découpe ne peut le rattraper — on ne pagine pas ce
+   *  qui n'a pas été rendu. */
+  forPrint?: boolean
 }
 
 export interface ContentViewerHandle {

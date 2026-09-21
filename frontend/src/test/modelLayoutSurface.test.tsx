@@ -195,6 +195,36 @@ describe('ModelLayoutSurface — rendu', () => {
   })
 })
 
+// ── Impression ───────────────────────────────────────────────────────────────
+
+describe('ModelLayoutSurface — impression', () => {
+  it('rend le diagramme ENTIER, pas la fenêtre de visualisation', async () => {
+    // Le défaut réparé : sans ce signal, seul le hublot `h-[70vh]` partait à
+    // l'impression, et ce qu'il ne montrait pas n'était pas dans le DOM.
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} forPrint />)
+    await screen.findByTestId('canvas-node-doc-commande')
+
+    const canvas = screen.getByTestId('canvas')
+    expect(canvas).toHaveAttribute('data-print', 'true')
+    expect(canvas.className).not.toContain('h-[70vh]')
+  })
+
+  it('à l\'écran, reste une fenêtre', async () => {
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} />)
+    await screen.findByTestId('canvas-node-doc-commande')
+    expect(screen.getByTestId('canvas').className).toContain('h-[70vh]')
+  })
+
+  it('à l\'impression, un clic n\'ouvre RIEN — il n\'y a pas de clic sur papier', async () => {
+    renderSurface(<ModelLayoutViewer content="" docId={MODEL_ID} forPrint />)
+    fireEvent.click(await screen.findByTestId('canvas-node-doc-client'))
+
+    expect(screen.getByTestId('pathname')).toHaveTextContent(
+      `/ws/ws/blocs/b1/documents/${MODEL_ID}`,
+    )
+  })
+})
+
 // ── Naviguer depuis le diagramme ─────────────────────────────────────────────
 
 describe('ModelLayoutSurface — ouvrir une entité', () => {

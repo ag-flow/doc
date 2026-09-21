@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Canvas, toRenderEdges } from '../components/canvas/Canvas'
 import { autoArrange } from '../lib/canvas/layout'
 import { emptyCanvas, type CanvasDoc } from '../lib/canvas/model'
+import { LABEL_MARGIN } from '../lib/canvas/bounds'
 
 const DOC: CanvasDoc = {
   schemaVersion: 1,
@@ -197,5 +198,56 @@ describe('toRenderEdges — le lien sort du BON côté', () => {
       edges: [{ ...DOC.edges[0], target: { node: 'disparu', port: 'id' } }],
     }
     expect(() => toRenderEdges(orphelin, true)).not.toThrow()
+  })
+})
+
+
+// ── Rendu pour l'impression ──────────────────────────────────────────────────
+
+describe('Canvas — forPrint : l\'étendue réelle, pas un hublot', () => {
+  it('sans forPrint, le canvas est une FENÊTRE de hauteur fixe', () => {
+    // C'est le défaut réparé par F4d : à l'impression, tout ce qui sortait de
+    // cette fenêtre n'était pas dans le DOM, donc perdu sur le papier.
+    render(<Canvas doc={DOC} />)
+    const el = screen.getByTestId('canvas')
+    expect(el.className).toContain('h-[70vh]')
+    expect(el).not.toHaveAttribute('data-print')
+  })
+
+  it('avec forPrint, la boîte prend la taille du CONTENU', () => {
+    render(<Canvas doc={DOC} forPrint />)
+    const el = screen.getByTestId('canvas')
+
+    expect(el).toHaveAttribute('data-print', 'true')
+    expect(el.className).not.toContain('h-[70vh]')
+    // Deux boîtes de 200×100 en (0,0) et (400,0) → 600×100, plus la marge de
+    // textes des deux côtés.
+    expect(Number(el.getAttribute('data-content-width'))).toBe(600 + 2 * LABEL_MARGIN)
+    expect(Number(el.getAttribute('data-content-height'))).toBe(100 + 2 * LABEL_MARGIN)
+    expect(el.style.width).toBe(`${600 + 2 * LABEL_MARGIN}px`)
+  })
+
+  it('l\'étendue suit le contenu, coudes hors des boîtes compris', () => {
+    const avecCoude: CanvasDoc = {
+      ...DOC,
+      edges: [{ ...DOC.edges[0], waypoints: [{ x: 1200, y: 800 }] }],
+    }
+    render(<Canvas doc={avecCoude} forPrint />)
+    const el = screen.getByTestId('canvas')
+
+    expect(Number(el.getAttribute('data-content-width'))).toBe(1200 + 2 * LABEL_MARGIN)
+    expect(Number(el.getAttribute('data-content-height'))).toBe(800 + 2 * LABEL_MARGIN)
+  })
+
+  it('retire ce qui suppose un lecteur : contrôles et carte', () => {
+    // Sur le papier, ce ne sont que de l'encre perdue.
+    const { container } = render(<Canvas doc={DOC} forPrint />)
+    expect(container.querySelector('.react-flow__controls')).toBeNull()
+    expect(container.querySelector('.react-flow__minimap')).toBeNull()
+  })
+
+  it('garde contrôles et carte en lecture à l\'écran', () => {
+    const { container } = render(<Canvas doc={DOC} readOnly />)
+    expect(container.querySelector('.react-flow__controls')).not.toBeNull()
   })
 })

@@ -28,6 +28,7 @@ import '@xyflow/react/dist/style.css'
 import type { CanvasDoc, CanvasEdge, CanvasNode, Point, Side } from '../../lib/canvas/model'
 import { nodeById, nodeSize } from '../../lib/canvas/model'
 import { sidesFor } from '../../lib/canvas/anchor'
+import { contentBounds } from '../../lib/canvas/bounds'
 import { detailFor, portsVisibleAt, type DetailLevel } from '../../lib/canvas/detail'
 import { CanvasNodeView, type CanvasNodeData } from './CanvasNodeView'
 import { OrthogonalEdge, type OrthogonalEdgeData } from './OrthogonalEdge'
@@ -49,6 +50,13 @@ export interface CanvasProps {
    *  sens : en édition, il sert à sélectionner et à déplacer. */
   onNodeActivate?: (nodeId: string) => void
   readOnly?: boolean
+  /** Rendu pour l'IMPRESSION : le canvas s'étend à la taille de son contenu au
+   *  lieu de l'offrir dans une fenêtre de visualisation.
+   *
+   *  Une fenêtre n'a pas de sens sur le papier : ce qu'elle ne montre pas
+   *  n'existe pas. Tout ce qui suppose un lecteur — défilement, zoom, contrôles,
+   *  carte — disparaît, et le contenu se cale en haut à gauche. */
+  forPrint?: boolean
   className?: string
 }
 
@@ -117,7 +125,9 @@ export function toRenderEdges(
   })
 }
 
-function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, className }: CanvasProps) {
+function CanvasInner({
+  doc, onChange, labelOf, onNodeActivate, readOnly, forPrint, className,
+}: CanvasProps) {
   const zoom = doc.viewport?.zoom ?? 1
   const detail = detailFor(zoom)
   const portsVisible = portsVisibleAt(zoom)
@@ -142,6 +152,11 @@ function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, classNa
     () => toRenderNodes(doc, detail, label, Boolean(onNodeActivate)),
     [doc, detail, label, onNodeActivate],
   )
+
+  // Étendue du contenu : sert à dimensionner la zone d'impression ET à caler le
+  // coin haut-gauche du diagramme sur celui de la zone (l'enveloppe peut
+  // commencer en coordonnées négatives).
+  const bounds = useMemo(() => contentBounds(doc), [doc])
   const edges = useMemo(
     () => toRenderEdges(doc, portsVisible, readOnly ? undefined : setWaypoints),
     [doc, portsVisible, readOnly, setWaypoints],
@@ -169,8 +184,26 @@ function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, classNa
     },
   })
 
+  // À l'impression : la boîte prend la taille du contenu, et le viewport le
+  // translate pour que son coin haut-gauche tombe en (0,0) — pas de zoom, pas de
+  // restauration du cadrage enregistré, qui n'aurait aucun sens sur le papier.
+  const printStyle = forPrint
+    ? { width: `${Math.round(bounds.width)}px`, height: `${Math.round(bounds.height)}px` }
+    : undefined
+  const viewport = forPrint
+    ? { x: -bounds.x, y: -bounds.y, zoom: 1 }
+    : (doc.viewport ?? { x: 0, y: 0, zoom: 1 })
+
   return (
-    <div className={className ?? 'h-[70vh] w-full'} data-testid="canvas" data-detail={detail}>
+    <div
+      className={className ?? (forPrint ? 'w-full' : 'h-[70vh] w-full')}
+      style={printStyle}
+      data-testid="canvas"
+      data-detail={detail}
+      data-print={forPrint ? 'true' : undefined}
+      data-content-width={forPrint ? Math.round(bounds.width) : undefined}
+      data-content-height={forPrint ? Math.round(bounds.height) : undefined}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -178,17 +211,24 @@ function CanvasInner({ doc, onChange, labelOf, onNodeActivate, readOnly, classNa
         edgeTypes={EDGE_TYPES}
         onNodesChange={onNodesChange}
         onNodeClick={onNodeActivate ? (_, n) => onNodeActivate(n.id) : undefined}
-        defaultViewport={doc.viewport ?? { x: 0, y: 0, zoom: 1 }}
-        nodesDraggable={!readOnly}
-        nodesConnectable={!readOnly}
-        elementsSelectable
+        defaultViewport={viewport}
+        nodesDraggable={!readOnly && !forPrint}
+        nodesConnectable={!readOnly && !forPrint}
+        elementsSelectable={!forPrint}
+        panOnDrag={!forPrint}
+        zoomOnScroll={!forPrint}
+        zoomOnPinch={!forPrint}
+        zoomOnDoubleClick={!forPrint}
+        preventScrolling={!forPrint}
         proOptions={{ hideAttribution: true }}
         minZoom={0.1}
         maxZoom={2}
       >
         <Background />
-        <Controls showInteractive={!readOnly} />
-        <MiniMap pannable zoomable />
+        {/* Contrôles et carte supposent un lecteur qui navigue : sur le papier,
+            ils ne sont que de l'encre perdue. */}
+        {!forPrint && <Controls showInteractive={!readOnly} />}
+        {!forPrint && <MiniMap pannable zoomable />}
       </ReactFlow>
     </div>
   )
