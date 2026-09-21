@@ -144,21 +144,6 @@
   font-size: inherit;
 }
 
-/* Mesure de lecture bornée pour le TEXTE courant : quand un panneau est replié,
-   la feuille s'élargit mais le texte ne s'étire pas au-delà d'une mesure
-   confortable (on ne veut pas d'une ligne sur 2000 px). L'unité `ch` suit la
-   taille de police : la mesure reste ~72 caractères à toutes les échelles.
-   Les blocs LARGES (composants df-*, tableaux, code, images, maquettes) ne sont
-   pas ciblés : ils exploitent toute la largeur libérée. */
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='paragraph'],
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='heading'],
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='bulletListItem'],
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='numberedListItem'],
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='checkListItem'],
-.doc-sheet .wiki-prose .bn-block-content[data-content-type='quote'] {
-  max-width: var(--reading-measure, 72ch);
-}
-
 /* Le corps du document (éditeur BlockNote ou rendu de lecture) exploite TOUTE
    la surface de la feuille : pas de page blanche dans la page. Le wrapper perd
    sa bordure et son fond propres — la feuille porte déjà le cadre. */
@@ -169,10 +154,6 @@
 }
 .doc-sheet > [data-testid='markdown-editor'] {
   border: 0;
-  background: transparent;
-}
-.doc-sheet .bn-editor,
-.doc-sheet .bn-container {
   background: transparent;
 }
 
@@ -190,14 +171,6 @@
   font-size: calc(var(--reading-scale, 1) * 16px);
   color: color-mix(in srgb, var(--color-ink) 72%, transparent);
 }
-/* Le bloc « citation » de BlockNote porte son propre filet gris 2px
-   ([data-content-type=quote] blockquote) — même filet cyan 4px partout
-   (lecture, éditeur, rendu public). */
-.bn-container [data-content-type='quote'] blockquote {
-  border-left: 4px solid var(--color-accent);
-  color: color-mix(in srgb, var(--color-ink) 72%, transparent);
-}
-
 .doc-sheet code {
   font-family: var(--font-mono);
   font-size: 0.88em;

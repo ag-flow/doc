@@ -296,6 +296,35 @@ describe('feuille document — aucun débordement horizontal possible', () => {
     expect(css).toMatch(/\.doc-sheet img\s*\{[^}]*max-width:\s*100%/)
   })
 
+  it('aucune règle BlockNote ne subsiste dans les feuilles GLOBALES', () => {
+    // F4f : la présentation du DOM d'une bibliothèque tierce appartient à la
+    // surface qui le produit. Tant qu'elle vit dans les feuilles de page,
+    // celles-ci supposent que tout document est du markdown.
+    const globales = ['src/index.css', 'src/styles/document.css', 'src/styles/print.css']
+    for (const f of globales) {
+      const contenu = readFileSync(join(process.cwd(), f), 'utf-8')
+      expect(contenu, `${f} contient encore un sélecteur BlockNote`).not.toMatch(/\.bn-/)
+    }
+  })
+
+  it('la surface markdown porte ces règles, et elle seule', () => {
+    // L'autre sens : les avoir retirées ne suffit pas, encore faut-il qu'elles
+    // existent quelque part — sinon le rendu markdown se dégrade en silence.
+    const surface = readFileSync(
+      join(process.cwd(), 'src/lib/contentSurfaces/markdown.css'),
+      'utf-8',
+    )
+    expect(surface).toMatch(/\.wiki-prose \.bn-editor/)
+    expect(surface).toMatch(/\.doc-sheet \.bn-editor/)
+    expect(surface).toMatch(/\.bn-container \[data-content-type='quote'\] blockquote/)
+    // Et qu'elles soient effectivement chargées avec la surface.
+    const module = readFileSync(
+      join(process.cwd(), 'src/lib/contentSurfaces/markdown.ts'),
+      'utf-8',
+    )
+    expect(module).toMatch(/import '\.\/markdown\.css'/)
+  })
+
   it('la feuille LARGE rend ses grilles en tableau pleine largeur, et gagne', () => {
     // La feuille porte les DEUX classes. À spécificité égale, `.doc-sheet table`
     // — plus bas dans le fichier — reprenait la main : la grille restait en

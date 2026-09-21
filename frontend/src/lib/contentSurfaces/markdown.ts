@@ -1,5 +1,8 @@
 /** Surface du type de contenu `md` — BlockNote. */
 
+// Présentation du DOM BlockNote : elle appartient à cette surface, pas aux
+// feuilles globales de page. Importée ici, elle est chargée avec elle.
+import './markdown.css'
 import { MarkdownEditor } from '../../components/MarkdownEditor'
 import { MarkdownViewer } from '../../components/MarkdownViewer'
 import type { ContentSurface } from './index'
