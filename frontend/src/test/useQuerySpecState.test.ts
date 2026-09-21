@@ -8,6 +8,7 @@ describe('useQuerySpecState', () => {
     expect(result.current.mode).toBe('browse')
     expect(result.current.spec).toEqual({
       type_slugs: null,
+      content_types: null,
       filters: [],
       sort: [],
       projection: null,
@@ -152,6 +153,32 @@ describe('useQuerySpecState', () => {
     expect(result.current.mode).toBe('browse')
   })
 
+  it('restreindre aux types de CONTENU bascule en mode requête', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setPage(3))
+    act(() => result.current.setContentTypes(['model-layout']))
+    expect(result.current.mode).toBe('query')
+    expect(result.current.spec.content_types).toEqual(['model-layout'])
+    expect(result.current.spec.page).toBe(1)
+  })
+
+  it('les deux axes de type se combinent sans se remplacer', () => {
+    // Type FONCTIONNEL et type de CONTENU sont indépendants : poser l'un ne doit
+    // jamais effacer l'autre.
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setTypeSlugs(['epic']))
+    act(() => result.current.setContentTypes(['md']))
+    expect(result.current.spec.type_slugs).toEqual(['epic'])
+    expect(result.current.spec.content_types).toEqual(['md'])
+  })
+
+  it('une liste de types de contenu vide ne filtre rien', () => {
+    const { result } = renderHook(() => useQuerySpecState(100))
+    act(() => result.current.setContentTypes([]))
+    expect(result.current.spec.content_types).toBeNull()
+    expect(result.current.mode).toBe('browse')
+  })
+
   it('reset clears filters/sort/projection and preserves page_size', () => {
     const { result } = renderHook(() => useQuerySpecState(100))
     act(() => result.current.setFilter('statut', { op: 'eq', value: 'done' }))
@@ -160,6 +187,7 @@ describe('useQuerySpecState', () => {
     expect(result.current.mode).toBe('browse')
     expect(result.current.spec).toEqual({
       type_slugs: null,
+      content_types: null,
       filters: [],
       sort: [],
       projection: null,

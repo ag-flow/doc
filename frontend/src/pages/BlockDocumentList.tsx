@@ -250,8 +250,10 @@ export function BlockDocumentList() {
   >(null)
   const [showDeleteBloc, setShowDeleteBloc] = useState(false)
 
-  const { spec, mode, setFilter, setTypeSlugs, toggleSort, setProjection, loadSpec, reset } =
-    useQuerySpecState()
+  const {
+    spec, mode, setFilter, setTypeSlugs, setContentTypes,
+    toggleSort, setProjection, loadSpec, reset,
+  } = useQuerySpecState()
 
   // Tri hiérarchique du mode browse (la pagination est gérée par useInfiniteQuery).
   const [browseSort, setBrowseSort] = useState<BrowseSort | null>(null)
@@ -272,10 +274,15 @@ export function BlockDocumentList() {
     // source en navigateur, et la seule qui existe sous MemoryRouter (tests).
     const url = readUrlState(searchParams)
     setTreeMode(url.treeMode)
-    if (url.spec.filters.length > 0 || (url.spec.type_slugs?.length ?? 0) > 0) {
+    const hasQuery =
+      url.spec.filters.length > 0 ||
+      (url.spec.type_slugs?.length ?? 0) > 0 ||
+      (url.spec.content_types?.length ?? 0) > 0
+    if (hasQuery) {
       // Filtres présents → mode requête : le tri appartient au QuerySpec.
       loadSpec({
         type_slugs: url.spec.type_slugs ?? null,
+        content_types: url.spec.content_types ?? null,
         filters: url.spec.filters,
         sort: url.spec.sort,
         projection: null,
@@ -298,6 +305,7 @@ export function BlockDocumentList() {
     const next = writeUrlState({
       spec: {
         type_slugs: spec.type_slugs ?? null,
+        content_types: spec.content_types ?? null,
         filters: spec.filters,
         sort: mode === 'query' ? spec.sort : browseSort ? [browseSort] : [],
         page: 1, // « Charger plus » : la page n'est plus dans l'URL (accumulation).
@@ -465,7 +473,7 @@ export function BlockDocumentList() {
   // par « Charger plus ». La clé exclut la page (gérée par l'infinite query) ;
   // filtres/tri/projection/taille de page la font repartir de la page 1.
   const querySpecKey = {
-    types: spec.type_slugs, filters: spec.filters, sort: spec.sort, projection: spec.projection,
+    types: spec.type_slugs, contentTypes: spec.content_types, filters: spec.filters, sort: spec.sort, projection: spec.projection,
   }
   const queryInfinite = useInfiniteQuery<BlockObjectsPage>({
     queryKey: ['block-query', ws, block, querySpecKey, pageSize],
@@ -523,6 +531,34 @@ export function BlockDocumentList() {
   const propColById = useMemo(
     () => new Map(propColumns.map((p) => [`prop_${p.slug}`, p])),
     [propColumns],
+  )
+
+  // Types de CONTENU présents (léger) : borne les options du filtre à ce qui
+  // rendra quelque chose. Pendant exact de `getPresentTypeSlugs`.
+  const { data: presentContentTypes = [] } = useQuery<string[]>({
+    queryKey: ['block-content-types', ws, block],
+    queryFn: () => docsApi.getPresentContentTypes(ws!, block!),
+    enabled: Boolean(ws && block),
+  })
+
+  const contentTypeLabelOf = useCallback(
+    (type: string) => {
+      // Registre d'abord ; clef brute si le type n'y est pas — même règle que la
+      // colonne : un type qu'on ne sait pas servir doit se voir.
+      const key = contentTypeLabelKey(type)
+      return key ? t(key) : type
+    },
+    [t],
+  )
+
+  const contentTypeFilterColumn = useMemo<FilterColumn>(
+    () => ({
+      slug: 'content-type',
+      label: t('documents.contentType'),
+      type: 'restricted_list',
+      allowedValues: presentContentTypes.map((ct) => ({ slug: ct, label: contentTypeLabelOf(ct) })),
+    }),
+    [presentContentTypes, contentTypeLabelOf, t],
   )
 
   /** Colonne de filtre du TYPE d'objet.
@@ -885,8 +921,10 @@ export function BlockDocumentList() {
         labelOf={propLabelOf}
         valueLabelOf={propValueLabelOf}
         typeLabelOf={typeLabelOf}
+        contentTypeLabelOf={contentTypeLabelOf}
         onRemoveFilter={(prop) => setFilter(prop, null)}
         onRemoveTypeFilter={() => setTypeSlugs(null)}
+        onRemoveContentTypeFilter={() => setContentTypes(null)}
         onClearAll={reset}
         onSaveView={() => setShowSaveView(true)}
       />
@@ -984,6 +1022,17 @@ export function BlockDocumentList() {
                             column={propCol}
                             clause={spec.filters.find((f) => f.prop === propCol.slug) ?? null}
                             onChange={(clause) => setFilter(propCol.slug, clause)}
+                          />
+                        )}
+                        {header.column.id === 'content_type' && (
+                          <HeaderFilterPopover
+                            column={contentTypeFilterColumn}
+                            clause={
+                              spec.content_types && spec.content_types.length > 0
+                                ? { prop: 'content-type', op: 'in', values: spec.content_types }
+                                : null
+                            }
+                            onChange={(clause) => setContentTypes(clause?.values ?? null)}
                           />
                         )}
                         {header.column.id === 'functional_type_slug' && (

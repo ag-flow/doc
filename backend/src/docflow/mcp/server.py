@@ -849,7 +849,11 @@ _TOOLS: list[Tool] = [
             "- sort : liste [{key, dir}] (key = prop_slug | title | created_at ; dir = asc|desc ; "
             "restricted_list trié par ordre de pipeline).\n"
             "- projection : liste de prop_slug à remonter (défaut : toutes).\n"
-            "- type_slugs : restreint aux types d'objet donnés.\n"
+            "- type_slugs : restreint aux types FONCTIONNELS donnés (ce que le document "
+            "représente métier : epic, article…).\n"
+            "- content_types : restreint aux types de CONTENU donnés (la grammaire du corps : "
+            "'md', 'table-schema', 'model-layout'…). À NE PAS confondre avec type_slugs — les "
+            "deux axes sont indépendants et se combinent.\n"
             "- page / page_size (défaut 50, max 100)."
         ),
         inputSchema={
@@ -879,7 +883,15 @@ _TOOLS: list[Tool] = [
                 },
                 "type_slugs": {
                     "type": "array",
-                    "description": "Restreindre aux types d'objet donnés",
+                    "description": "Restreindre aux types FONCTIONNELS donnés (epic, article…)",
+                    "items": {"type": "string"},
+                },
+                "content_types": {
+                    "type": "array",
+                    "description": (
+                        "Restreindre aux types de CONTENU donnés ('md', 'table-schema', "
+                        "'model-layout'…) — la grammaire du corps, PAS le type fonctionnel"
+                    ),
                     "items": {"type": "string"},
                 },
                 "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
@@ -2457,10 +2469,12 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         )
         projection = args.get("projection")
         type_slugs = args.get("type_slugs")
+        content_types = args.get("content_types")
         spec = QuerySpec(
             workspace_slug=ws,
             block_slug=block,
             type_slugs=type_slugs if isinstance(type_slugs, list) else None,
+            content_types=content_types if isinstance(content_types, list) else None,
             filters=clauses,
             sort=sort,
             projection=projection if isinstance(projection, list) else None,

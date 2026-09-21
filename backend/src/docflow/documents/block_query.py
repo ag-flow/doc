@@ -343,6 +343,11 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
                 "d.functional_type_ref IN (SELECT id FROM functional_type "
                 f"WHERE workspace_technical_key = {wk_ph} AND slug = ANY({ts_ph}::text[]))"
             )
+        if spec.content_types:
+            # Filtre sur la GRAMMAIRE du corps, pas sur le type fonctionnel : la
+            # colonne est portée par le document lui-même, aucune jointure.
+            ct_ph = p.add(spec.content_types)
+            where.append(f"d.type = ANY({ct_ph}::text[])")
         for f in spec.filters:
             where.append(_filter_sql(f, ptypes[f.prop], p))
         where_sql = " AND ".join(where)

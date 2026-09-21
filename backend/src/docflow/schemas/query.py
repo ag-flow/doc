@@ -78,6 +78,10 @@ class QuerySpec(BaseModel):
     workspace_slug: str
     block_slug: str
     type_slugs: list[str] | None = None
+    # Type de CONTENU (`md`, `table-schema`…) — la grammaire du corps. Distinct de
+    # `type_slugs`, qui porte le type FONCTIONNEL : les deux se combinent et ne se
+    # remplacent jamais.
+    content_types: list[str] | None = None
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
@@ -99,6 +103,7 @@ class BlockQueryBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     type_slugs: list[str] | None = None
+    content_types: list[str] | None = None
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None

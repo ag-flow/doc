@@ -16,6 +16,7 @@ describe('querySpecUrl', () => {
         ],
         page: 3,
         type_slugs: null,
+        content_types: null,
       },
       treeMode: false,
     }
@@ -31,7 +32,7 @@ describe('querySpecUrl', () => {
 
   it('une URL vierge ne porte aucun paramètre', () => {
     const params = writeUrlState({
-      spec: { filters: [], sort: [], page: 1, type_slugs: null },
+      spec: { filters: [], sort: [], page: 1, type_slugs: null, content_types: null },
       treeMode: true,
     })
     expect([...params.keys()]).toEqual([])
@@ -41,7 +42,7 @@ describe('querySpecUrl', () => {
     // Un filtre qui ne survit ni au rechargement ni au partage du lien n'est
     // qu'à moitié posé.
     const state = {
-      spec: { filters: [], sort: [], page: 1, type_slugs: ['epic', 'feature'] },
+      spec: { filters: [], sort: [], page: 1, type_slugs: ['epic', 'feature'], content_types: null },
       treeMode: true,
     }
     const params = writeUrlState(state)
@@ -56,6 +57,7 @@ describe('querySpecUrl', () => {
         sort: [],
         page: 1,
         type_slugs: null,
+        content_types: null,
       },
       treeMode: true,
     }
@@ -63,10 +65,26 @@ describe('querySpecUrl', () => {
     expect(round.spec.filters[0]).toEqual({ prop: 'a:b', op: 'eq', value: 'x|y,z~w' })
   })
 
+  it('aller-retour de la restriction de type de CONTENU', () => {
+    // Paramètre distinct de `t` : les deux axes se partagent indépendamment.
+    const state = {
+      spec: {
+        filters: [], sort: [], page: 1,
+        type_slugs: ['epic'],
+        content_types: ['model-layout', 'table-schema'],
+      },
+      treeMode: true,
+    }
+    const params = writeUrlState(state)
+    expect(params.get('t')).toBe('epic')
+    expect(params.get('ct')).toBe('model-layout|table-schema')
+    expect(readUrlState(params)).toEqual(state)
+  })
+
   it('paramètres illisibles ignorés (dégradation, pas de plantage)', () => {
     const params = new URLSearchParams('sort=&f=nimportequoi&f=statut:bidon:x&page=zero')
     expect(readUrlState(params)).toEqual({
-      spec: { filters: [], sort: [], page: 1, type_slugs: null },
+      spec: { filters: [], sort: [], page: 1, type_slugs: null, content_types: null },
       treeMode: true,
     })
   })

@@ -187,6 +187,15 @@ async def list_present_type_slugs(
     return await service.list_present_type_slugs(request.app.state.pool, ws_slug, block_slug)
 
 
+@router.get(_BLOCK + "/content-types", response_model=list[str])
+async def list_present_content_types(
+    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+) -> list[str]:
+    """Types de CONTENU présents dans le bloc (léger — pour le filtre de colonne)."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await service.list_present_content_types(request.app.state.pool, ws_slug, block_slug)
+
+
 @router.post(_BLOCK + "/documents", response_model=DocumentOut, status_code=201)
 async def create_document_in_block(
     ws_slug: str,

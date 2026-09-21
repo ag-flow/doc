@@ -437,7 +437,10 @@ export const viewsApi = {
 }
 
 export interface BlockQueryBody {
+  /** Types FONCTIONNELS (ce que le document représente métier). */
   type_slugs?: string[] | null
+  /** Types de CONTENU (la grammaire du corps). Axe distinct, combinable. */
+  content_types?: string[] | null
   filters: FilterClause[]
   sort: SortKey[]
   projection?: string[] | null
@@ -517,6 +520,10 @@ export const docsApi = {
   /** Slugs des types fonctionnels présents dans le bloc (léger — colonnes). */
   getPresentTypeSlugs: (ws: string, block: string) =>
     api.get<string[]>(`/workspaces/${ws}/blocks/${block}/type-slugs`),
+
+  /** Types de CONTENU présents dans le bloc (léger — options du filtre). */
+  getPresentContentTypes: (ws: string, block: string) =>
+    api.get<string[]>(`/workspaces/${ws}/blocks/${block}/content-types`),
 
   getAllowedTypes: (ws: string, block: string, parentId?: string) => {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''

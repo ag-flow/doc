@@ -237,6 +237,105 @@ async def test_sort_restricted_list_by_pipeline(
     assert positions == sorted(positions)  # non-décroissant : todo < doing < done
 
 
+# ── content_types : l'autre axe ───────────────────────────────────────────────
+
+
+async def _seed_content_types(pool: asyncpg.Pool, block_id: uuid.UUID) -> None:
+    """Deux documents de GRAMMAIRE différente, même type fonctionnel.
+
+    C'est le cas qui distingue les deux axes : si `content_types` retombait sur le
+    type fonctionnel, ces deux-là seraient indiscernables."""
+    # Contenus VALIDES : les codecs refusent un corps vide (F9), et c'est voulu —
+    # on ne contourne pas la validation pour les besoins d'un test.
+    bodies = {
+        "model-layout": "schemaVersion: 1\nentities: []\n",
+        "table-schema": "name: entite\nfields:\n  - name: id\n    type: uuid\n",
+    }
+    for slug, title, ct in [("m1", "Modele", "model-layout"), ("e1", "Entite", "table-schema")]:
+        await doc_svc.create_document(
+            pool,
+            _WS,
+            DocumentCreate(
+                title=title,
+                slug=slug,
+                block_id=block_id,
+                functional_type_slug="task",
+                content_type=ct,
+                content=bodies[ct],
+            ),
+        )
+
+
+async def test_content_types_filtre_sur_la_grammaire(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    assert set(await _titles(db_pool, content_types=["model-layout"])) == {"Modele"}
+    assert set(await _titles(db_pool, content_types=["table-schema"])) == {"Entite"}
+    # Les documents markdown de la fixture : tout le reste.
+    md = set(await _titles(db_pool, content_types=["md"]))
+    assert {"T1", "T2", "T3", "T4", "S1"} <= md
+    assert "Modele" not in md and "Entite" not in md
+
+
+async def test_content_types_plusieurs_valeurs(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    assert set(await _titles(db_pool, content_types=["model-layout", "table-schema"])) == {
+        "Modele",
+        "Entite",
+    }
+
+
+async def test_content_types_et_type_slugs_se_combinent(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Les deux axes sont indépendants : les croiser restreint, ne remplace pas."""
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    # `Modele` est un `task` en `model-layout` : les deux clauses passent.
+    assert set(
+        await _titles(db_pool, type_slugs=["task"], content_types=["model-layout"])
+    ) == {"Modele"}
+    # `S1` est un `subtask` en `md` : la grammaire passe, le type fonctionnel non.
+    assert await _titles(db_pool, type_slugs=["subtask"], content_types=["model-layout"]) == []
+
+
+async def test_content_types_vide_ou_absent_ne_filtre_rien(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Une liste vide ≡ aucune restriction — sinon on masquerait tout le bloc."""
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    sans = set(await _titles(db_pool))
+    assert set(await _titles(db_pool, content_types=[])) == sans
+    assert set(await _titles(db_pool, content_types=None)) == sans
+
+
+async def test_content_types_inconnu_ne_rend_rien_sans_lever(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Un type absent du bloc est une réponse vide, pas une erreur : le filtre est
+    une question, pas une assertion sur le contenu du bloc."""
+    await _setup(db_pool)
+    assert await _titles(db_pool, content_types=["type-qui-nexiste-pas"]) == []
+
+
+async def test_content_types_ne_sinjecte_pas(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """La valeur passe en paramètre, jamais dans le SQL."""
+    await _setup(db_pool)
+    assert await _titles(db_pool, content_types=["md' OR '1'='1"]) == []
+
+
 # ── type_slugs & projection ───────────────────────────────────────────────────
 
 

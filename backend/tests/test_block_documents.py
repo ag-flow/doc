@@ -84,6 +84,36 @@ async def test_list_present_type_slugs(db_pool: asyncpg.Pool, test_workspace: di
     assert slugs == ["epic", "feature"]  # distinct + trié, pas story/atdd (absents)
 
 
+async def test_list_present_content_types(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Types de CONTENU présents — pendant de `list_present_type_slugs` pour l'autre
+    axe. Ne propose au filtre que ce qui rendra quelque chose."""
+    from docflow.blocks import service as block_svc
+
+    await _setup_agile_block(db_pool)
+    assert await block_svc.list_present_content_types(db_pool, _WS, "agile-board") == []
+
+    epic = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board", DocumentCreateInBlock(title="E", slug="doc-e")
+    )
+    await doc_svc.create_document_in_block(
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(
+            title="M",
+            slug="doc-m",
+            parent_id=epic.doc_technical_key,
+            functional_type_slug="feature",
+            content_type="model-layout",
+        ),
+    )
+    # Distinct + trié. Le premier document n'a pas déclaré de type : il est 'md'.
+    assert await block_svc.list_present_content_types(db_pool, _WS, "agile-board") == [
+        "md",
+        "model-layout",
+    ]
+
+
 # ── DoD 2 : bloc 'epic', Add racine → crée un epic (implicite) ────────────────
 
 

@@ -119,6 +119,33 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
     return _row(row)
 
 
+async def list_present_content_types(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> list[str]:
+    """Types de CONTENU réellement présents parmi les documents d'un bloc.
+
+    Pendant de `list_present_type_slugs` pour l'autre axe. Sert à ne proposer au
+    filtre que des valeurs qui rendent quelque chose : offrir un type absent du
+    bloc, c'est offrir un filtre dont on sait déjà qu'il ne rendra rien.
+
+    La colonne est portée par le document lui-même — aucune jointure.
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT d.type AS type
+            FROM document d
+            JOIN data_block b ON b.id = d.data_block_ref
+            WHERE b.workspace_technical_key = $1 AND b.slug = $2
+            ORDER BY d.type
+            """,
+            wk,
+            block_slug,
+        )
+        return [r["type"] for r in rows]
+
+
 async def list_present_type_slugs(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> list[str]:
     """Slugs distincts des types fonctionnels réellement présents parmi les
     documents d'un bloc — pour dériver les colonnes de propriétés SANS charger

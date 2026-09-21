@@ -12,6 +12,7 @@ vi.mock('../lib/api', async () => {
       ...actual.docsApi,
       getBlockDocuments: vi.fn(),
       getPresentTypeSlugs: vi.fn(),
+      getPresentContentTypes: vi.fn(),
       getTypesRich: vi.fn(),
       getBlockTree: vi.fn(),
       getAllowedTypes: vi.fn(),
@@ -125,6 +126,11 @@ describe('BlockDocumentList', () => {
       return [...new Set(docs.map((d) => d.functional_type_slug).filter(Boolean) as string[])]
     })
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([])
+    // Types de CONTENU présents : dérivés des mêmes documents, comme le serveur.
+    vi.mocked(docsApi.getPresentContentTypes).mockImplementation(async () => {
+      const docs = await vi.mocked(docsApi.getBlockDocuments)('ws', 'b1').catch(() => [])
+      return [...new Set(docs.map((d) => d.type ?? 'md'))].sort()
+    })
     vi.mocked(viewsApi.list).mockResolvedValue([])
     vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
     vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
@@ -369,6 +375,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -472,6 +479,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
         type_slugs: ['epic'],
+        content_types: null,
         filters: [],
         sort: [],
         projection: null,
@@ -485,6 +493,69 @@ describe('BlockDocumentList', () => {
     // Retirer la chip repasse en navigation, sans requête qui ne filtre rien.
     fireEvent.click(screen.getByTestId('filter-chip-remove-type'))
     await waitFor(() => expect(screen.queryByTestId('filter-chip-type')).not.toBeInTheDocument())
+  })
+
+  it('filtre sur le type de CONTENU et le combine avec le type fonctionnel', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout', functional_type_slug: 'epic' }),
+      makeDoc({ doc_technical_key: 'e1', title: 'Doc', type: 'md', functional_type_slug: 'epic' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'm1', title: 'Boutique', functional_type_slug: 'epic', type: 'model-layout',
+          updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-btn-content-type')).toBeInTheDocument(),
+    )
+
+    await applyRestrictedFilter('content-type', ['model-layout'])
+
+    await waitFor(() => {
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: ['model-layout'],
+        filters: [],
+        sort: [],
+        projection: null,
+        page: 1,
+        page_size: 25,
+      })
+    })
+    // La chip porte l'étiquette du REGISTRE, pas la clef brute.
+    expect(screen.getByTestId('filter-chip-content-type')).toHaveTextContent('MCD')
+    expect(screen.getByTestId('filter-chip-content-type')).not.toHaveTextContent('model-layout')
+
+    fireEvent.click(screen.getByTestId('filter-chip-remove-content-type'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-chip-content-type')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('ne propose au filtre de contenu que les types PRÉSENTS dans le bloc', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList()
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-btn-content-type')).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByTestId('filter-btn-content-type'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-opt-content-type-model-layout')).toBeInTheDocument(),
+    )
+    // `table-schema` est un type connu du registre, mais absent de CE bloc.
+    expect(screen.queryByTestId('filter-opt-content-type-table-schema')).toBeNull()
   })
 
   it('ne propose au filtre de type que les types PRÉSENTS dans le bloc', async () => {
@@ -541,6 +612,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
@@ -554,6 +626,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
@@ -588,6 +661,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -704,6 +778,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
@@ -718,6 +793,7 @@ describe('BlockDocumentList', () => {
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
+        content_types: null,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [
           { key: 'statut', dir: 'asc' },

@@ -49,7 +49,7 @@ function paramToClause(raw: string): FilterClause | null {
 }
 
 export interface UrlState {
-  spec: Pick<BlockQueryBody, 'filters' | 'sort' | 'page' | 'type_slugs'>
+  spec: Pick<BlockQueryBody, 'filters' | 'sort' | 'page' | 'type_slugs' | 'content_types'>
   /** Vue arbre (défaut) ou liste plate, en mode navigation. */
   treeMode: boolean
 }
@@ -75,9 +75,16 @@ export function readUrlState(params: URLSearchParams): UrlState {
   // Le type d'objet n'est pas une propriété : il a son propre paramètre (`t`),
   // à l'image de `type_slugs` dans le QuerySpec.
   const typeSlugs = (params.get('t') ?? '').split('|').filter(Boolean).map(unesc)
+  // Paramètre distinct de `t` : les deux axes se partagent et se rechargent
+  // indépendamment.
+  const contentTypes = (params.get('ct') ?? '').split('|').filter(Boolean).map(unesc)
 
   return {
-    spec: { filters, sort, page, type_slugs: typeSlugs.length > 0 ? typeSlugs : null },
+    spec: {
+      filters, sort, page,
+      type_slugs: typeSlugs.length > 0 ? typeSlugs : null,
+      content_types: contentTypes.length > 0 ? contentTypes : null,
+    },
     treeMode: params.get('vue') !== 'liste',
   }
 }
@@ -92,6 +99,9 @@ export function writeUrlState(state: UrlState): URLSearchParams {
   for (const f of state.spec.filters) params.append('f', clauseToParam(f))
   if (state.spec.type_slugs && state.spec.type_slugs.length > 0) {
     params.set('t', state.spec.type_slugs.map(esc).join('|'))
+  }
+  if (state.spec.content_types && state.spec.content_types.length > 0) {
+    params.set('ct', state.spec.content_types.map(esc).join('|'))
   }
   if (state.spec.page > 1) params.set('page', String(state.spec.page))
   if (!state.treeMode) params.set('vue', 'liste')
