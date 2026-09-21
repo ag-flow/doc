@@ -44,7 +44,24 @@ export interface Tile {
 export const TILE_WARN_THRESHOLD = 20
 
 /**
- * Découpe un plan en tuiles de la taille d'une page.
+ * Nombre de colonnes d'un plan — donc de COPIES du contenu que l'impression doit
+ * émettre.
+ *
+ * Seul l'axe horizontal demande des copies : le navigateur sait couper
+ * verticalement tout seul. Une copie par colonne, rognée et décalée, et la
+ * coupure verticale naturelle produit exactement l'ordre voulu — toute la
+ * colonne 1, puis toute la colonne 2.
+ *
+ * Rend 1 dans le cas de loin le plus fréquent (le contenu tient en largeur) :
+ * aucune copie supplémentaire n'est alors émise.
+ */
+export function tileColumns(width: number, pageW: number): number {
+  if (pageW <= 0 || width <= 0) return 0
+  return Math.ceil(width / pageW)
+}
+
+/**
+ * Découpe un plan en tuiles de la taille d'une page — la GRILLE d'aperçu.
  *
  * Règle arrêtée avec l'architecte : l'origine du contenu se cale sur le coin
  * **haut-gauche**, sans recadrage ni réduction ; on descend la première colonne

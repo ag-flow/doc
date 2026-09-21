@@ -46,6 +46,13 @@
   border-top: 1px dashed color-mix(in srgb, var(--color-accent-2) 60%, transparent);
   pointer-events: none;
 }
+/* Colonnes de tuilage : n'existent QU'À l'impression. Sur papier, un plan plus
+   large qu'une page est purement rogné — aucune CSS ne tuile horizontalement.
+   On émet donc une copie du contenu par colonne, décalée et rognée, et on laisse
+   le navigateur couper verticalement comme il sait le faire. L'ordre obtenu est
+   exactement celui voulu : toute la colonne 1, puis toute la colonne 2. */
+.print-tiles { display: none; }
+
 /* Repère de TUILE : un plan (canevas) ne se coupe pas, il se tuile. Le repère
    marque le coin haut-gauche de chaque page et porte ses coordonnées, sans quoi
    les feuilles imprimées ne se recollent pas. Aperçu seulement. */
@@ -137,6 +144,18 @@
 
 @media print {
   .no-print { display: none !important; }
+  .print-tiles { display: block; }
+  .print-tile-col { overflow: hidden; position: relative; }
+  .print-tile-col + .print-tile-col { page-break-before: always; break-before: page; }
+  /* Coordonnées de recollage : elles, s'impriment. */
+  .tile-coord {
+    position: absolute;
+    left: 2mm;
+    font-size: 8pt;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  }
   .print-page { width: auto; max-width: none; padding: 0; }
   .print-toolbar { display: none !important; }
   .print-break { page-break-before: always; break-before: page; }

@@ -6,6 +6,7 @@ import { docsApi, type DocumentOut } from '../lib/api'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { surfaceFor } from '../lib/contentSurfaces'
 import {
+  tileColumns,
   tileGrid,
   TILE_WARN_THRESHOLD,
   type FlowBlock,
@@ -173,6 +174,10 @@ export function PrintDocumentPage() {
   const pagesRef = useRef<HTMLDivElement>(null)
   const [markers, setMarkers] = useState<Record<string, number[]>>({})
   const [tiles, setTiles] = useState<Record<string, Tile[]>>({})
+  // Nombre de colonnes par document, et géométrie de page mesurée : les copies
+  // de tuilage en ont besoin pour se décaler et se rogner.
+  const [cols, setCols] = useState<Record<string, number>>({})
+  const [pageBox, setPageBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
   // Remplissage (aperçu écran) poussant chaque document suivant en haut d'une
   // nouvelle page — pour que l'aperçu reflète la coupure par document du PDF.
   const [fills, setFills] = useState<Record<string, number>>({})
@@ -228,6 +233,7 @@ export function PrintDocumentPage() {
       fitOversized()
       const next: Record<string, number[]> = {}
       const nextTiles: Record<string, Tile[]> = {}
+      const nextCols: Record<string, number> = {}
       const nextFills: Record<string, number> = {}
       // Hauteur cumulée depuis le haut du 1er document (origine des repères de
       // page). Chaque document suivant est repoussé en haut de la page suivante.
@@ -247,15 +253,21 @@ export function PrintDocumentPage() {
           // flux d'impression (une par page) — aucune CSS ne tuile horizontalement,
           // ce qui dépasse la largeur d'une page est purement et simplement rogné.
           nextTiles[id] = tileGrid(layout.width, layout.height, pageWidthPx, pageHeightPx)
+          nextCols[id] = tileColumns(layout.width, pageWidthPx)
           next[id] = []
         } else {
           nextTiles[id] = []
+          nextCols[id] = 1
           next[id] = computeCuts(layout.blocks, pageHeightPx, section.offsetHeight)
         }
         running += section.offsetHeight
       })
       setMarkers((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
       setTiles((prev) => (JSON.stringify(prev) === JSON.stringify(nextTiles) ? prev : nextTiles))
+      setCols((prev) => (JSON.stringify(prev) === JSON.stringify(nextCols) ? prev : nextCols))
+      setPageBox((prev) =>
+        prev.w === pageWidthPx && prev.h === pageHeightPx ? prev : { w: pageWidthPx, h: pageHeightPx },
+      )
       setFills((prev) => (JSON.stringify(prev) === JSON.stringify(nextFills) ? prev : nextFills))
       observeSheets()
     }
@@ -344,9 +356,48 @@ export function PrintDocumentPage() {
                 </div>
               ))}
               <h1>{d.title}</h1>
-              <div data-print-content>
+              {/* Rendu unique : il sert à MESURER l'étendue et à l'aperçu.
+                  Masqué à l'impression dès qu'il y a plusieurs colonnes — sinon
+                  le navigateur rognerait tout ce qui dépasse à droite. */}
+              <div
+                data-print-content
+                className={(cols[d.doc_technical_key] ?? 1) > 1 ? 'no-print' : undefined}
+              >
                 <PrintViewer doc={d} />
               </div>
+
+              {/* Colonnes de tuilage — n'existent QU'à l'impression. Une copie
+                  par colonne, décalée et rognée ; le navigateur coupe
+                  verticalement, ce qui donne l'ordre voulu : toute la colonne 1,
+                  puis toute la colonne 2. */}
+              {(cols[d.doc_technical_key] ?? 1) > 1 && pageBox.w > 0 && (
+                <div className="print-tiles" data-testid={`print-tiles-${d.doc_technical_key}`}>
+                  {Array.from({ length: cols[d.doc_technical_key] }, (_, c) => (
+                    <div
+                      key={c}
+                      className="print-tile-col"
+                      style={{ width: pageBox.w }}
+                      data-testid={`print-tile-col-${d.doc_technical_key}-${c + 1}`}
+                    >
+                      <div style={{ marginLeft: -c * pageBox.w, width: 'max-content' }}>
+                        <PrintViewer doc={d} />
+                      </div>
+                      {/* Coordonnées de recollage, une par ligne de la colonne :
+                          sans elles, les feuilles ne se remettent pas en ordre. */}
+                      {Array.from(
+                        { length: Math.max(1, Math.ceil(
+                          ((tiles[d.doc_technical_key] ?? []).reduce((m, t) => Math.max(m, t.row), 1)),
+                        )) },
+                        (_, r) => (
+                          <span key={r} className="tile-coord" style={{ top: r * pageBox.h + 4 }}>
+                            col. {c + 1} / ligne {r + 1}
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Grille de tuilage : repères d'aperçu seulement. Les tuiles
                   imprimées, elles, sont émises plus bas. */}
               {(tiles[d.doc_technical_key] ?? []).map((t) => (

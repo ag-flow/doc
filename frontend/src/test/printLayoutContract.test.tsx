@@ -7,6 +7,7 @@ import {
   plainTextSurface,
   tableSchemaSurface,
 } from '../lib/contentSurfaces'
+import { tileColumns, tileGrid } from '../lib/print/layout'
 
 /** jsdom ne met rien en page : on simule la géométrie, seule chose qui compte ici. */
 function geometry(rects: Map<Element, { top: number; height: number }>) {
@@ -109,5 +110,23 @@ describe('surface sans capacité — le repli', () => {
     // contenu qui n'est pas plus large qu'une page. Rien à déclarer, rien à
     // perdre — alors qu'un repli qui tronque ne se voit pas.
     expect(plainTextSurface.getPrintLayout).toBeUndefined()
+  })
+})
+
+describe('tuilage à l\'impression — la copie par colonne', () => {
+  it('une seule colonne : AUCUNE copie émise', () => {
+    // Le cas courant. Émettre une copie coûterait un rendu de canevas de plus,
+    // pour rien.
+    expect(tileColumns(600, 700)).toBe(1)
+    expect(tileGrid(600, 1400, 700, 700).every((t) => t.col === 1)).toBe(true)
+  })
+
+  it('l\'ordre des pages imprimées est celui des colonnes', () => {
+    // C'est la coupure verticale NATURELLE du navigateur qui produit l'ordre :
+    // une copie par colonne, chacune coupée en pages de haut en bas, dans
+    // l'ordre du flux. Toute la colonne 1, puis toute la colonne 2.
+    const grid = tileGrid(1400, 1400, 700, 700)
+    expect(grid.map((t) => `${t.col}:${t.row}`)).toEqual(['1:1', '1:2', '2:1', '2:2'])
+    expect(tileColumns(1400, 700)).toBe(2)
   })
 })

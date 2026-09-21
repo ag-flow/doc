@@ -1,7 +1,7 @@
 /** Tuilage d'un plan en pages (épic MLD — F4d). */
 
 import { describe, it, expect } from 'vitest'
-import { tileGrid } from '../lib/print/layout'
+import { tileColumns, tileGrid } from '../lib/print/layout'
 
 describe('tileGrid', () => {
   it('couvre le point le plus en bas à droite', () => {
@@ -50,5 +50,23 @@ describe('tileGrid', () => {
   it('une dimension à peine supérieure à une page en ajoute une seule', () => {
     // Garde-fou d'arrondi : 100.5 ne doit pas produire trois colonnes.
     expect(Math.max(...tileGrid(100.5, 100, 100, 100).map((t) => t.col))).toBe(2)
+  })
+})
+
+describe('tileColumns — combien de COPIES le rendu doit émettre', () => {
+  it('une seule colonne quand le contenu tient en largeur : aucune copie', () => {
+    // Cas de loin le plus fréquent — et le plus important, puisqu'une copie
+    // supplémentaire, c'est un canevas rendu une fois de plus.
+    expect(tileColumns(600, 700)).toBe(1)
+  })
+
+  it('une colonne par page de large', () => {
+    expect(tileColumns(1400, 700)).toBe(2)
+    expect(tileColumns(1401, 700)).toBe(3)
+  })
+
+  it('rien à imprimer pour un contenu vide', () => {
+    expect(tileColumns(0, 700)).toBe(0)
+    expect(tileColumns(700, 0)).toBe(0)
   })
 })
