@@ -452,6 +452,7 @@ export function DocumentEditor() {
         size="sm"
         onClick={() => setFocusMode((f) => !f)}
         title={focusMode ? t('editor.focusExit') : t('editor.focusEnter')}
+        data-testid="document-focus-btn"
       >
         {focusMode ? <ArrowsIn size={14} weight="duotone" /> : <ArrowsOut size={14} weight="duotone" />}
       </Button>
@@ -532,8 +533,18 @@ export function DocumentEditor() {
             <ArrowsIn size={14} weight="duotone" />
           </Button>
         </div>
-        <div className="mx-auto max-w-[820px] px-6 pb-32">
-          <div className="doc-sheet wiki-prose">{editorSheet}</div>
+        {/* Le mode focus honore `fullWidth` comme la coquille normale. Il codait
+            `wiki-prose` en dur : un diagramme ou une grille de champs s'y
+            retrouvait enfermé dans la mesure de lecture de 72 caractères —
+            exactement le défaut que `fullWidth` existe pour éviter, reproduit
+            dans la branche oubliée. */}
+        <div className={`mx-auto px-6 pb-32 ${fullWidth ? 'max-w-none' : 'max-w-[820px]'}`}>
+          <div
+            className={`doc-sheet${fullWidth ? ' doc-sheet-wide' : ' wiki-prose'}`}
+            data-testid="focus-sheet"
+          >
+            {editorSheet}
+          </div>
         </div>
       </div>
     )

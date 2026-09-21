@@ -274,6 +274,43 @@ describe('DocumentEditor — ossature Broadsheet', () => {
   })
 })
 
+// ── Mode focus ───────────────────────────────────────────────────────────────
+
+describe('DocumentEditor — mode focus', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function enterFocus() {
+    await enterEditMode()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-focus-btn'))
+    })
+  }
+
+  it('une surface de PROSE garde la mesure de lecture', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await enterFocus()
+
+    const sheet = screen.getByTestId('focus-sheet')
+    expect(sheet.className).toContain('wiki-prose')
+    expect(sheet.className).not.toContain('doc-sheet-wide')
+  })
+
+  it('une surface NON textuelle prend toute la largeur', async () => {
+    // Défaut réparé : le mode focus codait `wiki-prose` en dur. Un diagramme ou
+    // une grille de champs s'y retrouvait enfermé dans 72 caractères — soit
+    // exactement ce que `fullWidth` existe pour éviter. La coquille normale
+    // l'honorait déjà ; la branche focus l'avait oublié.
+    vi.mocked(docsApi.getDocument).mockResolvedValue({ ...doc, type: 'model-layout' })
+    renderEditor()
+    await enterFocus()
+
+    const sheet = screen.getByTestId('focus-sheet')
+    expect(sheet.className).toContain('doc-sheet-wide')
+    expect(sheet.className).not.toContain('wiki-prose')
+  })
+})
+
 describe('feuille document — aucun débordement horizontal possible', () => {
   // jsdom ne calcule pas de layout : on verrouille les règles CSS qui empêchent
   // le débordement, seul garde-fou automatisable.
