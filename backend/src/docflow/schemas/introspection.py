@@ -69,6 +69,12 @@ class BlockObjectOut(BaseModel):
     # grammaire du document, à ne pas confondre avec son type FONCTIONNEL, qui
     # dit ce qu'il représente métier.
     type: str = "md"
+    # Parent direct — sans lui, impossible de reconstruire l'arbre côté client.
+    parent_id: str | None = None
+    # `False` pour un ANCÊTRE remonté en contexte : il porte le chemin, il n'est
+    # pas un résultat. Sans cette distinction, le compte affiché contredirait ce
+    # que l'écran montre.
+    matched: bool = True
     updated_at: datetime | None = None
     updated_by: str | None = None
     properties: list[PropertyValueBrief]

@@ -441,6 +441,8 @@ export interface BlockQueryBody {
   type_slugs?: string[] | null
   /** Types de CONTENU (la grammaire du corps). Axe distinct, combinable. */
   content_types?: string[] | null
+  /** Remonte aussi les ancêtres des résultats, pour un arbre élagué. */
+  include_ancestors?: boolean
   filters: FilterClause[]
   sort: SortKey[]
   projection?: string[] | null
@@ -464,6 +466,11 @@ export interface BlockObjectOut {
   functional_type_slug: string | null
   /** Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…). */
   type: string
+  /** Parent direct — permet de reconstruire l'arbre en mode requête. */
+  parent_id: string | null
+  /** `false` pour un ANCÊTRE remonté en contexte : il porte le chemin, il n'est
+   *  pas un résultat du filtre. */
+  matched: boolean
   properties: PropertyValueBrief[]
   updated_at: string | null
   updated_by: string | null

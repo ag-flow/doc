@@ -85,6 +85,11 @@ class QuerySpec(BaseModel):
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    # Remonte aussi les ANCÊTRES des résultats, pour reconstruire un arbre élagué.
+    # Opt-in délibéré : sans ce drapeau la réponse est inchangée. Enrichir en
+    # silence fausserait la logique d'un appelant qui compte sur « exactement ce
+    # que j'ai demandé » — la surface MCP, notamment.
+    include_ancestors: bool = False
     page: int = 1
     page_size: int = 50
 
@@ -107,5 +112,6 @@ class BlockQueryBody(BaseModel):
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    include_ancestors: bool = False
     page: int = 1
     page_size: int = 50

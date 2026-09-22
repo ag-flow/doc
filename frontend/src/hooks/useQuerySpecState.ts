@@ -8,6 +8,9 @@ const DEFAULT_PAGE_SIZE = 100
 function emptySpec(pageSize: number): BlockQueryBody {
   return {
     type_slugs: null, content_types: null,
+    // Le front reconstruit un arbre élagué : il lui faut le chemin des résultats.
+    // Opt-in au niveau du contrat ; ici c'est toujours ce qu'on veut.
+    include_ancestors: true,
     filters: [], sort: [], projection: null, page: 1, page_size: pageSize,
   }
 }

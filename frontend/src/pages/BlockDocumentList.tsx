@@ -55,8 +55,13 @@ interface TreeRow {
   /** Type de CONTENU (`md`, `model-layout`…) — la grammaire du corps, à ne pas
    *  confondre avec le type fonctionnel, qui dit ce qu'il représente métier. */
   type?: string | null
+  /** `false` pour un ANCÊTRE affiché en CONTEXTE : il porte le chemin jusqu'au
+   *  résultat, il n'est pas lui-même un résultat du filtre. Le distinguer évite
+   *  que le compte annoncé contredise ce que l'écran montre. */
+  matched?: boolean
   updated_at?: string | null
   updated_by?: string | null
+  parentId?: string | null
   subRows: TreeRow[]
   /** Renseigné en mode requête (query) : valeurs déjà aplaties par le serveur. */
   properties?: { prop_slug: string; value: string | null; allowed_value_slug: string | null }[]
@@ -142,12 +147,36 @@ interface BrowseSort {
   dir: 'asc' | 'desc'
 }
 
+/**
+ * Reconstruit l'arbre élagué d'un résultat de requête.
+ *
+ * Le serveur remonte les résultats ET leurs ancêtres (`include_ancestors`) : on
+ * rebâtit la hiérarchie depuis `parent_id`. Un nœud dont le parent n'est pas
+ * dans l'ensemble devient une racine — c'est le cas d'un résultat dont les
+ * ancêtres ont été élagués par la pagination.
+ *
+ * Filtrer ne doit PLUS faire disparaître l'arborescence : sans le chemin, on
+ * perd de vue OÙ se trouve ce qu'on a trouvé.
+ */
+function pruneTree(flat: TreeRow[]): TreeRow[] {
+  const byId = new Map(flat.map((r) => [r.id, { ...r, subRows: [] as TreeRow[] }]))
+  const roots: TreeRow[] = []
+  for (const row of byId.values()) {
+    const parent = row.parentId ? byId.get(row.parentId) : undefined
+    if (parent) parent.subRows.push(row)
+    else roots.push(row)
+  }
+  return roots
+}
+
 function flatRows(page: BlockObjectsPage): TreeRow[] {
   return page.objects.map((o) => ({
     id: o.id,
     title: o.title,
     functional_type_slug: o.functional_type_slug,
     type: o.type,
+    matched: o.matched,
+    parentId: o.parent_id,
     updated_at: o.updated_at,
     updated_by: o.updated_by,
     subRows: [],
@@ -619,7 +648,11 @@ export function BlockDocumentList() {
 
   const rows = useMemo<TreeRow[]>(() => {
     if (mode === 'query') {
-      return (queryInfinite.data?.pages ?? []).flatMap((p) => flatRows(p))
+      const flat = (queryInfinite.data?.pages ?? []).flatMap((p) => flatRows(p))
+      // Arbre élagué par défaut ; la liste plate reste accessible par le
+      // basculement — c'est une préférence d'affichage, elle n'a pas de raison
+      // de disparaître dès qu'un filtre est posé.
+      return treeMode ? pruneTree(flat) : flat
     }
     // L'ordre vient du serveur (racines + enfants triés par la clé browse) ;
     // en mode liste plate on aplatit sans réordonner.
@@ -655,9 +688,9 @@ export function BlockDocumentList() {
         cell: ({ row, getValue }) => (
           <div
             className="flex items-center gap-1"
-            style={{ paddingLeft: mode === 'browse' && treeMode ? `${row.depth * 16}px` : undefined }}
+            style={{ paddingLeft: treeMode ? `${row.depth * 16}px` : undefined }}
           >
-            {mode === 'browse' && treeMode && row.getCanExpand() ? (
+            {treeMode && row.getCanExpand() ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -669,9 +702,21 @@ export function BlockDocumentList() {
                 {row.getIsExpanded() ? '▾' : '▸'}
               </button>
             ) : (
-              mode === 'browse' && treeMode && <span className="w-4" />
+              treeMode && <span className="w-4" />
             )}
-            <span className="text-sm font-medium">{String(getValue())}</span>
+            {/* Un ANCÊTRE de contexte n'est pas un résultat : il porte le chemin.
+                L'atténuer évite que le compte annoncé — qui ne compte que les
+                résultats — semble contredire ce que l'écran montre. */}
+            <span
+              className={
+                row.original.matched === false
+                  ? 'text-sm text-ink/[0.45]'
+                  : 'text-sm font-medium'
+              }
+              data-context={row.original.matched === false ? 'true' : undefined}
+            >
+              {String(getValue())}
+            </span>
           </div>
         ),
       },
@@ -789,7 +834,10 @@ export function BlockDocumentList() {
   const table = useReactTable({
     data: rows,
     columns,
-    state: { expanded, columnVisibility },
+    // En mode requête l'arbre est DÉJÀ élagué : tout replier masquerait
+    // précisément ce qu'on vient de chercher. Les ancêtres ne sont là que pour
+    // situer les résultats — ils doivent donc être ouverts.
+    state: { expanded: mode === 'query' ? true : expanded, columnVisibility },
     onExpandedChange: setExpanded,
     onColumnVisibilityChange: handleColumnVisibilityChange,
     getSubRows: (row) => row.subRows,

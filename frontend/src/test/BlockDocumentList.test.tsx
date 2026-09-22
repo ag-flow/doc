@@ -354,6 +354,8 @@ describe('BlockDocumentList', () => {
       has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'atdd1',
           title: 'ATDD done',
           functional_type_slug: 'atdd',
@@ -376,6 +378,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -402,6 +405,95 @@ describe('BlockDocumentList', () => {
     expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
     expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
     expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
+  })
+
+  // ── Filtrer sans perdre l'arborescence ────────────────────────────────────
+
+  it('un filtre conserve l\'ARBORESCENCE : les ancêtres viennent en contexte', async () => {
+    // Le défaut rapporté : « quand on commence à filtrer, l'arborescence
+    // disparaît ». Le serveur remonte désormais les ancêtres des résultats
+    // (`include_ancestors`), et le front rebâtit l'arbre élagué.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: 'epic',
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    // Le serveur rend le résultat (Feature 1) ET son ancêtre, marqué contexte.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['feature'])
+
+    // L'ancêtre est affiché — sans lui on ne sait plus OÙ est le résultat.
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    expect(screen.getByText('Feature 1')).toBeInTheDocument()
+    // Et il est distingué du résultat.
+    expect(screen.getByText('Epic 1')).toHaveAttribute('data-context', 'true')
+    expect(screen.getByText('Feature 1')).not.toHaveAttribute('data-context')
+  })
+
+  it('le compte annoncé ne compte QUE les résultats', async () => {
+    // « 1 document » veut dire un résultat, pas un résultat plus le chemin qui
+    // y mène — sinon le compte contredirait ce que l'écran montre.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: null,
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['feature'])
+
+    await waitFor(() => expect(screen.getByTestId('docs-toolbar')).toHaveTextContent('1'))
+    expect(screen.getByTestId('docs-toolbar')).not.toHaveTextContent('2 document')
   })
 
   // ── Colonne « type technique » ────────────────────────────────────────────
@@ -464,6 +556,8 @@ describe('BlockDocumentList', () => {
       block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'epic1', title: 'Epic 1', functional_type_slug: 'epic',
           type: 'md',
           updated_at: null, updated_by: null, properties: [],
@@ -480,6 +574,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
         type_slugs: ['epic'],
         content_types: null,
+        include_ancestors: true,
         filters: [],
         sort: [],
         projection: null,
@@ -506,6 +601,8 @@ describe('BlockDocumentList', () => {
       block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'm1', title: 'Boutique', functional_type_slug: 'epic', type: 'model-layout',
           updated_at: null, updated_by: null, properties: [],
         },
@@ -523,6 +620,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: ['model-layout'],
+        include_ancestors: true,
         filters: [],
         sort: [],
         projection: null,
@@ -598,7 +696,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -613,6 +711,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
@@ -627,6 +726,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
@@ -647,7 +747,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 250,
       has_next: true,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -662,6 +762,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
@@ -756,6 +857,8 @@ describe('BlockDocumentList', () => {
       has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'e1',
           type: 'md',
           title: 'Epic 1',
@@ -779,6 +882,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
@@ -794,6 +898,7 @@ describe('BlockDocumentList', () => {
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
         type_slugs: null,
         content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [
           { key: 'statut', dir: 'asc' },
@@ -851,7 +956,7 @@ describe('BlockDocumentList', () => {
       page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', updated_at: null, updated_by: null, properties: [statut('done')] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [statut('done')] }],
     })
 
     renderList()
@@ -1285,6 +1390,8 @@ describe('BlockDocumentList — tri, filtres et URL', () => {
     // Il faut au moins une ligne : sans résultat, c'est l'état vide qui s'affiche.
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       objects: [{
+        parent_id: null,
+        matched: true,
         id: 'd1', title: 'Alpha', functional_type_slug: 'epic',
         type: 'md',
         updated_at: null, updated_by: null,

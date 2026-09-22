@@ -9,6 +9,7 @@ describe('useQuerySpecState', () => {
     expect(result.current.spec).toEqual({
       type_slugs: null,
       content_types: null,
+      include_ancestors: true,
       filters: [],
       sort: [],
       projection: null,
@@ -188,6 +189,7 @@ describe('useQuerySpecState', () => {
     expect(result.current.spec).toEqual({
       type_slugs: null,
       content_types: null,
+      include_ancestors: true,
       filters: [],
       sort: [],
       projection: null,

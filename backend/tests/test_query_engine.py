@@ -237,6 +237,98 @@ async def test_sort_restricted_list_by_pipeline(
     assert positions == sorted(positions)  # non-décroissant : todo < doing < done
 
 
+# ── include_ancestors : l'arbre élagué ────────────────────────────────────────
+
+
+async def test_sans_le_drapeau_la_reponse_est_inchangee(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Contrat MCP : enrichir en silence fausserait la logique d'un appelant."""
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(filters=[FilterClause(prop="statut", op="eq", value="todo")])
+    )
+    assert {o.title for o in page.objects} == {"T1", "T4"}
+    assert all(o.matched for o in page.objects)
+
+
+async def test_ancetres_remontes_et_marques_comme_contexte(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    # S1 est un subtask sous T1. Filtrer sur le type `subtask` ne rend que S1 —
+    # sans son parent, l'arbre affiché n'aurait aucun sens.
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    par_titre = {o.title: o for o in page.objects}
+    assert par_titre["S1"].matched is True
+    assert par_titre["T1"].matched is False, "l'ancêtre est du CONTEXTE, pas un résultat"
+    assert par_titre["S1"].parent_id == par_titre["T1"].id
+
+
+async def test_total_ne_compte_QUE_les_resultats(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """« 12 documents » doit vouloir dire douze résultats — pas douze résultats
+    plus le chemin qui y mène."""
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    assert page.total == 1
+    assert len(page.objects) == 2  # S1 + son ancêtre T1
+
+
+async def test_un_resultat_a_la_racine_n_ajoute_aucun_ancetre(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["task"], include_ancestors=True)
+    )
+
+    assert all(o.matched for o in page.objects)
+    assert all(o.parent_id is None for o in page.objects)
+
+
+async def test_un_ancetre_commun_n_est_remonte_qu_une_fois(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    # Deux subtasks sous le MÊME parent : le dédoublonnage est fait par le
+    # `UNION` du CTE, pas par l'appelant.
+    block_id = await _setup(db_pool)
+    t1_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT doc_technical_key FROM document WHERE title='T1'"
+    )
+    await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="S2", slug="s2", block_id=block_id,
+            functional_type_slug="subtask", parent_id=t1_id,
+        ),
+    )
+
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    assert page.total == 2
+    assert [o.title for o in page.objects].count("T1") == 1
+
+
+async def test_parent_id_est_toujours_remonte(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Sans lui, le front ne peut pas reconstruire l'arbre."""
+    await _setup(db_pool)
+    page = await query_documents(db_pool, _WS, _spec(type_slugs=["subtask"]))
+    assert page.objects[0].parent_id is not None
+
+
 # ── content_types : l'autre axe ───────────────────────────────────────────────
 
 
