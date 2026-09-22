@@ -129,8 +129,9 @@ _TOOLS: list[Tool] = [
             "de create_block pour obtenir le slug. "
             "Retourne l'id (UUID), le title et la 'version' initiale du document créé "
             "(version directement utilisable comme expected_version d'un update_document). "
-            "functional_type_slug est optionnel mais doit correspondre au type du bloc "
-            "(doit exister dans le workspace, sinon erreur). "
+            "functional_type_slug est REQUIS et doit être autorisé à la position visée "
+            "(à la racine du bloc : le type du bloc ; sous un parent : un type fils du "
+            "sien). Un appel sans lui est refusé, avec la liste des types admissibles. "
             "contenu est du markdown libre, optionnel. "
             "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
             "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
@@ -164,7 +165,8 @@ _TOOLS: list[Tool] = [
                 "functional_type_slug": {
                     "type": "string",
                     "description": (
-                        "Type fonctionnel à associer (optionnel, doit exister dans le workspace)"
+                        "Type fonctionnel du document (REQUIS) — doit exister dans le "
+                        "workspace et être autorisé à la position visée"
                     ),
                 },
                 "content_type": {
@@ -203,7 +205,7 @@ _TOOLS: list[Tool] = [
                     ),
                 },
             },
-            "required": ["workspace_slug", "block_slug", "title"],
+            "required": ["workspace_slug", "block_slug", "title", "functional_type_slug"],
         },
     ),
     Tool(
@@ -1712,6 +1714,35 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
     except ValueError:
         return _text({"error": "parent_id : UUID invalide"})
+    # Le type fonctionnel est REQUIS, comme dans l'interface — qui désactive la
+    # création tant qu'aucun type n'est choisi. L'écart entre les deux chemins
+    # produisait des documents sans type, que rien ne contraignait ensuite :
+    # `_validate_type_position` se retire pour eux, ils échappaient donc aussi à
+    # la hiérarchie du bloc.
+    #
+    # Rupture de contrat ASSUMÉE (décision d'architecte du 2026-09-21) : un
+    # appelant qui omettait le paramètre reçoit désormais un refus. Le message
+    # doit donc suffire à se corriger seul — d'où les types admissibles nommés.
+    if type_slug is None:
+        try:
+            admissibles = await doc_svc.allowed_types(pool, ws_slug, block_slug, parent_id)
+        except HTTPException:
+            admissibles = []
+        return _text(
+            {
+                "error": {
+                    "code": "functional_type_required",
+                    "message": (
+                        "functional_type_slug est requis. Types admissibles à cette "
+                        "position : "
+                        + (", ".join(t["slug"] for t in admissibles) or "(aucun)")
+                        + ". Les lister aussi via get_block_type / list_blocks."
+                    ),
+                    "allowed": [t["slug"] for t in admissibles],
+                }
+            }
+        )
+
     raw_props = args.get("properties")
     properties: dict[str, str] | None = None
     if raw_props is not None:

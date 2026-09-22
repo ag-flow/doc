@@ -494,6 +494,73 @@ async def test_create_document_enfant_type_invalide_refuse(
     assert "error" in data  # type: ignore[operator]
 
 
+async def test_create_document_sans_type_est_REFUSE(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Rupture de contrat assumée (T2) : l'interface exige le type depuis
+    toujours, le MCP le laissait optionnel. L'écart produisait des documents sans
+    type — qui échappaient aussi à la contrainte de hiérarchie du bloc."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Sans type",
+            },
+        )
+    )
+
+    assert data["error"]["code"] == "functional_type_required"  # type: ignore[index]
+
+
+async def test_le_refus_NOMME_les_types_admissibles(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un refus doit suffire à se corriger seul : sinon on remplace un document
+    mal typé par un agent bloqué."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Sans type",
+            },
+        )
+    )
+
+    assert "epic" in data["error"]["allowed"]  # type: ignore[index]
+    assert "epic" in data["error"]["message"]  # type: ignore[index]
+
+
+async def test_create_document_avec_type_reste_inchange(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Les appelants qui passaient déjà le type ne voient aucune différence."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Avec type",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+
+    assert data["created"] is True  # type: ignore[index]
+
+
+def test_create_document_declare_le_type_comme_REQUIS() -> None:
+    """Le schéma doit dire la vérité : un outil qui annonce « optionnel » ce
+    qu'il refuse fait échouer l'agent sans qu'il comprenne."""
+    tool = next(t for t in _TOOLS if t.name == "create_document")
+    assert "functional_type_slug" in tool.inputSchema["required"]
+    assert "optionnel" not in tool.inputSchema["properties"]["functional_type_slug"]["description"]
+
+
 # ---------------------------------------------------------------------------
 # 7. update_document
 # ---------------------------------------------------------------------------
@@ -526,19 +593,29 @@ async def test_update_document_pose_le_type_fonctionnel(
 ) -> None:
     """Le trou que ce ticket comble : un agent qui oubliait le type à la création
     ne pouvait plus le rattraper — aucun outil MCP ne l'exposait."""
-    # Un document créé SANS type, comme le MCP le permettait jusqu'ici.
-    created = _json(
-        await _create_document(
-            db_pool,
-            {
-                "workspace_slug": mcp_ws["ws_slug"],
-                "block_slug": "epics",
-                "title": "Sans type",
-                "contenu": "corps",
-            },
-        )
+    # Un document SANS type. Le MCP ne permet plus d'en créer (T2), mais il en
+    # existe : créés avant, ou par un autre chemin. C'est exactement la
+    # population que T3 devra reprendre — et qu'on doit pouvoir réparer.
+    # `create_document_in_block` DÉDUIT le type du bloc à la racine : il ne
+    # produit donc pas de document typeless. Seul `create_document` laisse le
+    # type à None quand on ne le passe pas — c'est par là que la population
+    # historique est arrivée.
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
+    block_id = await db_pool.fetchval(
+        "SELECT b.id FROM data_block b JOIN workspace w "
+        "ON w.workspace_technical_key = b.workspace_technical_key "
+        "WHERE w.slug = $1 AND b.slug = $2",
+        mcp_ws["ws_slug"],
+        "epics",
     )
-    doc_id = created["id"]  # type: ignore[index]
+    legacy = await doc_svc.create_document(
+        db_pool,
+        str(mcp_ws["ws_slug"]),
+        DocumentCreate(title="Sans type", slug="sans-type", block_id=block_id),
+    )
+    doc_id = str(legacy.doc_technical_key)
     before = _json(await _get_document(db_pool, mcp_ws["ws_slug"], doc_id))  # type: ignore[arg-type]
     assert before["functional_type_slug"] is None  # type: ignore[index]
 

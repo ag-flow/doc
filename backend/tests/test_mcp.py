@@ -183,6 +183,7 @@ async def test_create_and_get_document_via_mcp(db_pool: asyncpg.Pool) -> None:
             "block_slug": "mcp-block",
             "title": "Doc créé via MCP",
             "contenu": "# Hello MCP",
+            "functional_type_slug": "mcp-root",
         },
     )
     created = json.loads(result[0].text)

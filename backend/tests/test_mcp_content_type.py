@@ -74,10 +74,13 @@ async def mcp_ws(db_pool: asyncpg.Pool) -> AsyncIterator[dict[str, object]]:
 
 
 async def _create(db_pool: asyncpg.Pool, ws_slug: str, title: str, **extra: Any) -> Any:
+    # Le type FONCTIONNEL est requis depuis T2 ; ces tests portent sur le type de
+    # CONTENU, on le pose donc par défaut pour ne pas brouiller leur objet.
     args: dict[str, Any] = {
         "workspace_slug": ws_slug,
         "block_slug": _BLOCK,
         "title": title,
+        "functional_type_slug": "epic",
         **extra,
     }
     return _json(await _create_document(db_pool, args))
@@ -124,7 +127,7 @@ async def test_creation_avec_un_type_de_contenu(
 async def test_creation_sans_type_reste_du_markdown(
     db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
 ) -> None:
-    """Rétro-compatibilité de la surface MCP."""
+    """Sans `content_type` déclaré, le corps reste du markdown."""
     configure(db_pool)
     created = await _create(
         db_pool, mcp_ws["ws_slug"], "Page MCP", contenu="# Bonjour"  # type: ignore[arg-type]
