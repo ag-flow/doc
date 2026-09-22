@@ -496,6 +496,53 @@ describe('BlockDocumentList', () => {
     expect(screen.getByTestId('docs-toolbar')).not.toHaveTextContent('2 document')
   })
 
+  it('un document vu en RÉSULTAT puis en contexte reste un résultat', async () => {
+    // La pagination porte sur les résultats, et chaque page remonte SES propres
+    // ancêtres : un même document peut donc revenir page 2 comme ancêtre alors
+    // qu'il était résultat page 1. Sans arbitrage, le dernier écrasait le
+    // premier — un vrai résultat s'affichait en gris tout en étant compté, et le
+    // nombre annoncé contredisait l'écran.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+    ])
+    // Une seule page qui contient e1 DEUX fois : résultat, puis ancêtre de f1.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 2, has_next: false,
+      objects: [
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['epic'])
+
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Le statut de RÉSULTAT l'emporte sur celui de contexte.
+    expect(screen.getByText('Epic 1')).not.toHaveAttribute('data-context')
+  })
+
   // ── Colonne « type technique » ────────────────────────────────────────────
 
   it('affiche le type technique via la table de mapping, pas la clef brute', async () => {

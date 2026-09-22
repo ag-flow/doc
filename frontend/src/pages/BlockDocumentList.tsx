@@ -159,7 +159,21 @@ interface BrowseSort {
  * perd de vue OÙ se trouve ce qu'on a trouvé.
  */
 function pruneTree(flat: TreeRow[]): TreeRow[] {
-  const byId = new Map(flat.map((r) => [r.id, { ...r, subRows: [] as TreeRow[] }]))
+  const byId = new Map<string, TreeRow>()
+  for (const r of flat) {
+    const seen = byId.get(r.id)
+    // Un même document peut revenir d'une PAGE à l'autre : résultat ici,
+    // ancêtre de contexte là (la pagination porte sur les résultats, et chaque
+    // page remonte ses propres ancêtres). Le statut de RÉSULTAT l'emporte —
+    // sinon un vrai résultat s'afficherait en gris tout en étant compté, et le
+    // nombre annoncé contredirait l'écran.
+    byId.set(
+      r.id,
+      seen
+        ? { ...seen, matched: seen.matched !== false || r.matched !== false }
+        : { ...r, subRows: [] as TreeRow[] },
+    )
+  }
   const roots: TreeRow[] = []
   for (const row of byId.values()) {
     const parent = row.parentId ? byId.get(row.parentId) : undefined
