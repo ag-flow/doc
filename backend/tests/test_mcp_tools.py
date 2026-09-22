@@ -521,6 +521,118 @@ async def test_update_document_titre(db_pool: asyncpg.Pool, mcp_ws: dict[str, ob
     assert check["is_current"] is True  # type: ignore[index]
 
 
+async def test_update_document_pose_le_type_fonctionnel(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le trou que ce ticket comble : un agent qui oubliait le type à la création
+    ne pouvait plus le rattraper — aucun outil MCP ne l'exposait."""
+    # Un document créé SANS type, comme le MCP le permettait jusqu'ici.
+    created = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Sans type",
+                "contenu": "corps",
+            },
+        )
+    )
+    doc_id = created["id"]  # type: ignore[index]
+    before = _json(await _get_document(db_pool, mcp_ws["ws_slug"], doc_id))  # type: ignore[arg-type]
+    assert before["functional_type_slug"] is None  # type: ignore[index]
+
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": doc_id,
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+
+    assert data["updated"] is True  # type: ignore[index]
+    after = _json(await _get_document(db_pool, mcp_ws["ws_slug"], doc_id))  # type: ignore[arg-type]
+    assert after["functional_type_slug"] == "epic"  # type: ignore[index]
+
+
+async def test_poser_le_type_seul_ne_cree_PAS_de_revision(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le type fonctionnel n'est pas du contenu : le poser ne versionne rien,
+    et n'exige donc aucune version attendue."""
+    before = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+
+    await _update_document(
+        db_pool,
+        {
+            "workspace_slug": mcp_ws["ws_slug"],
+            "doc_id": mcp_ws["doc_id"],
+            "functional_type_slug": "epic",
+        },
+    )
+
+    after = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    assert after["version"] == before["version"]  # type: ignore[index]
+
+
+async def test_update_document_titre_exige_TOUJOURS_une_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """La concurrence optimiste ne se relâche que pour le type : dès qu'on touche
+    au contenu, un appel sans version reste refusé."""
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "title": "Sans version",
+            },
+        )
+    )
+    assert data["error"]["code"] == "version_required"  # type: ignore[index]
+
+
+async def test_update_document_type_interdit_a_cette_position(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Poser un type fait entrer le document dans la contrainte de hiérarchie :
+    un type incompatible se REFUSE, il ne se force pas."""
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "SELECT $1, $2, workspace_technical_key FROM workspace WHERE slug = $3",
+        "story",
+        "Story",
+        mcp_ws["ws_slug"],
+    )
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "functional_type_slug": "story",
+            },
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_update_document_sans_rien_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": mcp_ws["ws_slug"], "doc_id": mcp_ws["doc_id"]},
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
 async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(
         await _update_document(

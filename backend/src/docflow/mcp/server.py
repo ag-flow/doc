@@ -221,9 +221,14 @@ _TOOLS: list[Tool] = [
             "title, contenu}} portant l'état courant. Boucle attendue côté client : "
             "relire (ou lire l'état du conflit) → réappliquer ses modifications → "
             "réécrire avec la version courante. Un appel sans expected_version est "
-            "refusé ({error:{code:'version_required'}}). "
-            "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
-            "(utiliser set_property_value pour cela). "
+            "refusé ({error:{code:'version_required'}}) — mais seulement si title "
+            "ou contenu est fourni. "
+            "PEUT AUSSI poser le type FONCTIONNEL (functional_type_slug) : ce n'est "
+            "pas du contenu, donc aucune version attendue n'est requise pour lui "
+            "seul, et le poser ne crée pas de révision. Le type doit être autorisé "
+            "à la position du document (à la racine du bloc : le type du bloc ; "
+            "sous un parent : un type fils du sien), sinon 422. "
+            "Ne touche pas aux valeurs de propriétés (utiliser set_property_value). "
             "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
             "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
             "description », jamais de numéro), ```df-chart (« libellé | valeur », "
@@ -255,16 +260,25 @@ _TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Nouveau contenu markdown (omis = inchangé)",
                 },
+                "functional_type_slug": {
+                    "type": "string",
+                    "description": (
+                        "Type FONCTIONNEL à poser (ce que le document représente "
+                        "métier). Doit exister dans le workspace ET être autorisé à "
+                        "la position du document. Ne crée pas de révision."
+                    ),
+                },
                 "expected_version": {
                     "type": "integer",
                     "description": (
-                        "OBLIGATOIRE — numéro de révision présumé courant "
-                        "(champ 'version' de get_document ou retour d'un "
-                        "update/create). Refus si périmé, sans écrasement."
+                        "Numéro de révision présumé courant (champ 'version' de "
+                        "get_document ou retour d'un update/create). Refus si périmé, "
+                        "sans écrasement. OBLIGATOIRE dès que title ou contenu est "
+                        "fourni ; inutile pour poser le seul functional_type_slug."
                     ),
                 },
             },
-            "required": ["workspace_slug", "doc_id", "expected_version"],
+            "required": ["workspace_slug", "doc_id"],
         },
     ),
     Tool(
@@ -1776,13 +1790,17 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     doc_id_str = str(args.get("doc_id", ""))
     title = str(args["title"]) if "title" in args else None
     contenu = str(args["contenu"]) if "contenu" in args else None
+    ft_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
 
-    if not title and contenu is None:
-        return _text({"error": "au moins title ou contenu requis"})
+    if not title and contenu is None and ft_slug is None:
+        return _text({"error": "au moins title, contenu ou functional_type_slug requis"})
 
-    # Concurrence optimiste : expected_version est OBLIGATOIRE côté appelant. Pas
-    # d'écriture aveugle ni de rejeu transparent — un conflit est un refus explicite.
-    if args.get("expected_version") is None:
+    # Le type fonctionnel n'est PAS du contenu : il ne se versionne pas, et sa
+    # pose seule n'exige donc aucune version attendue. Dès qu'on touche au titre
+    # ou au corps, la concurrence optimiste reprend ses droits — pas d'écriture
+    # aveugle, un conflit est un refus explicite.
+    touches_content = title is not None or contenu is not None
+    if touches_content and args.get("expected_version") is None:
         return _text(
             {
                 "error": {
@@ -1795,7 +1813,9 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             }
         )
     try:
-        expected_version = int(str(args["expected_version"]))
+        expected_version = (
+            int(str(args["expected_version"])) if args.get("expected_version") is not None else None
+        )
     except (TypeError, ValueError):
         return _text(
             {
@@ -1819,6 +1839,8 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         update_fields["title"] = title
     if "contenu" in args:
         update_fields["content"] = contenu
+    if ft_slug is not None:
+        update_fields["functional_type_slug"] = ft_slug
 
     try:
         data = DocumentUpdate(expected_version=expected_version, **update_fields)
