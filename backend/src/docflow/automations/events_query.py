@@ -13,7 +13,9 @@ Le consommateur lui-même et les priorités supérieures le voient toujours.
 Params positionnels communs : $1 = workspaces (uuid[]), $2 = eventCodes,
 $3 = block_slugs, $4 = functional_type_slugs, $5 = automation_id (pour la
 chaîne), $6 = curseur (last_seq), $7 = block_templates. Un document supprimé (jointure NULL) est
-exclu dès qu'un filtre bloc/type est posé.
+exclu dès qu'un filtre bloc/type est posé ; un event SANS document (cycle de vie
+d'un workspace ou d'un bloc) en est au contraire exempté — les filtres
+documentaires ne s'appliquent pas à ce qui n'est pas un document.
 """
 
 from __future__ import annotations
@@ -34,12 +36,22 @@ WHERE de.workspace_technical_key = ANY($1::uuid[])
   -- Périmètre de blocs : UNION des deux critères. Aucun des deux posé = aucune
   -- restriction ; l'un ou l'autre posé = le bloc doit satisfaire au moins un.
   -- Le template d'un bloc est la provenance de son type RACINE (0038).
+  -- Un event de CONTENANT (workspace créé, bloc créé) ne porte pas de document :
+  -- les filtres documentaires ne le concernent pas, il passe tel quel. Sans cette
+  -- exemption, poser n'importe quel filtre le ferait disparaître en silence.
+  -- `de.document_ref IS NULL` et non `d.* IS NULL` : un document SUPPRIMÉ garde
+  -- sa référence et reste, lui, exclu dès qu'un filtre est posé.
   AND (
-        (cardinality($3::text[]) = 0 AND cardinality($7::text[]) = 0)
+        de.document_ref IS NULL
+        OR (cardinality($3::text[]) = 0 AND cardinality($7::text[]) = 0)
         OR b.slug = ANY($3::text[])
         OR bft.source_template = ANY($7::text[])
   )
-  AND (cardinality($4::text[]) = 0 OR ft.slug = ANY($4::text[]))
+  AND (
+        de.document_ref IS NULL
+        OR cardinality($4::text[]) = 0
+        OR ft.slug = ANY($4::text[])
+  )
   AND (
         de.consumed_by IS NULL
         OR de.consumed_by = $5

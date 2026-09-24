@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from docflow.db.helpers import require_workspace
 from docflow.documents.changelog import log_structure_change
 from docflow.errors import DependentsConflictError
+from docflow.events import outbox
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 
 _SELECT_BLOCK = """
@@ -257,6 +258,26 @@ async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) 
                 ) from exc
             assert row is not None
             await log_structure_change(conn, wk, "block", "C", row["id"])
+            # Provenance du type RACINE : c'est elle qui permet à l'appelant de
+            # trier les blocs qu'il traite sans énumérer leurs slugs.
+            source_template = await conn.fetchval(
+                "SELECT source_template FROM functional_type WHERE id = $1", type_id
+            )
+            # Dans la MÊME transaction que la création : jamais un bloc sans son
+            # event, jamais un event pour un bloc qui n'existe pas.
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.block.created.v1",
+                workspace_wk=wk,
+                business={
+                    "workspaceSlug": ws_slug,
+                    "blockSlug": data.slug,
+                    "blockLabel": data.label,
+                    "functionalTypeSlug": data.functional_type_slug,
+                    "sourceTemplate": source_template,
+                },
+                dedup_key=str(row["id"]),
+            )
     return DataBlockOut(
         id=row["id"],
         slug=row["slug"],

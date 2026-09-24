@@ -43,7 +43,7 @@ class AutomationCreate(BaseModel):
     # Workspaces couverts (l'automate est visible et se déclenche dans chacun).
     # Vide à la création = [workspace courant]. Jamais vide en base.
     workspace_slugs: list[str] = []
-    # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
+    # eventCodes déclencheurs (catalogue docflow : events de document ET de contenant).
     event_codes: list[str] = []
     # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
     block_slugs: list[str] = []

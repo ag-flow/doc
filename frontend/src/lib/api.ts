@@ -1155,6 +1155,11 @@ export interface EventCatalogEntry {
   title: string
   description: string
   deprecated: boolean
+  /** Ce sur quoi porte l'event : 'document', ou 'container' (workspace, bloc).
+   *  Un event de contenant ne porte pas de document : les filtres de bloc et de
+   *  type d'un automate ne s'y appliquent pas. L'écran le lit ici plutôt que de
+   *  reconnaître des eventCodes en dur. Absent = 'document' (ancien serveur). */
+  scope?: 'document' | 'container'
 }
 
 export interface EventCatalog {

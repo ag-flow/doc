@@ -1172,3 +1172,70 @@ async def test_echec_persistant_finit_en_dead_letter(
     calls_before = len(_CALLS)
     await worker.run_tick(db_pool, automation, _Settings())
     assert len(_CALLS) == calls_before
+
+
+async def test_events_de_contenant_emis_et_exemptes_des_filtres(db_pool: asyncpg.Pool) -> None:
+    """Créer un workspace puis un bloc émet les events de contenant, et un
+    automate les voit MÊME avec un filtre de bloc posé.
+
+    Sans l'exemption, le filtre ferait disparaître ces events en silence : les
+    jointures document→bloc sont NULL pour un event qui ne porte pas de document.
+    Le symptôme serait un automate « qui ne se déclenche jamais », sans erreur.
+    """
+    from docflow.automations import service as auto_svc
+    from docflow.blocks import service as block_svc
+    from docflow.schemas.block import DataBlockCreate
+    from docflow.schemas.types import FunctionalTypeCreate
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.types import service as type_svc
+    from docflow.workspaces import service as ws_svc
+
+    slug = f"auto-ct-{uuid.uuid4().hex[:8]}"
+    ws = await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=slug, label="Contenant"), None)
+    wk = ws.workspace_technical_key
+
+    ev = await db_pool.fetchrow(
+        "SELECT event_code, document_ref, business FROM document_event "
+        "WHERE workspace_technical_key = $1 ORDER BY seq DESC LIMIT 1",
+        wk,
+    )
+    assert ev is not None and ev["event_code"] == "docflow.workspace.created.v1"
+    # Pas de document : c'est ce NULL qui déclenche l'exemption de filtre.
+    assert ev["document_ref"] is None
+    biz = json.loads(ev["business"]) if isinstance(ev["business"], str) else ev["business"]
+    assert biz["workspaceSlug"] == slug and biz["workspaceLabel"] == "Contenant"
+
+    await type_svc.create_type(db_pool, slug, FunctionalTypeCreate(slug="t", label="T"))
+    await block_svc.create_block(
+        db_pool, slug, DataBlockCreate(slug="b", label="B", functional_type_slug="t")
+    )
+    ev = await db_pool.fetchrow(
+        "SELECT event_code, document_ref, business FROM document_event "
+        "WHERE workspace_technical_key = $1 ORDER BY seq DESC LIMIT 1",
+        wk,
+    )
+    assert ev is not None and ev["event_code"] == "docflow.block.created.v1"
+    assert ev["document_ref"] is None
+    biz = json.loads(ev["business"]) if isinstance(ev["business"], str) else ev["business"]
+    assert biz["blockSlug"] == "b" and biz["functionalTypeSlug"] == "t"
+    # Type créé à la main : aucune provenance de template, et le dire est utile.
+    assert biz["sourceTemplate"] is None
+
+    # Un automate avec un filtre de bloc QUI NE MATCHE PAS voit quand même les
+    # deux events de contenant — ils ne portent pas sur un bloc.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, functional_type_slugs, delay_minutes, url, http_method) "
+        "VALUES ($1,'RAG',true,$2,ARRAY['autre-bloc'],'{}',ARRAY['autre-type'],0,$3,'POST') "
+        "RETURNING id",
+        wk,
+        ["docflow.workspace.created.v1", "docflow.block.created.v1"],
+        "https://rag.example/ws",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    autos = await auto_svc.list_automations(db_pool, slug)
+    assert next(x for x in autos if x.id == auto_id).pending_count == 2

@@ -209,6 +209,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       .flatMap((t) => t.type_slugs),
   )
 
+  const hasContainerEvent = eventTypes.some(
+    (ev) => ev.scope === 'container' && eventCodes.includes(ev.eventCode),
+  )
+
   const operations = contractDetail?.operations ?? []
 
   const toggle = (arr: string[], v: string) => arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]
@@ -405,6 +409,18 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 ))}
               </div>
             </Section>
+
+            {/* Un event de contenant ne porte pas de document : les filtres
+                documentaires ne s'y appliquent pas. Le taire donnerait un
+                automate « qui ne se déclenche jamais » sans rien d'anormal à
+                l'écran — exactement le mode de panne qu'on vient de corriger
+                ailleurs. */}
+            {hasContainerEvent && (blockSlugs.length > 0 || blockTemplates.length > 0 || typeSlugs.length > 0) && (
+              <p className="text-[12px] text-accent-700" data-testid="auto-container-scope-note">
+                Les events de contenant (workspace, bloc) ne portent pas de document :
+                ils se déclenchent quels que soient les filtres de bloc et de type.
+              </p>
+            )}
 
             <Section title="Events déclencheurs">
               <div className="grid grid-cols-2 gap-1.5">

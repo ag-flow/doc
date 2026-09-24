@@ -187,3 +187,58 @@ describe('AutomationDialog — couverture par template de bloc', () => {
     expect(onSave.mock.calls[0][0].block_slugs).toEqual([])
   })
 })
+
+describe('AutomationDialog — events de contenant', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(contractsApi.list).mockResolvedValue([])
+    vi.mocked(secretsApi.list).mockResolvedValue([])
+    vi.mocked(docsApi.getBlocks).mockResolvedValue([])
+    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(eventsProducerApi.catalog).mockResolvedValue({
+      revision: 'r', specVersion: '1.0',
+      events: [
+        { eventCode: 'docflow.document.updated.v1', latestVersion: 1, title: 'Doc MAJ', description: '', deprecated: false, scope: 'document' },
+        { eventCode: 'docflow.block.created.v1', latestVersion: 1, title: 'Bloc créé', description: '', deprecated: false, scope: 'container' },
+      ],
+    })
+  })
+
+  function open(initial: AutomationOut) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AutomationDialog ws="ws1" initial={initial} onSave={vi.fn()} onClose={vi.fn()} saving={false} error={null} />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByTestId('auto-tab-events'))
+  }
+
+  const base: AutomationOut = {
+    id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+    event_codes: ['docflow.block.created.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
+    block_slugs: [], block_templates: [], functional_type_slugs: [],
+    on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
+    url: 'https://rag.example/api', http_method: 'POST', body_template: null,
+    headers: [], created_at: '', updated_at: '',
+  }
+
+  it('avertit que les filtres ne s’appliquent pas quand un event de contenant est coché', async () => {
+    open({ ...base, block_slugs: ['kb'] })
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-container-scope-note')).toBeInTheDocument(),
+    )
+  })
+
+  it('reste muet sans filtre posé — rien à avertir', async () => {
+    open(base)
+    await waitFor(() => expect(screen.getByTestId('auto-tab-events')).toBeInTheDocument())
+    expect(screen.queryByTestId('auto-container-scope-note')).not.toBeInTheDocument()
+  })
+
+  it('reste muet quand seuls des events documentaires sont cochés', async () => {
+    open({ ...base, event_codes: ['docflow.document.updated.v1'], block_slugs: ['kb'] })
+    await waitFor(() => expect(screen.getByTestId('auto-tab-events')).toBeInTheDocument())
+    expect(screen.queryByTestId('auto-container-scope-note')).not.toBeInTheDocument()
+  })
+})

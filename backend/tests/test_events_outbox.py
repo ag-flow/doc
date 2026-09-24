@@ -37,11 +37,16 @@ async def _events(pool: asyncpg.Pool) -> list[tuple[str, dict]]:
 
 
 def test_catalog_shape() -> None:
-    assert len(catalog.CATALOG) == 7
+    assert len(catalog.CATALOG) == 9
     assert catalog.catalog_revision().startswith("sha256:")
     codes = {e["eventCode"] for e in catalog.catalog_summary()}
     assert "docflow.document.created.v1" in codes
     assert "docflow.document.propertyChanged.v1" in codes
+    # Cycle de vie des contenants : ils n'ont pas de documentId, et c'est voulu.
+    assert "docflow.workspace.created.v1" in codes
+    assert "docflow.block.created.v1" in codes
+    for code in ("docflow.workspace.created.v1", "docflow.block.created.v1"):
+        assert "documentId" not in catalog.CATALOG[code].data_schema["properties"]
 
 
 def test_get_schema_known_and_unknown() -> None:

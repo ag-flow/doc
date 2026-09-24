@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from docflow.app import app
+from docflow.events import catalog
 
 _JWT_SECRET = "test_jwt_secret_events_discovery"
 _EMAIL = "disco@example.com"
@@ -33,7 +34,8 @@ def test_schemas_is_public(
     with _client(monkeypatch, test_schema_url) as client:
         r = client.get("/api/schemas")
     assert r.status_code == 200
-    assert len(r.json()["events"]) == 7
+    # Le catalogue entier est exposé : la découverte ne filtre rien.
+    assert len(r.json()["events"]) == len(catalog.CATALOG)
 
 
 def test_schema_catalog_and_versions(
@@ -48,8 +50,12 @@ def test_schema_catalog_and_versions(
         assert body["specVersion"]
         assert body["revision"].startswith("sha256:")
         codes = {e["eventCode"] for e in body["events"]}
-        assert len(codes) == 7
+        assert len(codes) == len(catalog.CATALOG)
         assert "docflow.document.created.v1" in codes
+        # Events de cycle de vie des contenants : un consommateur doit pouvoir
+        # les découvrir sans lire le code de docflow.
+        assert "docflow.workspace.created.v1" in codes
+        assert "docflow.block.created.v1" in codes
 
         r = client.get("/api/schemas/docflow.document.created.v1/versions", headers=hdrs)
         assert r.status_code == 200

@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.events import outbox
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
 
 _COLS = (
@@ -90,7 +91,16 @@ async def create_workspace(
                 raise HTTPException(
                     status_code=409, detail=f"workspace '{data.slug}' existe déjà"
                 ) from exc
-    assert row is not None
+            assert row is not None
+            # Dans la MÊME transaction que la création : jamais un workspace sans
+            # son event, jamais un event pour un workspace qui n'existe pas.
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.workspace.created.v1",
+                workspace_wk=row["workspace_technical_key"],
+                business={"workspaceSlug": data.slug, "workspaceLabel": data.label},
+                dedup_key=str(row["workspace_technical_key"]),
+            )
     return _row(row)
 
 
