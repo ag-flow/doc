@@ -88,7 +88,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
     const initial: AutomationOut = {
       id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
       event_codes: ['docflow.document.updated.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
-      block_slugs: [], functional_type_slugs: [],
+      block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
       url: 'https://rag.example/api', http_method: 'POST', body_template: '{"doc": "{title}"}',
       headers: [], created_at: '', updated_at: '',
@@ -110,7 +110,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
     const initial: AutomationOut = {
       id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
       event_codes: ['docflow.document.updated.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
-      block_slugs: [], functional_type_slugs: [],
+      block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: 'c1', operation_id: 'index',
       url: 'https://rag.example/api', http_method: 'POST', body_template: '{}',
       headers: [], created_at: '', updated_at: '',
@@ -120,5 +120,70 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
     await waitFor(() =>
       expect((screen.getByTestId('header-name-0') as HTMLInputElement).value).toBe('Authorization'),
     )
+  })
+})
+
+describe('AutomationDialog — couverture par template de bloc', () => {
+  const tpl = {
+    template: 'kb-tpl', label: 'Knowledge base', version: 1, path: '',
+    concrete_types: 1, type_slugs: ['kb-root'], blocks_count: 2,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(contractsApi.list).mockResolvedValue([])
+    vi.mocked(eventsProducerApi.catalog).mockResolvedValue({ revision: 'r', specVersion: '1.0', events: [] })
+    vi.mocked(secretsApi.list).mockResolvedValue([])
+    vi.mocked(docsApi.getBlocks).mockResolvedValue([
+      {
+        id: 'b1', slug: 'kb', label: 'Base de connaissance', functional_type_slug: 'kb-root',
+        parent_slug: null, workspace_slug: 'ws1', exposed: true, created_at: '', updated_at: '',
+        documents_count: 0, last_write_at: null,
+      },
+    ])
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/templates') return [tpl]
+      if (path === '/workspaces') return [{ slug: 'ws1', label: 'WS1' }]
+      return []
+    })
+  })
+
+  it('envoie block_templates et marque les blocs déjà couverts par provenance', async () => {
+    const initial: AutomationOut = {
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+      event_codes: [], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
+      block_slugs: [], block_templates: [], functional_type_slugs: [],
+      on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
+      url: 'https://rag.example/api', http_method: 'POST', body_template: null,
+      headers: [], created_at: '', updated_at: '',
+    }
+    const onSave = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AutomationDialog ws="ws1" initial={initial} onSave={onSave} onClose={vi.fn()} saving={false} error={null} />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByTestId('auto-tab-events'))
+    await waitFor(() => expect(screen.getByTestId('auto-block-template-kb-tpl')).toBeInTheDocument())
+
+    // Le bloc n'est PAS couvert tant que le template n'est pas coché.
+    await waitFor(() => expect(screen.getByTestId('auto-block-ws1-kb')).toBeInTheDocument())
+    expect(screen.queryByTestId('auto-block-via-template-kb')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('auto-block-template-kb-tpl').querySelector('input')!)
+
+    // Couvert par provenance : marqué, coché, et non décochable à la main.
+    await waitFor(() => expect(screen.getByTestId('auto-block-via-template-kb')).toBeInTheDocument())
+    const blockBox = screen.getByTestId('auto-block-ws1-kb').querySelector('input')!
+    expect(blockBox.checked).toBe(true)
+    expect(blockBox.disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    // Le template porte la couverture ; le bloc n'est PAS recopié en dur dans
+    // block_slugs — sinon le critère serait figé à l'instant de l'édition.
+    expect(onSave.mock.calls[0][0].block_templates).toEqual(['kb-tpl'])
+    expect(onSave.mock.calls[0][0].block_slugs).toEqual([])
   })
 })

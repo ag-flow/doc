@@ -12,7 +12,7 @@ Le consommateur lui-même et les priorités supérieures le voient toujours.
 
 Params positionnels communs : $1 = workspaces (uuid[]), $2 = eventCodes,
 $3 = block_slugs, $4 = functional_type_slugs, $5 = automation_id (pour la
-chaîne), $6 = curseur (last_seq). Un document supprimé (jointure NULL) est
+chaîne), $6 = curseur (last_seq), $7 = block_templates. Un document supprimé (jointure NULL) est
 exclu dès qu'un filtre bloc/type est posé.
 """
 
@@ -28,9 +28,17 @@ FROM document_event de
 LEFT JOIN document d ON d.doc_technical_key = de.document_ref
 LEFT JOIN data_block b ON b.id = d.data_block_ref
 LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
+LEFT JOIN functional_type bft ON bft.id = b.functional_type_ref
 WHERE de.workspace_technical_key = ANY($1::uuid[])
   AND de.event_code = ANY($2::text[])
-  AND (cardinality($3::text[]) = 0 OR b.slug = ANY($3::text[]))
+  -- Périmètre de blocs : UNION des deux critères. Aucun des deux posé = aucune
+  -- restriction ; l'un ou l'autre posé = le bloc doit satisfaire au moins un.
+  -- Le template d'un bloc est la provenance de son type RACINE (0038).
+  AND (
+        (cardinality($3::text[]) = 0 AND cardinality($7::text[]) = 0)
+        OR b.slug = ANY($3::text[])
+        OR bft.source_template = ANY($7::text[])
+  )
   AND (cardinality($4::text[]) = 0 OR ft.slug = ANY($4::text[]))
   AND (
         de.consumed_by IS NULL
@@ -56,19 +64,21 @@ async def matching_batch(
     automation_id: uuid.UUID,
     cursor: int,
     limit: int,
+    templates: list[str] | None = None,
 ) -> list[asyncpg.Record]:
     """Events matchés au-delà du curseur (batch ordonné)."""
     rows: list[asyncpg.Record] = await conn.fetch(
         "SELECT de.seq, de.document_ref, de.event_code, de.business, "
         "de.correlation_id, de.correlation_kind, de.origin, de.traceparent "
         + _FROM_WHERE
-        + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT $7",
+        + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT $8",
         wks,
         codes,
         blocks,
         types,
         automation_id,
         cursor,
+        templates or [],
         limit,
     )
     return rows
@@ -82,6 +92,7 @@ async def next_matching(
     types: list[str],
     automation_id: uuid.UUID,
     cursor: int,
+    templates: list[str] | None = None,
 ) -> asyncpg.Record | None:
     """Prochain event matché au-delà du curseur (ou None)."""
     return await conn.fetchrow(
@@ -95,6 +106,7 @@ async def next_matching(
         types,
         automation_id,
         cursor,
+        templates or [],
     )
 
 
@@ -106,6 +118,7 @@ async def pending_count(
     types: list[str],
     automation_id: uuid.UUID,
     cursor: int,
+    templates: list[str] | None = None,
 ) -> int:
     """Nombre d'events matchés au-delà du curseur."""
     n: int = await conn.fetchval(
@@ -116,6 +129,7 @@ async def pending_count(
         types,
         automation_id,
         cursor,
+        templates or [],
     )
     return n or 0
 
@@ -128,6 +142,7 @@ async def prev_cursor(
     types: list[str],
     automation_id: uuid.UUID,
     cursor: int,
+    templates: list[str] | None = None,
 ) -> int:
     """Nouveau curseur pour « revenir au précédent » : l'event matché juste avant
     le dernier traité redevient courant. 0 si on est déjà au début."""
@@ -142,6 +157,7 @@ async def prev_cursor(
         types,
         automation_id,
         cursor,
+        templates or [],
     )
     return val or 0
 

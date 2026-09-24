@@ -134,6 +134,7 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
         list(row["functional_type_slugs"] or []),
         row["id"],
         cursor,
+        list(row["block_templates"] or []),
     )
 
 
@@ -171,6 +172,7 @@ async def _deferred_until(conn: asyncpg.Connection, row: asyncpg.Record) -> date
         list(row["functional_type_slugs"] or []),
         row["id"],
         cursor,
+        list(row["block_templates"] or []),
     )
     if ev is None or ev["document_ref"] is None:
         return None
@@ -207,6 +209,7 @@ def _row_to_out(
         workspace_slugs=workspace_slugs or [],
         event_codes=list(row["event_codes"] or []),
         block_slugs=list(row["block_slugs"] or []),
+        block_templates=list(row["block_templates"] or []),
         functional_type_slugs=list(row["functional_type_slugs"] or []),
         stop_chain=row["stop_chain"],
         on_create=row["on_create"],
@@ -252,7 +255,8 @@ async def _upsert_headers(
 
 _LIST_FIELDS = (
     "a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
-    "a.block_slugs, a.functional_type_slugs, a.stop_chain, a.on_create, a.on_update, "
+    "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
+    "a.on_create, a.on_update, "
     "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
     "a.body_template, a.created_at, a.updated_at, "
     # Dernière exécution : sous-requête sur le run le plus récent.
@@ -369,11 +373,12 @@ async def create_automation(
             raise HTTPException(422, "un automate doit couvrir au moins un workspace")
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, "
             " delay_minutes, contract_ref, operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
             keys[0],
@@ -381,6 +386,7 @@ async def create_automation(
             body.active,
             body.event_codes,
             body.block_slugs,
+            body.block_templates,
             body.functional_type_slugs,
             body.stop_chain,
             body.on_create,
@@ -407,7 +413,8 @@ async def get_automation(
         wk = await _maybe_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
-            "a.block_slugs, a.functional_type_slugs, a.stop_chain, a.on_create, a.on_update, "
+            "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
+    "a.on_create, a.on_update, "
             "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
             "a.body_template, a.created_at, a.updated_at "
             "FROM automation a WHERE a.id = $1 AND " + _VISIBLE,
@@ -462,6 +469,7 @@ async def update_automation(
                 "active",
                 "event_codes",
                 "block_slugs",
+                "block_templates",
                 "functional_type_slugs",
                 "stop_chain",
                 "on_create",
@@ -488,6 +496,7 @@ async def update_automation(
 
         row = await conn.fetchrow(
             "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
@@ -620,7 +629,8 @@ async def run_next_pending(
     async with pool.acquire() as conn:
         wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "stop_chain, "
             "functional_type_slugs, url, http_method, body_template "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -645,6 +655,7 @@ async def run_next_pending(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -701,7 +712,8 @@ async def advance_pending(
     async with pool.acquire() as conn:
         wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "stop_chain, "
             "functional_type_slugs, url, http_method, body_template "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -726,6 +738,7 @@ async def advance_pending(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -785,7 +798,8 @@ async def cursor_back(
     async with pool.acquire() as conn:
         wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT workspace_technical_key, event_codes, block_slugs, functional_type_slugs "
+            "SELECT workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "functional_type_slugs "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -809,6 +823,7 @@ async def cursor_back(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         await _advance(conn, automation_id, new_cursor)
     return {"cursor": new_cursor}
@@ -835,18 +850,20 @@ async def clone_automation(
 
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, "
             " contract_ref, "
             " operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
+            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
             src["workspace_technical_key"],
             f"{src['label']} (copie)",
             src["event_codes"],
             src["block_slugs"],
+            src["block_templates"],
             src["functional_type_slugs"],
             src["stop_chain"],
             src["on_create"],

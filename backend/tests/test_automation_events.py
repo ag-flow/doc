@@ -172,7 +172,8 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     )
 
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
@@ -243,7 +244,8 @@ async def test_un_report_est_journalise_une_fois_par_tick(
         auto_id, wk,
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
         auto_id,
     )
@@ -299,7 +301,8 @@ async def test_aucun_report_aucune_ligne(
         auto_id, wk,
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
         auto_id,
     )
@@ -401,7 +404,8 @@ async def test_run_records_detail_and_prunes_to_20(
         auto_id, wk,
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
@@ -527,13 +531,83 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
     assert await _pending() == 1
 
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, body_template FROM automation WHERE id = $1",
         auto_id,
     )
     await worker.run_tick(db_pool, automation, object())
     assert len(_CALLS) == 1
+
+
+async def test_block_template_filter_covers_blocks_by_provenance(db_pool: asyncpg.Pool) -> None:
+    """`block_templates` couvre les blocs par PROVENANCE, en union avec `block_slugs`.
+
+    C'est le point du critère : un bloc qu'aucun automate ne nomme entre quand
+    même dans le périmètre s'il vient d'un template couvert — sinon créer un bloc
+    obligerait à se souvenir d'éditer chaque automate, ce que personne ne fait.
+    """
+    from docflow.automations import service as auto_svc
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # bloc 'b', type racine 't'
+    await db_pool.execute(
+        "UPDATE functional_type SET source_template = 'kb-tpl' "
+        "WHERE slug = 't' AND workspace_technical_key = $1",
+        wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, delay_minutes, url, http_method) "
+        "VALUES ($1,'RAG',true,$2,'{}','{}',0,$3,'POST') RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next(x for x in autos if x.id == auto_id).pending_count
+
+    # Aucun critère posé : aucune restriction (comportement inchangé).
+    assert await _pending() == 1
+
+    # Template qui ne couvre pas ce bloc → exclu.
+    await db_pool.execute(
+        "UPDATE automation SET block_templates = ARRAY['autre-tpl'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+
+    # Le bon template → couvert SANS que le bloc soit nommé.
+    await db_pool.execute(
+        "UPDATE automation SET block_templates = ARRAY['kb-tpl'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 1
+
+    # Union : un slug qui ne matche pas n'annule pas la couverture par template.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['autre-bloc'], "
+        "block_templates = ARRAY['kb-tpl'] WHERE id = $1",
+        auto_id,
+    )
+    assert await _pending() == 1
+
+    # Symétrique : le slug seul couvre, template non couvrant.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['b'], "
+        "block_templates = ARRAY['autre-tpl'] WHERE id = $1",
+        auto_id,
+    )
+    assert await _pending() == 1
 
 
 async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
@@ -847,7 +921,8 @@ async def test_worker_holds_no_pool_connection_during_http(
         wk,
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, delay_minutes, url, http_method, body_template "
         "FROM automation WHERE id = $1",
         auto_id,
@@ -915,7 +990,8 @@ async def _mk_automation(
         wk,
     )
     return await pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, delay_minutes, url, http_method, body_template "
         "FROM automation WHERE id = $1",
         auto_id,

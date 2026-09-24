@@ -448,6 +448,7 @@ async def _read_batch(
         automation["id"],
         cursor,
         100,
+        list(automation["block_templates"] or []),
     )
 
 
@@ -737,7 +738,8 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
         # tick (curseur unique) — sa priorité effective est la plus haute
         # (min des positions) parmi ses workspaces.
         automations = await conn.fetch(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "stop_chain, "
             "functional_type_slugs, delay_minutes, url, http_method, body_template, "
             "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
             " WHERE aw.automation_ref = automation.id) AS prio "

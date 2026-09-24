@@ -1300,6 +1300,10 @@ export interface AutomationOut {
   workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]
+  /** Templates dont les blocs sont couverts — UNION avec `block_slugs` : un bloc
+   *  entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé plus
+   *  tard depuis un template coché entre sans qu'on touche à l'automate. */
+  block_templates: string[]
   stop_chain: boolean
   functional_type_slugs: string[]
   on_create: boolean
@@ -1321,6 +1325,7 @@ export interface AutomationCreate {
   workspace_slugs?: string[]
   event_codes?: string[]
   block_slugs?: string[]
+  block_templates?: string[]
   stop_chain?: boolean
   functional_type_slugs?: string[]
   on_create?: boolean

@@ -7,7 +7,8 @@ import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
 import {
   api, contractsApi, docsApi, eventsProducerApi, secretsApi,
   type AutomationCreate, type AutomationHeaderIn, type AutomationOut,
-  type DataBlockOut, type FunctionalType, type OperationOut, type WorkspaceOut,
+  type DataBlockOut, type FunctionalType, type OperationOut, type TemplateInfo,
+  type WorkspaceOut,
 } from '../lib/api'
 
 // Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
@@ -43,13 +44,18 @@ function newRow(): HeaderRow {
   return { id: crypto.randomUUID(), name: '', value: '', secretRef: '', valuePrefix: '', isSecret: false, required: false, enabled: true }
 }
 
-/** Blocs d'un workspace couvert (arbre de couverture) : cases de filtre + type. */
+/** Blocs d'un workspace couvert (arbre de couverture) : cases de filtre + type.
+ *
+ *  `coveredTypeSlugs` = types portés par les templates cochés. Un bloc dont le
+ *  type racine en fait partie est DÉJÀ couvert par l'union : on le montre comme
+ *  tel plutôt que de laisser croire qu'il faut aussi le cocher. */
 function WorkspaceBlocksNode({
-  wsSlug, blockSlugs, onToggleBlock,
+  wsSlug, blockSlugs, onToggleBlock, coveredTypeSlugs,
 }: {
   wsSlug: string
   blockSlugs: string[]
   onToggleBlock: (slug: string) => void
+  coveredTypeSlugs: Set<string>
 }) {
   const { data: blocks = [], isLoading } = useQuery<DataBlockOut[]>({
     queryKey: ['blocs', wsSlug],
@@ -60,16 +66,25 @@ function WorkspaceBlocksNode({
   if (blocks.length === 0) return <p className="text-muted ml-6 text-[12px]">Aucun bloc</p>
   return (
     <div className="ml-6 space-y-0.5 border-l border-[var(--color-divider)] pl-3">
-      {blocks.map((b) => (
-        <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
-          <input type="checkbox" checked={blockSlugs.includes(b.slug)}
-            onChange={() => onToggleBlock(b.slug)} />
-          <span className="truncate">{b.label}</span>
-          <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
-            {b.functional_type_slug}
-          </span>
-        </label>
-      ))}
+      {blocks.map((b) => {
+        const viaTemplate = coveredTypeSlugs.has(b.functional_type_slug)
+        return (
+          <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
+            <input type="checkbox" checked={blockSlugs.includes(b.slug) || viaTemplate}
+              disabled={viaTemplate}
+              onChange={() => onToggleBlock(b.slug)} />
+            <span className="truncate">{b.label}</span>
+            {viaTemplate && (
+              <span className="shrink-0 text-[10px] text-accent-700" data-testid={`auto-block-via-template-${b.slug}`}>
+                via template
+              </span>
+            )}
+            <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
+              {b.functional_type_slug}
+            </span>
+          </label>
+        )
+      })}
     </div>
   )
 }
@@ -132,6 +147,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   const [eventCodes, setEventCodes] = useState<string[]>(initial?.event_codes ?? [])
   const [stopChain, setStopChain] = useState(initial?.stop_chain ?? false)
   const [blockSlugs, setBlockSlugs] = useState<string[]>(initial?.block_slugs ?? [])
+  const [blockTemplates, setBlockTemplates] = useState<string[]>(initial?.block_templates ?? [])
   const [typeSlugs, setTypeSlugs] = useState<string[]>(initial?.functional_type_slugs ?? [])
   const [delay, setDelay] = useState(String(initial?.delay_minutes ?? 0))
   const [url, setUrl] = useState(initial?.url ?? '')
@@ -180,6 +196,18 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     queryKey: ['types', ws], queryFn: () => api.get<FunctionalType[]>(`/workspaces/${ws}/types`),
     enabled: !!ws, staleTime: 60_000,
   })
+
+  // Templates installés (filtre « par provenance »), global : un template couvre
+  // les blocs de TOUS les workspaces, pas seulement du workspace courant.
+  const { data: blockTemplateChoices = [] } = useQuery<TemplateInfo[]>({
+    queryKey: ['templates'], queryFn: () => api.get<TemplateInfo[]>('/templates'), staleTime: 60_000,
+  })
+  // Types portés par les templates cochés — sert à marquer les blocs déjà couverts.
+  const coveredTypeSlugs = new Set(
+    blockTemplateChoices
+      .filter((t) => blockTemplates.includes(t.template))
+      .flatMap((t) => t.type_slugs),
+  )
 
   const operations = contractDetail?.operations ?? []
 
@@ -248,7 +276,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     onSave({
       label, event_codes: eventCodes,
       workspace_slugs: workspaceSlugs,
-      block_slugs: blockSlugs, functional_type_slugs: typeSlugs,
+      block_slugs: blockSlugs, block_templates: blockTemplates,
+      functional_type_slugs: typeSlugs,
       stop_chain: stopChain,
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
@@ -318,7 +347,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               maxBody
               summary={`${workspaceSlugs.length} workspace${workspaceSlugs.length > 1 ? 's' : ''} · ${
                 blockSlugs.length > 0 ? `${blockSlugs.length} bloc${blockSlugs.length > 1 ? 's' : ''}` : 'tous les blocs'
-              }`}
+              }${blockTemplates.length > 0 ? ` · ${blockTemplates.length} template${blockTemplates.length > 1 ? 's' : ''}` : ''}`}
               hint="au moins un workspace ; blocs cochés = filtre, aucun = tous">
               <div className="space-y-1.5">
                 {workspaces.map((w) => {
@@ -336,6 +365,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                           wsSlug={w.slug}
                           blockSlugs={blockSlugs}
                           onToggleBlock={(slug) => setBlockSlugs((p) => toggle(p, slug))}
+                          coveredTypeSlugs={coveredTypeSlugs}
                         />
                       )}
                     </div>
@@ -349,6 +379,32 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 Un automate doit couvrir au moins un workspace.
               </p>
             )}
+
+            <Section
+              title="Blocs issus d'un template"
+              defaultOpen={false}
+              maxBody
+              summary={blockTemplates.length > 0
+                ? `${blockTemplates.length} template${blockTemplates.length > 1 ? 's' : ''}`
+                : 'aucun'}
+              hint="union avec les blocs cochés — un bloc créé plus tard entre sans geste">
+              <div className="space-y-1">
+                {blockTemplateChoices.length === 0 && (
+                  <p className="text-[12px] text-ink/[0.5]">Aucun template installé</p>
+                )}
+                {blockTemplateChoices.map((t) => (
+                  <label key={t.template} className="flex items-center gap-1.5 text-sm"
+                    data-testid={`auto-block-template-${t.template}`}>
+                    <input type="checkbox" checked={blockTemplates.includes(t.template)}
+                      onChange={() => setBlockTemplates((p) => toggle(p, t.template))} />
+                    <span className="truncate">{t.label}</span>
+                    <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
+                      {t.blocks_count} bloc{t.blocks_count > 1 ? 's' : ''}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Section>
 
             <Section title="Events déclencheurs">
               <div className="grid grid-cols-2 gap-1.5">

@@ -47,6 +47,10 @@ class AutomationCreate(BaseModel):
     event_codes: list[str] = []
     # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
     block_slugs: list[str] = []
+    # Templates dont les blocs sont couverts. UNION avec `block_slugs` : un bloc
+    # entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé depuis
+    # un template couvert entre donc SANS geste — c'est tout l'objet du critère.
+    block_templates: list[str] = []
     functional_type_slugs: list[str] = []
     # Chaîne de responsabilité : si cet automate matche ET que l'appel réussit,
     # les automates de priorité inférieure ne traitent pas l'event.
@@ -71,6 +75,7 @@ class AutomationUpdate(BaseModel):
     workspace_slugs: list[str] | None = None
     event_codes: list[str] | None = None
     block_slugs: list[str] | None = None
+    block_templates: list[str] | None = None
     stop_chain: bool | None = None
     functional_type_slugs: list[str] | None = None
     on_create: bool | None = None
@@ -103,6 +108,10 @@ class AutomationOut(BaseModel):
     workspace_slugs: list[str] = []
     event_codes: list[str]
     block_slugs: list[str] = []
+    # Templates dont les blocs sont couverts. UNION avec `block_slugs` : un bloc
+    # entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé depuis
+    # un template couvert entre donc SANS geste — c'est tout l'objet du critère.
+    block_templates: list[str] = []
     functional_type_slugs: list[str] = []
     stop_chain: bool = False
     on_create: bool

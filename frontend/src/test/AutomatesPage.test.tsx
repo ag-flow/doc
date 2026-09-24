@@ -48,7 +48,7 @@ function makeAuto(over: Partial<AutomationOut>): AutomationOut {
   return {
     id: 'a1', workspace_technical_key: 'wk', label: 'Vers RAG', active: true,
     pending_count: 0, position: 1, workspace_slugs: ['ws1'],
-    event_codes: ['docflow.document.updated.v1'], block_slugs: [], functional_type_slugs: [],
+    event_codes: ['docflow.document.updated.v1'], block_slugs: [], block_templates: [], functional_type_slugs: [],
     stop_chain: false, on_create: false, on_update: true, delay_minutes: 0,
     contract_ref: null, operation_id: null, url: 'https://rag.example/api',
     http_method: 'POST', body_template: '{"doc": "{title}"}', headers: [],
