@@ -14,6 +14,7 @@ from typing import Any
 
 import asyncpg
 import pytest
+from structlog.testing import capture_logs
 
 from docflow.automations import worker
 from docflow.events import outbox
@@ -203,6 +204,113 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     # Dédup : rejouer le tick ne refait pas l'appel.
     await worker.run_tick(db_pool, automation, object())
     assert len(_CALLS) == 1
+
+
+async def test_un_report_est_journalise_une_fois_par_tick(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un automate qui diffère doit le DIRE.
+
+    Sans cette ligne, « l'automate attend » et « l'automate est mort » produisent
+    exactement les mêmes logs : rien. C'est ce silence qui a fait diagnostiquer
+    un blocage sur 78 events simplement mis en attente par le debounce.
+    """
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+
+    # Event TOUT FRAIS → le document est « chaud » dans la fenêtre de 10 min.
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,10,$4,$5,$6) RETURNING id",
+        wk, "RAG", [_UPDATED], "https://rag.example/index", "POST", json.dumps({"d": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
+        auto_id,
+    )
+
+    class _Settings:
+        public_base_url = "https://doc.example"
+
+    # On capture l'ÉVÉNEMENT STRUCTURÉ, pas le texte rendu : `capsys` dépend de
+    # qui détient `sys.stdout` au moment où structlog crée son logger, donc de
+    # l'ordre d'import — le test passait seul et échouait dans la suite.
+    with capture_logs() as journal:
+        await worker.run_tick(db_pool, automation, _Settings())
+
+    # Rien n'a été appelé : l'event est différé, pas traité.
+    assert _CALLS == []
+    reports = [e for e in journal if e.get("event") == "automation_tick_deferred"]
+    assert len(reports) == 1, "une seule ligne par tick, pas une par event"
+    assert reports[0]["deferred_documents"] == 1
+    assert reports[0]["delay_minutes"] == 10
+    assert reports[0]["resume_at"] is not None
+    assert reports[0]["log_level"] == "info"
+
+
+async def test_aucun_report_aucune_ligne(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pas de bruit périodique : un tick qui ne diffère rien se tait."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    # delay_minutes = 0 → aucun debounce, donc aucun report.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,0,$4,$5,$6) RETURNING id",
+        wk, "RAG", [_UPDATED], "https://rag.example/index", "POST", json.dumps({"d": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
+        auto_id,
+    )
+
+    class _Settings:
+        public_base_url = "https://doc.example"
+
+    with capture_logs() as journal:
+        await worker.run_tick(db_pool, automation, _Settings())
+
+    assert not [e for e in journal if e.get("event") == "automation_tick_deferred"]
 
 
 async def test_run_next_does_not_advance_cursor(

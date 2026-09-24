@@ -557,6 +557,54 @@ async def _process_event(
     return deferred
 
 
+async def _log_deferred(
+    pool: asyncpg.Pool, automation: asyncpg.Record, rows: list[asyncpg.Record]
+) -> None:
+    """Un tick qui diffère doit le DIRE.
+
+    Sans cette ligne, un automate qui attend et un automate en panne produisent
+    exactement les mêmes logs : rien. C'est ce silence qui a fait diagnostiquer
+    un blocage sur 78 events simplement mis en attente par le debounce.
+
+    UNE ligne par tick, pas une par event : 78 lignes toutes les 60 secondes
+    noieraient le signal qu'on cherche à donner.
+
+    `resume_at` est le PREMIER instant où quelque chose repart — le curseur étant
+    gelé sur le premier document chaud, c'est lui qui débloque la file.
+    """
+    delay: int = automation["delay_minutes"] or 0
+    doc_refs = {r["document_ref"] for r in rows if r["document_ref"] is not None}
+    if delay <= 0 or not doc_refs:
+        return
+
+    async with pool.acquire() as conn:
+        hot = await conn.fetchrow(
+            """
+            SELECT count(*) AS docs, min(resume_at) AS resume_at
+            FROM (
+                SELECT document_ref,
+                       max(occurred_at) + ($2 || ' minutes')::interval AS resume_at
+                FROM document_event
+                WHERE document_ref = ANY($1::uuid[])
+                  AND occurred_at > now() - ($2 || ' minutes')::interval
+                GROUP BY document_ref
+            ) chauds
+            """,
+            list(doc_refs),
+            str(delay),
+        )
+
+    if hot is None or not hot["docs"]:
+        return
+    log.info(
+        "automation_tick_deferred",
+        automation_id=str(automation["id"]),
+        deferred_documents=hot["docs"],
+        delay_minutes=delay,
+        resume_at=hot["resume_at"].isoformat() if hot["resume_at"] else None,
+    )
+
+
 async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
     codes: list[str] = list(automation["event_codes"] or [])
     if not codes:
@@ -573,6 +621,10 @@ async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: obj
     deferred = False
     for row in rows:
         deferred = await _process_event(pool, automation, row, settings, deferred=deferred)
+
+    # Rien à dire quand rien n'est différé : pas de bruit périodique.
+    if deferred:
+        await _log_deferred(pool, automation, list(rows))
 
     # Reprise persistante : les émissions échouées (curseur déjà passé) sont
     # rejouées ici, indépendamment du curseur — donc SANS bloquer le flux des
