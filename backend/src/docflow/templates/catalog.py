@@ -32,3 +32,27 @@ def find_template(template_slug: str) -> Template:
             if tpl.template == template_slug:
                 return tpl
     raise ValueError(f"template '{template_slug}' introuvable")
+
+
+def templates_providing_type(type_slug: str) -> list[str]:
+    """Templates du catalogue qui DÉCLARENT ce type fonctionnel.
+
+    Sert uniquement à enrichir un message d'erreur : un `target_type` qui ne
+    résout pas est presque toujours un type appartenant à un autre template. Sans
+    cette réponse, l'utilisateur lit un slug de type et doit deviner d'où il
+    vient — c'est exactement le diagnostic qui a coûté une session entière.
+
+    Scan du répertoire : acceptable ici, on n'y passe que sur le chemin d'erreur.
+    """
+    found: list[str] = []
+    if not TEMPLATES_DIR.exists():
+        return found
+    for yaml_file in sorted(TEMPLATES_DIR.glob("*.yaml")):
+        try:
+            with yaml_file.open() as f:
+                tpl = Template.model_validate(yaml.safe_load(f))
+        except Exception:
+            continue
+        if any(t.slug == type_slug for t in tpl.functional_types):
+            found.append(tpl.template)
+    return found

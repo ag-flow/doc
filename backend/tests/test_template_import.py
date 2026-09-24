@@ -11,8 +11,10 @@ from fastapi import HTTPException
 
 import docflow.templates.router as tr
 from docflow.schemas.workspace import WorkspaceCreate
+from docflow.templates import catalog as tpl_catalog
 from docflow.templates.importer import (
     ImportConflictError,
+    MissingTemplateDependencyError,
     UnresolvedTargetTypeError,
     VersionConflictError,
     run_import,
@@ -589,3 +591,112 @@ async def test_import_template_route_unresolved_target_type_returns_422(
         assert exc.value.status_code == 422
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-route-badref")
+
+
+# ── Dépendances déclarées (`requires:`) ──────────────────────────────────────
+
+
+def _dependent_template(version: int = 1, requires: list[str] | None = None) -> Template:
+    """Template qui référence un type appartenant à un AUTRE template."""
+    return Template(
+        version=version,
+        template="dep-child",
+        label="Dépendant",
+        requires=requires if requires is not None else ["dep-base"],
+        functional_types=[
+            TypeDef(
+                slug="feature",
+                label="Feature",
+                properties=[
+                    PropDef(
+                        slug="maquette_ecran",
+                        label="Maquette",
+                        type="reference",
+                        target_type="ecran",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _base_template(version: int = 1) -> Template:
+    return Template(
+        version=version,
+        template="dep-base",
+        label="Base",
+        functional_types=[TypeDef(slug="ecran", label="Écran")],
+    )
+
+
+async def test_import_refuse_quand_une_dependance_declaree_manque(db_pool: asyncpg.Pool) -> None:
+    """Le refus NOMME le template manquant, et rien n'est écrit.
+
+    C'est tout l'objet du critère : « target_type 'ecran' introuvable » laissait
+    l'utilisateur devant un slug de type sans moyen de savoir d'où il venait.
+    """
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-dep", label="Dep"), None)
+    try:
+        with pytest.raises(MissingTemplateDependencyError) as exc:
+            await run_import(db_pool, "tpl-dep", _dependent_template())
+        assert "dep-base" in str(exc.value)
+        assert exc.value.missing == ["dep-base"]
+
+        # Refus AVANT écriture : aucun type posé.
+        count = await db_pool.fetchval(
+            "SELECT count(*) FROM functional_type ft "
+            "JOIN workspace w ON w.workspace_technical_key = ft.workspace_technical_key "
+            "WHERE w.slug = $1",
+            "tpl-dep",
+        )
+        assert count == 0
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-dep")
+
+
+async def test_import_passe_quand_la_dependance_est_deja_importee(db_pool: asyncpg.Pool) -> None:
+    """Rétro-compatibilité : un workspace qui a déjà les deux templates importe
+    exactement comme avant."""
+    await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug="tpl-dep-ok", label="Dep OK"), None)
+    try:
+        assert (await run_import(db_pool, "tpl-dep-ok", _base_template())).applied
+        assert (await run_import(db_pool, "tpl-dep-ok", _dependent_template())).applied
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-dep-ok")
+
+
+async def test_import_sans_requires_inchange(db_pool: asyncpg.Pool) -> None:
+    """Un template qui ne déclare rien n'est pas soumis au contrôle : les
+    templates existants gardent leur comportement au caractère près."""
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-dep-none", label="Dep None"), None
+    )
+    try:
+        report = await run_import(db_pool, "tpl-dep-none", _base_template())
+        assert report.applied
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-dep-none")
+
+
+async def test_type_introuvable_nomme_le_template_qui_le_fournit(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Message distinct du précédent : ici la dépendance n'est PAS déclarée (cas
+    des templates antérieurs à `requires`). On remonte quand même le template
+    fournisseur, sinon le message reste un slug de type sans origine."""
+    monkeypatch.setattr(
+        tpl_catalog,
+        "templates_providing_type",
+        lambda slug: ["screen-mockups"] if slug == "ecran" else [],
+    )
+    await ws_svc.create_workspace(
+        db_pool, WorkspaceCreate(slug="tpl-dep-hint", label="Dep Hint"), None
+    )
+    try:
+        with pytest.raises(UnresolvedTargetTypeError) as exc:
+            await run_import(db_pool, "tpl-dep-hint", _dependent_template(requires=[]))
+        assert "screen-mockups" in str(exc.value)
+        # Le message dit toujours QUEL type manque — on enrichit, on ne remplace pas.
+        assert "ecran" in str(exc.value)
+    finally:
+        await db_pool.execute("DELETE FROM workspace WHERE slug = $1", "tpl-dep-hint")

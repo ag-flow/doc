@@ -23,6 +23,7 @@ from docflow.templates.gallery import (
 from docflow.templates.importer import (
     ConcurrentImportError,
     ImportConflictError,
+    MissingTemplateDependencyError,
     UnresolvedTargetTypeError,
     VersionConflictError,
     run_import,
@@ -408,6 +409,9 @@ async def export_template(template_slug: str, _: None = _Auth) -> Response:
         "template": tpl.template,
         "label": tpl.label,
         "version": tpl.version,
+        # Sans elle, l'export perd silencieusement la condition d'importabilité
+        # du template : celui qui le relit ne saurait pas ce qu'il lui manque.
+        "requires": tpl.requires,
         "functional_types": [r.model_dump(mode="json") for r in resolved],
     }
     body = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -577,6 +581,10 @@ async def import_template(
             detail={"message": "conflits bloquants", "conflicts": conflicts},
         ) from e
     except InheritanceCycleError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except MissingTemplateDependencyError as e:
+        # 422 et non 404 : le template demandé existe, c'est le workspace qui
+        # n'est pas prêt à le recevoir — et le message nomme ce qu'il faut faire.
         raise HTTPException(status_code=422, detail=str(e)) from e
     except UnresolvedTargetTypeError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

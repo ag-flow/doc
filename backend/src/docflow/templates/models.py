@@ -81,7 +81,17 @@ class Template(BaseModel):
     version: int
     template: str
     label: str
+    # Templates dont celui-ci a besoin pour s'importer : leurs types sont cibles
+    # de propriétés `reference` déclarées ici. La dépendance ne s'installe PAS
+    # toute seule — elle se déclare pour que le refus nomme ce qui manque, au
+    # lieu de rendre un slug de type que personne ne sait rattacher.
+    requires: list[str] = Field(default_factory=list)
     functional_types: list[TypeDef]
+
+    @field_validator("requires")
+    @classmethod
+    def _requires_valid(cls, v: list[str]) -> list[str]:
+        return [validate_slug(s, "requires") for s in v]
 
 
 # ── Resolved (post-inheritance, concrete only) ─────────────────────────────

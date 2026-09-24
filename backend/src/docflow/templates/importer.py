@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from docflow.documents.changelog import log_structure_change
 from docflow.documents.service import validate_scalar_value
+from docflow.templates import catalog
 from docflow.templates.diff import DiffResult, compute_diff
 from docflow.templates.inheritance import resolve
 from docflow.templates.models import AllowedValueDef, ConstraintDef, PropDef, ResolvedType, Template
@@ -26,6 +27,24 @@ class VersionConflictError(Exception):
 
 class UnresolvedTargetTypeError(ValueError):
     pass
+
+
+class MissingTemplateDependencyError(ValueError):
+    """Un template déclaré en `requires` n'est pas importé dans ce workspace.
+
+    Distincte d'`UnresolvedTargetTypeError` à dessein : « il manque un TEMPLATE »
+    est une instruction, « il manque un TYPE » est un symptôme dont l'utilisateur
+    ne peut rien faire. Les deux rendaient jusqu'ici la même erreur de bas niveau.
+    """
+
+    def __init__(self, template_slug: str, missing: list[str]) -> None:
+        self.missing = missing
+        noms = ", ".join(f"'{m}'" for m in missing)
+        pluriel = "s" if len(missing) > 1 else ""
+        super().__init__(
+            f"le template '{template_slug}' dépend du template{pluriel} {noms},"
+            f" non importé{pluriel} dans ce workspace : importez-le{pluriel} d'abord"
+        )
 
 
 class ConcurrentImportError(Exception):
@@ -52,15 +71,47 @@ class ImportReport:
 
 
 def _validate_target_types(resolved: list[ResolvedType], known_slugs: set[str]) -> None:
-    """Fail-fast : chaque target_type doit résoudre à un type existant ou importé ici."""
+    """Fail-fast : chaque target_type doit résoudre à un type existant ou importé ici.
+
+    Quand le type manquant appartient à un autre template du catalogue, on le
+    DIT : un template ancien qui ne déclare pas encore ses `requires` produit
+    sinon un message que seul un lecteur du YAML source sait interpréter.
+    """
     valid = known_slugs | {rt.slug for rt in resolved}
     for rt in resolved:
         for prop in rt.properties:
             if prop.target_type is not None and prop.target_type not in valid:
-                raise UnresolvedTargetTypeError(
+                msg = (
                     f"propriété '{rt.slug}.{prop.slug}' : target_type '{prop.target_type}'"
                     " introuvable dans le workspace ni dans ce template"
                 )
+                providers = catalog.templates_providing_type(prop.target_type)
+                if providers:
+                    noms = ", ".join(f"'{p}'" for p in providers)
+                    msg += f" — ce type est fourni par le template {noms} : importez-le d'abord"
+                raise UnresolvedTargetTypeError(msg)
+
+
+async def _validate_dependencies(conn: asyncpg.Connection, wk: str, template: Template) -> None:
+    """Refuse AVANT toute écriture si une dépendance déclarée manque.
+
+    Placée en tête de la transaction, avant le diff : l'échec doit coûter un
+    message, pas un écrit partiel ni un calcul de structure.
+    """
+    if not template.requires:
+        return
+    present = {
+        row["template"]
+        for row in await conn.fetch(
+            "SELECT template FROM workspace_template_import"
+            " WHERE workspace_technical_key = $1 AND template = ANY($2::text[])",
+            wk,
+            template.requires,
+        )
+    }
+    missing = [t for t in template.requires if t not in present]
+    if missing:
+        raise MissingTemplateDependencyError(template.template, missing)
 
 
 async def _fetch_version(conn: asyncpg.Connection, wk: str, template_slug: str) -> int | None:
@@ -406,6 +457,10 @@ async def _run_import_tx(
     *,
     dry_run: bool,
 ) -> ImportReport:
+    # Dépendances d'abord : un template manquant se nomme, il ne se déduit pas
+    # d'un type introuvable trois étapes plus loin.
+    await _validate_dependencies(conn, wk, template)
+
     current_version: int | None = await _fetch_version(conn, wk, template.template)
 
     if current_version is not None and template.version < current_version:
