@@ -31,3 +31,4 @@ Format : `- [module] erreur observée → bonne pratique`. Une leçon par ligne,
 - [templates] Lire le code existant avant de bâtir du neuf (la galerie distante existe : `templates/gallery.py`). Dans `importer.py`, calculer le diff AVANT le check no_op, sinon le ré-import est bloqué après suppression des types.
 - [logs] Le label Loki de la stack est `compose_project="deploy"`, pas `"docflow"` → une requête sur le mauvais label rend un résultat vide, qui ressemble à « pas de log » plutôt qu'à « mauvaise question ».
 - [mld] Une fonction pure écrite, exportée et testée peut n'être appelée par personne (`sidesFor`) → vérifier l'usage réel, pas seulement l'existence ; un test d'unité ne prouve pas le câblage.
+- [frontend] `npx tsc --noEmit` à la racine ne vérifie RIEN (`tsconfig.json` a `"files": []` et délègue aux références) → utiliser `npx tsc -b`, sinon des erreurs de type dans `src/test/` passent inaperçues.
