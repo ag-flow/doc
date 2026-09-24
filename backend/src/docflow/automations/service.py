@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -136,12 +137,63 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
     )
 
 
+async def _deferred_until(conn: asyncpg.Connection, row: asyncpg.Record) -> datetime | None:
+    """Instant où le PROCHAIN event en attente cessera d'être différé.
+
+    Le worker repousse un event tant que son document a reçu un event récent
+    (`_is_hot`, fenêtre `delay_minutes`). Un push de masse rend tous les
+    documents chauds au même instant : la file paraît alors figée, et RIEN ne
+    dit qu'elle attend — un automate différé et un automate en panne s'affichent
+    à l'identique.
+
+    On calcule sur le prochain event seulement : c'est celui que le worker
+    tentera, et donc celui qui débloque la file.
+
+    Rend `None` si l'automate n'a pas de debounce, s'il n'y a rien en attente,
+    ou si le document n'est plus chaud (l'event partira au prochain tick).
+    """
+    delay: int = row["delay_minutes"] or 0
+    codes = list(row["event_codes"] or [])
+    if delay <= 0 or not codes:
+        return None
+
+    cursor: int = (
+        await conn.fetchval(
+            "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", row["id"]
+        )
+        or 0
+    )
+    ev = await events_query.next_matching(
+        conn,
+        await _workspace_keys(conn, row["id"]),
+        codes,
+        list(row["block_slugs"] or []),
+        list(row["functional_type_slugs"] or []),
+        row["id"],
+        cursor,
+    )
+    if ev is None or ev["document_ref"] is None:
+        return None
+
+    return await conn.fetchval(  # type: ignore[no-any-return]
+        """
+        SELECT max(occurred_at) + ($2 || ' minutes')::interval
+        FROM document_event
+        WHERE document_ref = $1
+          AND occurred_at > now() - ($2 || ' minutes')::interval
+        """,
+        ev["document_ref"],
+        str(delay),
+    )
+
+
 def _row_to_out(
     row: asyncpg.Record,
     headers: list[AutomationHeaderOut],
     pending_count: int = 0,
     workspace_slugs: list[str] | None = None,
     position: int = 0,
+    deferred_until: datetime | None = None,
 ) -> AutomationOut:
     keys = row.keys()
     return AutomationOut(
@@ -150,6 +202,7 @@ def _row_to_out(
         label=row["label"],
         active=row["active"],
         pending_count=pending_count,
+        deferred_until=deferred_until,
         position=position,
         workspace_slugs=workspace_slugs or [],
         event_codes=list(row["event_codes"] or []),
@@ -247,6 +300,7 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str | None) -> list[Auto
                     await _pending_count(conn, row),
                     await _workspace_slugs(conn, row["id"]),
                     row["position"],
+                    await _deferred_until(conn, row),
                 )
             )
     return result

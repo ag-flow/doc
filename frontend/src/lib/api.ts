@@ -1291,6 +1291,10 @@ export interface AutomationOut {
   label: string
   active: boolean
   pending_count: number
+  /** Fin de la fenêtre de debounce du prochain event en attente. `null` = rien
+   *  n'est différé. Sans cette donnée, « en attente » ne dit pas si l'automate
+   *  patiente ou s'il est en panne. */
+  deferred_until?: string | null
   /** Position d'évaluation dans le workspace demandé (1..n). */
   position: number
   workspace_slugs: string[]

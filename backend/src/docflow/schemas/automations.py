@@ -91,6 +91,13 @@ class AutomationOut(BaseModel):
     active: bool
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
     pending_count: int = 0
+    # Instant où le plus ancien event en attente cessera d'être « chaud » (fin de
+    # la fenêtre de debounce). `None` = rien n'est différé.
+    #
+    # Sans cette donnée, un automate qui ATTEND et un automate EN PANNE
+    # s'affichent pareil : « N en attente » et rien qui bouge. C'est ce qui rend
+    # le debounce indiscernable d'un blocage.
+    deferred_until: datetime | None = None
     # Position d'évaluation DANS LE WORKSPACE demandé (1..n).
     position: int = 0
     workspace_slugs: list[str] = []

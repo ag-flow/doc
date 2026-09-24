@@ -77,11 +77,13 @@ export function AutomatesPage() {
       } else {
         const http = res.http_status != null ? `HTTP ${res.http_status}` : (res.status === 'ok' ? 'OK' : 'échec')
         const body = res.body ? res.body.replace(/\s+/g, ' ').trim() : ''
-        entry = { text: `Event joué (${http})`, err: res.status === 'failed' }
+        // « curseur inchangé » explicitement : sans ça, rejouer dix fois donne
+        // dix messages positifs alors que la file n'a pas avancé d'un cran.
+        entry = { text: `Event rejoué (${http}) · curseur inchangé`, err: res.status === 'failed' }
         if (res.status === 'failed') {
           toast(`« ${label} » — échec de l'appel (${http})${body ? '\n' + body.slice(0, 400) : ''}`, 'error')
         } else {
-          toast(`« ${label} » — appel envoyé (${http})`, 'success')
+          toast(`« ${label} » — appel envoyé (${http}) · aperçu : le curseur n'a pas avancé`, 'success')
         }
       }
       setRunMsg((m) => ({ ...m, [id]: entry }))
@@ -324,7 +326,17 @@ export function AutomatesPage() {
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     {/* Events en attente (au-delà du curseur) — magenta : il y a à faire. */}
-                    {a.pending_count > 0 ? (
+                    {a.pending_count > 0 && a.deferred_until ? (
+                      /* Différé par le debounce : le document a reçu un event
+                         récent, le worker le repousse. Sans ce repère, « N en
+                         attente » et rien qui bouge ressemble à une panne —
+                         alors que l'automate fait exactement son travail. */
+                      <span className="tag tag-neutral"
+                        title={`Le document visé a reçu un event récent : le worker attend la fin de la fenêtre de ${a.delay_minutes} min avant de le traiter.`}
+                        data-testid={`deferred-${a.id}`}>
+                        {a.pending_count} différé{a.pending_count > 1 ? 's' : ''} · reprise {new Date(a.deferred_until).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    ) : a.pending_count > 0 ? (
                       <span className="tag tag-accent-2"
                         title="Events non encore évalués (au-delà du curseur)"
                         data-testid={`pending-${a.id}`}>
@@ -342,7 +354,7 @@ export function AutomatesPage() {
                       <SkipBack size={14} weight="duotone" />
                     </Button>
                     {/* Jouer l'event courant SANS avancer le curseur (test) */}
-                    <Button variant="icon" size="sm" title="Jouer l'event courant (test, sans avancer)"
+                    <Button variant="icon" size="sm" title="Aperçu : rejoue l'event courant SANS avancer le curseur — un appel réel est émis vers la cible"
                       onClick={() => runNextMut.mutate(a.id)} disabled={runNextMut.isPending}
                       data-testid={`run-next-${a.id}`}>
                       <Play size={14} weight="duotone" />

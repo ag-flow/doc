@@ -116,6 +116,47 @@ describe('AutomatesPage — inventaire des commandes de ligne', () => {
     expect(badge).toHaveClass('tag-accent-2')
   })
 
+  it('différé par le debounce → dit POURQUOI et jusqu\'à quand', async () => {
+    // Le défaut observé : 78 events poussés d'un coup rendent tous les documents
+    // « chauds », le worker les repousse, et l'écran affichait « 78 en attente »
+    // sans rien qui bouge — indiscernable d'une panne.
+    vi.mocked(automationsApi.list).mockResolvedValue([
+      makeAuto({
+        pending_count: 78,
+        delay_minutes: 10,
+        deferred_until: '2026-09-24T05:56:35Z',
+      }),
+    ])
+    renderPage()
+
+    const badge = await screen.findByTestId('deferred-a1')
+    expect(badge).toHaveTextContent('78 différés')
+    expect(badge).toHaveTextContent('reprise')
+    // Pas le badge d'alerte : l'automate fait son travail, il n'est pas en faute.
+    expect(screen.queryByTestId('pending-a1')).not.toBeInTheDocument()
+    expect(badge).not.toHaveClass('tag-accent-2')
+  })
+
+  it('en attente SANS debounce → badge d\'alerte inchangé', async () => {
+    vi.mocked(automationsApi.list).mockResolvedValue([
+      makeAuto({ pending_count: 3, deferred_until: null }),
+    ])
+    renderPage()
+    expect(await screen.findByTestId('pending-a1')).toHaveTextContent('3 en attente')
+  })
+
+  it('l\'aperçu annonce que le curseur n\'a PAS avancé', async () => {
+    // Sans cette mention, rejouer dix fois donne dix messages positifs alors que
+    // la file n'a pas bougé d'un cran.
+    vi.mocked(automationsApi.list).mockResolvedValue([makeAuto({ pending_count: 1 })])
+    vi.mocked(automationsApi.runNext).mockResolvedValue({ status: 'ok', http_status: 202 })
+    renderPage()
+
+    fireEvent.click(await screen.findByTestId('run-next-a1'))
+
+    await waitFor(() => expect(screen.getByText(/curseur inchangé/)).toBeInTheDocument())
+  })
+
   it('les commandes du curseur appellent la bonne API', async () => {
     vi.mocked(automationsApi.runNext).mockResolvedValue({ status: 'no_pending' })
     vi.mocked(automationsApi.advance).mockResolvedValue({ status: 'no_pending' })
