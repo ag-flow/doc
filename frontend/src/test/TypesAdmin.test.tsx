@@ -72,6 +72,58 @@ describe('TypesAdmin', () => {
   })
 })
 
+describe('TypesAdmin — retour d\'import hors du modal', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /** Workspace en v3 d'un template dont la galerie sert la v6 : la bannière de
+   *  mise à jour s'affiche. */
+  function mockWorkspaceEnRetard() {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/templates') {
+        return Promise.resolve([
+          { template: 'agile-basic', label: 'Projet agile', version: 6, path: '', concrete_types: 0, type_slugs: [] },
+        ])
+      }
+      if (url.endsWith('/templates')) {
+        return Promise.resolve([{ template: 'agile-basic', version: 3 }])
+      }
+      return Promise.resolve([
+        { slug: 'epic', label: 'Epic', parent_slug: null, id: '1', source_template: 'agile-basic' },
+      ])
+    })
+  }
+
+  it('un refus du serveur est AFFICHÉ, pas avalé', async () => {
+    // Le défaut réparé : le message n'était rendu qu'à l'intérieur du modal
+    // d'import, que le bouton « Mettre à jour » de la bannière n'ouvre pas.
+    // L'écran ne bougeait pas — on concluait que le bouton ne faisait rien.
+    mockWorkspaceEnRetard()
+    vi.mocked(api.post).mockRejectedValue(
+      new Error("propriété 'feature.maquette_ecran' : target_type 'ecran' introuvable"),
+    )
+    renderWithProviders()
+
+    await waitFor(() => expect(screen.getByTestId('tpl-update-agile-basic')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('tpl-update-agile-basic'))
+
+    const feedback = await screen.findByTestId('import-feedback-error')
+    expect(feedback).toHaveTextContent("target_type 'ecran' introuvable")
+  })
+
+  it('un succès est affiché de la même façon', async () => {
+    mockWorkspaceEnRetard()
+    vi.mocked(api.post).mockResolvedValue({
+      applied: true, no_op: false, adds: 3, soft_updates: 1,
+    })
+    renderWithProviders()
+
+    await waitFor(() => expect(screen.getByTestId('tpl-update-agile-basic')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('tpl-update-agile-basic'))
+
+    expect(await screen.findByTestId('import-feedback-success')).toBeInTheDocument()
+  })
+})
+
 describe('flattenTypeTree', () => {
   const mk = (slug: string, label: string, parent: string | null) =>
     ({

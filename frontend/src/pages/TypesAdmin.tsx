@@ -177,6 +177,10 @@ export function TypesAdmin() {
   // bloque la mise à jour (la réconciliation est de toute façon additive :
   // jamais de suppression de type/propriété, donc aucun orphelin).
   const updateMutation = useMutation({
+    onMutate: () => {
+      setImportMsg(null)
+      setImportError(null)
+    },
     mutationFn: async (template: string) => {
       await api.post(`/workspaces/${ws}/templates/import`, { template, dry_run: true })
       return api.post<{ applied: boolean; no_op: boolean; adds: number; soft_updates: number }>(
@@ -321,6 +325,36 @@ export function TypesAdmin() {
             </Button>
           </div>
         </form>
+      )}
+
+      {/* Retour d'import visible HORS du modal.
+          Le bouton « Mettre à jour » de la bannière de template déclenche le même
+          import, sans ouvrir le modal : tant que le message n'était rendu que
+          dedans, un refus du serveur restait totalement muet — l'écran ne
+          bougeait pas, et on concluait que le bouton ne faisait rien. */}
+      {!showImport && (importError || importMsg) && (
+        <div
+          className={`mb-4 rounded border px-3 py-2 text-sm ${
+            importError
+              ? 'border-accent-2-700/40 bg-accent-2-50 text-accent-2-700'
+              : 'border-accent-700/40 bg-accent-50 text-accent-700'
+          }`}
+          role="status"
+          data-testid={importError ? 'import-feedback-error' : 'import-feedback-success'}
+        >
+          <span className="whitespace-pre-line">{importError ?? importMsg}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setImportError(null)
+              setImportMsg(null)
+            }}
+            aria-label={t('common.close')}
+            className="ml-3 border-0 bg-transparent p-0 text-inherit underline"
+          >
+            {t('common.close')}
+          </button>
+        </div>
       )}
 
       {isLoading ? (
