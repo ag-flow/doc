@@ -171,10 +171,10 @@ async def test_un_contenu_refuse_remonte_un_code_structure(
     )
 
     assert "error" in data
-    assert data["error"]["code"] == code
-    assert data["error"]["issues"]
+    assert data["error_code"] == code
+    assert data["error_detail"]["issues"]
     # Le pointeur vers la grammaire rend la boucle agent auto-suffisante.
-    assert data["error"]["doc"]
+    assert data["error_detail"]["doc"]
 
 
 async def test_le_refus_donne_le_chemin_et_le_vocabulaire(
@@ -190,7 +190,7 @@ async def test_le_refus_donne_le_chemin_et_le_vocabulaire(
         content_type="table-schema",
     )
 
-    issue = data["error"]["issues"][0]
+    issue = data["error_detail"]["issues"][0]
     assert issue["path"] == "fields[0].type"
     assert issue["code"] == "physical_type"
     assert "integer" in issue["message"]

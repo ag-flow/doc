@@ -16,6 +16,7 @@ from mcp.types import ImageContent, TextContent, Tool
 from docflow.artifacts import mockup_base, mutable, render, service, uploads
 from docflow.artifacts.links import build_download_query, build_preview_query
 from docflow.config.settings import Settings
+from docflow.mcp import errors
 from docflow.mcp.coerce import as_bool as _as_bool
 from docflow.mcp.session import acting_identity, require_identity
 from docflow.net.ssrf import SSRFError, validate_public_url
@@ -641,12 +642,12 @@ async def handle_create_upload(
 ) -> list[TextContent]:
     """Ouvre un ticket d'upload : ne crée aucun artefact, retourne l'upload_url."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     filename = str(args.get("filename", ""))
     raw_size = args.get("size_bytes")
     if not isinstance(raw_size, int) or isinstance(raw_size, bool):
-        return _text({"error": "size_bytes invalide : entier attendu"})
+        return _text(errors.err(errors.INVALID, "size_bytes invalide : entier attendu"))
     sha256 = str(args.get("sha256", ""))
 
     # Le ticket est lié au PORTEUR de la clé (require_identity) : seul lui
@@ -663,7 +664,7 @@ async def handle_create_upload(
             max_bytes=settings.artifact_max_bytes,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     upload_id = str(result["upload_id"])
     return _text(
         {
@@ -678,7 +679,7 @@ async def handle_create_artifact(
     pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
 ) -> list[TextContent]:
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     filename = str(args.get("filename", ""))
     max_bytes = settings.artifact_max_bytes
@@ -694,14 +695,21 @@ async def handle_create_artifact(
     has_url = raw_url is not None and str(raw_url) != ""
     has_upload = raw_upload is not None and str(raw_upload) != ""
     if has_b64 + has_url + has_upload != 1:
-        return _text({"error": "fournir exactement l'un de data_base64, source_url ou upload_id"})
+        return _text(
+            errors.err(
+                errors.INVALID, "fournir exactement l'un de data_base64, source_url ou upload_id"
+            )
+        )
 
     # Voie ticket : l'artefact est créé et le ticket consommé atomiquement.
     # Le nom de fichier vient du ticket ; l'estampillage created_by suit l'OBO.
     if has_upload:
         if mutable:
             return _text(
-                {"error": "mutable non supporté via upload_id (utiliser data_base64 ou source_url)"}
+                errors.err(
+                    errors.INVALID,
+                    "mutable non supporté via upload_id (utiliser data_base64 ou source_url)",
+                )
             )
         try:
             created = await uploads.consume_upload(
@@ -713,19 +721,19 @@ async def handle_create_artifact(
                 max_bytes=max_bytes,
             )
         except HTTPException as e:
-            return _text({"error": e.detail})
+            return _text(errors.from_http(e.status_code, e.detail))
         return _artifact_payload(created)
 
     if has_url:
         try:
             data = await _download_artifact_bytes(str(raw_url), max_bytes)
         except _DownloadError as e:
-            return _text({"error": str(e)})
+            return _text(errors.err(errors.INVALID, e))
     else:
         try:
             data = base64.b64decode(str(raw_b64), validate=True)
         except (binascii.Error, ValueError):
-            return _text({"error": "data_base64 invalide : base64 attendu"})
+            return _text(errors.err(errors.INVALID, "data_base64 invalide : base64 attendu"))
 
     # Estampillage OBO : l'artefact est attribué à l'acteur (l'humain si l'OBO
     # du portail l'a résolu, sinon l'identité de la clé) — cohérent avec
@@ -742,7 +750,7 @@ async def handle_create_artifact(
             mutable=mutable,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _artifact_payload(created)
 
 
@@ -751,17 +759,17 @@ async def handle_update_artifact(
 ) -> list[TextContent]:
     """Remplacement intégral du contenu d'un artefact mutable (révision N+1)."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     if_revision = args.get("if_revision")
     if not isinstance(if_revision, int) or isinstance(if_revision, bool):
-        return _text({"error": "if_revision obligatoire (entier)"})
+        return _text(errors.err(errors.INVALID, "if_revision obligatoire (entier)"))
     content = args.get("content")
     if not isinstance(content, str):
-        return _text({"error": "content obligatoire (texte)"})
+        return _text(errors.err(errors.INVALID, "content obligatoire (texte)"))
     try:
         result = await mutable.update_artifact(
             pool,
@@ -774,7 +782,7 @@ async def handle_update_artifact(
             keep=settings.artifact_revision_keep,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -783,21 +791,25 @@ async def handle_patch_artifact(
 ) -> list[TextContent]:
     """Édition par ancres d'un artefact mutable textuel (révision N+1)."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     if_revision = args.get("if_revision")
     if not isinstance(if_revision, int) or isinstance(if_revision, bool):
-        return _text({"error": "if_revision obligatoire (entier)"})
+        return _text(errors.err(errors.INVALID, "if_revision obligatoire (entier)"))
     raw_edits = args.get("edits")
     if not isinstance(raw_edits, list) or not raw_edits:
-        return _text({"error": "edits obligatoire (liste non vide de {old_str, new_str})"})
+        return _text(
+            errors.err(errors.INVALID, "edits obligatoire (liste non vide de {old_str, new_str})")
+        )
     edits: list[dict[str, str]] = []
     for item in raw_edits:
         if not isinstance(item, dict) or "old_str" not in item or "new_str" not in item:
-            return _text({"error": "chaque édition doit porter old_str et new_str"})
+            return _text(
+                errors.err(errors.INVALID, "chaque édition doit porter old_str et new_str")
+            )
         edits.append({"old_str": str(item["old_str"]), "new_str": str(item["new_str"])})
     try:
         result = await mutable.patch_artifact(
@@ -811,7 +823,7 @@ async def handle_patch_artifact(
             keep=settings.artifact_revision_keep,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -820,11 +832,11 @@ async def handle_prune_artifact_revisions(
 ) -> list[TextContent]:
     """Purge explicite de l'historique d'un artefact mutable (garde les N dernières)."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     raw_keep = args.get("keep")
     keep = (
         raw_keep
@@ -834,7 +846,7 @@ async def handle_prune_artifact_revisions(
     try:
         result = await mutable.prune_artifact_revisions(pool, ws_slug, artifact_id, keep=keep)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -856,11 +868,11 @@ async def handle_get_artifact(pool: asyncpg.Pool, args: dict[str, object]) -> li
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     try:
         meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     payload = meta.model_dump(mode="json")
     # Historique consultable (artefacts mutables uniquement).
     if meta.mutable:
@@ -884,11 +896,11 @@ async def handle_get_artifact_data(
     """Contenu de l'artefact INLINE (texte brut ou base64), pour un agent sans
     accès réseau. Au-delà de la limite inline, redirige vers get_artifact_link."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     raw_rev = args.get("revision")
     revision = raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else None
 
@@ -903,7 +915,7 @@ async def handle_get_artifact_data(
                 pool, ws_slug, artifact_id
             )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     max_inline = settings.artifact_inline_max_bytes
     if len(data) > max_inline:
@@ -968,7 +980,7 @@ async def handle_list_artifacts(pool: asyncpg.Pool, args: dict[str, object]) -> 
     if args.get("document_id") not in (None, ""):
         document_id = _parse_artifact_id(args.get("document_id"))
         if document_id is None:
-            return _text({"error": "document_id invalide : UUID attendu"})
+            return _text(errors.err(errors.INVALID, "document_id invalide : UUID attendu"))
 
     try:
         items, total = await service.list_artifacts(
@@ -981,7 +993,7 @@ async def handle_list_artifacts(pool: asyncpg.Pool, args: dict[str, object]) -> 
             document_id=document_id,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text({"items": items, "total": total, "limit": limit, "offset": offset})
 
 
@@ -989,16 +1001,16 @@ async def handle_get_artifact_link(
     pool: asyncpg.Pool, settings: Settings | None, args: dict[str, object]
 ) -> list[TextContent]:
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     try:
         # Vérifie existence + appartenance au workspace avant d'émettre le lien
         await service.get_artifact_meta(pool, ws_slug, artifact_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     ttl = settings.artifact_link_ttl_seconds
     query = build_download_query(
         ws_slug, artifact_id, ttl_seconds=ttl, secret=settings.jwt_secret.reveal()
@@ -1014,26 +1026,32 @@ async def handle_get_preview_link(
 ) -> list[TextContent]:
     """Lien de preview signé (révision-conscient) d'une maquette HTML mutable."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     if not settings.preview_base_url:
-        return _text({"error": "origine de preview non configurée sur l'instance"})
+        return _text(
+            errors.err(errors.INTERNAL, "origine de preview non configurée sur l'instance")
+        )
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     try:
         meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     if not meta.mutable or meta.media_type.lower() != "text/html":
-        return _text({"error": "get_preview_link réservé aux maquettes HTML mutables"})
+        return _text(
+            errors.err(errors.INVALID, "get_preview_link réservé aux maquettes HTML mutables")
+        )
 
     raw_rev = args.get("revision")
     revision = (
         raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else meta.revision
     )
     if revision < 1 or revision > meta.revision:
-        return _text({"error": f"révision hors bornes (1..{meta.revision})"})
+        return _text(
+            errors.err(errors.VERSION_NOT_FOUND, f"révision hors bornes (1..{meta.revision})")
+        )
 
     ttl = settings.artifact_link_ttl_seconds
     query = build_preview_query(
@@ -1054,33 +1072,41 @@ async def handle_get_maquette_png(
 ) -> Sequence[TextContent | ImageContent]:
     """Rend une maquette HTML mutable en PNG affichable (via le service de rendu)."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     if not settings.render_service_url:
-        return _text({"error": "service de rendu non configuré sur l'instance (PNG indisponible)"})
+        return _text(
+            errors.err(
+                errors.INTERNAL, "service de rendu non configuré sur l'instance (PNG indisponible)"
+            )
+        )
     ws_slug = str(args.get("workspace_slug", ""))
     artifact_id = _parse_artifact_id(args.get("artifact_id", ""))
     if artifact_id is None:
-        return _text({"error": "artifact_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "artifact_id invalide : UUID attendu"))
     try:
         meta = await service.get_artifact_meta(pool, ws_slug, artifact_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     if not meta.mutable or meta.media_type.lower() != "text/html":
-        return _text({"error": "get_maquette_png réservé aux maquettes HTML mutables"})
+        return _text(
+            errors.err(errors.INVALID, "get_maquette_png réservé aux maquettes HTML mutables")
+        )
 
     raw_rev = args.get("revision")
     revision = (
         raw_rev if isinstance(raw_rev, int) and not isinstance(raw_rev, bool) else meta.revision
     )
     if revision < 1 or revision > meta.revision:
-        return _text({"error": f"révision hors bornes (1..{meta.revision})"})
+        return _text(
+            errors.err(errors.VERSION_NOT_FOUND, f"révision hors bornes (1..{meta.revision})")
+        )
 
     try:
         data, _media, _filename = await mutable.fetch_revision_content(
             pool, ws_slug, artifact_id, revision
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     raw_width = args.get("width")
     width_arg = (
@@ -1093,9 +1119,13 @@ async def handle_get_maquette_png(
     try:
         png = await render.render_png(settings, data.decode("utf-8", errors="replace"), width=width)
     except render.RenderNotConfigured:
-        return _text({"error": "service de rendu non configuré sur l'instance (PNG indisponible)"})
+        return _text(
+            errors.err(
+                errors.INTERNAL, "service de rendu non configuré sur l'instance (PNG indisponible)"
+            )
+        )
     except render.RenderError as e:
-        return _text({"error": f"échec du rendu PNG : {e}"})
+        return _text(errors.err(errors.INTERNAL, f"échec du rendu PNG : {e}"))
 
     image = ImageContent(
         type="image", data=base64.b64encode(png).decode("ascii"), mimeType="image/png"
@@ -1120,21 +1150,21 @@ async def handle_set_mockup_base(
 ) -> list[TextContent]:
     """Crée ou met à jour la base CSS (mutable text/css)."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     css = args.get("css")
     if not isinstance(css, str):
-        return _text({"error": "css obligatoire (texte)"})
+        return _text(errors.err(errors.INVALID, "css obligatoire (texte)"))
     base_id: uuid.UUID | None = None
     if args.get("base_id") is not None:
         base_id = _parse_artifact_id(args.get("base_id"))
         if base_id is None:
-            return _text({"error": "base_id invalide : UUID attendu"})
+            return _text(errors.err(errors.INVALID, "base_id invalide : UUID attendu"))
     if_revision = args.get("if_revision")
     if if_revision is not None and (
         not isinstance(if_revision, int) or isinstance(if_revision, bool)
     ):
-        return _text({"error": "if_revision invalide (entier)"})
+        return _text(errors.err(errors.INVALID, "if_revision invalide (entier)"))
     try:
         result = await mockup_base.set_mockup_base(
             pool,
@@ -1146,7 +1176,7 @@ async def handle_set_mockup_base(
             if_revision=if_revision,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1155,12 +1185,12 @@ async def handle_apply_mockup_base(
 ) -> list[TextContent]:
     """Embarque le bloc de base à la version courante dans une maquette."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     base_id = _parse_artifact_id(args.get("base_id"))
     maquette_id = _parse_artifact_id(args.get("maquette_id"))
     if base_id is None or maquette_id is None:
-        return _text({"error": "base_id et maquette_id requis (UUID)"})
+        return _text(errors.err(errors.INVALID, "base_id et maquette_id requis (UUID)"))
     try:
         result = await mockup_base.apply_mockup_base(
             pool,
@@ -1171,7 +1201,7 @@ async def handle_apply_mockup_base(
             max_bytes=settings.artifact_max_bytes,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1180,11 +1210,11 @@ async def handle_propagate_mockup_base(
 ) -> list[TextContent]:
     """Propage la base courante vers toutes ses maquettes en retard."""
     if settings is None:
-        return _text({"error": "configuration indisponible"})
+        return _text(errors.err(errors.INTERNAL, "configuration indisponible"))
     ws_slug = str(args.get("workspace_slug", ""))
     base_id = _parse_artifact_id(args.get("base_id"))
     if base_id is None:
-        return _text({"error": "base_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "base_id invalide : UUID attendu"))
     try:
         result = await mockup_base.propagate_mockup_base(
             pool,
@@ -1194,7 +1224,7 @@ async def handle_propagate_mockup_base(
             max_bytes=settings.artifact_max_bytes,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1205,9 +1235,9 @@ async def handle_mockup_base_drift(
     ws_slug = str(args.get("workspace_slug", ""))
     base_id = _parse_artifact_id(args.get("base_id"))
     if base_id is None:
-        return _text({"error": "base_id invalide : UUID attendu"})
+        return _text(errors.err(errors.INVALID, "base_id invalide : UUID attendu"))
     try:
         result = await mockup_base.mockup_base_drift(pool, ws_slug, base_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)

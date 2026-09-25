@@ -190,7 +190,8 @@ async def test_find_referencing_invalid_uuid_via_call_tool(
             {"workspace_slug": str(refs_ws["ws"]), "doc_id": "pas-un-uuid"},
         )
     )
-    assert data == {"error": "doc_id : UUID invalide"}
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
 
 
 @contextmanager

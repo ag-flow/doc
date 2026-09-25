@@ -13,7 +13,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
-from docflow.mcp import artifact_tools, dataset_tools
+from docflow.mcp import artifact_tools, calllog, dataset_tools, errors
 from docflow.mcp.coerce import as_bool
 from docflow.mcp.session import acting_identity, current_session, require_identity
 from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
@@ -21,6 +21,10 @@ from docflow.workspaces.access import accessible_workspace_slugs, user_can_acces
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
 log = structlog.get_logger(__name__)
+
+# Sentinelle : distingue « payload non fourni » de « payload vaut None », None
+# étant une valeur légitime (réponse non-JSON).
+_UNSET: object = object()
 
 # Pool + settings injectés au démarrage par configure()
 _pool: asyncpg.Pool | None = None
@@ -92,7 +96,8 @@ _TOOLS: list[Tool] = [
             "contenu sont versionnés ; functional_type_slug et les propriétés "
             "reflètent toujours l'état courant. La lecture d'une version est sans "
             "effet de bord (aucune restauration). Une version inexistante retourne "
-            "{error:{code:'version_not_found', available_min, available_max}}. "
+            "{error_code:'version_not_found'} avec error_detail{available_min, "
+            "available_max}. "
             "Ajoute 'warnings' (liste) lorsque des propriétés obligatoires du type "
             "sont non renseignées : les renseigner avec set_property_value. "
             "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
@@ -219,12 +224,12 @@ _TOOLS: list[Tool] = [
             "numéro de révision sur lequel s'appuie l'écriture, obtenu via "
             "get_document ('version') ou le retour d'un update/create précédent. Si "
             "la version a changé entre-temps, l'écriture est REFUSÉE (aucun "
-            "écrasement) et retourne {error:{code:'version_conflict', version, "
-            "title, contenu}} portant l'état courant. Boucle attendue côté client : "
-            "relire (ou lire l'état du conflit) → réappliquer ses modifications → "
-            "réécrire avec la version courante. Un appel sans expected_version est "
-            "refusé ({error:{code:'version_required'}}) — mais seulement si title "
-            "ou contenu est fourni. "
+            "écrasement) et retourne {error_code:'version_conflict'} avec "
+            "error_detail{version, title, contenu} portant l'état courant. Boucle "
+            "attendue côté client : relire (ou lire l'état du conflit) → réappliquer "
+            "ses modifications → réécrire avec la version courante. Un appel sans "
+            "expected_version est refusé ({error_code:'version_required'}) — mais "
+            "seulement si title ou contenu est fourni. "
             "PEUT AUSSI poser le type FONCTIONNEL (functional_type_slug) : ce n'est "
             "pas du contenu, donc aucune version attendue n'est requise pour lui "
             "seul, et le poser ne crée pas de révision. Le type doit être autorisé "
@@ -1188,7 +1193,20 @@ _TOOLS: list[Tool] = [
     *dataset_tools.DATASET_TOOLS,
 ]
 
-mcp_server = Server("docflow")
+# Le contrat d'erreur est annoncé UNE fois au niveau du serveur plutôt que
+# répété dans 40 descriptions d'outils : un client le lit à la connexion, et il
+# ne peut pas diverger d'un outil à l'autre.
+mcp_server = Server(
+    "docflow",
+    instructions=(
+        "Erreurs : tout échec rend {error: <phrase lisible>, error_code: <code>} "
+        "et est marqué isError. Brancher sur error_code, jamais sur le texte. "
+        "Codes : " + ", ".join(sorted(errors.ALL_CODES)) + ". "
+        "Quand il y a plus à dire, error_detail porte le contexte utile "
+        "(état courant d'un conflit de version, anomalies de validation, "
+        "dépendants d'une suppression refusée)."
+    ),
+)
 
 
 def configure(pool: asyncpg.Pool, settings: Settings | None = None) -> None:
@@ -1280,14 +1298,18 @@ def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextConte
         name == "create_block" and bool(arguments.get("template_slug"))
     )
     if admin_required:
-        return _text({"error": f"outil {name} : clé API non-admin, opération interdite"})
+        return _text(
+            errors.err(errors.FORBIDDEN, f"outil {name} : clé API non-admin, opération interdite")
+        )
     if name in _WS_TOOLS:
         ws_slug = str(arguments.get("workspace_slug", ""))
         raw_block = arguments.get("block_slug")
         block_slug = str(raw_block) if raw_block else None
         assert session.api_key_scopes is not None  # unrestricted a déjà filtré None
         if not scope_allows(session.api_key_scopes, ws_slug, block_slug, _WS_TOOLS[name]):
-            return _text({"error": f"outil {name} : hors du périmètre de la clé API"})
+            return _text(
+                errors.err(errors.FORBIDDEN, f"outil {name} : hors du périmètre de la clé API")
+            )
     return None
 
 
@@ -1320,18 +1342,31 @@ async def _check_user_access(
                 return None
             if not await user_can_access_workspace(conn, ws_key, user):
                 return _text(
-                    {
-                        "error": (
-                            f"outil {name} : accès refusé au workspace "
-                            f"'{ws_slug}' pour l'utilisateur"
-                        )
-                    }
+                    errors.err(
+                        errors.FORBIDDEN,
+                        f"outil {name} : accès refusé au workspace '{ws_slug}' pour l'utilisateur",
+                    )
                 )
+    return None
+
+
+def _payload_of(result: Sequence[TextContent | ImageContent]) -> object:
+    """Contenu JSON d'une réponse d'outil, ou None si ce n'en est pas une.
+
+    Une réponse d'outil docflow est un unique bloc texte portant du JSON ; tout
+    le reste (image, multi-blocs, texte libre) est par construction un succès.
+    """
+    if len(result) == 1 and isinstance(result[0], TextContent):
+        try:
+            return json.loads(result[0].text)
+        except (ValueError, TypeError):
+            return None
     return None
 
 
 def _finalize_tool_result(
     result: Sequence[TextContent | ImageContent],
+    payload: object = _UNSET,
 ) -> Sequence[TextContent | ImageContent] | CallToolResult:
     """Marque `isError` sur une réponse d'échec métier.
 
@@ -1340,14 +1375,14 @@ def _finalize_tool_result(
     au succès et la gateway répond `ok:true / 200` pour un échec — trompeur. On
     convertit donc ces réponses en `CallToolResult(isError=True)` : le contenu
     (message d'erreur) est préservé, mais le statut reflète l'échec.
+
+    `payload` évite de re-décoder le JSON que l'appelant a déjà lu pour le
+    journal ; omis, il est décodé ici.
     """
-    if len(result) == 1 and isinstance(result[0], TextContent):
-        try:
-            payload = json.loads(result[0].text)
-        except (ValueError, TypeError):
-            payload = None
-        if isinstance(payload, dict) and payload.get("error"):
-            return CallToolResult(content=list(result), isError=True)
+    if payload is _UNSET:
+        payload = _payload_of(result)
+    if errors.is_error(payload):
+        return CallToolResult(content=list(result), isError=True)
     return result
 
 
@@ -1355,14 +1390,21 @@ def _finalize_tool_result(
 async def _call_tool(
     name: str, arguments: dict[str, object]
 ) -> Sequence[TextContent | ImageContent] | CallToolResult:
-    return _finalize_tool_result(await _dispatch_tool(name, arguments))
+    # Point de passage UNIQUE de tous les appels : c'est ici, et nulle part
+    # ailleurs, qu'on sait à la fois ce qui a été demandé et ce qui en est
+    # ressorti. Journaliser plus haut manquerait l'issue, plus bas manquerait
+    # les appels qui n'atteignent pas leur handler (outil inconnu, refus).
+    with calllog.ToolCall(name, arguments) as call:
+        result = await _dispatch_tool(name, arguments)
+        payload = _payload_of(result)
+        call.record(payload)
+        return _finalize_tool_result(result, payload)
 
 
 async def _dispatch_tool(
     name: str, arguments: dict[str, object]
 ) -> Sequence[TextContent | ImageContent]:
     pool = _get_pool()
-    log.info("mcp_call_tool", tool=name)
 
     denied = _check_tool_authz(name, arguments)
     if denied is not None:
@@ -1502,7 +1544,7 @@ async def _dispatch_tool(
         return await artifact_tools.handle_mockup_base_drift(pool, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
         return await dataset_tools.handle(name, pool, arguments)
-    return _text({"error": f"outil inconnu : {name}"})
+    return _text(errors.err(errors.UNKNOWN_TOOL, f"outil inconnu : {name}"))
 
 
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
@@ -1603,20 +1645,22 @@ async def _get_document(
     try:
         doc_uuid = uuid.UUID(doc_id)
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     # Version demandée (optionnelle) : entier strict, sinon erreur explicite.
     want_version: int | None = None
     if version is not None:
         try:
             want_version = int(str(version))
         except (TypeError, ValueError):
-            return _text({"error": "version : entier attendu (numéro de révision)"})
+            return _text(
+                errors.err(errors.INVALID, "version : entier attendu (numéro de révision)")
+            )
 
     async with pool.acquire() as conn:
         try:
             wk = await _require_workspace(conn, ws_slug)
         except ValueError as e:
-            return _text({"error": str(e)})
+            return _text(errors.err(errors.NOT_FOUND, e))
         head = await conn.fetchrow(
             """
             SELECT d.doc_technical_key::text AS id, d.title, d.version AS current_version,
@@ -1635,7 +1679,7 @@ async def _get_document(
             doc_uuid,
         )
         if head is None:
-            return _text({"error": f"document '{doc_id}' introuvable"})
+            return _text(errors.err(errors.NOT_FOUND, f"document '{doc_id}' introuvable"))
         current_version = head["current_version"]
 
         # Révision courante : forme historique du retour, enrichie de version/is_current.
@@ -1672,14 +1716,12 @@ async def _get_document(
                 doc_uuid,
             )
             return _text(
-                {
-                    "error": {
-                        "code": "version_not_found",
-                        "message": f"version {want_version} introuvable pour ce document",
-                        "available_min": bounds["lo"] if bounds else None,
-                        "available_max": bounds["hi"] if bounds else None,
-                    }
-                }
+                errors.err(
+                    errors.VERSION_NOT_FOUND,
+                    f"version {want_version} introuvable pour ce document",
+                    available_min=bounds["lo"] if bounds else None,
+                    available_max=bounds["hi"] if bounds else None,
+                )
             )
     return _text(
         {
@@ -1713,7 +1755,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
     except ValueError:
-        return _text({"error": "parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "parent_id : UUID invalide"))
     # Le type fonctionnel est REQUIS, comme dans l'interface — qui désactive la
     # création tant qu'aucun type n'est choisi. L'écart entre les deux chemins
     # produisait des documents sans type, que rien ne contraignait ensuite :
@@ -1729,25 +1771,20 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         except HTTPException:
             admissibles = []
         return _text(
-            {
-                "error": {
-                    "code": "functional_type_required",
-                    "message": (
-                        "functional_type_slug est requis. Types admissibles à cette "
-                        "position : "
-                        + (", ".join(t["slug"] for t in admissibles) or "(aucun)")
-                        + ". Les lister aussi via get_block_type / list_blocks."
-                    ),
-                    "allowed": [t["slug"] for t in admissibles],
-                }
-            }
+            errors.err(
+                errors.FUNCTIONAL_TYPE_REQUIRED,
+                "functional_type_slug est requis. Types admissibles à cette position : "
+                + (", ".join(t["slug"] for t in admissibles) or "(aucun)")
+                + ". Les lister aussi via get_block_type / list_blocks.",
+                allowed=[t["slug"] for t in admissibles],
+            )
         )
 
     raw_props = args.get("properties")
     properties: dict[str, str] | None = None
     if raw_props is not None:
         if not isinstance(raw_props, dict):
-            return _text({"error": "properties : objet {slug: valeur} attendu"})
+            return _text(errors.err(errors.INVALID, "properties : objet {slug: valeur} attendu"))
         properties = {str(k): str(v) for k, v in raw_props.items()}
 
     async with pool.acquire() as conn:
@@ -1761,7 +1798,11 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             block_slug,
         )
     if block_id is None:
-        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+        return _text(
+            errors.err(
+                errors.NOT_FOUND, f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"
+            )
+        )
 
     try:
         data = DocumentCreate(
@@ -1775,7 +1816,7 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         )
         doc = await doc_svc.create_document(pool, ws_slug, data, author=_author_label())
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     # La version initiale est retournée : elle est directement utilisable comme
     # expected_version d'un update_document ultérieur (pas de relecture requise).
@@ -1794,21 +1835,8 @@ def _update_error(status_code: int, detail: object) -> dict[str, object]:
     discriminable par un `code` machine (le client distingue conflit de version,
     document introuvable et refus de droits sans analyser un message)."""
     if status_code == 409 and isinstance(detail, dict):
-        # Conflit de version : porte l'état COURANT pour réappliquer sans relecture.
-        return {
-            "error": {
-                "code": "version_conflict",
-                "message": (
-                    "expected_version périmée : recharger l'état courant, réappliquer "
-                    "les modifications, réécrire avec la version courante."
-                ),
-                "version": detail.get("version"),
-                "title": detail.get("title"),
-                "contenu": detail.get("content"),
-            }
-        }
-    code = {404: "not_found", 403: "forbidden", 422: "invalid"}.get(status_code, "invalid")
-    return {"error": {"code": code, "message": detail}}
+        return errors.version_conflict(detail)
+    return errors.from_http(status_code, detail)
 
 
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1824,7 +1852,9 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     ft_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
 
     if not title and contenu is None and ft_slug is None:
-        return _text({"error": "au moins title, contenu ou functional_type_slug requis"})
+        return _text(
+            errors.err(errors.INVALID, "au moins title, contenu ou functional_type_slug requis")
+        )
 
     # Le type fonctionnel n'est PAS du contenu : il ne se versionne pas, et sa
     # pose seule n'exige donc aucune version attendue. Dès qu'on touche au titre
@@ -1833,15 +1863,11 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     touches_content = title is not None or contenu is not None
     if touches_content and args.get("expected_version") is None:
         return _text(
-            {
-                "error": {
-                    "code": "version_required",
-                    "message": (
-                        "expected_version obligatoire : lire la version courante via "
-                        "get_document (champ 'version') avant d'écrire."
-                    ),
-                }
-            }
+            errors.err(
+                errors.VERSION_REQUIRED,
+                "expected_version obligatoire : lire la version courante via "
+                "get_document (champ 'version') avant d'écrire.",
+            )
         )
     try:
         expected_version = (
@@ -1849,18 +1875,16 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         )
     except (TypeError, ValueError):
         return _text(
-            {
-                "error": {
-                    "code": "version_required",
-                    "message": "expected_version doit être un entier (numéro de révision).",
-                }
-            }
+            errors.err(
+                errors.VERSION_REQUIRED,
+                "expected_version doit être un entier (numéro de révision).",
+            )
         )
 
     try:
         doc_id = uuid.UUID(doc_id_str)
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
 
     # Ne renseigner que les champs réellement fournis : un champ omis reste
     # « unset » (exclude_unset l'exclut) pour que le service conserve sa valeur
@@ -1893,7 +1917,7 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
         raw_parent = args.get("parent_id")
         parent_id = uuid.UUID(str(raw_parent)) if raw_parent else None
     except ValueError:
-        return _text({"error": "doc_id / parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id / parent_id : UUID invalide"))
     ft_slug = str(args["functional_type_slug"]) if args.get("functional_type_slug") else None
 
     # parent_id est TOUJOURS posé explicitement (None = racine) ; le type ne
@@ -1906,7 +1930,7 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
     try:
         doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -1928,7 +1952,7 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     confirm = as_bool(args.get("confirm"), default=False)
 
     # La garde vit dans le service, sous la transaction de suppression : la
@@ -1937,9 +1961,11 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id, confirm=confirm)
     except DependentsConflictError as e:
-        return _text({"error": e.detail, "dependents": e.dependents})
+        # Pas une HTTPException : l'objet refusé a des dépendants, et la liste
+        # est ce qui permet à l'appelant de décider quoi faire ensuite.
+        return _text(errors.err(errors.CONFLICT, e.detail, dependents=e.dependents))
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text({"deleted": True, **snapshot})
 
@@ -1955,18 +1981,18 @@ async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> 
     try:
         parent_id = uuid.UUID(str(args.get("parent_id", "")))
     except ValueError:
-        return _text({"error": "parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "parent_id : UUID invalide"))
 
     raw_items = args.get("items")
     if not isinstance(raw_items, list) or not all(isinstance(i, dict) for i in raw_items):
-        return _text({"error": "items : liste d'objets attendue"})
+        return _text(errors.err(errors.INVALID, "items : liste d'objets attendue"))
 
     try:
         result = await sync_child_documents(
             pool, ws_slug, parent_id, child_type_slug, raw_items, exhaustive
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1980,7 +2006,7 @@ async def _find_by_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> lis
     try:
         result = await find_by_dedup_key(pool, ws_slug, text)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1993,13 +2019,13 @@ async def _set_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[Te
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     raw_text = args.get("text")
     text = str(raw_text) if raw_text is not None else None
     try:
         result = await set_dedup_key(pool, ws_slug, doc_id, text)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -2034,7 +2060,11 @@ async def _get_block_type(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> 
         block_slug,
     )
     if row is None:
-        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+        return _text(
+            errors.err(
+                errors.NOT_FOUND, f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"
+            )
+        )
     return _text(dict(row))
 
 
@@ -2042,12 +2072,12 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
     try:
         doc_uuid = uuid.UUID(doc_id)
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     async with pool.acquire() as conn:
         try:
             wk = await _require_workspace(conn, ws_slug)
         except ValueError as e:
-            return _text({"error": str(e)})
+            return _text(errors.err(errors.NOT_FOUND, e))
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -2107,12 +2137,12 @@ async def _get_property_value(
     try:
         doc_uuid = uuid.UUID(doc_id)
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     async with pool.acquire() as conn:
         try:
             wk = await _require_workspace(conn, ws_slug)
         except ValueError as e:
-            return _text({"error": str(e)})
+            return _text(errors.err(errors.NOT_FOUND, e))
         row = await conn.fetchrow(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -2136,7 +2166,9 @@ async def _get_property_value(
             prop_slug,
         )
     if row is None:
-        return _text({"error": f"propriété '{prop_slug}' introuvable sur ce document"})
+        return _text(
+            errors.err(errors.NOT_FOUND, f"propriété '{prop_slug}' introuvable sur ce document")
+        )
     return _text(dict(row))
 
 
@@ -2156,7 +2188,7 @@ async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> li
     try:
         doc_id = uuid.UUID(doc_id_str)
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
 
     data = PropertyValueSet(
         value=value, allowed_value_slug=allowed_value_slug, expected_version=expected_version
@@ -2164,7 +2196,7 @@ async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> li
     try:
         out = await doc_svc.set_property_value(pool, ws_slug, doc_id, prop_slug, data)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text({"updated": True, "prop_slug": out.prop_slug})
 
 
@@ -2222,9 +2254,9 @@ async def _export_template(template_slug: str) -> list[TextContent]:
         tpl = cast(Template, _find_template(template_slug))
         resolved = resolve(tpl)
     except ValueError as e:
-        return _text({"error": str(e)})
+        return _text(errors.err(errors.NOT_FOUND, e))
     except Exception as e:  # héritage incohérent → message explicite
-        return _text({"error": f"template non résolvable : {e}"})
+        return _text(errors.err(errors.INVALID, f"template non résolvable : {e}"))
 
     return _text(
         {
@@ -2251,7 +2283,7 @@ async def _get_template_yaml(template_slug: str) -> list[TextContent]:
                 continue
             if tpl.template == template_slug:
                 return _text({"template": tpl.template, "yaml_content": yaml_file.read_text()})
-    return _text({"error": f"template '{template_slug}' introuvable"})
+    return _text(errors.err(errors.NOT_FOUND, f"template '{template_slug}' introuvable"))
 
 
 async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -2271,9 +2303,11 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
         # (l'humain si l'OBO du portail l'a résolu, sinon l'identité de la clé).
         result = await ws_svc.create_workspace(pool, data, owner_id=acting_identity().id)
     except ValidationError as e:
-        return _text({"error": e.errors(include_url=False)})
+        return _text(
+            errors.err(errors.INVALID, "arguments invalides", issues=e.errors(include_url=False))
+        )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2289,6 +2323,7 @@ async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     from docflow.templates.importer import (
         ConcurrentImportError,
         ImportConflictError,
+        MissingTemplateDependencyError,
         VersionConflictError,
         run_import,
     )
@@ -2300,12 +2335,19 @@ async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         tpl = _find_template(template_slug)
         report = await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
     except (VersionConflictError, ConcurrentImportError) as e:
-        return _text({"error": str(e)})
+        return _text(errors.err(errors.CONFLICT, e))
     except ImportConflictError as e:
         conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]
-        return _text({"error": "conflits bloquants", "conflicts": conflicts})
+        return _text(errors.err(errors.CONFLICT, "conflits bloquants", conflicts=conflicts))
+    except MissingTemplateDependencyError as e:
+        # AVANT le `except ValueError` : cette exception en hérite, et y tomber
+        # rendrait « not_found », c'est-à-dire « template introuvable » — alors
+        # que le template existe et que ce sont ses dépendances qui manquent.
+        # Distinguer les deux est tout l'objet de 9190e1af ; le perdre ici
+        # annulerait le bénéfice côté MCP.
+        return _text(errors.err(errors.CONFLICT, e, missing_templates=e.missing))
     except ValueError as e:
-        return _text({"error": str(e)})
+        return _text(errors.err(errors.NOT_FOUND, e))
 
     return _text(
         {
@@ -2343,9 +2385,11 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
         )
         result = await block_svc.create_block(pool, ws_slug, data)
     except ValidationError as e:
-        return _text({"error": e.errors(include_url=False)})
+        return _text(
+            errors.err(errors.INVALID, "arguments invalides", issues=e.errors(include_url=False))
+        )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2367,7 +2411,7 @@ async def _list_blocks(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
     try:
         blocks = await block_svc.list_blocks(pool, ws_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(
         [
             {
@@ -2396,30 +2440,31 @@ async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
     try:
         counts = await block_svc.count_block_dependents(pool, ws_slug, block_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     dependents = counts["child_blocks"] + counts["documents"]
     if dependents > 0 and not confirm:
         return _text(
-            {
-                "error": (
-                    f"la suppression du bloc '{block_slug}' détruirait en cascade "
-                    f"{counts['child_blocks']} bloc(s) enfant(s) et "
-                    f"{counts['documents']} document(s) (valeurs et historique compris) ; "
-                    "rappeler avec confirm=true pour confirmer"
-                ),
-                "child_blocks": counts["child_blocks"],
-                "documents": counts["documents"],
-                "dependents": dependents,
-            }
+            errors.err(
+                errors.CONFLICT,
+                f"la suppression du bloc '{block_slug}' détruirait en cascade "
+                f"{counts['child_blocks']} bloc(s) enfant(s) et "
+                f"{counts['documents']} document(s) (valeurs et historique compris) ; "
+                "rappeler avec confirm=true pour confirmer",
+                child_blocks=counts["child_blocks"],
+                documents=counts["documents"],
+                dependents=dependents,
+            )
         )
 
     try:
         await block_svc.delete_block(pool, ws_slug, block_slug, confirm=confirm)
     except DependentsConflictError as e:
-        return _text({"error": e.detail, "dependents": e.dependents})
+        # Pas une HTTPException : l'objet refusé a des dépendants, et la liste
+        # est ce qui permet à l'appelant de décider quoi faire ensuite.
+        return _text(errors.err(errors.CONFLICT, e.detail, dependents=e.dependents))
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text({"deleted": True, "block_slug": block_slug})
 
@@ -2434,7 +2479,7 @@ async def _list_block_properties(
     try:
         out = await list_block_properties(pool, ws_slug, block_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2454,7 +2499,7 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
     try:
         page, page_size = _pagination_args(args)
     except ValueError:
-        return _text({"error": "page / page_size : entier invalide"})
+        return _text(errors.err(errors.INVALID, "page / page_size : entier invalide"))
     try:
         out = await list_block_objects(
             pool,
@@ -2464,7 +2509,7 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
             page_size,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2484,7 +2529,7 @@ async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             page_size,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2500,7 +2545,7 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         page, page_size = _pagination_args(args)
     except ValueError:
-        return _text({"error": "page / page_size : entier invalide"})
+        return _text(errors.err(errors.INVALID, "page / page_size : entier invalide"))
 
     clauses: list[FilterClause] = []
     try:
@@ -2535,12 +2580,12 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             page_size=page_size,
         )
     except ValidationError as e:
-        return _text({"error": f"QuerySpec invalide : {e}"})
+        return _text(errors.err(errors.INVALID, f"QuerySpec invalide : {e}"))
 
     try:
         out = await query_documents(pool, ws, spec)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2568,7 +2613,7 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
             [ApiProfileScopeIn(workspace_slug=ws_slug, block_slug=None, read_only=read_only)],
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2601,7 +2646,7 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
             ApiKeyCreate(profile_id=uuid.UUID(profile_id_str), label=label),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2624,11 +2669,11 @@ async def _find_referencing_documents(
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     try:
         result = await ref_svc.find_referencing_documents(pool, ws_slug, doc_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -2638,7 +2683,7 @@ async def _search_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list
 
     q = str(args.get("q", "")).strip()
     if not q:
-        return _text({"error": "q requis (terme non vide)"})
+        return _text(errors.err(errors.INVALID, "q requis (terme non vide)"))
     raw_limit = args.get("limit", 10)
     limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else 10
     limit = max(1, min(50, limit))
@@ -2665,7 +2710,7 @@ async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -
     try:
         out = await members.list_members(pool, str(args.get("workspace_slug", "")))
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)
 
 
@@ -2685,7 +2730,7 @@ async def _add_workspace_member(pool: asyncpg.Pool, args: dict[str, object]) -> 
             require_identity(),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)
 
 
@@ -2705,5 +2750,5 @@ async def _remove_workspace_member(
             require_identity(),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)

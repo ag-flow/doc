@@ -511,7 +511,7 @@ async def test_create_document_sans_type_est_REFUSE(
         )
     )
 
-    assert data["error"]["code"] == "functional_type_required"  # type: ignore[index]
+    assert data["error_code"] == "functional_type_required"  # type: ignore[index]
 
 
 async def test_le_refus_NOMME_les_types_admissibles(
@@ -530,8 +530,8 @@ async def test_le_refus_NOMME_les_types_admissibles(
         )
     )
 
-    assert "epic" in data["error"]["allowed"]  # type: ignore[index]
-    assert "epic" in data["error"]["message"]  # type: ignore[index]
+    assert "epic" in data["error_detail"]["allowed"]  # type: ignore[index]
+    assert "epic" in data["error"]  # type: ignore[index]
 
 
 async def test_create_document_avec_type_reste_inchange(
@@ -670,7 +670,7 @@ async def test_update_document_titre_exige_TOUJOURS_une_version(
             },
         )
     )
-    assert data["error"]["code"] == "version_required"  # type: ignore[index]
+    assert data["error_code"] == "version_required"  # type: ignore[index]
 
 
 async def test_update_document_type_interdit_a_cette_position(
@@ -722,7 +722,7 @@ async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, 
             },
         )
     )
-    assert data["error"]["code"] == "not_found"  # type: ignore[index]
+    assert data["error_code"] == "not_found"  # type: ignore[index]
 
 
 async def test_update_document_doc_id_malforme(
@@ -752,7 +752,7 @@ async def test_update_document_sans_version_refuse(
             {"workspace_slug": mcp_ws["ws_slug"], "doc_id": mcp_ws["doc_id"], "title": "X"},
         )
     )
-    assert data["error"]["code"] == "version_required"  # type: ignore[index]
+    assert data["error_code"] == "version_required"  # type: ignore[index]
     # Refus = aucune écriture : le document reste à sa version initiale.
     check = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
     assert check["version"] == 1  # type: ignore[index]
@@ -784,8 +784,8 @@ async def test_update_document_version_perimee_refuse(
             },
         )
     )
-    err = conflict["error"]  # type: ignore[index]
-    assert err["code"] == "version_conflict"
+    assert conflict["error_code"] == "version_conflict"  # type: ignore[index]
+    err = conflict["error_detail"]  # type: ignore[index]
     # L'erreur porte l'état COURANT pour réappliquer sans relecture.
     assert err["version"] == 2
     assert err["contenu"] == "v2"
@@ -817,8 +817,8 @@ async def test_update_conflict_code_distinct_du_not_found(
             },
         )
     )
-    assert conflict["error"]["code"] == "version_conflict"  # type: ignore[index]
-    assert not_found["error"]["code"] == "not_found"  # type: ignore[index]
+    assert conflict["error_code"] == "version_conflict"  # type: ignore[index]
+    assert not_found["error_code"] == "not_found"  # type: ignore[index]
 
 
 # Bug MCO : omission d'un champ (title ou contenu) ne doit PAS écraser l'autre à NULL.
@@ -929,8 +929,8 @@ async def test_get_document_version_inexistante_donne_les_bornes(
 ) -> None:
     ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
     data = _json(await _get_document(db_pool, ws, doc_id, 99))  # type: ignore[arg-type]
-    err = data["error"]  # type: ignore[index]
-    assert err["code"] == "version_not_found"
+    assert data["error_code"] == "version_not_found"  # type: ignore[index]
+    err = data["error_detail"]  # type: ignore[index]
     assert err["available_min"] == 1
     assert err["available_max"] == 1
 
@@ -1125,7 +1125,8 @@ async def test_set_property_value_uuid_invalide(
             },
         )
     )
-    assert data == {"error": "doc_id : UUID invalide"}
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
 
 
 async def test_set_property_value_conflit_de_version(
@@ -1161,9 +1162,9 @@ async def test_set_property_value_conflit_de_version(
         )
     )
     assert isinstance(stale, dict)
-    assert isinstance(stale["error"], dict)  # type: ignore[index]
-    assert stale["error"]["version"] == 1  # type: ignore[index]
-    assert stale["error"]["value"] == "haute"  # type: ignore[index]
+    assert stale["error_code"] == "conflict"  # type: ignore[index]
+    assert stale["error_detail"]["version"] == 1  # type: ignore[index]
+    assert stale["error_detail"]["value"] == "haute"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1409,7 +1410,7 @@ async def test_delete_document_avec_descendants_refuse_sans_confirm(
     refused = _json(
         await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
     )
-    assert refused["dependents"] == 1  # type: ignore[index]
+    assert refused["error_detail"]["dependents"] == 1  # type: ignore[index]
     assert "confirm" in str(refused["error"])
 
     # Le document et son enfant existent toujours
@@ -1460,7 +1461,7 @@ async def test_delete_document_avec_descendants_finalize_is_error(
     assert isinstance(finalized, CallToolResult)
     assert finalized.isError is True
     payload = json.loads(finalized.content[0].text)
-    assert payload["dependents"] == 1
+    assert payload["error_detail"]["dependents"] == 1
 
 
 async def test_delete_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
@@ -1480,7 +1481,8 @@ async def test_delete_document_uuid_invalide(
             db_pool, {"workspace_slug": mcp_ws["ws_slug"], "doc_id": "pas-un-uuid"}
         )
     )
-    assert data == {"error": "doc_id : UUID invalide"}
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1829,7 +1831,8 @@ async def test_set_parent_uuid_invalide(db_pool: asyncpg.Pool, mcp_ws: dict[str,
             {"workspace_slug": str(mcp_ws["ws_slug"]), "doc_id": "pas-un-uuid"},
         )
     )
-    assert result == {"error": "doc_id / parent_id : UUID invalide"}
+    assert result["error_code"] == "invalid"  # type: ignore[index]
+    assert result["error"] == "doc_id / parent_id : UUID invalide"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1887,8 +1890,8 @@ async def test_delete_block_non_vide_sans_confirm_refuse(
         await _delete_block(db_pool, {"workspace_slug": ws, "block_slug": mcp_ws["block_slug"]})
     )
     assert "error" in res  # type: ignore[operator]
-    assert res["documents"] == 1  # type: ignore[index]
-    assert res["dependents"] >= 1  # type: ignore[index]
+    assert res["error_detail"]["documents"] == 1  # type: ignore[index]
+    assert res["error_detail"]["dependents"] >= 1  # type: ignore[index]
     # Le bloc est toujours là.
     slugs = [b["slug"] for b in _json(await _list_blocks(db_pool, ws))]  # type: ignore[arg-type,union-attr]
     assert mcp_ws["block_slug"] in slugs

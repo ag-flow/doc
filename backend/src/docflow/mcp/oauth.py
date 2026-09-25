@@ -69,9 +69,7 @@ _SELECT_BY_PIN = (
 )
 
 
-async def resolve_idp_bearer(
-    pool: asyncpg.Pool, settings: Settings, token: str
-) -> AuthUser | None:
+async def resolve_idp_bearer(pool: asyncpg.Pool, settings: Settings, token: str) -> AuthUser | None:
     """Résout un jeton d'accès IdP (Bearer JWT) en app_user, ou None si le jeton
     n'est pas vérifiable / mauvaise audience (→ 401 côté appelant).
 
@@ -80,17 +78,13 @@ async def resolve_idp_bearer(
     l'identité est prouvée, c'est l'autorisation applicative qui manque.
     """
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT issuer, enabled FROM oidc_config LIMIT 1"
-        )
+        row = await conn.fetchrow("SELECT issuer, enabled FROM oidc_config LIMIT 1")
     if row is None or not row["enabled"]:
         return None  # pas d'IdP configuré → aucun jeton d'accès à valider
     issuer: str = row["issuer"]
 
     try:
-        claims = await verify_access_token(
-            token, issuer=issuer, audience=settings.oauth2_audience
-        )
+        claims = await verify_access_token(token, issuer=issuer, audience=settings.oauth2_audience)
     except OidcVerifyError as exc:
         log.warning("mcp_bearer_rejected", reason=str(exc), exc_info=True)
         return None
