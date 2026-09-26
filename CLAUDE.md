@@ -4,11 +4,20 @@
 > Projet **indépendant** d'ag.flow, devpod-ui (aucun couplage runtime ni de source).
 
 > Généré depuis les standards globaux (docflow, workspace `globals`, bloc `documentation`).
-> Génération : **2026-09-20**. Standards repris (titre — rév.) : *Fichier
-> d'instructions agent de projet* — 2026-09-20 · *Exposer un service interne derrière
-> l'authentification du portail* — 2026-09-16 · *Gestion des logs* · *Gestion des
-> secrets* · *Authentification OIDC & liaison d'identité* · *Instance de dev/test* —
-> 2026-09-15. Mise à jour par `--update` : ne reporter que le delta depuis cette date.
+> Génération : **2026-09-20**. Dernier `--update` : **2026-09-26**.
+> Standards repris (titre — version du document au moment du report) : *Fichier
+> d'instructions agent de projet* — v36 · *Exposer un service interne derrière
+> l'authentification du portail* — v3 (rév. 16/09/2026) · *Gestion des logs* — v3 ·
+> *Gestion des secrets* — v4 (rév. 2026-09-20) · *Authentification OIDC & liaison
+> d'identité* — v7 · *Instance de dev/test* — v10.
+> Mise à jour par `--update` : ne reporter que le delta depuis cette date.
+>
+> **Datation par numéro de version, et non par `updated_at`.** Le reclassement du
+> 2026-09-24 (reprise T3) a écrasé l'`updated_at` des STANDARDs, et aucun d'eux ne
+> porte de date de révision interne systématique : la date de modification ne peut
+> donc plus servir à calculer un delta. Le numéro de version du document, lui, est
+> intact — `--update` compare désormais des versions, pas des dates.
+>
 > Avant le 2026-09-20 le fichier n'avait pas de provenance : la conformité a été
 > **revérifiée intégralement**, pas déduite d'un delta.
 
@@ -76,11 +85,29 @@ documentation du projet, puis dépôt `ressources`, puis l'artefact réel.
 La gateway MCP expose une API vers docflow (workspaces ⊃ blocs ⊃ documents).
 Le backlog des tâches à exécuter est dans le workspace `docflow`, bloc `backlog`.
 
+**Avant de commencer, découvre les statuts réels.** Les valeurs de statut dépendent
+du type de ticket et diffèrent d'un type à l'autre. Introspecte le bloc pour
+connaître, pour chaque type présent, la valeur qui joue chacun de ces rôles :
+
+- **disponible** — la tâche peut être prise ;
+- **en cours** — tu travailles dessus ;
+- **en revue** — tu as fini, elle attend une revue humaine ;
+- **terminée** — elle est close ;
+- **en attente** — elle attend une réponse de l'utilisateur (ce rôle peut ne pas exister).
+
+N'écris JAMAIS une valeur de statut de mémoire : une valeur inexistante est refusée,
+et un statut approximatif choisi au jugé fausse l'état du backlog pour tout le monde.
+
 Quand on te demande de traiter le backlog :
 
-- identifie les tâches qui ne sont PAS au statut `en review` ;
-- quand tu prends une tâche, passe son statut à `en cours` ;
-- quand tu as fini, passe son statut à `en review`.
+- ne retiens que les tâches au rôle **disponible** — ni en cours, ni en revue, ni
+  terminées, ni en attente ;
+- **AVANT de toucher au code**, passe la tâche au rôle **en cours** ;
+- **quand tu as fini**, passe-la au rôle **en revue**.
+
+Ces deux écritures ne sont pas optionnelles : c'est ce qui dit aux autres — humains
+et agents — qu'une tâche est prise, et ce qui permet de reprendre après une
+interruption.
 
 **Le backlog est la source de vérité, jamais ta mémoire.** Ne tiens pas la liste des
 tâches restantes dans ta tête : elle s'éloigne à mesure que ton contexte se remplit,
@@ -94,8 +121,10 @@ doit pouvoir reprendre sur la seule lecture du backlog.
 prédécesseurs déclarés avant de prendre une tâche, et prends la suivante éligible.
 
 **Une question ne bloque pas la file.** Si une tâche soulève un vrai doute : écris la
-question dans la tâche, passe-la en attente, et CONTINUE avec la suivante. Ne gèle
-jamais le lot entier sur un doute isolé.
+question en tête de la tâche, puis passe-la au rôle **en attente** s'il existe. S'il
+n'existe pas, laisse-la dans son état et signale-la explicitement à la fin du lot.
+Dans les deux cas, CONTINUE avec la suivante. Ne gèle jamais le lot entier sur un
+doute isolé.
 
 **Tu ne t'arrêtes que pour une de ces quatre raisons, et tu la nommes :**
 
@@ -191,11 +220,69 @@ Les six fonctions, back et front. Détail et pièges : fragments de technologie.
 **Pas de linter JS configuré** : `tsc --noEmit` et Vitest sont les garde-fous côté
 front. N'invoque pas `eslint`, il n'a pas de configuration ici.
 
-## Déploiement sur la VM de test
+## Machines de test
 
-**Machine** : `test1` (alias SSH local, root, clé `~/.ssh/id_ed25519`).
-**Répertoire** : `/opt/docflow`. Procédure complète (1re installation incluse) :
-`deploy/DEPLOY.md` § *Déploiement dev (VM de test)* — référence unique, ne pas la dupliquer.
+Les machines de test sont **à ta disposition** pour exécuter les tests et valider que
+les livrables sont conformes à la demande. Rien à demander pour t'en servir.
+
+**Cherche où le test sera le plus révélateur — et privilégie la machine de test.**
+Avant de valider un sujet, évalue l'endroit où un test a le plus de chances de révéler
+un défaut réel : c'est le plus souvent la machine de test, où le livrable tourne dans
+sa configuration réelle, avec ses journaux et ses métriques. Un test local qui passe
+ne dispense pas de la validation sur une machine de test dès que celle-ci peut
+révéler davantage.
+
+- **Accès** : alias SSH déclarés dans la configuration SSH — `test1`, `test2`, `test…`.
+  Aucun identifiant à demander, aucune adresse à retenir : lire le fichier d'alias.
+- **Docker** est installé en standard : conteneurs à tester, mais aussi tests
+  unitaires, ATDD ou tout autre type de test jugé nécessaire.
+- **Services en standard** : un collecteur de logs et un collecteur de métriques
+  (`alloy-collector`, `alloy-metrics`), et un `browserless-chromium` pour éprouver en
+  mode web les services livrés.
+
+**Un alias qui répond ne prouve rien** : les alias sont recyclés. Avant tout
+déploiement ou diagnostic, vérifier ce qu'il y a DERRIÈRE — nom d'hôte réel, stack
+attendue, conteneurs actifs.
+
+**Consigne les ressources qui te sont attribuées** dans
+`ia_instructions/tests_and_ressources.md` (nom d'hôte, alias SSH, à quoi elle sert),
+et retire-les quand elles te sont reprises. Ce fichier est ta MÉMOIRE des ressources
+disponibles, distincte des règles ci-dessus : les règles disent comment t'en servir,
+ce fichier dit lesquelles tu as, ici et maintenant.
+
+> ⚠ **État constaté le 2026-09-26** : `test1` n'a **aucune entrée** dans
+> `~/.ssh/config`, et `test2` est déclaré mais sans route (`No route to host`). Les
+> deux machines nommées ci-dessus sont donc injoignables depuis l'environnement de
+> travail courant — voir `ia_instructions/tests_and_ressources.md`. Tant que c'est le
+> cas, le déploiement doit être lancé par l'humain : ne prétends pas l'avoir fait.
+
+### Livrer sur une machine de test — procédure incontournable
+
+Livrer les images du projet passe TOUJOURS par cette procédure, jamais par une
+construction ou un `docker run` à la main :
+
+1. **Pousser sur `dev`.** Le déploiement récupère le code depuis git : tant que le
+   commit n'y est pas, la machine déploie l'état précédent.
+2. **Se connecter** à la machine de test par son alias SSH.
+3. **La première fois** : cloner la branche `dev`.
+4. **Les fois suivantes** : lancer `dev-deploy.sh`, exclusivement.
+5. **Lire les journaux réels** du service déployé, pas la sortie de la commande.
+
+Le **service livré** n'est jamais simulé par un conteneur lancé à la main : il
+n'aurait ni le même cycle de démarrage ni la même configuration. Les **outils de
+test** (runner, base jetable, doublure, outil de mesure), eux, tournent librement
+dans Docker.
+
+**Aucune retouche manuelle de la cible hors de cette procédure.** Un correctif
+d'infra ou de provisionnement (permission à poser, service à initialiser, migration
+d'un annexe) ne se joue JAMAIS en `docker exec` / édition de fichier à la main : il
+se met DANS le script de déploiement, de sorte qu'un simple `dev-deploy.sh`
+l'applique et que la prochaine machine en hérite. Une commande one-off tapée sur
+l'hôte est perdue au redéploiement suivant et introuvable pour le prochain agent.
+
+**Ici** : répertoire `/opt/docflow`. Procédure complète (1re installation incluse) :
+`deploy/DEPLOY.md` § *Déploiement dev (VM de test)* — référence unique, ne pas la
+dupliquer.
 
 ```bash
 ssh test1 && cd /opt/docflow && sudo ./dev-deploy.sh dev
@@ -227,6 +314,7 @@ semble utile ».
 
 | Tu t'apprêtes à… | Lis d'abord |
 |---|---|
+| te servir d'une machine de test, ou en recevoir une | `ia_instructions/tests_and_ressources.md` |
 | modifier un fichier `.py` sous `backend/` | `ia_instructions/10_python.md` |
 | modifier un fichier sous `frontend/src/` | `ia_instructions/10_typescript.md` |
 | écrire ou modifier une migration, ou une requête SQL | `ia_instructions/10_postgresql.md` |
@@ -276,13 +364,31 @@ existante, README de test manuel.
 
 ### Branche de développement
 
-**Tout le code se fait sur la branche `dev`.** Jamais `feat/*`, jamais sur `main` directement. Avant toute édition, vérifier `git branch --show-current` ; si autre branche, `git checkout dev`. Si `dev` n'existe pas, la créer depuis `main` à jour. Ne propose **jamais** `git checkout -b feat/...` — la consigne utilisateur prime sur tout workflow.
+**Tout le code se fait sur la branche `dev`. Aucun compromis.** Jamais `feat/*`, jamais
+sur `main` directement, jamais ailleurs. Avant toute édition, vérifier
+`git branch --show-current` ; si autre branche, `git checkout dev`. Si `dev` n'existe pas
+localement, la créer depuis `main` à jour. Ne propose **jamais**
+`git checkout -b feat/...` — même si un outil ou un workflow tiers le suggère, la
+consigne utilisateur prime.
+
+**Committer et pousser sur `dev` est obligatoire**, sans demande à attendre : c'est ce qui
+rend le travail livrable sur une machine de test. Commits en **français**, conventionnels
+(`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
+
+**Merger `dev` sur `main` est formellement interdit sans demande explicite de l'humain.**
 
 ### Livraison
 
-- **`test1` est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
+- **La machine de test est l'environnement de Claude** — push sur `dev` et déploiement
+  sont libres, sans demande explicite. C'est un outil de travail pour valider les
+  implémentations.
 - Ne modifie pas `.env` sauf si demandé.
-- Commit messages en **français**, format conventionnel (`feat:`, `fix:`, `chore:`, `docs:`, `test:`…).
+
+### Définition de « terminé »
+
+**Une tâche est finie quand les tests passent.** Pas quand le code compile, pas quand
+il est poussé. Tant qu'un test échoue, la tâche n'est pas finie et ne passe pas au rôle
+**en revue**.
 
 ### Vérification avant validation
 
@@ -323,7 +429,7 @@ sert à rien.
 | Navigation sémantique | avant un refactor, pour trouver les usages | **Serena** |
 | Méthodes de travail | plan, exécution, débogage, TDD | **skills Superpowers** |
 | Revue | >3 fichiers ou >100 lignes | **`/review`** |
-| Commit | sur demande explicite de l'utilisateur | **`/commit`**, format français conventionnel |
+| Commit | à chaque tâche livrée — obligatoire, sans attendre de demande | **`/commit`**, format français conventionnel |
 
 Context7 ici : FastAPI, pydantic v2, asyncpg, authlib, httpx, structlog, React,
 TanStack Query, Vite, Vitest, i18next, `@xyflow/react`, BlockNote, SDK MCP.
