@@ -185,6 +185,18 @@ main() {
         echo "  ✓ ENCRYPTION_KEY générée"
     fi
 
+    if [[ -z "$(_env_get SESSION_COOKIE_SECURE)" ]]; then
+        # La stack dev est publiée en CLAIR sur le LAN (pas de proxy TLS devant,
+        # cf. le port 8080 du compose). Avec Secure, le navigateur jette le cookie
+        # de session et la connexion échoue sans message côté serveur : le symptôme
+        # est un écran de login qui boucle, pas une erreur.
+        # Le défaut du code est `true` (fail closed) et c'est la bonne valeur ; c'est
+        # bien ce script — le seul qui connaisse le mode de publication — qui doit
+        # poser l'exception. Ne JAMAIS poser ça dans prod-deploy.sh.
+        _env_set SESSION_COOKIE_SECURE "false"
+        echo "  ✓ SESSION_COOKIE_SECURE=false (stack dev servie en http)"
+    fi
+
     unset -f _env_get _env_set
 
     if [[ "$FIRST_ENV" -eq 1 ]]; then

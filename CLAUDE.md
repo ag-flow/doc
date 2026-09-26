@@ -138,8 +138,14 @@ t'arrêtes par oubli : réinterroge le backlog et continue.
 
 ## Logs & documentation
 
-**Logs** : la centralisation est accessible par le service MCP (`logs_query`). Le
-label Loki de la stack est `compose_project="deploy"`, pas `"docflow"`.
+**Logs** : la centralisation est accessible par le service MCP (`logs_query`).
+
+Le sélecteur de l'instance docflow est **`{host="docflow-dev", compose_service="app"}`**.
+`compose_project="deploy"` seul ne suffit pas : ce label est **partagé** avec le portail
+devpod (host `dev.yoops.org`, services `caddy` / `portal`) — filtrer dessus rend les
+erreurs du portail et non les tiennes. `host="doc.yoops.org"` n'existe pas comme valeur
+de label. Et `detected_level` n'est pas un label de flux : `{… detected_level="error"}`
+rend 0 même quand des lignes d'erreur existent — filtrer sur le contenu.
 
 **Documentation** : workspace `docflow`, bloc `Documentation` — pour lire et écrire
 la doc du projet. Le cross-projet vit dans le workspace `globals`, bloc
@@ -211,13 +217,13 @@ Les six fonctions, back et front. Détail et pièges : fragments de technologie.
 # Lancer en local    uv run uvicorn docflow.app:app --reload  (:8000) | npm run dev (:5173)
 # Tester             cd backend && uv run pytest -v | cd frontend && npm run test
 # Style              cd backend && uv run ruff check src/ tests/      (pas d'ESLint côté front)
-# Types              cd backend && uv run mypy src/ | cd frontend && npx tsc --noEmit
+# Types              cd backend && uv run mypy src/ | cd frontend && npx tsc -b
 # Construire         cd frontend && npm run build
 # Migrations         cd backend && uv run python -m docflow.db.apply  (idempotent)
 # Stack locale       docker compose -f deploy/docker-compose.yml up -d
 ```
 
-**Pas de linter JS configuré** : `tsc --noEmit` et Vitest sont les garde-fous côté
+**Pas de linter JS configuré** : `tsc -b` et Vitest sont les garde-fous côté
 front. N'invoque pas `eslint`, il n'a pas de configuration ici.
 
 ## Machines de test
@@ -394,7 +400,7 @@ il est poussé. Tant qu'un test échoue, la tâche n'est pas finie et ne passe p
 
 Avant de déclarer une tâche terminée, **toutes** ces étapes sont obligatoires :
 
-1. Le style, les types et la construction passent — back : `ruff check` + `mypy src/` ; front : `npx tsc --noEmit` + `npm run build`.
+1. Le style, les types et la construction passent — back : `ruff check` + `mypy src/` ; front : `npx tsc -b` + `npm run build`.
 2. Le cas nominal est testé — `uv run pytest` et/ou `npm run test`, pas une vérification à l'œil.
 3. Les imports ajoutés existent réellement.
 4. Pas de régression sur les fichiers modifiés.

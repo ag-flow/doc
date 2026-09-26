@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     session_absolute_ttl_seconds: int = 24 * 3600
     # Pose l'attribut Secure sur le cookie de session. Fail closed : par défaut le
     # cookie n'est jamais renvoyé en clair. Un déploiement en http DOIT poser false
-    # explicitement (dev-deploy.sh le fait pour la machine de test) — l'oubli penche
-    # du bon côté : une connexion qui ne s'établit pas se voit, un cookie servi sans
-    # Secure non.
+    # explicitement — c'est `dev-deploy.sh` qui le fait, dans sa réparation du `.env`,
+    # parce qu'il est le seul à savoir que la stack dev est publiée sans proxy TLS.
+    # L'oubli penche du bon côté, mais son symptôme est coûteux : le navigateur jette
+    # le cookie, le login boucle, et le serveur ne journalise aucune erreur.
     session_cookie_secure: bool = True
     # Re-liaison d'émetteur OIDC (bascule d'IdP) : FERMÉE par défaut (fail closed).
     # Ouverte explicitement le temps d'une migration (via /data/.env), elle laisse

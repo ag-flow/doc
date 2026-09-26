@@ -14,7 +14,7 @@ Tailwind **v4** + shadcn/ui + i18next + Vitest & React Testing Library.
 
 ## Conventions
 
-- **TypeScript strict** : pas de `any` de confort. `npx tsc --noEmit` est le
+- **TypeScript strict** : pas de `any` de confort. `npx tsc -b` est le
   garde-fou — il n'y a **pas d'ESLint configuré** dans ce dépôt, ne l'invoque pas.
 - Textes d'interface **toujours** via i18next (`src/locales/fr.json`), jamais en dur
   dans un composant.
@@ -36,7 +36,7 @@ Tailwind **v4** + shadcn/ui + i18next + Vitest & React Testing Library.
 cd frontend && npm install
 cd frontend && npm run dev          # :5173
 cd frontend && npm run test         # vitest run
-cd frontend && npx tsc --noEmit     # types
+cd frontend && npx tsc -b     # types
 cd frontend && npm run build        # tsc -b && vite build
 ```
 
@@ -61,7 +61,7 @@ cd frontend && npm run build        # tsc -b && vite build
 
 ## Part de checklist
 
-- [ ] `npx tsc --noEmit` passe
+- [ ] `npx tsc -b` passe
 - [ ] `npm run test` passe, et le changement a son test
 - [ ] `npm run build` passe
 - [ ] Aucun texte d'interface en dur hors `locales/`
