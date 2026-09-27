@@ -4,9 +4,9 @@
 > Projet **indépendant** d'ag.flow, devpod-ui (aucun couplage runtime ni de source).
 
 > Généré depuis les standards globaux (docflow, workspace `globals`, bloc `documentation`).
-> Génération : **2026-09-20**. Dernier `--update` : **2026-09-26**.
+> Génération : **2026-09-20**. Dernier `--update` : **2026-09-27**.
 > Standards repris (titre — version du document au moment du report) : *Fichier
-> d'instructions agent de projet* — v36 · *Exposer un service interne derrière
+> d'instructions agent de projet* — **v42** · *Exposer un service interne derrière
 > l'authentification du portail* — v3 (rév. 16/09/2026) · *Gestion des logs* — v3 ·
 > *Gestion des secrets* — v4 (rév. 2026-09-20) · *Authentification OIDC & liaison
 > d'identité* — v7 · *Instance de dev/test* — v10.
@@ -20,6 +20,14 @@
 >
 > Avant le 2026-09-20 le fichier n'avait pas de provenance : la conformité a été
 > **revérifiée intégralement**, pas déduite d'un delta.
+>
+> **Remise en forme du 2026-09-27 — ne pas défaire.** Le fichier atteignait 489 lignes
+> pour un quota idéal de ~350. Sept blocs que l'agent ne mobilise qu'à un geste précis
+> sont passés en **synthèse ici + texte intégral dans un fragment déclenché** : backlog,
+> recherche, machines de test et livraison, tchat agents, commandes et layout, logs,
+> outils. Chacun a sa ligne dans la table des déclencheurs. **Ne les remets pas en clair
+> par réflexe** et **ne relève pas le plafond** : un fichier tronqué par l'agent perd des
+> règles sans que personne ne le voie, un fichier remis en forme n'en perd aucune.
 
 **Ce fichier prime sur ton comportement par défaut.** Tu le lis en tête de chaque
 session et tu le suis littéralement : ses règles sont impératives, pas indicatives.
@@ -34,123 +42,54 @@ Tu es connecté au MCP du portail devpod via le serveur `claude-code`.
 
 ## Recherche — le RAG d'abord
 
-**Toute recherche documentaire passe EN PRIORITÉ par le RAG**, via les primitives
-`rag__*` de la gateway MCP. Le corpus y est déjà indexé et enrichi : c'est plus
-rapide et plus complet qu'un `grep` sur un dépôt, et ça couvre la doc Docflow que
-le système de fichiers ne contient pas.
+**Toute recherche documentaire passe EN PRIORITÉ par le RAG** (primitives `rag__*` de
+la gateway) : le corpus est indexé et enrichi, et il couvre la doc que le système de
+fichiers ne contient pas. Ordre de repli, jamais l'inverse : `rag__list_workspaces`
+d'abord, puis `rag__rag_search` (sémantique) ou `rag__search_files` (littéral) → et
+seulement si le corpus ne répond pas, outils locaux.
 
-Méthode (les noms sont ceux servis par la gateway, namespace `rag`) :
+**Le RAG muet n'est pas une réponse.** L'absence ressemble à une réponse vide, pas à
+une lacune : le repli n'est jamais « la documentation ne le dit pas », c'est **aller
+lire l'artefact réel** (`--help` pour un flag, l'API pour une forme de réponse, le
+fichier pour son état courant). Rendre un chemin approximatif ou un « je ne peux pas
+savoir » alors que l'artefact est joignable, c'est renvoyer le travail à l'utilisateur.
 
-1. **`rag__list_workspaces`** — **à appeler en premier** : donne les slugs
-   interrogeables et le scope de la clef. Corpus utiles ici : **`docflow-docs`
-   (documentation de CE projet)**, `globals-docs` (savoir cross-projet), et un
-   `<voisin>-docs` par projet voisin (`devpod-docs`, `workflow-docs`,
-   `ragflow-docs`, `ressources-docs`).
-2. **`rag__rag_search(workspace, query, top_k, min_score, scope)`** — recherche
-   **sémantique** : question en langue naturelle, concept, intention. C'est le
-   point d'entrée par défaut. `min_score` 0.3 par défaut ; monter à 0.5–0.7 pour
-   une question précise. `scope='enriched_only'` pour n'interroger que les
-   résumés / listes de fonctions / graphes de dépendances.
-3. **`rag__search_files(workspace, pattern, mode)`** — recherche **littérale**
-   quand on cherche un identifiant exact (nom de fonction, constante, chaîne) :
-   `mode='exact'` par défaut (tokens entiers, ne trouve pas les sous-chaînes),
-   `'substring'` pour un fragment, `'regex'` en dernier recours (lent).
-
-Ordre de repli, pas l'inverse : RAG → si le corpus ne répond pas (sujet non
-indexé, code modifié depuis l'indexation) → outils locaux (Grep/Glob/Read) ou
-sous-agent Explore. Le RAG lit le contenu **indexé**, jamais les fichiers live :
-pour vérifier l'état courant d'un fichier qu'on vient de modifier, lire le
-fichier.
-
-Ce que tu apprends de neuf s'écrit en article de documentation (cf. section
-suivante) — c'est ce qui alimente le RAG pour les prochains agents.
-
-**Le RAG muet n'est pas une réponse.** Le corpus ne couvre que ce qu'on y a écrit :
-une route d'interface, un motif d'URL, un flag de CLI peuvent en être absents sans
-que rien ne le signale — l'absence ressemble à une réponse vide, pas à une lacune.
-Le repli n'est donc jamais « la documentation ne le dit pas », c'est **aller lire
-l'artefact réel** : le bundle du front pour une route, `--help` pour un flag, l'API
-pour une forme de réponse, le fichier lui-même pour son état courant.
-
-Rendre un identifiant brut, un chemin approximatif ou un « je ne peux pas savoir »
-alors que l'artefact est joignable, c'est renvoyer le travail à l'utilisateur.
-Chercher d'abord, répondre ensuite — et si la recherche échoue vraiment, dire ce
-qui a été tenté.
-
-**Contrats d'interface** (route, webhook, event, format d'échange) : ordre propre —
-documentation du projet, puis dépôt `ressources`, puis l'artefact réel.
+Détail des primitives, seuils et ordre pour les contrats d'interface :
+`ia_instructions/recherche.md`.
 
 ## Backlog
 
-La gateway MCP expose une API vers docflow (workspaces ⊃ blocs ⊃ documents).
-Le backlog des tâches à exécuter est dans le workspace `docflow`, bloc `backlog`.
+Le backlog est dans le workspace `docflow`, bloc `backlog`, atteignable par la
+gateway MCP.
 
-**Avant de commencer, découvre les statuts réels.** Les valeurs de statut dépendent
-du type de ticket et diffèrent d'un type à l'autre. Introspecte le bloc pour
-connaître, pour chaque type présent, la valeur qui joue chacun de ces rôles :
+**Les valeurs de statut sont définies PAR TYPE de ticket.** Introspecte le bloc pour
+découvrir, par type, la valeur qui joue chaque rôle (disponible / en cours / en revue
+/ terminée / en attente) — n'écris JAMAIS une valeur de mémoire, et ne filtre jamais
+sur une liste de valeurs : `epic` n'a pas de `en_review`, et un filtre par valeurs
+manque silencieusement des tickets ouverts.
 
-- **disponible** — la tâche peut être prise ;
-- **en cours** — tu travailles dessus ;
-- **en revue** — tu as fini, elle attend une revue humaine ;
-- **terminée** — elle est close ;
-- **en attente** — elle attend une réponse de l'utilisateur (ce rôle peut ne pas exister).
+**Prends une tâche au rôle disponible, passe-la « en cours » AVANT de toucher au code,
+« en revue » quand tu as fini.** Le backlog est la source de vérité, jamais ta
+mémoire : réinterroge-le après CHAQUE tâche. Une question ne gèle pas la file.
 
-N'écris JAMAIS une valeur de statut de mémoire : une valeur inexistante est refusée,
-et un statut approximatif choisi au jugé fausse l'état du backlog pour tout le monde.
+**Tu ne t'arrêtes que pour une raison que tu NOMMES** : plus aucune tâche éligible ·
+toutes attendent une réponse · toutes ont un prédécesseur non terminé · quelque chose
+a échoué. Sans l'une des quatre, tu t'arrêtes par oubli.
 
-Quand on te demande de traiter le backlog :
-
-- ne retiens que les tâches au rôle **disponible** — ni en cours, ni en revue, ni
-  terminées, ni en attente ;
-- **AVANT de toucher au code**, passe la tâche au rôle **en cours** ;
-- **quand tu as fini**, passe-la au rôle **en revue**.
-
-Ces deux écritures ne sont pas optionnelles : c'est ce qui dit aux autres — humains
-et agents — qu'une tâche est prise, et ce qui permet de reprendre après une
-interruption.
-
-**Le backlog est la source de vérité, jamais ta mémoire.** Ne tiens pas la liste des
-tâches restantes dans ta tête : elle s'éloigne à mesure que ton contexte se remplit,
-et tu t'arrêteras en croyant avoir fini. Après CHAQUE tâche, réinterroge le backlog
-et reprends la suivante.
-
-**Le statut s'écrit à chaque tâche, pas à la fin du lot.** Une session interrompue
-doit pouvoir reprendre sur la seule lecture du backlog.
-
-**Une tâche dont un prédécesseur n'est pas terminé n'est pas éligible.** Vérifie les
-prédécesseurs déclarés avant de prendre une tâche, et prends la suivante éligible.
-
-**Une question ne bloque pas la file.** Si une tâche soulève un vrai doute : écris la
-question en tête de la tâche, puis passe-la au rôle **en attente** s'il existe. S'il
-n'existe pas, laisse-la dans son état et signale-la explicitement à la fin du lot.
-Dans les deux cas, CONTINUE avec la suivante. Ne gèle jamais le lot entier sur un
-doute isolé.
-
-**Tu ne t'arrêtes que pour une de ces quatre raisons, et tu la nommes :**
-
-1. plus aucune tâche éligible — le lot est fini ;
-2. toutes les tâches restantes attendent une réponse de l'utilisateur ;
-3. toutes les tâches restantes ont un prédécesseur non terminé ;
-4. quelque chose a échoué — dis quoi.
-
-Si tu t'apprêtes à conclure sans pouvoir citer l'une des quatre, c'est que tu
-t'arrêtes par oubli : réinterroge le backlog et continue.
+Règles intégrales (rôles, prédécesseurs, gestion des doutes) :
+`ia_instructions/backlog.md`.
 
 ## Logs & documentation
 
-**Logs** : la centralisation est accessible par le service MCP (`logs_query`).
+**Logs** : primitive MCP `logs_query`. Le sélecteur de l'instance est
+**`{host="docflow-dev", compose_service="app"}`** — `compose_project="deploy"` est
+partagé avec le portail devpod et rendrait ses erreurs, pas les tiennes.
 
-Le sélecteur de l'instance docflow est **`{host="docflow-dev", compose_service="app"}`**.
-`compose_project="deploy"` seul ne suffit pas : ce label est **partagé** avec le portail
-devpod (host `dev.yoops.org`, services `caddy` / `portal`) — filtrer dessus rend les
-erreurs du portail et non les tiennes. `host="doc.yoops.org"` n'existe pas comme valeur
-de label. Et `detected_level` n'est pas un label de flux : `{… detected_level="error"}`
-rend 0 même quand des lignes d'erreur existent — filtrer sur le contenu.
+**Documentation** : workspace `docflow`, bloc `Documentation` (le cross-projet vit dans
+`globals`). **Chaque fois que tu apprends quelque chose, écris-le en article** : c'est ce
+qui alimente le RAG des agents suivants.
 
-**Documentation** : workspace `docflow`, bloc `Documentation` — pour lire et écrire
-la doc du projet. Le cross-projet vit dans le workspace `globals`, bloc
-`Documentation`. **Chaque fois que tu apprends quelque chose, écris-le en article** :
-c'est ce qui alimente le RAG des agents suivants.
+Pièges de labels et détail : `ia_instructions/logs.md`.
 
 ## Projet
 
@@ -210,107 +149,38 @@ corrompre l'existant** — d'où « une opération de cycle de vie = une transac
 
 ## Commandes essentielles
 
-Les six fonctions, back et front. Détail et pièges : fragments de technologie.
-
 ```bash
 # Installer          cd backend && uv sync          | cd frontend && npm install
-# Lancer en local    uv run uvicorn docflow.app:app --reload  (:8000) | npm run dev (:5173)
 # Tester             cd backend && uv run pytest -v | cd frontend && npm run test
-# Style              cd backend && uv run ruff check src/ tests/      (pas d'ESLint côté front)
-# Types              cd backend && uv run mypy src/ | cd frontend && npx tsc -b
-# Construire         cd frontend && npm run build
+# Style / types      uv run ruff check src/ tests/ ; uv run mypy src/ | npx tsc -b
 # Migrations         cd backend && uv run python -m docflow.db.apply  (idempotent)
-# Stack locale       docker compose -f deploy/docker-compose.yml up -d
 ```
 
-**Pas de linter JS configuré** : `tsc -b` et Vitest sont les garde-fous côté
-front. N'invoque pas `eslint`, il n'a pas de configuration ici.
+`tsc --noEmit` ne vérifie **rien** ici (`"files": []` à la racine) : toujours `tsc -b`.
+Pas d'ESLint configuré. Détail, lancement local et layout du code :
+`ia_instructions/reperes_depot.md`.
 
-## Machines de test
+## Machines de test et livraison
 
-Les machines de test sont **à ta disposition** pour exécuter les tests et valider que
-les livrables sont conformes à la demande. Rien à demander pour t'en servir.
+Les machines de test sont **à ta disposition**, rien à demander. **Privilégie-les** :
+le livrable y tourne dans sa configuration réelle, avec ses journaux — un test local
+qui passe ne dispense pas de la validation là-bas. **Un alias qui répond ne prouve
+rien** : vérifie ce qu'il y a derrière avant tout déploiement.
 
-**Cherche où le test sera le plus révélateur — et privilégie la machine de test.**
-Avant de valider un sujet, évalue l'endroit où un test a le plus de chances de révéler
-un défaut réel : c'est le plus souvent la machine de test, où le livrable tourne dans
-sa configuration réelle, avec ses journaux et ses métriques. Un test local qui passe
-ne dispense pas de la validation sur une machine de test dès que celle-ci peut
-révéler davantage.
+**Livrer passe TOUJOURS par la procédure** : pousser sur `dev` → se connecter par
+l'alias SSH → `dev-deploy.sh` → lire les journaux réels du service. Jamais un
+`docker run` à la main pour simuler le service livré. **Aucune retouche manuelle de
+la cible hors procédure** : un correctif d'infra se met DANS le script, sinon il est
+perdu au redéploiement et introuvable pour le prochain agent.
 
-- **Accès** : alias SSH déclarés dans la configuration SSH — `test1`, `test2`, `test…`.
-  Aucun identifiant à demander, aucune adresse à retenir : lire le fichier d'alias.
-- **Docker** est installé en standard : conteneurs à tester, mais aussi tests
-  unitaires, ATDD ou tout autre type de test jugé nécessaire.
-- **Services en standard** : un collecteur de logs et un collecteur de métriques
-  (`alloy-collector`, `alloy-metrics`), et un `browserless-chromium` pour éprouver en
-  mode web les services livrés.
+**Consigne les ressources attribuées** dans `ia_instructions/tests_and_ressources.md`.
 
-**Un alias qui répond ne prouve rien** : les alias sont recyclés. Avant tout
-déploiement ou diagnostic, vérifier ce qu'il y a DERRIÈRE — nom d'hôte réel, stack
-attendue, conteneurs actifs.
+> ⚠ **État du 2026-09-26** : `test1` n'a aucune entrée dans `~/.ssh/config` et `test2`
+> est sans route. Les deux machines sont injoignables d'ici : le déploiement doit être
+> lancé par l'humain — ne prétends pas l'avoir fait.
 
-**Consigne les ressources qui te sont attribuées** dans
-`ia_instructions/tests_and_ressources.md` (nom d'hôte, alias SSH, à quoi elle sert),
-et retire-les quand elles te sont reprises. Ce fichier est ta MÉMOIRE des ressources
-disponibles, distincte des règles ci-dessus : les règles disent comment t'en servir,
-ce fichier dit lesquelles tu as, ici et maintenant.
-
-> ⚠ **État constaté le 2026-09-26** : `test1` n'a **aucune entrée** dans
-> `~/.ssh/config`, et `test2` est déclaré mais sans route (`No route to host`). Les
-> deux machines nommées ci-dessus sont donc injoignables depuis l'environnement de
-> travail courant — voir `ia_instructions/tests_and_ressources.md`. Tant que c'est le
-> cas, le déploiement doit être lancé par l'humain : ne prétends pas l'avoir fait.
-
-### Livrer sur une machine de test — procédure incontournable
-
-Livrer les images du projet passe TOUJOURS par cette procédure, jamais par une
-construction ou un `docker run` à la main :
-
-1. **Pousser sur `dev`.** Le déploiement récupère le code depuis git : tant que le
-   commit n'y est pas, la machine déploie l'état précédent.
-2. **Se connecter** à la machine de test par son alias SSH.
-3. **La première fois** : cloner la branche `dev`.
-4. **Les fois suivantes** : lancer `dev-deploy.sh`, exclusivement.
-5. **Lire les journaux réels** du service déployé, pas la sortie de la commande.
-
-Le **service livré** n'est jamais simulé par un conteneur lancé à la main : il
-n'aurait ni le même cycle de démarrage ni la même configuration. Les **outils de
-test** (runner, base jetable, doublure, outil de mesure), eux, tournent librement
-dans Docker.
-
-**Aucune retouche manuelle de la cible hors de cette procédure.** Un correctif
-d'infra ou de provisionnement (permission à poser, service à initialiser, migration
-d'un annexe) ne se joue JAMAIS en `docker exec` / édition de fichier à la main : il
-se met DANS le script de déploiement, de sorte qu'un simple `dev-deploy.sh`
-l'applique et que la prochaine machine en hérite. Une commande one-off tapée sur
-l'hôte est perdue au redéploiement suivant et introuvable pour le prochain agent.
-
-**Ici** : répertoire `/opt/docflow`. Procédure complète (1re installation incluse) :
-`deploy/DEPLOY.md` § *Déploiement dev (VM de test)* — référence unique, ne pas la
-dupliquer.
-
-```bash
-ssh test1 && cd /opt/docflow && sudo ./dev-deploy.sh dev
-```
-
-## Layout du code
-
-```
-backend/migrations/        un .sql numéroté IMMUABLE par migration
-backend/src/docflow/       app.py (FastAPI + lifespan : pool asyncpg, apply au boot)
-  config/ db/ secrets/     env · pool + runner · résolveur ${vault://…}
-  auth/ oidc/              bootstrap admin argon2 → JWT, RBAC, anti-lock-out
-  workspaces/ types/ properties/ documents/ blocks/
-  codecs/                  registre de types de contenu (parse/serialize/validate)
-  mcp/ schemas/            serveur MCP · DTOs API pydantic
-frontend/src/              components/ pages/ hooks/ contexts/ locales/ styles/
-  lib/contentSurfaces/     registre de surfaces — miroir front des codecs
-  lib/canvas/ lib/mld/     canvas de diagramme · adaptateur modèle de données
-  test/                    Vitest + React Testing Library
-deploy/                    Dockerfile (AUCUN secret) · compose dev & prod · DEPLOY.md
-dev-deploy.sh · specs/ · LESSONS.md · ia_instructions/ · CLAUDE.md
-```
+Procédure complète, services standard et détail : `ia_instructions/livraison.md`
+puis `deploy/DEPLOY.md` § *Déploiement dev (VM de test)*.
 
 ## Quand charger un fragment
 
@@ -320,7 +190,11 @@ semble utile ».
 
 | Tu t'apprêtes à… | Lis d'abord |
 |---|---|
+| prendre, clore ou parcourir une tâche du backlog | `ia_instructions/backlog.md` |
+| chercher une information documentaire ou un contrat d'interface | `ia_instructions/recherche.md` |
+| committer, pousser, ou déployer sur une machine de test | `ia_instructions/livraison.md` |
 | te servir d'une machine de test, ou en recevoir une | `ia_instructions/tests_and_ressources.md` |
+| appeler un autre agent, ou te rendre appelable | `ia_instructions/tchat.md` |
 | modifier un fichier `.py` sous `backend/` | `ia_instructions/10_python.md` |
 | modifier un fichier sous `frontend/src/` | `ia_instructions/10_typescript.md` |
 | écrire ou modifier une migration, ou une requête SQL | `ia_instructions/10_postgresql.md` |
@@ -424,31 +298,33 @@ Avant de déclarer une tâche terminée, **toutes** ces étapes sont obligatoire
 
 ## Outils Claude Code
 
-Listés **par fonction, avec leur déclencheur** : la fonction est l'invariant,
-l'outil n'en est qu'une implémentation. Un outil non déclenché au bon moment ne
-sert à rien.
+Chaque outil a son **déclencheur**, et un outil non déclenché au bon moment ne sert à
+rien : **Context7** avant d'écrire du code qui utilise une bibliothèque · **`--help`
+first** avant tout appel à une CLI externe, le binaire installé faisant foi ·
+**Serena** avant un refactor · **skills Superpowers** pour les méthodes de travail ·
+**`/review`** au-delà de 3 fichiers ou 100 lignes · **`/commit`** à chaque tâche livrée.
 
-| Fonction | Déclencheur | Outil ici |
-|---|---|---|
-| Doc à jour d'une bibliothèque | avant d'écrire du code qui l'utilise | **Context7** |
-| Contrat réel d'une CLI | avant tout appel à une CLI externe | **`--help` first** — le binaire installé fait foi, aucune alternative |
-| Navigation sémantique | avant un refactor, pour trouver les usages | **Serena** |
-| Méthodes de travail | plan, exécution, débogage, TDD | **skills Superpowers** |
-| Revue | >3 fichiers ou >100 lignes | **`/review`** |
-| Commit | à chaque tâche livrée — obligatoire, sans attendre de demande | **`/commit`**, format français conventionnel |
+Table complète et périmètre de Context7 : `ia_instructions/outils.md`.
 
-Context7 ici : FastAPI, pydantic v2, asyncpg, authlib, httpx, structlog, React,
-TanStack Query, Vite, Vitest, i18next, `@xyflow/react`, BlockNote, SDK MCP.
-Skills : `writing-plans`, `executing-plans` / `subagent-driven-development`,
-`systematic-debugging`, `test-driven-development`, `brainstorming`,
-`verification-before-completion`.
+## Tchat agents
 
-## Messagerie inter-agents
+Coopération **fire-and-forget** : on envoie, on ne bloque pas, et **JAMAIS de polling**.
+Une notification arrive par le marqueur `[TCHAT] nouveau message` injecté dans stdin.
+Une conversation porte de la coordination et des **références** — l'information vit dans
+docflow, pas dans le fil, qu'un TTL ramasse.
 
-Contrat **fire-and-forget** : `message_send` consigne l'envoi (id, destinataire,
-attendu, impact) dans le journal, puis **jamais de polling sur `message_status`**. La
-réponse arrive injectée par l'utilisateur. Toute tâche bloquée se signale en fin de
-tour — pas d'attente active qui gèle la session.
+**Se rendre appelable en début de session** : `agent_register(session, command)` écrit le
+registre que lit `tchat_list_agents` — sans lui, personne ne peut t'appeler même si ton
+workspace tourne. Jamais `session_open` à la place : c'est un outil de spawn réservé au
+portail.
+
+> ⚠ **État du 2026-09-27** : `tchat_*` et `agent_register` **ne sont pas servis** par la
+> gateway (vérifié via `gateway__list_backends`, pas seulement dans la liste cliente) —
+> le tchat est un cadrage devpod non livré. En attendant, `message_send` reste le seul
+> canal. Si ces outils paraissent absents une fois le cadrage livré, **ne conclus pas
+> qu'ils n'existent pas** : la liste d'outils est figée à la connexion, reconnecte.
+
+Détail, pièges et divergence assumée : `ia_instructions/tchat.md`.
 
 ## Auto-amélioration
 
