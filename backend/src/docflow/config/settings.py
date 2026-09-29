@@ -22,6 +22,20 @@ class Settings(BaseSettings):
     # true = connexion locale FORCÉE active (panne OIDC) ; false = forcée
     # inactive. Ignorée tant qu'aucun utilisateur n'existe (setup wizard).
     local_login_enabled: bool | None = None
+    # Chemin ABSOLU du `.env` de l'instance, quand il y en a un (`/data/.env` sur la
+    # machine de test). Sert aux gestes break-glass qui doivent **réécrire** leur
+    # propre flag pour être one-shot — aujourd'hui `prune_users`.
+    #
+    # Ce n'est PAS un `env_file` : rien n'est chargé depuis ce fichier au démarrage,
+    # la configuration continue de venir exclusivement de l'environnement. La raison
+    # du refus d'`env_file` était la résolution relative au cwd, qui ferait fuiter un
+    # `.env` de développement dans les tests ; un chemin absolu explicite, absent par
+    # défaut, ne présente pas ce risque.
+    runtime_env_path: str | None = None
+    # Purge break-glass de la table des utilisateurs au démarrage — dernier recours
+    # de reprise de lockout. One-shot : le flag est réécrit à `false` après usage, et
+    # la purge est REFUSÉE si ce désarmement est impossible (cf. `auth/purge.py`).
+    prune_users: bool = False
     # ── Sessions serveur opaques (remplace le jeton HS256 de l'IHM) ──
     # Fenêtre d'inactivité : glisse à chaque requête authentifiée, ferme les
     # sessions oubliées.

@@ -23,6 +23,7 @@ from docflow.artifacts.types_router import admin_router as artifact_types_admin_
 from docflow.artifacts.types_router import read_router as artifact_types_read_router
 from docflow.artifacts.worker import purge_loop as artifact_purge_loop
 from docflow.auth.invite import router as invite_router
+from docflow.auth.purge import maybe_purge_users
 from docflow.auth.router import router as auth_router
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
@@ -98,6 +99,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
+    # Reprise de lockout : APRÈS les migrations (la table doit exister) et AVANT de
+    # servir du trafic. Lève si le flag est armé sans pouvoir être désarmé — mieux
+    # vaut un démarrage qui échoue qu'une purge silencieuse à chaque boot.
+    await maybe_purge_users(pool, settings)
     configure_mcp(pool, settings)
     # Producteur d'events : seed initial depuis l'env (si jamais configuré) puis
     # reconcile → l'émission (enqueue) est pilotée par la config DB, à chaud.

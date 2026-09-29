@@ -185,6 +185,13 @@ main() {
         echo "  ✓ ENCRYPTION_KEY générée"
     fi
 
+    if [[ -z "$(_env_get RUNTIME_ENV_PATH)" ]]; then
+        # Le backend doit savoir où vit CE fichier pour désarmer un flag break-glass
+        # (PRUNE_USERS) après usage. Sans lui, la purge est refusée au démarrage.
+        _env_set RUNTIME_ENV_PATH "$ENV_FILE"
+        echo "  ✓ RUNTIME_ENV_PATH=${ENV_FILE}"
+    fi
+
     if [[ -z "$(_env_get SESSION_COOKIE_SECURE)" ]]; then
         # La stack dev est publiée en CLAIR sur le LAN (pas de proxy TLS devant,
         # cf. le port 8080 du compose). Avec Secure, le navigateur jette le cookie
