@@ -30,7 +30,7 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
         json={"username": "bootstrap", "email": _EMAIL, "password": _PW},
     )
     assert setup.status_code == 201, setup.text
-    login = client.post("/api/auth/login", json={"email": _EMAIL, "password": _PW})
+    login = client.post("/api/auth/login", json={"username": "bootstrap", "password": _PW})
     assert login.status_code == 200, login.text
     return {}  # TestClient garde le cookie de session dans son jar
 

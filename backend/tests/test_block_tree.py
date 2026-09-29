@@ -243,7 +243,7 @@ async def test_rest_tree_endpoint(
         )
         assert setup.status_code == 201, setup.text
         login = client.post(
-            "/api/auth/login", json={"email": "boot@example.com", "password": "boot_pw_123"}
+            "/api/auth/login", json={"username": "boot", "password": "boot_pw_123"}
         )
         assert login.status_code == 200, login.text
         hdrs = {}  # jar TestClient : cookie de session
@@ -260,7 +260,7 @@ async def test_rest_tree_endpoint(
 
     with TestClient(app) as client:
         login = client.post(
-            "/api/auth/login", json={"email": "boot@example.com", "password": "boot_pw_123"}
+            "/api/auth/login", json={"username": "boot", "password": "boot_pw_123"}
         )
         assert login.status_code == 200, login.text
         hdrs = {}  # jar TestClient : cookie de session

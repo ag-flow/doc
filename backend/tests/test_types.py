@@ -156,7 +156,7 @@ async def test_types_crud_via_http(
         assert setup.status_code == 201
 
         login = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert login.status_code == 200, login.text
         hdrs = {}  # jar TestClient : cookie de session
@@ -195,7 +195,7 @@ async def test_delete_type_confirm_guard_via_http(
         )
         assert setup.status_code == 201
         login = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert login.status_code == 200, login.text
         hdrs = {}  # jar TestClient : cookie de session

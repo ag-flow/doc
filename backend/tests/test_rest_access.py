@@ -29,7 +29,12 @@ def _client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient
 
 
 def _login(client: TestClient, email: str) -> dict[str, str]:
-    login = client.post("/api/auth/login", json={"email": email, "password": _PW})
+    # Identifiant de connexion : le username, dérivé de la partie locale
+    # de l'email pour les comptes créés par /admin/users ou par invitation
+    # (STANDARD utilisateurs, U7 — l'email n'authentifie jamais).
+    ident = "restadmin" if email == _ADMIN else email.split("@")[0]
+    login = client.post(
+        "/api/auth/login", json={"username": ident, "password": _PW})
     assert login.status_code == 200, login.text
     token = client.cookies.get("docflow_session")
     client.cookies.clear()  # jar propre : auth explicite par requete (multi-identite)

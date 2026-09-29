@@ -92,8 +92,13 @@ async def create_invitation(
     async with pool.acquire() as conn, conn.transaction():
         try:
             user_id = await conn.fetchval(
-                "INSERT INTO app_user (email, label, is_admin, validated, disabled, source) "
-                "VALUES ($1, $2, $3, true, false, 'local') RETURNING id",
+                "INSERT INTO app_user "
+                "(username, email, label, is_admin, validated, disabled, source) "
+                "VALUES ($1, $2, $3, $4, true, false, 'local') RETURNING id",
+                # L'invité se connectera par cet identifiant, pas par son email
+                # (STANDARD utilisateurs, U7) : sans lui, l'invitation créerait un
+                # compte que personne ne peut ouvrir.
+                body.email.split("@", 1)[0],
                 body.email,
                 body.label,
                 body.is_admin,

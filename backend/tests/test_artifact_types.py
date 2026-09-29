@@ -116,7 +116,7 @@ def _setup(client: TestClient, test_schema_url: str) -> tuple[dict[str, str], di
         "/api/setup/init-admin",
         json={"username": "atadmin", "email": _ADMIN, "password": _PW},
     )
-    client.post("/api/auth/login", json={"email": _ADMIN, "password": _PW})
+    client.post("/api/auth/login", json={"username": "atadmin", "password": _PW})
     admin = {"docflow_session": client.cookies.get("docflow_session")}
     client.cookies.clear()
     client.post(
@@ -135,7 +135,9 @@ def _setup(client: TestClient, test_schema_url: str) -> tuple[dict[str, str], di
             await conn.close()
 
     asyncio.run(_validate())
-    client.post("/api/auth/login", json={"email": _USER, "password": _PW})
+    # L'utilisateur NON-admin : identifiant dérivé de son email par
+    # /admin/users (STANDARD utilisateurs, U7 — l'email n'authentifie jamais).
+    client.post("/api/auth/login", json={"username": _USER.split("@")[0], "password": _PW})
     user = {"docflow_session": client.cookies.get("docflow_session")}
     client.cookies.clear()
     return admin, user

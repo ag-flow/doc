@@ -47,7 +47,7 @@ describe('Login', () => {
       </MemoryRouter>,
     )
     // Login rend null tant que /auth/methods n'a pas répondu
-    expect(await screen.findByTestId('email-input')).toBeInTheDocument()
+    expect(await screen.findByTestId('username-input')).toBeInTheDocument()
     expect(screen.getByTestId('password-input')).toBeInTheDocument()
     expect(screen.getByTestId('submit-button')).toBeInTheDocument()
   })
@@ -59,7 +59,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('username-input'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByTestId('submit-button'))
     await waitFor(() => expect(setToken).toHaveBeenCalled())
@@ -73,7 +73,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('username-input'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'wrong' } })
     fireEvent.click(screen.getByTestId('submit-button'))
     await waitFor(() => expect(screen.getByText('Identifiants invalides')).toBeInTheDocument())
@@ -85,7 +85,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    await screen.findByTestId('email-input')
+    await screen.findByTestId('username-input')
     expect(screen.queryByTestId('oidc-button')).not.toBeInTheDocument()
   })
 
@@ -111,11 +111,11 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    const email = await screen.findByTestId('email-input')
-    fireEvent.change(email, { target: { value: 'a@b.com' } })
+    const username = await screen.findByTestId('username-input')
+    fireEvent.change(username, { target: { value: 'alice' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'secret' } })
     // Submit natif du formulaire (ce que produit Entrée dans un input)
-    fireEvent.submit(email.closest('form')!)
+    fireEvent.submit(username.closest('form')!)
     await waitFor(() => expect(setToken).toHaveBeenCalled())
   })
 
@@ -126,7 +126,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('username-input'), { target: { value: 'alice' } })
     const pw = screen.getByTestId('password-input')
     fireEvent.change(pw, { target: { value: 'wrong' } })
     fireEvent.click(screen.getByTestId('submit-button'))
@@ -146,7 +146,7 @@ describe('Login', () => {
         <Login />
       </MemoryRouter>,
     )
-    fireEvent.change(await screen.findByTestId('email-input'), { target: { value: 'a@b.com' } })
+    fireEvent.change(await screen.findByTestId('username-input'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByTestId('password-input'), { target: { value: 'x' } })
     fireEvent.click(screen.getByTestId('submit-button'))
 
@@ -180,7 +180,7 @@ describe('Login', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByTestId('local-disabled-notice')).toBeInTheDocument()
-    expect(screen.queryByTestId('email-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('username-input')).not.toBeInTheDocument()
     expect(screen.getByTestId('oidc-button')).toBeInTheDocument()
   })
 })

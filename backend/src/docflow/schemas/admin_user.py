@@ -13,6 +13,10 @@ class AdminUserCreate(BaseModel):
     label: str
     password: str
     is_admin: bool = False
+    # Identifiant de CONNEXION. Omis = dérivé de la partie locale de l'email.
+    # L'email lui-même n'authentifie jamais (STANDARD utilisateurs, U7) : sans
+    # username, le compte créé serait inconnectable.
+    username: str | None = None
 
 
 class AdminUserUpdate(BaseModel):

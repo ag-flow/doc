@@ -23,7 +23,7 @@ def _admin(client: TestClient) -> dict[str, str]:
         "/api/setup/init-admin",
         json={"username": "inviter", "email": _ADMIN, "password": _PW},
     )
-    login = client.post("/api/auth/login", json={"email": _ADMIN, "password": _PW})
+    login = client.post("/api/auth/login", json={"username": "inviter", "password": _PW})
     assert login.status_code == 200, login.text
     token = client.cookies.get("docflow_session")
     client.cookies.clear()
@@ -60,7 +60,9 @@ def test_invitation_full_flow(
         ).status_code == 204
         login = client.post(
             "/api/auth/login",
-            json={"email": "nouvelle@example.com", "password": "mot-de-passe-solide"},
+                # L'INVITÉE, pas l'inviteur : son identifiant est dérivé de la
+                # partie locale de son email (STANDARD utilisateurs, U7).
+            json={"username": "nouvelle", "password": "mot-de-passe-solide"},
         )
         assert login.status_code == 200
 

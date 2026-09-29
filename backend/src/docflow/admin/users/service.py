@@ -24,8 +24,8 @@ _SELECT_ALL = f"SELECT {_COLS} FROM app_user ORDER BY created_at"
 _SELECT_ONE = f"SELECT {_COLS} FROM app_user WHERE id = $1"
 
 _INSERT = f"""
-INSERT INTO app_user (email, label, password_hash, is_admin, validated, disabled, source)
-VALUES ($1, $2, $3, $4, true, false, 'local')
+INSERT INTO app_user (username, email, label, password_hash, is_admin, validated, disabled, source)
+VALUES ($1, $2, $3, $4, $5, true, false, 'local')
 RETURNING {_COLS}
 """
 
@@ -68,11 +68,25 @@ async def get_user(pool: asyncpg.Pool, user_id: uuid.UUID) -> AdminUserOut:
 
 async def create_user(pool: asyncpg.Pool, data: AdminUserCreate) -> AdminUserOut:
     hashed = hash_password(data.password)
+    # Sans identifiant de connexion, le compte serait créé et inconnectable — le
+    # défaut le dérive donc de l'email plutôt que de laisser passer un NULL.
+    username = data.username or data.email.split("@", 1)[0]
     async with pool.acquire() as conn:
         try:
-            row = await conn.fetchrow(_INSERT, data.email, data.label, hashed, data.is_admin)
+            row = await conn.fetchrow(
+                _INSERT, username, data.email, data.label, hashed, data.is_admin
+            )
         except asyncpg.UniqueViolationError as exc:
-            raise HTTPException(status_code=409, detail="email déjà utilisé") from exc
+            # Deux contraintes uniques possibles : l'email, et l'identifiant de
+            # connexion — que l'appelant n'a pas forcément saisi. Le message doit
+            # dire lequel, sinon « email déjà utilisé » ment sur un conflit de
+            # username dérivé.
+            detail = (
+                f"identifiant de connexion '{username}' déjà utilisé"
+                if "username" in str(exc)
+                else "email déjà utilisé"
+            )
+            raise HTTPException(status_code=409, detail=detail) from exc
     assert row is not None
     return _row_to_out(row)
 

@@ -34,7 +34,7 @@ def _bootstrap(client: TestClient) -> dict[str, str]:
         "/api/setup/init-admin",
         json={"username": "artadmin", "email": _ADMIN, "password": _PW},
     )
-    login = client.post("/api/auth/login", json={"email": _ADMIN, "password": _PW})
+    login = client.post("/api/auth/login", json={"username": "artadmin", "password": _PW})
     assert login.status_code == 200, login.text
     admin = {}  # TestClient garde le cookie de session dans son jar
     r = client.post("/api/workspaces", json={"slug": _WS, "label": "Art WS"}, headers=admin)

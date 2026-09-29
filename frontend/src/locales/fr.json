@@ -2,6 +2,7 @@
   "login": {
     "title": "Connexion",
     "email": "Email",
+    "username": "Identifiant",
     "password": "Mot de passe",
     "submit": "Se connecter",
     "error": "Identifiants invalides",

@@ -13,9 +13,11 @@ from docflow.setup import service as setup_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# L'email est un pivot d'identité, jamais un identifiant de connexion
+# (STANDARD « Gestion des utilisateurs », U7) : on authentifie sur `username`.
 _SELECT_FOR_LOGIN = """
 SELECT id, email, label, password_hash, is_admin, validated, disabled
-FROM app_user WHERE email = $1
+FROM app_user WHERE username = $1
 """
 
 
@@ -63,7 +65,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Aut
         if not await _local_login_enabled(request):
             # Mode OIDC-only (page de configuration OIDC, ou surcharge .env).
             raise HTTPException(status_code=403, detail="connexion locale désactivée")
-        row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.email)
+        row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.username)
 
     _invalid = HTTPException(status_code=401, detail="identifiants invalides")
 

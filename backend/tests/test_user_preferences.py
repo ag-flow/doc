@@ -23,7 +23,7 @@ def _auth(client: TestClient) -> dict[str, str]:
         "/api/setup/init-admin",
         json={"username": "prefs", "email": _EMAIL, "password": _PW},
     )
-    login = client.post("/api/auth/login", json={"email": _EMAIL, "password": _PW})
+    login = client.post("/api/auth/login", json={"username": "prefs", "password": _PW})
     assert login.status_code == 200, login.text
     token = client.cookies.get("docflow_session")
     client.cookies.clear()

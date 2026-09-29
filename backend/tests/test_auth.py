@@ -28,8 +28,14 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestC
 
 def _login_cookies(client: TestClient, email: str, pw: str) -> dict[str, str]:
     """Loggue et rend un dict cookies {docflow_session: token}, jar client vidé —
-    auth explicite par requête (multi-identité sûre)."""
-    r = client.post("/api/auth/login", json={"email": email, "password": pw})
+    auth explicite par requête (multi-identité sûre).
+
+    L'email n'authentifie plus (STANDARD utilisateurs, U7) : on se connecte par
+    l'identifiant. Le compte du wizard porte « bootstrap » ; ceux créés par
+    `/admin/users` ont un identifiant dérivé de la partie locale de leur email.
+    """
+    ident = "bootstrap" if email == _BOOTSTRAP_EMAIL else email.split("@")[0]
+    r = client.post("/api/auth/login", json={"username": ident, "password": pw})
     assert r.status_code == 200, r.text
     token = client.cookies.get(_SESSION_COOKIE)
     client.cookies.clear()
@@ -94,7 +100,7 @@ def test_login_pose_un_cookie_de_session(
             json={"username": "bootstrap", "email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
         )
         r = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert r.status_code == 200
         # Le corps porte le profil (plus de jeton) ; l'auth est dans le cookie.
@@ -108,7 +114,7 @@ def test_login_wrong_password(
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
-        resp = client.post("/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": "wrong"})
+        resp = client.post("/api/auth/login", json={"username": "bootstrap", "password": "wrong"})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "identifiants invalides"
 
@@ -119,7 +125,7 @@ def test_login_unknown_email(
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
         resp = client.post(
-            "/api/auth/login", json={"email": "nobody@example.com", "password": "pw"}
+            "/api/auth/login", json={"username": "bootstrap", "password": "pw"}
         )
     assert resp.status_code == 401
 
@@ -286,7 +292,7 @@ def test_local_login_disabled_flag(
         m = client.get("/api/auth/methods").json()
         assert m["local"] is False
         r = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert r.status_code == 403
         assert "désactivée" in r.json()["detail"]
@@ -334,7 +340,7 @@ def test_oidc_only_via_config_and_reactivation(
         client.put("/api/admin/oidc", json=body, cookies=admin)
         assert client.get("/api/auth/methods").json()["local"] is False
         r = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert r.status_code == 403
 

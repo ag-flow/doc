@@ -34,7 +34,7 @@ function Pillar({ title, body, magenta = false }: { title: string; body: string;
 export function Login() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pendingValidation, setPendingValidation] = useState(false)
@@ -75,7 +75,7 @@ export function Login() {
     try {
       // Le serveur pose un cookie de session HttpOnly ; le corps porte le profil,
       // plus aucun jeton. On marque juste l'UI comme authentifiée.
-      const user = await api.post<{ is_admin: boolean }>('/auth/login', { email, password })
+      const user = await api.post<{ is_admin: boolean }>('/auth/login', { username, password })
       setToken(user.is_admin)
       navigate('/')
     } catch (err: unknown) {
@@ -170,16 +170,20 @@ export function Login() {
 
           {localEnabled && (
             <form onSubmit={handleSubmit} className="grid gap-3.5">
-              <Field label={t('login.email')} htmlFor="login-email">
+              {/* Identifiant de connexion, PAS l'email : celui-ci est un pivot
+                  d'identité et n'authentifie jamais (STANDARD utilisateurs, U7).
+                  `type="text"` et non `email` — le navigateur refuserait une
+                  saisie sans arobase. */}
+              <Field label={t('login.username')} htmlFor="login-username">
                 <Input
-                  id="login-email"
-                  type="email"
+                  id="login-username"
+                  type="text"
                   className="bg-paper"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   required
-                  autoComplete="email"
-                  data-testid="email-input"
+                  autoComplete="username"
+                  data-testid="username-input"
                 />
               </Field>
               {/* L'erreur d'authentification porte sur le couple : elle s'affiche
