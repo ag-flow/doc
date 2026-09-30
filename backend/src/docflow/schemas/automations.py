@@ -105,8 +105,10 @@ class AutomationOut(BaseModel):
     # s'affichent pareil : « N en attente » et rien qui bouge. C'est ce qui rend
     # le debounce indiscernable d'un blocage.
     deferred_until: datetime | None = None
-    # Position d'évaluation DANS LE WORKSPACE demandé (1..n).
-    position: int = 0
+    # Position d'évaluation DANS LE WORKSPACE demandé (1..n). `None` quand
+    # l'automate n'a pas de rang ici — cas d'un automate sans filtre de portée,
+    # qui s'évalue après tous les autres.
+    position: int | None = 0
     workspace_slugs: list[str] = []
     event_codes: list[str]
     block_slugs: list[str] = []

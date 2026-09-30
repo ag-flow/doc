@@ -1300,8 +1300,10 @@ export interface AutomationOut {
    *  n'est différé. Sans cette donnée, « en attente » ne dit pas si l'automate
    *  patiente ou s'il est en panne. */
   deferred_until?: string | null
-  /** Position d'évaluation dans le workspace demandé (1..n). */
-  position: number
+  /** Position d'évaluation dans le workspace demandé (1..n). `null` quand
+   *  l'automate n'a pas de rang ici — aucun filtre de portée, donc évalué
+   *  après tous les autres. */
+  position: number | null
   workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]

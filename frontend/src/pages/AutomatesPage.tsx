@@ -277,9 +277,17 @@ export function AutomatesPage() {
                   </span>
                   <span
                     className="w-6 shrink-0 text-right text-[13px] font-[600] text-ink/[0.38] [font-family:var(--font-heading)]"
-                    title="Position d'évaluation"
+                    title={
+                      a.position == null
+                        ? "Aucun filtre de portée : évalué après tous les autres"
+                        : "Position d'évaluation"
+                    }
                   >
-                    {String(a.position).padStart(2, '0')}
+                    {/* Pas de rang dans ce workspace (automate sans filtre de
+                        portée) : un tiret, pas un nombre. La largeur de la
+                        colonne est fixe — y rendre un entier de rang tronquerait
+                        le titre voisin. */}
+                    {a.position == null ? '—' : String(a.position).padStart(2, '0')}
                   </span>
                   <button
                     type="button"

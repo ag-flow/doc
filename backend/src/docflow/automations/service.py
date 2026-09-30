@@ -198,12 +198,28 @@ async def _deferred_until(conn: asyncpg.Connection, row: asyncpg.Record) -> date
     )
 
 
+#: Rang de tri des automates SANS rattachement au workspace demandé : ils sont
+#: évalués en dernier. C'est une sentinelle de TRI, jamais une donnée d'affichage.
+_LAST_RANK = 2147483647
+
+
+def _rank_or_none(position: int | None) -> int | None:
+    """Rang d'évaluation, ou None quand l'automate n'en a pas dans ce contexte.
+
+    Un automate sans filtre de portée n'a pas de position dans un workspace
+    donné : il s'évalue après tous les autres. Rendre la sentinelle telle quelle
+    afficherait « 2147483647 » dans la colonne de rang — une valeur interne qui
+    déborde et ne veut rien dire pour qui la lit.
+    """
+    return None if position is None or position >= _LAST_RANK else position
+
+
 def _row_to_out(
     row: asyncpg.Record,
     headers: list[AutomationHeaderOut],
     pending_count: int = 0,
     workspace_slugs: list[str] | None = None,
-    position: int = 0,
+    position: int | None = 0,
     deferred_until: datetime | None = None,
 ) -> AutomationOut:
     keys = row.keys()
@@ -322,7 +338,7 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str | None) -> list[Auto
                     headers,
                     await _pending_count(conn, row),
                     await _workspace_slugs(conn, row["id"]),
-                    row["position"],
+                    _rank_or_none(row["position"]),
                     await _deferred_until(conn, row),
                 )
             )
