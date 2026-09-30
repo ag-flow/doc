@@ -91,7 +91,9 @@ class AutomationUpdate(BaseModel):
 
 class AutomationOut(BaseModel):
     id: uuid.UUID
-    workspace_technical_key: uuid.UUID
+    # Vestige d'avant la couverture multi-workspaces : la portée réelle est
+    # `workspace_slugs`. NULL = aucun filtre de portée (toute l'instance).
+    workspace_technical_key: uuid.UUID | None
     label: str
     active: bool
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).

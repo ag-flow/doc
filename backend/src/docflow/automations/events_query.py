@@ -1,9 +1,12 @@
 """Requêtes sur le journal document_event filtrées pour un automate.
 
-Filtre commun : eventCodes déclencheurs + (optionnel) blocs + (optionnel) types
-de document, combinés en AND, sur TOUS les workspaces couverts. Un filtre vide
-= « tous ». Centralisé ici pour que le worker, le compteur « en attente » et la
-navigation (next/prev) appliquent EXACTEMENT le même filtre.
+Quatre filtres indépendants, combinés en ET : workspaces · blocs et templates ·
+types de document · eventCodes. **Un filtre vide ne filtre pas** — la section
+laisse alors tout passer. Aucun n'est obligatoire, y compris la portée workspace :
+un automate sans workspace coché s'applique à l'instance entière.
+
+Centralisé ici pour que le worker, le compteur « en attente » et la navigation
+(next/prev) appliquent EXACTEMENT le même filtre.
 
 Chaîne de responsabilité : un event « consommé » (document_event.consumed_by)
 par un automate stop_chain est masqué pour les automates de priorité INFÉRIEURE
@@ -31,8 +34,16 @@ LEFT JOIN document d ON d.doc_technical_key = de.document_ref
 LEFT JOIN data_block b ON b.id = d.data_block_ref
 LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
 LEFT JOIN functional_type bft ON bft.id = b.functional_type_ref
-WHERE de.workspace_technical_key = ANY($1::uuid[])
-  AND de.event_code = ANY($2::text[])
+-- Chaque critère est un FILTRE INDÉPENDANT, et un filtre vide ne filtre pas :
+-- rien de coché dans une section = cette section laisse tout passer. Les sections
+-- se combinent en ET. C'est la règle uniforme demandée côté écran — workspaces,
+-- blocs/templates, types de document, codes d'event obéissent toutes à la même.
+--
+-- Conséquence assumée : un automate sans AUCUN critère se déclenche sur tout
+-- l'instance. C'est puissant et c'est voulu ; l'écran le signale en rouge sous
+-- chaque section vide plutôt que de l'interdire.
+WHERE (cardinality($1::uuid[]) = 0 OR de.workspace_technical_key = ANY($1::uuid[]))
+  AND (cardinality($2::text[]) = 0 OR de.event_code = ANY($2::text[]))
   -- Périmètre de blocs : UNION des deux critères. Aucun des deux posé = aucune
   -- restriction ; l'un ou l'autre posé = le bloc doit satisfaire au moins un.
   -- Le template d'un bloc est la provenance de son type RACINE (0038).

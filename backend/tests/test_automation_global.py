@@ -49,10 +49,16 @@ async def test_global_list_spans_workspaces(db_pool: asyncpg.Pool) -> None:
     assert a1.id in ws1_ids and a2.id not in ws1_ids
 
 
-async def test_global_create_requires_scope(db_pool: asyncpg.Pool) -> None:
-    with pytest.raises(HTTPException) as exc:
-        await service.create_automation(db_pool, None, _body("Sans portée", []))
-    assert exc.value.status_code == 422
+async def test_global_create_sans_portee_couvre_tout(db_pool: asyncpg.Pool) -> None:
+    """Une portée vide n'est PAS une saisie incomplète : c'est « aucun filtre de
+    portée », donc l'instance entière — même règle que les autres sections."""
+    out = await service.create_automation(db_pool, None, _body("Sans portée", []))
+    assert out.workspace_slugs == []
+    # Et il reste visible dans l'écran de n'importe quel workspace : se déclencher
+    # partout en n'apparaissant nulle part serait la pire combinaison.
+    ws = await _ws(db_pool)
+    listed = await service.list_automations(db_pool, ws)
+    assert out.id in [a.id for a in listed]
 
 
 async def test_global_get_update_delete(db_pool: asyncpg.Pool) -> None:

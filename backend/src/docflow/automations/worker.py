@@ -607,9 +607,10 @@ async def _log_deferred(
 
 
 async def run_tick(pool: asyncpg.Pool, automation: asyncpg.Record, settings: object) -> None:
+    # Un filtre vide ne filtre pas : sans code coché, l'automate se déclenche sur
+    # TOUS les events. C'est la règle uniforme des sections de filtre, et elle est
+    # signalée en rouge dans l'écran d'édition.
     codes: list[str] = list(automation["event_codes"] or [])
-    if not codes:
-        return
 
     async with pool.acquire() as conn:
         rows = await _read_batch(conn, automation, codes)

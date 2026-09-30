@@ -249,15 +249,16 @@ describe('AutomatesPage — modale (DoD)', () => {
     const details = document.querySelector('details')
     expect(details?.open).toBe(false)
     expect(details).toHaveTextContent('1 workspace · tous les blocs')
-    // Décocher le dernier workspace → le refus apparaît HORS de la section,
-    // donc visible même repliée (DoD).
+    // Décocher le dernier workspace n'est PAS une erreur : un filtre vide ne
+    // filtre pas. La mention apparaît HORS de la section, donc visible même
+    // repliée — c'est l'absence de coche qui porte l'information.
     fireEvent.click(details!.querySelector('summary')!)
     const wsCheckbox = await screen.findByTestId('auto-ws-ws1')
     fireEvent.click(wsCheckbox.querySelector('input')!)
-    const err = await screen.findByTestId('auto-ws-empty')
-    expect(details).not.toContainElement(err)
-    expect(err).toHaveTextContent('au moins un workspace')
-    // Et l'enregistrement est refusé (bouton verrouillé).
-    expect(screen.getByRole('button', { name: 'Enregistrer' })).toBeDisabled()
+    const note = await screen.findByTestId('auto-nofilter-workspaces')
+    expect(details).not.toContainElement(note)
+    expect(note).toHaveTextContent('tous les workspaces')
+    // Et l'enregistrement reste POSSIBLE : la portée n'est plus obligatoire.
+    expect(screen.getByRole('button', { name: 'Enregistrer' })).not.toBeDisabled()
   })
 })

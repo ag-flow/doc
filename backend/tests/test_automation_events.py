@@ -611,7 +611,6 @@ async def test_block_template_filter_covers_blocks_by_provenance(db_pool: asyncp
 
 
 async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
-    from fastapi import HTTPException
 
     from docflow.automations import service as auto_svc
     from docflow.schemas.automations import AutomationCreate, AutomationUpdate
@@ -652,12 +651,14 @@ async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
     assert not any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_a))
     assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_b))
 
-    # Jamais aucun workspace → 422.
-    with pytest.raises(HTTPException) as exc:
-        await auto_svc.update_automation(
-            db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
-        )
-    assert exc.value.status_code == 422
+    # Vider la portée est LÉGITIME : « aucun filtre de portée » = toute
+    # l'instance. L'automate redevient alors visible dans les DEUX workspaces,
+    # puisqu'il s'y déclenche.
+    await auto_svc.update_automation(
+        db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
+    )
+    assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_a))
+    assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_b))
 
 
 async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
@@ -682,18 +683,23 @@ async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
         )
         ids.append(out.id)
 
-    # Ordre initial identique (création) dans les deux workspaces.
-    order_a = [a.id for a in await auto_svc.list_automations(db_pool, slug_a)]
+    # Ordre initial identique (création) dans les deux workspaces. On ne retient
+    # que NOS automates : un automate sans portée (donc visible partout) créé par
+    # un autre cas apparaît légitimement dans cette liste.
+    def _mine(rows: list) -> list:  # type: ignore[type-arg]
+        return [a.id for a in rows if a.id in ids]
+
+    order_a = _mine(await auto_svc.list_automations(db_pool, slug_a))
     assert order_a == ids
 
     # Inverser DANS A seulement.
     await auto_svc.reorder_automations(db_pool, slug_a, [ids[1], ids[0]])
-    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_a)] == [ids[1], ids[0]]
+    assert _mine(await auto_svc.list_automations(db_pool, slug_a)) == [ids[1], ids[0]]
     # B garde SON ordre (indépendance par workspace).
-    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_b)] == ids
+    assert _mine(await auto_svc.list_automations(db_pool, slug_b)) == ids
 
     # Positions exposées dans le contexte du workspace demandé.
-    a_list = await auto_svc.list_automations(db_pool, slug_a)
+    a_list = [a for a in await auto_svc.list_automations(db_pool, slug_a) if a.id in ids]
     assert [a.position for a in a_list] == [1, 2]
 
     # Couverture inexacte → 422.
@@ -711,7 +717,7 @@ async def test_clone_automation(db_pool: asyncpg.Pool) -> None:
         db_pool,
         slug,
         AutomationCreate(
-            label="Rag", event_codes=[_UPDATED], block_slugs=["b"],
+            label="Rag", event_codes=[_UPDATED], block_slugs=["b"], workspace_slugs=[slug],
             url="https://rag.example/index", http_method="POST",
             body_template='{"doc": "{content}"}',
             headers=[AutomationHeaderIn(name="Authorization", value_prefix="Bearer ",
@@ -769,12 +775,12 @@ async def test_stop_chain_blocks_lower_priority(
     # A (priorité 1, stop_chain) et B (priorité 2) sur le même event.
     a = await auto_svc.create_automation(
         db_pool, slug,
-        AutomationCreate(label="A", event_codes=[_UPDATED], stop_chain=True,
+        AutomationCreate(label="A", event_codes=[_UPDATED], stop_chain=True, workspace_slugs=[slug],
                          url="https://a.example/hook", http_method="POST"),
     )
     b = await auto_svc.create_automation(
         db_pool, slug,
-        AutomationCreate(label="B", event_codes=[_UPDATED],
+        AutomationCreate(label="B", event_codes=[_UPDATED], workspace_slugs=[slug],
                          url="https://b.example/hook", http_method="POST"),
     )
     await db_pool.execute("UPDATE automation SET active = true WHERE id = ANY($1)", [a.id, b.id])
@@ -829,13 +835,15 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     auto = await auto_svc.create_automation(
         db_pool, slug,
         AutomationCreate(
-            label="Rag", event_codes=[_REFRESHED], url="https://x/api", http_method="POST"
+            label="Rag", event_codes=[_REFRESHED], workspace_slugs=[slug],
+            url="https://x/api", http_method="POST"
         ),
     )
     upd_only = await auto_svc.create_automation(
         db_pool, slug,
         AutomationCreate(
-            label="UpdOnly", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
+            label="UpdOnly", event_codes=[_UPDATED], workspace_slugs=[slug],
+            url="https://x/api", http_method="POST"
         ),
     )
 
@@ -1239,3 +1247,82 @@ async def test_events_de_contenant_emis_et_exemptes_des_filtres(db_pool: asyncpg
     )
     autos = await auto_svc.list_automations(db_pool, slug)
     assert next(x for x in autos if x.id == auto_id).pending_count == 2
+
+
+async def test_un_filtre_vide_ne_filtre_pas(db_pool: asyncpg.Pool) -> None:
+    """Chaque section est un filtre INDÉPENDANT : rien de coché = tout passe.
+
+    C'est la règle uniforme demandée côté écran. Elle vaut aussi pour la portée
+    workspace, qui n'est plus obligatoire : un automate sans workspace coché
+    s'applique à l'instance entière, au même titre qu'aucun bloc coché veut dire
+    tous les blocs.
+    """
+    from docflow.automations import service as auto_svc
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # bloc 'b', type 't'
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+
+    # Automate SANS aucun critère : ni workspace, ni event_code, ni bloc, ni type.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, functional_type_slugs, delay_minutes, url, http_method) "
+        "VALUES (NULL,'Tout',true,'{}','{}','{}','{}',0,$1,'POST') RETURNING id",
+        "https://rag.example/index",
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next((x.pending_count for x in autos if x.id == auto_id), -1)
+
+    # Sans rattachement, il doit rester VISIBLE dans l'écran du workspace —
+    # invisible et actif serait la pire combinaison — et compter des events.
+    # Le compteur porte sur TOUTE l'instance : on ne peut pas l'égaler à 1, la
+    # base de test portant les events des autres cas. Ce qui se vérifie ici,
+    # c'est qu'il voit au-delà de son (absence de) portée.
+    sans_filtre = await _pending()
+    assert sans_filtre >= 1
+
+    # On borne la portée à NOTRE workspace : la mesure devient exacte.
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    assert await _pending() == 1
+
+    # Section « events » : un code qui ne correspond pas → elle filtre.
+    await db_pool.execute(
+        "UPDATE automation SET event_codes = ARRAY[$2::text] WHERE id = $1", auto_id, _CREATED
+    )
+    assert await _pending() == 0
+
+    # Le bon code → il repasse.
+    await db_pool.execute(
+        "UPDATE automation SET event_codes = ARRAY[$2::text] WHERE id = $1", auto_id, _UPDATED
+    )
+    assert await _pending() == 1
+
+    # Section « blocs » : un bloc qui ne correspond pas → elle filtre.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['autre-bloc'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+
+    # Vidée, elle cesse de filtrer — sans qu'on ait à cocher le bon bloc.
+    await db_pool.execute("UPDATE automation SET block_slugs = '{}' WHERE id = $1", auto_id)
+    assert await _pending() == 1
+
+    # Section « types de document » : même règle.
+    await db_pool.execute(
+        "UPDATE automation SET functional_type_slugs = ARRAY['autre-type'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+    await db_pool.execute(
+        "UPDATE automation SET functional_type_slugs = '{}' WHERE id = $1", auto_id
+    )
+    assert await _pending() == 1

@@ -89,6 +89,21 @@ function WorkspaceBlocksNode({
   )
 }
 
+/** Mention posée sous une section de filtre qui ne filtre rien.
+ *
+ *  Un critère vide laisse TOUT passer : sans ce rappel, une section repliée et
+ *  vide se lit comme « rien à signaler » alors qu'elle ouvre le déclenchement en
+ *  grand. Elle s'efface dès qu'un élément est coché — c'est l'absence de coche
+ *  qui est l'information, pas sa présence. */
+function NoFilter({ active, id, what }: { active: boolean; id: string; what: string }) {
+  if (!active) return null
+  return (
+    <p className="field-error m-0 mt-1" data-testid={`auto-nofilter-${id}`} role="status">
+      Aucun filtre : {what} — tout passe.
+    </p>
+  )
+}
+
 /** Section repliable de l'onglet Events. Repliée, elle tient sur une ligne
  *  avec son résumé ; dépliée, son corps défile dans une hauteur bornée au lieu
  *  de pousser le reste de l'onglet. */
@@ -352,7 +367,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               summary={`${workspaceSlugs.length} workspace${workspaceSlugs.length > 1 ? 's' : ''} · ${
                 blockSlugs.length > 0 ? `${blockSlugs.length} bloc${blockSlugs.length > 1 ? 's' : ''}` : 'tous les blocs'
               }${blockTemplates.length > 0 ? ` · ${blockTemplates.length} template${blockTemplates.length > 1 ? 's' : ''}` : ''}`}
-              hint="au moins un workspace ; blocs cochés = filtre, aucun = tous">
+              hint="cochés = filtre ; aucun coché = tous les workspaces">
               <div className="space-y-1.5">
                 {workspaces.map((w) => {
                   const covered = workspaceSlugs.includes(w.slug)
@@ -378,11 +393,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               </div>
             </Section>
 
-            {workspaceSlugs.length === 0 && (
-              <p className="field-error m-0" data-testid="auto-ws-empty" role="alert">
-                Un automate doit couvrir au moins un workspace.
-              </p>
-            )}
+            <NoFilter active={workspaceSlugs.length === 0} id="workspaces" what="tous les workspaces" />
 
             <Section
               title="Blocs issus d'un template"
@@ -409,6 +420,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 ))}
               </div>
             </Section>
+
+            <NoFilter active={blockSlugs.length === 0 && blockTemplates.length === 0} id="blocs" what="tous les blocs" />
 
             {/* Un event de contenant ne porte pas de document : les filtres
                 documentaires ne s'y appliquent pas. Le taire donnerait un
@@ -437,6 +450,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               </div>
             </Section>
 
+            <NoFilter active={eventCodes.length === 0} id="events" what="tous les events" />
+
             <Section title="Filtre type de document" hint="combiné en ET — vide = tous">
               <div className="grid grid-cols-2 gap-1">
                 {types.length === 0 && <p className="text-[12px] text-ink/[0.5]">Aucun type</p>}
@@ -449,6 +464,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 ))}
               </div>
             </Section>
+
+            <NoFilter active={typeSlugs.length === 0} id="types" what="tous les types de document" />
 
             <label className="flex items-start gap-2 text-[14px]" data-testid="auto-stop-chain">
               <input type="checkbox" className="mt-0.5" checked={stopChain}
@@ -587,7 +604,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
 
         <div className="dialog-actions m-0 border-t border-[var(--color-divider)] pt-3">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
-          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim() || workspaceSlugs.length === 0}>
+          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim()}>
             {saving ? 'Enregistrement…' : 'Enregistrer'}
           </Button>
         </div>

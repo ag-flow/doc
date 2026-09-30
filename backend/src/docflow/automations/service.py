@@ -94,9 +94,11 @@ async def _set_workspaces(
             automation_id,
             key,
         )
+    # Colonne vestigiale (cf. migration 0078) : NULL quand aucun workspace n'est
+    # coché, plutôt qu'un workspace inventé qui mentirait sur la portée.
     await conn.execute(
         "UPDATE automation SET workspace_technical_key = $1 WHERE id = $2",
-        keys[0],
+        keys[0] if keys else None,
         automation_id,
     )
 
@@ -108,8 +110,14 @@ async def _maybe_workspace(conn: asyncpg.Connection, ws_slug: str | None) -> uui
 
 # Clause de visibilité : l'automate est accessible depuis tout workspace coché ;
 # $2 NULL = vue globale (routes admin /automations), aucun filtre.
+# Un automate sans rattachement ne filtre pas sur la portée : il s'applique à
+# TOUS les workspaces, donc il doit apparaître dans l'écran de chacun. Sans la
+# clause du milieu, il se déclencherait partout en n'étant visible nulle part —
+# invisible et actif est la pire combinaison.
 _VISIBLE = (
-    "($2::uuid IS NULL OR EXISTS (SELECT 1 FROM automation_workspace aw "
+    "($2::uuid IS NULL"
+    " OR NOT EXISTS (SELECT 1 FROM automation_workspace aw WHERE aw.automation_ref = a.id)"
+    " OR EXISTS (SELECT 1 FROM automation_workspace aw "
     "WHERE aw.automation_ref = a.id AND aw.workspace_technical_key = $2))"
 )
 
@@ -117,9 +125,10 @@ _VISIBLE = (
 async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
     """Nombre d'events déclencheurs matchés au-delà du curseur (filtres inclus),
     sur TOUS les workspaces couverts par l'automate."""
+    # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas, il
+    # laisse tout passer (cf. events_query). Le court-circuit portait l'ancienne
+    # sémantique « aucun code = ne se déclenche jamais ».
     codes = list(row["event_codes"] or [])
-    if not codes:
-        return 0
     cursor: int = (
         await conn.fetchval(
             "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", row["id"]
@@ -286,12 +295,22 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str | None) -> list[Auto
         else:
             # Visible dans TOUS les workspaces cochés, trié par PRIORITÉ
             # d'évaluation dans CE workspace (position de la table de liaison).
+            #
+            # Et aussi les automates SANS aucun rattachement : ne pas filtrer sur
+            # la portée veut dire s'appliquer partout, donc figurer dans l'écran de
+            # chaque workspace. Un JOIN strict les rendait invisibles ici tout en
+            # les laissant se déclencher — invisible et actif est la pire
+            # combinaison. Ils n'ont pas de position : ils passent en dernier,
+            # ce qui est bien leur rang réel d'évaluation.
             rows = await conn.fetch(
-                "SELECT " + _LIST_FIELDS + ", aw.position "
+                "SELECT " + _LIST_FIELDS + ", COALESCE(aw.position, 2147483647) AS position "
                 "FROM automation a "
-                "JOIN automation_workspace aw ON aw.automation_ref = a.id "
-                "WHERE aw.workspace_technical_key = $1 "
-                "ORDER BY aw.position, a.label",
+                "LEFT JOIN automation_workspace aw "
+                "  ON aw.automation_ref = a.id AND aw.workspace_technical_key = $1 "
+                "WHERE aw.automation_ref IS NOT NULL "
+                "   OR NOT EXISTS (SELECT 1 FROM automation_workspace x "
+                "                  WHERE x.automation_ref = a.id) "
+                "ORDER BY position, a.label",
                 wk,
             )
         result = []
@@ -363,14 +382,15 @@ async def create_automation(
     pool: asyncpg.Pool, ws_slug: str | None, body: AutomationCreate
 ) -> AutomationOut:
     async with pool.acquire() as conn, conn.transaction():
-        wk = await _maybe_workspace(conn, ws_slug)
-        # Portée : les workspaces cochés ; vide → [workspace courant]. Jamais aucun.
-        if body.workspace_slugs:
-            keys = await _resolve_workspace_keys(conn, body.workspace_slugs)
-        elif wk is not None:
-            keys = [wk]
-        else:
-            raise HTTPException(422, "un automate doit couvrir au moins un workspace")
+        # Portée : les workspaces cochés. AUCUN coché = aucun filtre de portée,
+        # donc l'instance entière — la couverture obéit à la même règle que les
+        # autres sections de l'écran (« vide = tout passe »), elle n'est pas un
+        # cas particulier obligatoire.
+        keys = (
+            await _resolve_workspace_keys(conn, body.workspace_slugs)
+            if body.workspace_slugs
+            else []
+        )
         row = await conn.fetchrow(
             "INSERT INTO automation "
             "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
@@ -381,7 +401,7 @@ async def create_automation(
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
-            keys[0],
+            keys[0] if keys else None,
             body.label,
             body.active,
             body.event_codes,
@@ -446,11 +466,10 @@ async def update_automation(
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
 
-        # Portée workspaces : remplacement de l'ensemble — JAMAIS vide.
+        # Portée workspaces : remplacement de l'ensemble. Vide est LÉGITIME —
+        # c'est « aucun filtre de portée », pas une saisie incomplète.
         if "workspace_slugs" in raw:
             new_slugs = raw.pop("workspace_slugs") or []
-            if not new_slugs:
-                raise HTTPException(422, "un automate doit couvrir au moins un workspace")
             await _set_workspaces(
                 conn, automation_id, await _resolve_workspace_keys(conn, new_slugs)
             )
@@ -638,9 +657,10 @@ async def run_next_pending(
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"status": "no_events"}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
@@ -721,9 +741,10 @@ async def advance_pending(
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"status": "no_events"}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
@@ -806,9 +827,10 @@ async def cursor_back(
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"cursor": 0}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
