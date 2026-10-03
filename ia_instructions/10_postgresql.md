@@ -1,7 +1,11 @@
 # PostgreSQL — migrations et accès aux données
 
-> Fragment chargé sur déclencheur. Voir la table « Quand charger un fragment » de
-> `CLAUDE.md`. **Lire avant d'écrire**, pas après.
+> **Résidu non couvert par la skill `postgresql`** — conservé à la migration du 2026-10-03.
+> La skill partagée ne porte pas : les placeholders `$1..$n` d'asyncpg, « pas d'ORM lourd »,
+> les trois invariants nommés de ce schéma, la commande `python -m docflow.db.apply`, le
+> piège de la colonne ajoutée sans reprise, ni l'idempotence du **rejeu** d'`apply` en
+> checklist. **Se charge EN PLUS de la skill `postgresql`**, jamais à sa place — voir la
+> table « Quand charger une skill » de `CLAUDE.md`. **Lire avant d'écrire**, pas après.
 
 ## Quand ce document s'applique
 

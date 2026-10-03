@@ -1,7 +1,13 @@
 # Python — conventions du backend docflow
 
-> Fragment chargé sur déclencheur. Voir la table « Quand charger un fragment » de
-> `CLAUDE.md`. **Lire avant d'écrire**, pas après.
+> **Résidu non couvert par la skill `python`** — conservé à la migration du 2026-10-03
+> parce que la comparaison fragment/skill a montré que la skill partagée ne porte pas
+> encore : `extra="forbid"` sur les DTO d'entrée, `exc_info` sur tout `except` journalisé,
+> `.reveal()` au point d'injection, la fixture `client`, les invariants de sécurité nommés,
+> le piège du `.env` chargé depuis `Settings`, ni « la suite de tests passe » en checklist.
+> **Se charge EN PLUS de la skill `python`**, jamais à sa place — voir la table « Quand
+> charger une skill » de `CLAUDE.md`. **Lire avant d'écrire**, pas après. À supprimer le
+> jour où la skill partagée sera complétée.
 
 ## Quand ce document s'applique
 

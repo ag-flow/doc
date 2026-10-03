@@ -1,19 +1,19 @@
 # Ressources attribuées à l'agent
 
 > Mémoire des ressources mises à ma disposition — **pas** des règles d'usage. Les
-> règles sont dans `CLAUDE.md` § *Machines de test* ; ce fichier dit lesquelles
-> j'ai, ici et maintenant. À tenir à jour à chaque notification d'attribution ou
-> de reprise.
+> règles sont portées par les skills `test-machine-deployment` (doctrine) et
+> `docflow-deployment` (chemins de ce dépôt) ; ce fichier dit lesquelles j'ai, ici
+> et maintenant. À tenir à jour à chaque notification d'attribution ou de reprise.
 
-**État relevé le 2026-09-26**, par sonde réelle (`ssh`, `docker ps`, requête
-Loki) et non par recopie de la documentation.
+**État relevé le 2026-09-26, revérifié le 2026-10-03**, par sonde réelle (`ssh`,
+`docker ps`, requête Loki) et non par recopie de la documentation.
 
 ## Machines de test
 
 | Ressource | Alias SSH | Joignable depuis ce poste | Rôle |
 |---|---|---|---|
-| `test1` | **absent de `~/.ssh/config`** | ✗ `Name or service not known` | Cité par `CLAUDE.md` § *Déploiement sur la VM de test* et par `deploy/DEPLOY.md` comme cible de déploiement |
-| `test2` | déclaré (`100.74.13.151`) | ✗ `connect failed: No route to host` | Chromium sans interface (`browserless`) pour éprouver les IHM |
+| `test1` | **absent de `~/.ssh/config`** | ✗ `Name or service not known` | Cible de déploiement citée par `deploy/DEPLOY.md` et la skill `docflow-deployment` |
+| `test2` | déclaré, `HostName 100.74.119.10` | ✗ `No route to host` (échec sur le saut `100.74.13.151`) | Chromium sans interface (`browserless`) pour éprouver les IHM |
 
 **Les deux machines nommées dans les instructions sont injoignables depuis
 l'environnement de travail courant.** Ce n'est pas la même chose qu'« elles

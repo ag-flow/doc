@@ -1,7 +1,12 @@
 # TypeScript / frontend — conventions
 
-> Fragment chargé sur déclencheur. Voir la table « Quand charger un fragment » de
-> `CLAUDE.md`. **Lire avant d'écrire**, pas après.
+> **Résidu non couvert par la skill `typescript-frontend`** — conservé à la migration du
+> 2026-10-03. La skill partagée **contredit ce dépôt** sur ses deux commandes de
+> vérification (`tsc --noEmit` ne vérifie rien ici, ESLint n'existe pas) et ne porte ni
+> `src/locales/fr.json`, ni le registre `lib/contentSurfaces/` miroir des codecs, ni les
+> frontières d'abstraction, ni la spécificité Tailwind v4, ni la fidélité des mocks au
+> contrat réel. **Se charge EN PLUS de la skill**, jamais à sa place — et sur les commandes,
+> **c'est ce fragment qui gagne**. **Lire avant d'écrire**, pas après.
 
 ## Quand ce document s'applique
 
