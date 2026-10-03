@@ -318,13 +318,15 @@ registre que lit `tchat_list_agents` — sans lui, personne ne peut t'appeler m�
 workspace tourne. Jamais `session_open` à la place : c'est un outil de spawn réservé au
 portail.
 
-> ⚠ **État du 2026-09-27** : `tchat_*` et `agent_register` **ne sont pas servis** par la
-> gateway (vérifié via `gateway__list_backends`, pas seulement dans la liste cliente) —
-> le tchat est un cadrage devpod non livré. En attendant, `message_send` reste le seul
-> canal. Si ces outils paraissent absents une fois le cadrage livré, **ne conclus pas
-> qu'ils n'existent pas** : la liste d'outils est figée à la connexion, reconnecte.
+> ⚠ **État du 2026-10-03** : `tchat_*` et `agent_register` **sont servis** (le cadrage
+> devpod est livré), et `message_send` est **retiré**. Mais le serveur les réserve à une
+> session d'agent de workspace : depuis une session CLI, l'appel est refusé et **aucun
+> canal inter-agents n'existe** — une tâche qui en dépend se signale, ne se contourne pas.
+> **`gateway__list_backends` ne prouve rien sur une primitive** : il liste des backends,
+> jamais leurs outils. Seul l'APPEL tranche, et un refus d'autorisation n'est pas une
+> absence.
 
-Détail, pièges et divergence assumée : `ia_instructions/tchat.md`.
+Détail et pièges de vérification : `ia_instructions/tchat.md`.
 
 ## Auto-amélioration
 

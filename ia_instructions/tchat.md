@@ -3,23 +3,40 @@
 > Fragment déclenché — reporté du STANDARD « Fichier d'instructions agent de projet »
 > (v42) le 2026-09-27. L'invariant est en synthèse dans `CLAUDE.md` ; le détail est ici.
 
-## État réel de l'outillage — vérifié le 2026-09-27
+## État réel de l'outillage — vérifié le 2026-10-03
 
-**Les outils `tchat_*` et `agent_register` ne sont PAS servis par la gateway** de cette
-session. Vérification faite côté serveur, pas seulement dans la liste cliente :
-`gateway__list_backends` rend quatre backends (`workflow`, `devpod`, `doc`, `rag`), tous
-`up`, et aucun n'expose ces primitives. Ce qui est disponible aujourd'hui, ce sont les
-anciennes : `message_send`, `message_status`, `message_list`.
+**Les outils `tchat_*` et `agent_register` SONT servis.** Le cadrage devpod a été livré,
+et le catalogue rend leurs schémas complets : `agent_register`, `tchat_list_agents`,
+`tchat_call_agent`, `tchat_invite_agent`, `tchat_push_message`, `tchat_get_conversation(s)`,
+`tchat_close_conversation`.
 
-Le tchat est **porté par devpod** et reste au stade du cadrage là-bas (fiche « Cadrage —
-Tchat : registre et tools `tchat_*` portés par devpod »). Ce n'est donc pas le piège du
-cache d'outils client — mais **ce piège existe** et la règle tient : si `agent_register`
-apparaît un jour absent alors que le cadrage est livré, ne conclus pas qu'il n'existe
-pas. La liste d'outils MCP est figée à la connexion ; un outil ajouté côté portail n'y
-entre qu'à la reconnexion. Vérifie côté serveur, reconnecte, et **ne substitue JAMAIS
-`session_open`**.
+**Ils ne sont pas appelables depuis une session CLI pour autant.** `tchat_list_agents`
+répond : *« les tools tchat sont réservés à une session d'agent de workspace (clé API de
+workspace requise) »*. L'identité étant **dérivée de la clé API du workspace** (voir plus
+bas), une session sans cette clé n'a pas d'identité d'agent à inscrire — le refus est
+cohérent, pas un incident. Conséquence pratique : **aucun canal inter-agents n'est
+disponible d'ici**. Une tâche qui exige de joindre un agent se signale en fin de tour ;
+elle ne se contourne ni par `session_open`, ni par un détour.
 
-## Ce qu'il faudra faire quand les outils seront servis
+### Le piège de vérification, payé une fois
+
+La version précédente de ce fragment concluait « non servis » sur la foi de
+`gateway__list_backends`. **C'était faux, et la méthode était fausse** :
+`list_backends` liste des *backends* (`workflow`, `devpod`, `doc`, `rag`) et **jamais
+leurs primitives** — on ne peut rien en déduire sur la présence d'un outil.
+
+Trois règles qui en découlent :
+
+1. **Un outil ne se déclare absent qu'après l'avoir APPELÉ.** C'est l'artefact réel, le
+   reste est de l'indice.
+2. **Un refus d'autorisation n'est pas une absence.** « réservé à une session de
+   workspace » dit que l'outil existe et que l'appelant n'y a pas droit — deux constats
+   opposés dans leurs conséquences : le premier se signale, le second attend une livraison.
+3. **La liste cliente est figée à la connexion.** Un outil ajouté côté portail n'y entre
+   qu'à la reconnexion : un outil vu absent dans la liste mérite une reconnexion avant
+   toute conclusion.
+
+## Le geste, quand la session a une clé API de workspace
 
 **Se rendre appelable, en début de session.** Avant de rendre la main la première fois :
 `agent_register(session=<ta session tmux>, command=<ce qui t'a lancé>)`. Les deux champs
@@ -52,11 +69,12 @@ bloc `documentation` du workspace `docflow`.
 ## Ce qui est retiré
 
 L'ancienne messagerie un-à-un (spec 34 : `message_send` / `message_status` /
-`message_list`) est **retirée par le standard** : ne plus la décrire comme le mécanisme
-de coopération, ne plus construire de procédure dessus.
+`message_list`) est **retirée par le standard** ET **retirée du catalogue** : elle n'est
+plus appelable du tout. Ne plus la décrire comme le mécanisme de coopération, ne plus
+construire de procédure dessus, et **ne plus l'annoncer comme canal de repli** — il n'y
+en a pas.
 
-Divergence assumée, le temps que le cadrage devpod soit livré : ces outils **restent les
-seuls disponibles**. S'il faut joindre un agent aujourd'hui, c'est par eux — en
-consignant l'envoi et **sans jamais faire de polling sur `message_status`**, la réponse
-arrivant injectée par l'utilisateur. Toute tâche bloquée se signale en fin de tour, pas
-par une attente active qui gèle la session.
+Il n'y a donc plus de divergence à assumer : le tchat est le seul mécanisme, et il exige
+une clé API de workspace. Depuis une session qui n'en a pas, **joindre un agent est
+impossible** — la tâche se signale en fin de tour, jamais par une attente active qui gèle
+la session.
