@@ -7,6 +7,7 @@ typés, tri multi-clé, projection des propriétés, pagination bornée.
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, model_validator
@@ -85,6 +86,10 @@ class QuerySpec(BaseModel):
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    # Restreint aux enfants DIRECTS de ce document. Volontairement pas de variante
+    # récursive : la sous-arborescence complète est le travail de `list_block_tree`,
+    # et deux chemins vers le même résultat finissent toujours par diverger.
+    parent_id: uuid.UUID | None = None
     # Remonte aussi les ANCÊTRES des résultats, pour reconstruire un arbre élagué.
     # Opt-in délibéré : sans ce drapeau la réponse est inchangée. Enrichir en
     # silence fausserait la logique d'un appelant qui compte sur « exactement ce
@@ -112,6 +117,7 @@ class BlockQueryBody(BaseModel):
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    parent_id: uuid.UUID | None = None
     include_ancestors: bool = False
     page: int = 1
     page_size: int = 50

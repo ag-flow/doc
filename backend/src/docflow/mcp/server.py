@@ -875,6 +875,10 @@ _TOOLS: list[Tool] = [
             "- content_types : restreint aux types de CONTENU donnés (la grammaire du corps : "
             "'md', 'table-schema', 'model-layout'…). À NE PAS confondre avec type_slugs — les "
             "deux axes sont indépendants et se combinent.\n"
+            "- parent_id : UUID d'un document → ses enfants DIRECTS seulement, combiné en ET "
+            "avec les autres filtres. C'est la façon de lister les enfants d'un epic ou d'une "
+            "section sans paginer le bloc entier. Un parent inexistant rend une page vide. "
+            "Pour toute la sous-arborescence d'un coup, utiliser list_block_tree.\n"
             "- page / page_size (défaut 50, max 100)."
         ),
         inputSchema={
@@ -915,6 +919,14 @@ _TOOLS: list[Tool] = [
                     ),
                     "items": {"type": "string"},
                 },
+                "parent_id": {
+                    "type": "string",
+                    "description": (
+                        "UUID d'un document : restreint à ses enfants DIRECTS. Se combine "
+                        "en ET avec les autres filtres. Pour toute la sous-arborescence, "
+                        "utiliser list_block_tree"
+                    ),
+                },
                 "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
                 "page_size": {
                     "type": "integer",
@@ -928,7 +940,11 @@ _TOOLS: list[Tool] = [
         name="list_block_tree",
         description=(
             "Arbre des documents d'un bloc (mode browse), PAGINÉ sur les RACINES "
-            "(≤100/page). Chaque racine porte son sous-arbre complet (children récursif) "
+            "(≤100/page). À utiliser quand tu veux TOUTE la hiérarchie d'un bloc en un "
+            "appel (plusieurs niveaux d'un coup). Pour les enfants d'UN document précis, "
+            "préférer query_documents(parent_id=…) : c'est plus ciblé, et ça sait filtrer, "
+            "trier et projeter — ce que cet outil ne sait pas faire. "
+            "Chaque racine porte son sous-arbre complet (children récursif) "
             "et les valeurs de propriétés de chaque nœud. total/has_next comptent les "
             "racines seules : les enfants d'une racine incluse ne consomment pas le "
             "page_size. Chaque nœud : id, title, functional_type_slug, parent_id, "
@@ -2568,6 +2584,7 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         projection = args.get("projection")
         type_slugs = args.get("type_slugs")
         content_types = args.get("content_types")
+        raw_parent = args.get("parent_id")
         spec = QuerySpec(
             workspace_slug=ws,
             block_slug=block,
@@ -2576,6 +2593,10 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             filters=clauses,
             sort=sort,
             projection=projection if isinstance(projection, list) else None,
+            # Transmis tel quel : c'est pydantic qui valide la forme UUID, et son
+            # refus remonte par le `except ValidationError` ci-dessous. Convertir
+            # ici avalerait l'erreur et rendrait une page non filtrée.
+            parent_id=raw_parent if raw_parent is not None else None,
             page=page,
             page_size=page_size,
         )

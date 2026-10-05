@@ -405,6 +405,11 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
             # colonne est portée par le document lui-même, aucune jointure.
             ct_ph = p.add(spec.content_types)
             where.append(f"d.type = ANY({ct_ph}::text[])")
+        if spec.parent_id is not None:
+            # Enfants DIRECTS seulement. Un parent inexistant ne lève pas : la
+            # condition ne matche rien et la page sort vide, comme pour tout autre
+            # filtre sans résultat.
+            where.append(f"d.parent = {p.add(spec.parent_id)}")
         for f in spec.filters:
             where.append(_filter_sql(f, ptypes[f.prop], p))
         where_sql = " AND ".join(where)
