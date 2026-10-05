@@ -28,9 +28,17 @@ TREE_MAX_PAGE_SIZE = 100
 TreeSortKey = Literal["title", "updated_at"]
 TreeSortDir = Literal["asc", "desc"]
 
+# Valeurs acceptées, PUBLIQUES : une surface qui reçoit le tri en texte libre (MCP)
+# doit pouvoir refuser une valeur inconnue elle-même. Sans elles, la valeur atteint
+# la whitelist ci-dessous et lève un `KeyError` — soit un 500 pour une faute de
+# frappe de l'appelant.
+TREE_SORT_KEYS: tuple[str, ...] = ("title", "updated_at")
+TREE_SORT_DIRS: tuple[str, ...] = ("asc", "desc")
+
 # Colonnes de tri autorisées → expression SQL. Whitelist stricte : la clé de tri
 # ne provient JAMAIS d'une chaîne utilisateur interpolée, seulement de cette table.
-_SORT_COLUMNS: dict[str, str] = {"title": "title", "updated_at": "updated_at"}
+# Dérivée de TREE_SORT_KEYS pour qu'il n'y ait qu'une liste à tenir à jour.
+_SORT_COLUMNS: dict[str, str] = {k: k for k in TREE_SORT_KEYS}
 
 
 def _tree_sql(sort_key: str, sort_dir: str) -> str:

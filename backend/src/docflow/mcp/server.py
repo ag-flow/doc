@@ -955,6 +955,20 @@ _TOOLS: list[Tool] = [
             "properties": {
                 "workspace_slug": {"type": "string", "description": "Slug du workspace"},
                 "block_slug": {"type": "string", "description": "Slug du bloc"},
+                "sort_key": {
+                    "type": "string",
+                    "enum": ["title", "updated_at"],
+                    "description": (
+                        "Clé de tri, appliquée aux racines ET aux enfants de chaque "
+                        "parent (défaut : title). Trié par le serveur, donc correct à "
+                        "travers la pagination"
+                    ),
+                },
+                "sort_dir": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sens du tri (défaut : asc)",
+                },
                 "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
                 "page_size": {
                     "type": "integer",
@@ -2530,12 +2544,37 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
 
 async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from typing import cast
+
     from fastapi import HTTPException
 
-    from docflow.documents.block_tree import TREE_DEFAULT_PAGE_SIZE, list_block_tree
+    from docflow.documents.block_tree import (
+        TREE_DEFAULT_PAGE_SIZE,
+        TREE_SORT_DIRS,
+        TREE_SORT_KEYS,
+        TreeSortDir,
+        TreeSortKey,
+        list_block_tree,
+    )
 
     page = int(str(args.get("page", 1)))
     page_size = int(str(args.get("page_size", TREE_DEFAULT_PAGE_SIZE)))
+    # Refus explicite d'une valeur de tri inconnue. Les deux autres issues sont
+    # mauvaises : laisser la valeur atteindre la whitelist du moteur lève un
+    # KeyError (500), et l'ignorer ferait lire un ordre arbitraire à un appelant
+    # qui croit avoir trié.
+    sort_key = str(args.get("sort_key", "title"))
+    if sort_key not in TREE_SORT_KEYS:
+        accepted = ", ".join(TREE_SORT_KEYS)
+        return _text(
+            errors.err(errors.INVALID, f"sort_key '{sort_key}' inconnu ; accepté : {accepted}")
+        )
+    sort_dir = str(args.get("sort_dir", "asc"))
+    if sort_dir not in TREE_SORT_DIRS:
+        accepted = ", ".join(TREE_SORT_DIRS)
+        return _text(
+            errors.err(errors.INVALID, f"sort_dir '{sort_dir}' inconnu ; accepté : {accepted}")
+        )
     try:
         out = await list_block_tree(
             pool,
@@ -2543,6 +2582,8 @@ async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             str(args.get("block_slug", "")),
             page,
             page_size,
+            cast(TreeSortKey, sort_key),
+            cast(TreeSortDir, sort_dir),
         )
     except HTTPException as e:
         return _text(errors.from_http(e.status_code, e.detail))
