@@ -37,7 +37,9 @@ async def list_profiles(request: Request, user: AuthUser = _Auth) -> list[ApiPro
 async def create_profile(
     body: ApiProfileCreate, request: Request, user: AuthUser = _Auth
 ) -> ApiProfileOut:
-    return await service.create_profile(request.app.state.pool, user.id, body)
+    return await service.create_profile(
+        request.app.state.pool, user.id, body, caller_is_superadmin=user.is_admin
+    )
 
 
 @router.get("/user/api-profiles/{profile_id}", response_model=ApiProfileDetail)
@@ -54,7 +56,9 @@ async def update_profile(
     request: Request,
     user: AuthUser = _Auth,
 ) -> ApiProfileOut:
-    return await service.update_profile(request.app.state.pool, user.id, profile_id, body)
+    return await service.update_profile(
+        request.app.state.pool, user.id, profile_id, body, caller_is_superadmin=user.is_admin
+    )
 
 
 @router.put(

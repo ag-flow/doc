@@ -13,23 +13,25 @@ import uuid
 
 import asyncpg
 
-from docflow.datasets.parser import extract_dataset_ids
-
 
 async def refresh_dataset_references(
     conn: asyncpg.Connection,
     doc_id: uuid.UUID,
     ws_key: uuid.UUID,
-    content: str | None,
+    parsed: list[str],
 ) -> None:
-    """Reconstruit les références datasets du document depuis son contenu.
+    """Reconstruit les références datasets du document.
 
     Doit être appelé dans la même transaction que le save. Ne conserve que les
     datasets du MÊME workspace qui existent ; les références vers un dataset
     inexistant ou d'un autre workspace sont ignorées (le save n'échoue jamais).
     Un dataset dont la dernière référence disparaît est supprimé immédiatement.
+
+    ``parsed`` (uuid canoniques, ordre de première apparition) est EXTRAIT PAR
+    LE CODEC du type de contenu (cf. ``documents.content_refs``) : cette
+    fonction ne connaît plus la grammaire du document, seulement la
+    réconciliation.
     """
-    parsed = extract_dataset_ids(content)
     old_rows = await conn.fetch(
         "SELECT dataset_ref FROM dataset_reference WHERE document_ref = $1", doc_id
     )

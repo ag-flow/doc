@@ -43,10 +43,14 @@ class AutomationCreate(BaseModel):
     # Workspaces couverts (l'automate est visible et se déclenche dans chacun).
     # Vide à la création = [workspace courant]. Jamais vide en base.
     workspace_slugs: list[str] = []
-    # eventCodes déclencheurs (les 6 codes du catalogue docflow.document.*).
+    # eventCodes déclencheurs (catalogue docflow : events de document ET de contenant).
     event_codes: list[str] = []
     # Filtres additionnels (AND) : blocs et/ou types de document (vide = tous).
     block_slugs: list[str] = []
+    # Templates dont les blocs sont couverts. UNION avec `block_slugs` : un bloc
+    # entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé depuis
+    # un template couvert entre donc SANS geste — c'est tout l'objet du critère.
+    block_templates: list[str] = []
     functional_type_slugs: list[str] = []
     # Chaîne de responsabilité : si cet automate matche ET que l'appel réussit,
     # les automates de priorité inférieure ne traitent pas l'event.
@@ -71,6 +75,7 @@ class AutomationUpdate(BaseModel):
     workspace_slugs: list[str] | None = None
     event_codes: list[str] | None = None
     block_slugs: list[str] | None = None
+    block_templates: list[str] | None = None
     stop_chain: bool | None = None
     functional_type_slugs: list[str] | None = None
     on_create: bool | None = None
@@ -86,16 +91,31 @@ class AutomationUpdate(BaseModel):
 
 class AutomationOut(BaseModel):
     id: uuid.UUID
-    workspace_technical_key: uuid.UUID
+    # Vestige d'avant la couverture multi-workspaces : la portée réelle est
+    # `workspace_slugs`. NULL = aucun filtre de portée (toute l'instance).
+    workspace_technical_key: uuid.UUID | None
     label: str
     active: bool
     # Events déclencheurs au-delà du curseur, pas encore évalués (0 = à jour).
     pending_count: int = 0
-    # Position d'évaluation DANS LE WORKSPACE demandé (1..n).
-    position: int = 0
+    # Instant où le plus ancien event en attente cessera d'être « chaud » (fin de
+    # la fenêtre de debounce). `None` = rien n'est différé.
+    #
+    # Sans cette donnée, un automate qui ATTEND et un automate EN PANNE
+    # s'affichent pareil : « N en attente » et rien qui bouge. C'est ce qui rend
+    # le debounce indiscernable d'un blocage.
+    deferred_until: datetime | None = None
+    # Position d'évaluation DANS LE WORKSPACE demandé (1..n). `None` quand
+    # l'automate n'a pas de rang ici — cas d'un automate sans filtre de portée,
+    # qui s'évalue après tous les autres.
+    position: int | None = 0
     workspace_slugs: list[str] = []
     event_codes: list[str]
     block_slugs: list[str] = []
+    # Templates dont les blocs sont couverts. UNION avec `block_slugs` : un bloc
+    # entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé depuis
+    # un template couvert entre donc SANS geste — c'est tout l'objet du critère.
+    block_templates: list[str] = []
     functional_type_slugs: list[str] = []
     stop_chain: bool = False
     on_create: bool
@@ -109,6 +129,10 @@ class AutomationOut(BaseModel):
     headers: list[AutomationHeaderOut]
     created_at: datetime
     updated_at: datetime
+    # Dernière exécution (renseignées par le listing ; None sinon).
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+    last_run_http_status: int | None = None
 
 
 class AutomationRunOut(BaseModel):

@@ -48,26 +48,30 @@ export function SecretInput({ value, onChange, placeholder, disabled }: SecretIn
       : 'chemin dans le wallet (ex: oidc/client_secret)'
 
   return (
-    <div className="flex rounded-md shadow-sm">
-      <select
-        value={mode}
-        onChange={(e) => setMode(e.target.value)}
-        disabled={disabled}
-        className="w-32 shrink-0 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 px-2 py-2 text-xs text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-      >
-        <option value={LOCAL}>En local</option>
-        {wallets.map((w) => (
-          <option key={w.id} value={w.name}>{w.name}</option>
-        ))}
-      </select>
-      <input
-        type={mode === LOCAL ? 'password' : 'text'}
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        placeholder={inputPlaceholder}
-        disabled={disabled}
-        className="min-w-0 flex-1 rounded-r-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
-      />
+    <div className="flex gap-2">
+      <div className="w-32 shrink-0">
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value)}
+          disabled={disabled}
+          className="input text-xs"
+        >
+          <option value={LOCAL}>En local</option>
+          {wallets.map((w) => (
+            <option key={w.id} value={w.name}>{w.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="min-w-0 flex-1">
+        <input
+          type={mode === LOCAL ? 'password' : 'text'}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          placeholder={inputPlaceholder}
+          disabled={disabled}
+          className="input"
+        />
+      </div>
     </div>
   )
 }

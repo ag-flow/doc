@@ -12,6 +12,7 @@ paramétré, aucun slug ni valeur interpolé dans la chaîne.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 import asyncpg
 from fastapi import HTTPException
@@ -24,32 +25,51 @@ from docflow.schemas.tree import BlockTreeNode, BlockTreePage
 TREE_DEFAULT_PAGE_SIZE = 50
 TREE_MAX_PAGE_SIZE = 100
 
-# Racines paginées (ordre stable title, id) puis sous-arbres via récursion sur
-# `parent`. L'ordre final (depth, title, id) rend les racines et, dans chaque
-# parent, les enfants triés par titre — l'assemblage préserve cet ordre.
-_TREE_SQL = """
+TreeSortKey = Literal["title", "updated_at"]
+TreeSortDir = Literal["asc", "desc"]
+
+# Colonnes de tri autorisées → expression SQL. Whitelist stricte : la clé de tri
+# ne provient JAMAIS d'une chaîne utilisateur interpolée, seulement de cette table.
+_SORT_COLUMNS: dict[str, str] = {"title": "title", "updated_at": "updated_at"}
+
+
+def _tree_sql(sort_key: str, sort_dir: str) -> str:
+    """Assemble la requête arbre avec un ordre de tri validé (whitelist).
+
+    Racines paginées puis sous-arbres via récursion sur `parent`. L'ordre final
+    (depth, <clé>, id) ordonne les racines et, dans chaque parent, les enfants
+    par la même clé — l'assemblage `_build_tree` préserve cet ordre.
+    """
+    col = _SORT_COLUMNS[sort_key]  # KeyError impossible : clé validée en amont
+    direction = "DESC" if sort_dir == "desc" else "ASC"
+    nulls = " NULLS LAST" if sort_key == "updated_at" else ""
+    order = f"{col} {direction}{nulls}"
+    return f"""
 WITH RECURSIVE roots AS (
     SELECT d.doc_technical_key
     FROM document d
     WHERE d.data_block_ref = $1 AND d.parent IS NULL
-    ORDER BY d.title, d.doc_technical_key
+    ORDER BY d.{order}, d.doc_technical_key
     LIMIT $2 OFFSET $3
 ),
 tree AS (
-    SELECT d.doc_technical_key, d.title, d.parent, d.functional_type_ref, 0 AS depth
+    SELECT d.doc_technical_key, d.title, d.parent, d.functional_type_ref,
+           d.type, d.updated_at, d.updated_by, 0 AS depth
     FROM document d
     JOIN roots r ON r.doc_technical_key = d.doc_technical_key
     UNION ALL
-    SELECT c.doc_technical_key, c.title, c.parent, c.functional_type_ref, t.depth + 1
+    SELECT c.doc_technical_key, c.title, c.parent, c.functional_type_ref,
+           c.type, c.updated_at, c.updated_by, t.depth + 1
     FROM document c
     JOIN tree t ON c.parent = t.doc_technical_key
-)
+) CYCLE doc_technical_key SET is_cycle USING path
 SELECT t.doc_technical_key AS id, t.title, t.parent AS parent_id,
+       t.type, t.updated_at, t.updated_by,
        ft.slug AS functional_type_slug, t.depth
 FROM tree t
 LEFT JOIN functional_type ft ON ft.id = t.functional_type_ref
-ORDER BY t.depth, t.title, t.doc_technical_key
-"""
+ORDER BY t.depth, t.{order}, t.doc_technical_key
+"""  # noqa: S608 — `order` est bâti depuis la whitelist _SORT_COLUMNS, pas d'entrée brute
 
 
 def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
@@ -82,7 +102,10 @@ def _build_tree(
             id=str(r["id"]),
             title=r["title"],
             functional_type_slug=r["functional_type_slug"],
+            type=r["type"],
             parent_id=str(r["parent_id"]) if r["parent_id"] is not None else None,
+            updated_at=r["updated_at"],
+            updated_by=r["updated_by"],
             properties=values.get(r["id"], []),
             children=[],
         )
@@ -109,8 +132,14 @@ async def list_block_tree(
     block_slug: str,
     page: int = 1,
     page_size: int = TREE_DEFAULT_PAGE_SIZE,
+    sort_key: TreeSortKey = "title",
+    sort_dir: TreeSortDir = "asc",
 ) -> BlockTreePage:
-    """Racines paginées d'un bloc avec leurs sous-arbres et valeurs de propriétés."""
+    """Racines paginées d'un bloc avec leurs sous-arbres et valeurs de propriétés.
+
+    `sort_key`/`sort_dir` ordonnent racines et enfants côté serveur (tri correct
+    à travers la pagination, contrairement à un tri client des seules pages chargées).
+    """
     page, page_size = _normalize_pagination(page, page_size)
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
@@ -119,6 +148,7 @@ async def list_block_tree(
             "SELECT count(*) FROM document WHERE data_block_ref = $1 AND parent IS NULL",
             block_id,
         )
-        rows = await conn.fetch(_TREE_SQL, block_id, page_size, (page - 1) * page_size)
+        sql = _tree_sql(sort_key, sort_dir)
+        rows = await conn.fetch(sql, block_id, page_size, (page - 1) * page_size)
         values = await _load_values(conn, [r["id"] for r in rows])
         return _build_tree(block_slug, list(rows), values, total, page, page_size)

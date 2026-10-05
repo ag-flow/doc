@@ -3,21 +3,28 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
+from collections.abc import Sequence
+from typing import cast
 
 import asyncpg
 import structlog
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, ImageContent, TextContent, Tool
 
 from docflow.apikeys.authz import allowed_workspace_slugs, scope_allows
 from docflow.config.settings import Settings
-from docflow.mcp import artifact_tools, dataset_tools
+from docflow.mcp import artifact_tools, calllog, dataset_tools, errors
+from docflow.mcp.coerce import as_bool
 from docflow.mcp.session import acting_identity, current_session, require_identity
 from docflow.workspaces.access import accessible_workspace_slugs, user_can_access_workspace
 
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "templates"
 
 log = structlog.get_logger(__name__)
+
+# Sentinelle : distingue « payload non fourni » de « payload vaut None », None
+# étant une valeur légitime (réponse non-JSON).
+_UNSET: object = object()
 
 # Pool + settings injectés au démarrage par configure()
 _pool: asyncpg.Pool | None = None
@@ -81,7 +88,16 @@ _TOOLS: list[Tool] = [
         name="get_document",
         description=(
             "Lit le contenu complet d'un document : id, title, contenu (markdown "
-            "brut), functional_type_slug. "
+            "brut), functional_type_slug, ET 'version' (numéro de révision courant) "
+            "avec 'is_current'. La 'version' retournée est l'identifiant à fournir à "
+            "update_document (concurrence optimiste). "
+            "Paramètre optionnel 'version' : lire une révision antérieure précise "
+            "(le contenu et le titre tels qu'ils étaient) — SEULS le titre et le "
+            "contenu sont versionnés ; functional_type_slug et les propriétés "
+            "reflètent toujours l'état courant. La lecture d'une version est sans "
+            "effet de bord (aucune restauration). Une version inexistante retourne "
+            "{error_code:'version_not_found'} avec error_detail{available_min, "
+            "available_max}. "
             "Ajoute 'warnings' (liste) lorsque des propriétés obligatoires du type "
             "sont non renseignées : les renseigner avec set_property_value. "
             "Retourne {error: ...} si le document n'existe pas ou n'appartient pas "
@@ -97,6 +113,13 @@ _TOOLS: list[Tool] = [
                     "format": "uuid",
                     "description": "UUID du document (champ id de list_documents)",
                 },
+                "version": {
+                    "type": "integer",
+                    "description": (
+                        "Numéro de révision à lire (optionnel) ; omis = révision "
+                        "courante. Seuls titre et contenu sont restitués à cette version."
+                    ),
+                },
             },
             "required": ["workspace_slug", "doc_id"],
         },
@@ -109,10 +132,27 @@ _TOOLS: list[Tool] = [
             "list_documents dès la réponse. "
             "block_slug est requis : utiliser list_blocks (REST) ou lire la réponse "
             "de create_block pour obtenir le slug. "
-            "Retourne l'id (UUID) et le title du document créé. "
-            "functional_type_slug est optionnel mais doit correspondre au type du bloc "
-            "(doit exister dans le workspace, sinon erreur). "
-            "contenu est du markdown libre, optionnel."
+            "Retourne l'id (UUID), le title et la 'version' initiale du document créé "
+            "(version directement utilisable comme expected_version d'un update_document). "
+            "functional_type_slug est REQUIS et doit être autorisé à la position visée "
+            "(à la racine du bloc : le type du bloc ; sous un parent : un type fils du "
+            "sien). Un appel sans lui est refusé, avec la liste des types admissibles. "
+            "contenu est du markdown libre, optionnel. "
+            "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
+            "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
+            "description », jamais de numéro), ```df-chart (« libellé | valeur », "
+            "attributs type=pie|donut|bar|line, format=count|percent, "
+            'source="dataset://<uuid>"), ```df-conversation (« Interlocuteur | '
+            "message », ou transcript/WebVTT collé tel quel), ```df-display "
+            "(composition libre A2UI simplifié : tableau JSON plat "
+            "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
+            "Divider/Text/Image/Icon/Badge/Chip/ProgressBar, variants "
+            "neutral|accent|alert) et ```mermaid (graphes). Attributs de fence entre "
+            "guillemets doubles. Un artefact non-image (pdf, audio, archive…) se "
+            "pose en puce téléchargeable avec `[libellé](artifact://<uuid>)` SEUL "
+            "sur sa ligne (libellé vide = nom de fichier) ; une image reste "
+            "`![nom](url)`. Grammaire détaillée : article « Composants "
+            "d'affichage — grammaire (pour agents) » du bloc Documentation. "
         ),
         inputSchema={
             "type": "object",
@@ -130,7 +170,21 @@ _TOOLS: list[Tool] = [
                 "functional_type_slug": {
                     "type": "string",
                     "description": (
-                        "Type fonctionnel à associer (optionnel, doit exister dans le workspace)"
+                        "Type fonctionnel du document (REQUIS) — doit exister dans le "
+                        "workspace et être autorisé à la position visée"
+                    ),
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": (
+                        "Type de CONTENU du corps, c'est-à-dire sa grammaire — à ne pas "
+                        "confondre avec functional_type_slug, qui dit ce que le document "
+                        "représente métier. Optionnel, défaut 'md' (markdown). "
+                        "'table-schema' = modèle de données (voir l'article « 5.8 Grammaire "
+                        "table-schema » du bloc Documentation). Positionnable UNIQUEMENT à la "
+                        "création : changer la grammaire d'un document existant est une "
+                        "opération à part. Un contenu qui ne respecte pas la grammaire du type "
+                        "demandé est REFUSÉ (content_unparseable / content_invalid)."
                     ),
                 },
                 "parent_id": {
@@ -148,12 +202,15 @@ _TOOLS: list[Tool] = [
                         "restricted_list, slug de la valeur autorisée). REQUIS pour "
                         "toute propriété obligatoire sans valeur par défaut : la "
                         "création est refusée (422) sinon, avec la liste des slugs "
-                        "manquants. Les propriétés à comportement automatique "
+                        "manquants. Une propriété de type 'date' accepte une date "
+                        "'YYYY-MM-DD' OU un instant ISO / timestamp (ex. "
+                        "'2026-07-30 08:39:09.93267') — seule la partie jour est "
+                        "conservée. Les propriétés à comportement automatique "
                         "(auto_now...) sont gérées par le serveur et refusées ici."
                     ),
                 },
             },
-            "required": ["workspace_slug", "block_slug", "title"],
+            "required": ["workspace_slug", "block_slug", "title", "functional_type_slug"],
         },
     ),
     Tool(
@@ -162,11 +219,38 @@ _TOOLS: list[Tool] = [
             "Modifie le titre et/ou le contenu markdown d'un document existant. "
             "ÉCRITURE : mise à jour versionnée et permanente, visible immédiatement. "
             "Au moins un des deux champs (title ou contenu) doit être fourni, "
-            "sinon erreur. "
-            "La mise à jour est atomique : la version courante est lue puis "
-            "incrémentée dans la même transaction (concurrence optimiste transparente). "
-            "Ne touche pas au type fonctionnel ni aux valeurs de propriétés "
-            "(utiliser set_property_value pour cela). "
+            "sinon erreur. Retourne 'version' (nouvelle révision) en cas de succès. "
+            "CONCURRENCE OPTIMISTE — 'expected_version' est OBLIGATOIRE : c'est le "
+            "numéro de révision sur lequel s'appuie l'écriture, obtenu via "
+            "get_document ('version') ou le retour d'un update/create précédent. Si "
+            "la version a changé entre-temps, l'écriture est REFUSÉE (aucun "
+            "écrasement) et retourne {error_code:'version_conflict'} avec "
+            "error_detail{version, title, contenu} portant l'état courant. Boucle "
+            "attendue côté client : relire (ou lire l'état du conflit) → réappliquer "
+            "ses modifications → réécrire avec la version courante. Un appel sans "
+            "expected_version est refusé ({error_code:'version_required'}) — mais "
+            "seulement si title ou contenu est fourni. "
+            "PEUT AUSSI poser le type FONCTIONNEL (functional_type_slug) : ce n'est "
+            "pas du contenu, donc aucune version attendue n'est requise pour lui "
+            "seul, et le poser ne crée pas de révision. Le type doit être autorisé "
+            "à la position du document (à la racine du bloc : le type du bloc ; "
+            "sous un parent : un type fils du sien), sinon 422. "
+            "Ne touche pas aux valeurs de propriétés (utiliser set_property_value). "
+            "Le markdown peut inclure des composants d'affichage rendus par l'éditeur "
+            "(fences CommonMark) : ```df-timeline (une étape par ligne « titre | "
+            "description », jamais de numéro), ```df-chart (« libellé | valeur », "
+            "attributs type=pie|donut|bar|line, format=count|percent, "
+            'source="dataset://<uuid>"), ```df-conversation (« Interlocuteur | '
+            "message », ou transcript/WebVTT collé tel quel), ```df-display "
+            "(composition libre A2UI simplifié : tableau JSON plat "
+            "[{id, component, children, ...props}], catalogue Row/Column/Card/List/"
+            "Divider/Text/Image/Icon/Badge/Chip/ProgressBar, variants "
+            "neutral|accent|alert) et ```mermaid (graphes). Attributs de fence entre "
+            "guillemets doubles. Un artefact non-image (pdf, audio, archive…) se "
+            "pose en puce téléchargeable avec `[libellé](artifact://<uuid>)` SEUL "
+            "sur sa ligne (libellé vide = nom de fichier) ; une image reste "
+            "`![nom](url)`. Grammaire détaillée : article « Composants "
+            "d'affichage — grammaire (pour agents) » du bloc Documentation. "
             "Retourne {error: ...} si le document est introuvable dans le workspace."
         ),
         inputSchema={
@@ -182,6 +266,23 @@ _TOOLS: list[Tool] = [
                 "contenu": {
                     "type": "string",
                     "description": "Nouveau contenu markdown (omis = inchangé)",
+                },
+                "functional_type_slug": {
+                    "type": "string",
+                    "description": (
+                        "Type FONCTIONNEL à poser (ce que le document représente "
+                        "métier). Doit exister dans le workspace ET être autorisé à "
+                        "la position du document. Ne crée pas de révision."
+                    ),
+                },
+                "expected_version": {
+                    "type": "integer",
+                    "description": (
+                        "Numéro de révision présumé courant (champ 'version' de "
+                        "get_document ou retour d'un update/create). Refus si périmé, "
+                        "sans écrasement. OBLIGATOIRE dès que title ou contenu est "
+                        "fourni ; inutile pour poser le seul functional_type_slug."
+                    ),
                 },
             },
             "required": ["workspace_slug", "doc_id"],
@@ -257,7 +358,7 @@ _TOOLS: list[Tool] = [
                     "description": "UUID du document à supprimer",
                 },
                 "confirm": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true pour confirmer la suppression en cascade quand le "
                         "document a des descendants (défaut false ; cf. dependents "
@@ -404,7 +505,12 @@ _TOOLS: list[Tool] = [
                 },
                 "value": {
                     "type": "string",
-                    "description": "Valeur brute — pour propriétés text ou int uniquement",
+                    "description": (
+                        "Valeur brute — pour propriétés text / int / date / url / "
+                        "float / bool (omettre pour restricted_list). Une propriété "
+                        "'date' accepte 'YYYY-MM-DD' ou un instant ISO / timestamp "
+                        "(ex. '2026-07-30 08:39:09.93267') dont seule la date est gardée."
+                    ),
                 },
                 "allowed_value_slug": {
                     "type": "string",
@@ -434,6 +540,50 @@ _TOOLS: list[Tool] = [
             "Lecture seule — aucun effet de bord."
         ),
         inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="export_template",
+        description=(
+            "Exporte la structure APLATIE d'un template global (héritage résolu) : "
+            "chaque type concret porte toutes ses propriétés directement, avec son "
+            "parent hiérarchique. Retourne {template, label, version, functional_types} "
+            "où chaque type liste slug, label, parent et properties (slug, label, "
+            "type, required, default, allowed_values...). "
+            "Miroir de l'export REST — utile pour analyser un modèle ou le "
+            "réintégrer dans un repo source (la reconstruction de l'héritage reste "
+            "un travail d'interprétation). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "template_slug": {
+                    "type": "string",
+                    "description": "Slug du template (issu de list_templates)",
+                },
+            },
+            "required": ["template_slug"],
+        },
+    ),
+    Tool(
+        name="get_template_yaml",
+        description=(
+            "Retourne la définition YAML SOURCE d'un template global — le modèle "
+            "natif, héritage NON résolu (types abstract, inherit, parent tels "
+            "quels). Complément de export_template (qui, lui, aplatit l'héritage). "
+            "Retourne {template, yaml_content}. "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "template_slug": {
+                    "type": "string",
+                    "description": "Slug du template (issu de list_templates)",
+                },
+            },
+            "required": ["template_slug"],
+        },
     ),
     Tool(
         name="create_workspace",
@@ -586,7 +736,7 @@ _TOOLS: list[Tool] = [
                     "description": "Slug du bloc à supprimer",
                 },
                 "confirm": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true pour confirmer la suppression en cascade quand le bloc "
                         "a des dépendants (défaut false ; cf. dependents dans la "
@@ -603,7 +753,9 @@ _TOOLS: list[Tool] = [
             "Crée un profil d'accès API avec un périmètre limité à UN workspace. "
             "ÉCRITURE : le profil est immédiatement utilisable pour générer des clés. "
             "name doit être unique parmi les profils de l'utilisateur système. "
-            "workspace_slug doit exister (utiliser list_workspaces pour le vérifier). "
+            "workspace_slug doit exister : un slug inconnu est refusé et aucun "
+            "profil n'est créé (utiliser list_workspaces pour le vérifier). "
+            "Le profil et son périmètre sont posés dans la même transaction. "
             "read_only=true (défaut) : lecture seule sur tout le workspace. "
             "read_only=false : lecture et écriture sur tout le workspace. "
             "description est optionnelle. "
@@ -621,7 +773,7 @@ _TOOLS: list[Tool] = [
                     "description": "Slug du workspace dont l'accès est accordé",
                 },
                 "read_only": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": "true = lecture seule (défaut), false = lecture+écriture",
                 },
                 "description": {
@@ -718,7 +870,11 @@ _TOOLS: list[Tool] = [
             "- sort : liste [{key, dir}] (key = prop_slug | title | created_at ; dir = asc|desc ; "
             "restricted_list trié par ordre de pipeline).\n"
             "- projection : liste de prop_slug à remonter (défaut : toutes).\n"
-            "- type_slugs : restreint aux types d'objet donnés.\n"
+            "- type_slugs : restreint aux types FONCTIONNELS donnés (ce que le document "
+            "représente métier : epic, article…).\n"
+            "- content_types : restreint aux types de CONTENU donnés (la grammaire du corps : "
+            "'md', 'table-schema', 'model-layout'…). À NE PAS confondre avec type_slugs — les "
+            "deux axes sont indépendants et se combinent.\n"
             "- page / page_size (défaut 50, max 100)."
         ),
         inputSchema={
@@ -748,7 +904,15 @@ _TOOLS: list[Tool] = [
                 },
                 "type_slugs": {
                     "type": "array",
-                    "description": "Restreindre aux types d'objet donnés",
+                    "description": "Restreindre aux types FONCTIONNELS donnés (epic, article…)",
+                    "items": {"type": "string"},
+                },
+                "content_types": {
+                    "type": "array",
+                    "description": (
+                        "Restreindre aux types de CONTENU donnés ('md', 'table-schema', "
+                        "'model-layout'…) — la grammaire du corps, PAS le type fonctionnel"
+                    ),
                     "items": {"type": "string"},
                 },
                 "page": {"type": "integer", "description": "Numéro de page (1-based, défaut 1)"},
@@ -803,6 +967,9 @@ _TOOLS: list[Tool] = [
             "retrait exige une propriété 'status' (restricted_list) avec une valeur "
             "autorisée 'removed_at_source' — sinon l'item concerné est reporté dans "
             "'errors' sans faire échouer l'opération. "
+            "Si plusieurs enfants existants portent le même external_id, la clé est "
+            "ambiguë : elle est ignorée (ni update, ni create, ni marquage de retrait) "
+            "et la collision est reportée dans 'errors' avec les ids concernés. "
             "Retourne {created, updated, unchanged, removed_marked} (listes d'ids), "
             "counts (compteurs) et errors (items en échec)."
         ),
@@ -826,12 +993,15 @@ _TOOLS: list[Tool] = [
                         "(chaîne, obligatoire — clé de corrélation), title (chaîne), "
                         "contenu (chaîne markdown, optionnel), properties (objet "
                         "{slug: valeur} optionnel ; pour une restricted_list, la valeur "
-                        "est le slug de la valeur autorisée)."
+                        "est le slug de la valeur autorisée). Un 'external_id' placé "
+                        "dans properties n'est jamais écrit — la clé de corrélation "
+                        "reste celle de l'item — et la divergence est reportée dans "
+                        "'errors'."
                     ),
                     "items": {"type": "object"},
                 },
                 "exhaustive": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": (
                         "true = les enfants absents des items sont marqués retirés "
                         "(status=removed_at_source) ; false (défaut) = aucun marquage"
@@ -985,11 +1155,58 @@ _TOOLS: list[Tool] = [
             "required": ["workspace_slug", "doc_id"],
         },
     ),
+    Tool(
+        name="search_documents",
+        description=(
+            "Recherche PLEIN-TEXTE (titre + contenu) sur TOUS les workspaces "
+            "accessibles à l'appelant — pas de workspace_slug, le périmètre suit "
+            "les droits de l'identité courante. Complète query_documents (qui, "
+            "lui, filtre par propriétés dans UN bloc) : ici c'est une recherche "
+            "libre par mot-clé sur le titre et le corps markdown. "
+            "Chaque résultat : {id, title, slug, version (révision courante), url "
+            "(ressource API du document), app_url (lien d'ouverture IHM), type, "
+            "workspace_slug, workspace_label, block_slug} — les correspondances "
+            "de titre remontent en premier. "
+            "Paramètres : q (1..200 car.), limit (1..50, défaut 10). "
+            "Lecture seule — aucun effet de bord."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Terme recherché (titre + contenu)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Nombre de résultats (1..50, défaut 10)",
+                },
+            },
+            "required": ["q"],
+        },
+    ),
     *artifact_tools.ARTIFACT_TOOLS,
     *dataset_tools.DATASET_TOOLS,
 ]
 
-mcp_server = Server("docflow")
+# Le contrat d'erreur est annoncé UNE fois au niveau du serveur plutôt que
+# répété dans 40 descriptions d'outils : un client le lit à la connexion, et il
+# ne peut pas diverger d'un outil à l'autre.
+mcp_server = Server(
+    "docflow",
+    instructions=(
+        "Erreurs : tout échec rend {error: <phrase lisible>, error_code: <code>} "
+        "et est marqué isError. Brancher sur error_code, jamais sur le texte. "
+        "Codes : " + ", ".join(sorted(errors.ALL_CODES)) + ". "
+        "Quand il y a plus à dire, error_detail porte le contexte utile "
+        "(état courant d'un conflit de version, anomalies de validation, "
+        "dépendants d'une suppression refusée)."
+    ),
+)
 
 
 def configure(pool: asyncpg.Pool, settings: Settings | None = None) -> None:
@@ -1002,6 +1219,17 @@ def _get_pool() -> asyncpg.Pool:
     if _pool is None:
         raise RuntimeError("MCP server not configured — call configure(pool)")
     return _pool
+
+
+def _author_label() -> str | None:
+    """Libellé d'auteur pour les écritures : l'acteur OBO s'il est résolu,
+    sinon l'identité de la session (JWT ou propriétaire de la clé API)."""
+    session = current_session()
+    if session is None:
+        return None
+    if session.actor_user is not None:
+        return session.actor_user.label
+    return session.user.label
 
 
 def _text(data: object) -> list[TextContent]:
@@ -1064,15 +1292,24 @@ def _check_tool_authz(name: str, arguments: dict[str, object]) -> list[TextConte
     session = current_session()
     if session is None or session.unrestricted:
         return None
-    if name in _ADMIN_TOOLS:
-        return _text({"error": f"outil {name} : clé API non-admin, opération interdite"})
+    # create_block AVEC template_slug réalise un import structurel : il exige donc
+    # le même niveau qu'import_template (admin write), pas un simple write de scope.
+    admin_required = name in _ADMIN_TOOLS or (
+        name == "create_block" and bool(arguments.get("template_slug"))
+    )
+    if admin_required:
+        return _text(
+            errors.err(errors.FORBIDDEN, f"outil {name} : clé API non-admin, opération interdite")
+        )
     if name in _WS_TOOLS:
         ws_slug = str(arguments.get("workspace_slug", ""))
         raw_block = arguments.get("block_slug")
         block_slug = str(raw_block) if raw_block else None
         assert session.api_key_scopes is not None  # unrestricted a déjà filtré None
         if not scope_allows(session.api_key_scopes, ws_slug, block_slug, _WS_TOOLS[name]):
-            return _text({"error": f"outil {name} : hors du périmètre de la clé API"})
+            return _text(
+                errors.err(errors.FORBIDDEN, f"outil {name} : hors du périmètre de la clé API")
+            )
     return None
 
 
@@ -1089,7 +1326,10 @@ async def _check_user_access(
     session = current_session()
     if session is None:
         return None
-    user = acting_identity()
+    # Décision « attribution seule » : les droits se jugent TOUJOURS sur le
+    # porteur de la clé, jamais sur l'acteur OBO (forgeable par le porteur —
+    # le secret HMAC de verify_actor est la clé API elle-même).
+    user = require_identity()
     if user.is_admin or name == "create_workspace":
         return None
     if name in _WS_TOOLS or name == "import_template":
@@ -1102,20 +1342,69 @@ async def _check_user_access(
                 return None
             if not await user_can_access_workspace(conn, ws_key, user):
                 return _text(
-                    {
-                        "error": (
-                            f"outil {name} : accès refusé au workspace "
-                            f"'{ws_slug}' pour l'utilisateur"
-                        )
-                    }
+                    errors.err(
+                        errors.FORBIDDEN,
+                        f"outil {name} : accès refusé au workspace '{ws_slug}' pour l'utilisateur",
+                    )
                 )
     return None
 
 
+def _payload_of(result: Sequence[TextContent | ImageContent]) -> object:
+    """Contenu JSON d'une réponse d'outil, ou None si ce n'en est pas une.
+
+    Une réponse d'outil docflow est un unique bloc texte portant du JSON ; tout
+    le reste (image, multi-blocs, texte libre) est par construction un succès.
+    """
+    if len(result) == 1 and isinstance(result[0], TextContent):
+        try:
+            return json.loads(result[0].text)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _finalize_tool_result(
+    result: Sequence[TextContent | ImageContent],
+    payload: object = _UNSET,
+) -> Sequence[TextContent | ImageContent] | CallToolResult:
+    """Marque `isError` sur une réponse d'échec métier.
+
+    Les handlers signalent une erreur en renvoyant un contenu `{"error": ...}`
+    (validation, introuvable, autorisation…). Sans marquage, le SDK MCP conclut
+    au succès et la gateway répond `ok:true / 200` pour un échec — trompeur. On
+    convertit donc ces réponses en `CallToolResult(isError=True)` : le contenu
+    (message d'erreur) est préservé, mais le statut reflète l'échec.
+
+    `payload` évite de re-décoder le JSON que l'appelant a déjà lu pour le
+    journal ; omis, il est décodé ici.
+    """
+    if payload is _UNSET:
+        payload = _payload_of(result)
+    if errors.is_error(payload):
+        return CallToolResult(content=list(result), isError=True)
+    return result
+
+
 @mcp_server.call_tool()  # type: ignore[untyped-decorator]
-async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextContent]:
+async def _call_tool(
+    name: str, arguments: dict[str, object]
+) -> Sequence[TextContent | ImageContent] | CallToolResult:
+    # Point de passage UNIQUE de tous les appels : c'est ici, et nulle part
+    # ailleurs, qu'on sait à la fois ce qui a été demandé et ce qui en est
+    # ressorti. Journaliser plus haut manquerait l'issue, plus bas manquerait
+    # les appels qui n'atteignent pas leur handler (outil inconnu, refus).
+    with calllog.ToolCall(name, arguments) as call:
+        result = await _dispatch_tool(name, arguments)
+        payload = _payload_of(result)
+        call.record(payload)
+        return _finalize_tool_result(result, payload)
+
+
+async def _dispatch_tool(
+    name: str, arguments: dict[str, object]
+) -> Sequence[TextContent | ImageContent]:
     pool = _get_pool()
-    log.info("mcp_call_tool", tool=name)
 
     denied = _check_tool_authz(name, arguments)
     if denied is not None:
@@ -1136,6 +1425,7 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
             pool,
             str(arguments.get("workspace_slug", "")),
             str(arguments.get("doc_id", "")),
+            arguments.get("version"),
         )
     if name == "create_document":
         return await _create_document(pool, arguments)
@@ -1182,6 +1472,10 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _set_property_value(pool, arguments)
     if name == "list_templates":
         return await _list_templates()
+    if name == "export_template":
+        return await _export_template(str(arguments.get("template_slug", "")))
+    if name == "get_template_yaml":
+        return await _get_template_yaml(str(arguments.get("template_slug", "")))
     if name == "create_workspace":
         return await _create_workspace(pool, arguments)
     if name == "import_template":
@@ -1210,21 +1504,47 @@ async def _call_tool(name: str, arguments: dict[str, object]) -> list[TextConten
         return await _generate_api_key(pool, arguments)
     if name == "find_referencing_documents":
         return await _find_referencing_documents(pool, arguments)
+    if name == "search_documents":
+        return await _search_documents(pool, arguments)
     if name == "list_workspace_members":
         return await _list_workspace_members(pool, arguments)
     if name == "add_workspace_member":
         return await _add_workspace_member(pool, arguments)
     if name == "remove_workspace_member":
         return await _remove_workspace_member(pool, arguments)
+    if name == "create_upload":
+        return await artifact_tools.handle_create_upload(pool, _settings, arguments)
     if name == "create_artifact":
         return await artifact_tools.handle_create_artifact(pool, _settings, arguments)
+    if name == "update_artifact":
+        return await artifact_tools.handle_update_artifact(pool, _settings, arguments)
+    if name == "patch_artifact":
+        return await artifact_tools.handle_patch_artifact(pool, _settings, arguments)
+    if name == "prune_artifact_revisions":
+        return await artifact_tools.handle_prune_artifact_revisions(pool, _settings, arguments)
     if name == "get_artifact":
         return await artifact_tools.handle_get_artifact(pool, arguments)
+    if name == "get_artifact_data":
+        return await artifact_tools.handle_get_artifact_data(pool, _settings, arguments)
+    if name == "list_artifacts":
+        return await artifact_tools.handle_list_artifacts(pool, arguments)
     if name == "get_artifact_link":
         return await artifact_tools.handle_get_artifact_link(pool, _settings, arguments)
+    if name == "get_preview_link":
+        return await artifact_tools.handle_get_preview_link(pool, _settings, arguments)
+    if name == "get_maquette_png":
+        return await artifact_tools.handle_get_maquette_png(pool, _settings, arguments)
+    if name == "set_mockup_base":
+        return await artifact_tools.handle_set_mockup_base(pool, _settings, arguments)
+    if name == "apply_mockup_base":
+        return await artifact_tools.handle_apply_mockup_base(pool, _settings, arguments)
+    if name == "propagate_mockup_base":
+        return await artifact_tools.handle_propagate_mockup_base(pool, _settings, arguments)
+    if name == "mockup_base_drift":
+        return await artifact_tools.handle_mockup_base_drift(pool, arguments)
     if name in dataset_tools.DATASET_WS_TOOLS:
         return await dataset_tools.handle(name, pool, arguments)
-    return _text({"error": f"outil inconnu : {name}"})
+    return _text(errors.err(errors.UNKNOWN_TOOL, f"outil inconnu : {name}"))
 
 
 async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
@@ -1236,9 +1556,10 @@ async def _list_workspaces(pool: asyncpg.Pool) -> list[TextContent]:
             assert session.api_key_scopes is not None
             key_allowed = allowed_workspace_slugs(session.api_key_scopes)
             rows = [r for r in rows if r["slug"] in key_allowed]
-        # Filtre accès-utilisateur (owner/membre/superadmin). None = superadmin
-        # (tout). Intersection avec le scope de clé le cas échéant.
-        user_allowed = await accessible_workspace_slugs(pool, session.acting_user)
+        # Filtre accès-utilisateur (owner/membre/superadmin) : droits du porteur
+        # de la clé, jamais de l'acteur OBO. None = superadmin (tout).
+        # Intersection avec le scope de clé le cas échéant.
+        user_allowed = await accessible_workspace_slugs(pool, session.user)
         if user_allowed is not None:
             rows = [r for r in rows if r["slug"] in user_allowed]
     return _text([dict(r) for r in rows])
@@ -1318,13 +1639,33 @@ async def _list_documents(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]
     return _text([dict(r) for r in rows])
 
 
-async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
+async def _get_document(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: str, version: object = None
+) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
+    # Version demandée (optionnelle) : entier strict, sinon erreur explicite.
+    want_version: int | None = None
+    if version is not None:
+        try:
+            want_version = int(str(version))
+        except (TypeError, ValueError):
+            return _text(
+                errors.err(errors.INVALID, "version : entier attendu (numéro de révision)")
+            )
+
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
-        row = await conn.fetchrow(
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text(errors.err(errors.NOT_FOUND, e))
+        head = await conn.fetchrow(
             """
-            SELECT d.doc_technical_key::text AS id, d.title,
+            SELECT d.doc_technical_key::text AS id, d.title, d.version AS current_version,
                    dv.content AS contenu,
+                   d.type AS content_type,
                    ft.slug AS functional_type_slug
             FROM document d
             LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
@@ -1335,19 +1676,68 @@ async def _get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[T
               AND d.doc_technical_key = $2
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
-        if row is None:
-            return _text({"error": f"document '{doc_id}' introuvable"})
-        unset = await _required_unset_slugs(conn, wk, uuid.UUID(doc_id))
-    result = dict(row)
-    if unset:
-        result["warnings"] = [
-            "propriété(s) obligatoire(s) non renseignée(s) : "
-            + ", ".join(unset)
-            + " — les renseigner avec set_property_value"
-        ]
-    return _text(result)
+        if head is None:
+            return _text(errors.err(errors.NOT_FOUND, f"document '{doc_id}' introuvable"))
+        current_version = head["current_version"]
+
+        # Révision courante : forme historique du retour, enrichie de version/is_current.
+        if want_version is None:
+            unset = await _required_unset_slugs(conn, wk, doc_uuid)
+            result: dict[str, object] = {
+                "id": head["id"],
+                "title": head["title"],
+                "contenu": head["contenu"],
+                "content_type": head["content_type"],
+                "functional_type_slug": head["functional_type_slug"],
+                "version": current_version,
+                "is_current": True,
+            }
+            if unset:
+                result["warnings"] = [
+                    "propriété(s) obligatoire(s) non renseignée(s) : "
+                    + ", ".join(unset)
+                    + " — les renseigner avec set_property_value"
+                ]
+            return _text(result)
+
+        # Lecture d'une révision antérieure : seuls titre et contenu sont versionnés.
+        ver_row = await conn.fetchrow(
+            "SELECT title, content FROM document_version "
+            "WHERE document_ref = $1 AND version_number = $2",
+            doc_uuid,
+            want_version,
+        )
+        if ver_row is None:
+            bounds = await conn.fetchrow(
+                "SELECT min(version_number) AS lo, max(version_number) AS hi "
+                "FROM document_version WHERE document_ref = $1",
+                doc_uuid,
+            )
+            return _text(
+                errors.err(
+                    errors.VERSION_NOT_FOUND,
+                    f"version {want_version} introuvable pour ce document",
+                    available_min=bounds["lo"] if bounds else None,
+                    available_max=bounds["hi"] if bounds else None,
+                )
+            )
+    return _text(
+        {
+            "id": head["id"],
+            "title": ver_row["title"],
+            "contenu": ver_row["content"],
+            # functional_type_slug n'est PAS versionné : état courant renvoyé tel quel.
+            "functional_type_slug": head["functional_type_slug"],
+            "version": want_version,
+            "is_current": want_version == current_version,
+            "note": (
+                "Seuls le titre et le contenu sont versionnés ; functional_type_slug "
+                "et les propriétés reflètent l'état courant."
+            ),
+        }
+    )
 
 
 async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1361,15 +1751,40 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     title = str(args.get("title", ""))
     contenu = str(args["contenu"]) if "contenu" in args else None
     type_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
+    content_type = str(args["content_type"]) if "content_type" in args else None
     try:
         parent_id = uuid.UUID(str(args["parent_id"])) if args.get("parent_id") else None
     except ValueError:
-        return _text({"error": "parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "parent_id : UUID invalide"))
+    # Le type fonctionnel est REQUIS, comme dans l'interface — qui désactive la
+    # création tant qu'aucun type n'est choisi. L'écart entre les deux chemins
+    # produisait des documents sans type, que rien ne contraignait ensuite :
+    # `_validate_type_position` se retire pour eux, ils échappaient donc aussi à
+    # la hiérarchie du bloc.
+    #
+    # Rupture de contrat ASSUMÉE (décision d'architecte du 2026-09-21) : un
+    # appelant qui omettait le paramètre reçoit désormais un refus. Le message
+    # doit donc suffire à se corriger seul — d'où les types admissibles nommés.
+    if type_slug is None:
+        try:
+            admissibles = await doc_svc.allowed_types(pool, ws_slug, block_slug, parent_id)
+        except HTTPException:
+            admissibles = []
+        return _text(
+            errors.err(
+                errors.FUNCTIONAL_TYPE_REQUIRED,
+                "functional_type_slug est requis. Types admissibles à cette position : "
+                + (", ".join(t["slug"] for t in admissibles) or "(aucun)")
+                + ". Les lister aussi via get_block_type / list_blocks.",
+                allowed=[t["slug"] for t in admissibles],
+            )
+        )
+
     raw_props = args.get("properties")
     properties: dict[str, str] | None = None
     if raw_props is not None:
         if not isinstance(raw_props, dict):
-            return _text({"error": "properties : objet {slug: valeur} attendu"})
+            return _text(errors.err(errors.INVALID, "properties : objet {slug: valeur} attendu"))
         properties = {str(k): str(v) for k, v in raw_props.items()}
 
     async with pool.acquire() as conn:
@@ -1383,7 +1798,11 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             block_slug,
         )
     if block_id is None:
-        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+        return _text(
+            errors.err(
+                errors.NOT_FOUND, f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"
+            )
+        )
 
     try:
         data = DocumentCreate(
@@ -1391,14 +1810,33 @@ async def _create_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             block_id=block_id,
             content=contenu,
             functional_type_slug=type_slug,
+            content_type=content_type,
             parent_id=parent_id,
             properties=properties,
         )
-        doc = await doc_svc.create_document(pool, ws_slug, data)
+        doc = await doc_svc.create_document(pool, ws_slug, data, author=_author_label())
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
-    return _text({"created": True, "id": str(doc.doc_technical_key), "title": doc.title})
+    # La version initiale est retournée : elle est directement utilisable comme
+    # expected_version d'un update_document ultérieur (pas de relecture requise).
+    return _text(
+        {
+            "created": True,
+            "id": str(doc.doc_technical_key),
+            "title": doc.title,
+            "version": doc.version,
+        }
+    )
+
+
+def _update_error(status_code: int, detail: object) -> dict[str, object]:
+    """Traduit une HTTPException du service update_document en erreur MCP
+    discriminable par un `code` machine (le client distingue conflit de version,
+    document introuvable et refus de droits sans analyser un message)."""
+    if status_code == 409 and isinstance(detail, dict):
+        return errors.version_conflict(detail)
+    return errors.from_http(status_code, detail)
 
 
 async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -1411,39 +1849,59 @@ async def _update_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     doc_id_str = str(args.get("doc_id", ""))
     title = str(args["title"]) if "title" in args else None
     contenu = str(args["contenu"]) if "contenu" in args else None
+    ft_slug = str(args["functional_type_slug"]) if "functional_type_slug" in args else None
 
-    if not title and contenu is None:
-        return _text({"error": "au moins title ou contenu requis"})
-
-    doc_id = uuid.UUID(doc_id_str)
-
-    # Lecture de la version courante pour la concurrence optimiste transparente
-    async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
-        current_version: int | None = await conn.fetchval(
-            "SELECT version FROM document "
-            "WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-            doc_id,
-            wk,
+    if not title and contenu is None and ft_slug is None:
+        return _text(
+            errors.err(errors.INVALID, "au moins title, contenu ou functional_type_slug requis")
         )
-    if current_version is None:
-        return _text({"error": f"document '{doc_id_str}' introuvable"})
 
-    # Ne renseigner que les champs réellement fournis : un champ omis doit rester
-    # « unset » (model_dump(exclude_unset=True) l'exclut) pour que le service
-    # reporte sa valeur courante au lieu de l'écraser à NULL (bug MCO).
-    update_fields: dict[str, object] = {"expected_version": current_version}
+    # Le type fonctionnel n'est PAS du contenu : il ne se versionne pas, et sa
+    # pose seule n'exige donc aucune version attendue. Dès qu'on touche au titre
+    # ou au corps, la concurrence optimiste reprend ses droits — pas d'écriture
+    # aveugle, un conflit est un refus explicite.
+    touches_content = title is not None or contenu is not None
+    if touches_content and args.get("expected_version") is None:
+        return _text(
+            errors.err(
+                errors.VERSION_REQUIRED,
+                "expected_version obligatoire : lire la version courante via "
+                "get_document (champ 'version') avant d'écrire.",
+            )
+        )
+    try:
+        expected_version = (
+            int(str(args["expected_version"])) if args.get("expected_version") is not None else None
+        )
+    except (TypeError, ValueError):
+        return _text(
+            errors.err(
+                errors.VERSION_REQUIRED,
+                "expected_version doit être un entier (numéro de révision).",
+            )
+        )
+
+    try:
+        doc_id = uuid.UUID(doc_id_str)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
+
+    # Ne renseigner que les champs réellement fournis : un champ omis reste
+    # « unset » (exclude_unset l'exclut) pour que le service conserve sa valeur
+    # courante au lieu de l'écraser à NULL.
+    update_fields: dict[str, object] = {}
     if "title" in args:
         update_fields["title"] = title
     if "contenu" in args:
         update_fields["content"] = contenu
+    if ft_slug is not None:
+        update_fields["functional_type_slug"] = ft_slug
 
     try:
-        data = DocumentUpdate(**update_fields)
-        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+        data = DocumentUpdate(expected_version=expected_version, **update_fields)
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
     except HTTPException as e:
-        return _text({"error": e.detail})
-
+        return _text(_update_error(e.status_code, e.detail))
     return _text({"updated": True, "title": doc.title, "version": doc.version})
 
 
@@ -1459,7 +1917,7 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
         raw_parent = args.get("parent_id")
         parent_id = uuid.UUID(str(raw_parent)) if raw_parent else None
     except ValueError:
-        return _text({"error": "doc_id / parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id / parent_id : UUID invalide"))
     ft_slug = str(args["functional_type_slug"]) if args.get("functional_type_slug") else None
 
     # parent_id est TOUJOURS posé explicitement (None = racine) ; le type ne
@@ -1470,9 +1928,9 @@ async def _set_document_parent(pool: asyncpg.Pool, args: dict[str, object]) -> l
         else DocumentUpdate(parent_id=parent_id)
     )
     try:
-        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data)
+        doc = await doc_svc.update_document(pool, ws_slug, doc_id, data, author=_author_label())
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -1488,35 +1946,26 @@ async def _delete_document(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     from fastapi import HTTPException
 
     from docflow.documents import service as doc_svc
+    from docflow.errors import DependentsConflictError
 
     ws_slug = str(args.get("workspace_slug", ""))
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
-    confirm = bool(args.get("confirm", False))
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
+    confirm = as_bool(args.get("confirm"), default=False)
 
+    # La garde vit dans le service, sous la transaction de suppression : la
+    # compter ici en ferait de nouveau un TOCTOU (un enfant créé entre-temps
+    # partirait en cascade sans confirmation).
     try:
-        dependents = await doc_svc.count_document_descendants(pool, ws_slug, doc_id)
+        snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id, confirm=confirm)
+    except DependentsConflictError as e:
+        # Pas une HTTPException : l'objet refusé a des dépendants, et la liste
+        # est ce qui permet à l'appelant de décider quoi faire ensuite.
+        return _text(errors.err(errors.CONFLICT, e.detail, dependents=e.dependents))
     except HTTPException as e:
-        return _text({"error": e.detail})
-
-    if dependents > 0 and not confirm:
-        return _text(
-            {
-                "error": (
-                    f"la suppression de ce document détruirait en cascade {dependents} "
-                    "document(s) descendant(s) (valeurs, commentaires, réactions "
-                    "compris) ; rappeler avec confirm=true pour confirmer"
-                ),
-                "dependents": dependents,
-            }
-        )
-
-    try:
-        snapshot = await doc_svc.delete_document(pool, ws_slug, doc_id)
-    except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text({"deleted": True, **snapshot})
 
@@ -1528,22 +1977,22 @@ async def _sync_child_documents(pool: asyncpg.Pool, args: dict[str, object]) -> 
 
     ws_slug = str(args.get("workspace_slug", ""))
     child_type_slug = str(args.get("child_type_slug", ""))
-    exhaustive = bool(args.get("exhaustive", False))
+    exhaustive = as_bool(args.get("exhaustive"), default=False)
     try:
         parent_id = uuid.UUID(str(args.get("parent_id", "")))
     except ValueError:
-        return _text({"error": "parent_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "parent_id : UUID invalide"))
 
     raw_items = args.get("items")
     if not isinstance(raw_items, list) or not all(isinstance(i, dict) for i in raw_items):
-        return _text({"error": "items : liste d'objets attendue"})
+        return _text(errors.err(errors.INVALID, "items : liste d'objets attendue"))
 
     try:
         result = await sync_child_documents(
             pool, ws_slug, parent_id, child_type_slug, raw_items, exhaustive
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1557,7 +2006,7 @@ async def _find_by_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> lis
     try:
         result = await find_by_dedup_key(pool, ws_slug, text)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1570,13 +2019,13 @@ async def _set_dedup_key(pool: asyncpg.Pool, args: dict[str, object]) -> list[Te
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     raw_text = args.get("text")
     text = str(raw_text) if raw_text is not None else None
     try:
         result = await set_dedup_key(pool, ws_slug, doc_id, text)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
 
 
@@ -1611,13 +2060,24 @@ async def _get_block_type(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> 
         block_slug,
     )
     if row is None:
-        return _text({"error": f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"})
+        return _text(
+            errors.err(
+                errors.NOT_FOUND, f"bloc '{block_slug}' introuvable dans le workspace '{ws_slug}'"
+            )
+        )
     return _text(dict(row))
 
 
 async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text(errors.err(errors.NOT_FOUND, e))
         rows = await conn.fetch(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -1637,7 +2097,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             ORDER BY pd.slug
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
         # Ensemble COMPLET des valeurs autorisées par propriété restricted_list du
         # type du document (pas seulement la valeur courante) : un agent peut ainsi
@@ -1655,7 +2115,7 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
             ORDER BY pd.slug, pav.position, pav.created_at
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
         )
     allowed_by_prop: dict[str, list[dict[str, str]]] = {}
     for r in av_rows:
@@ -1674,8 +2134,15 @@ async def _list_property_values(pool: asyncpg.Pool, ws_slug: str, doc_id: str) -
 async def _get_property_value(
     pool: asyncpg.Pool, ws_slug: str, doc_id: str, prop_slug: str
 ) -> list[TextContent]:
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     async with pool.acquire() as conn:
-        wk = await _require_workspace(conn, ws_slug)
+        try:
+            wk = await _require_workspace(conn, ws_slug)
+        except ValueError as e:
+            return _text(errors.err(errors.NOT_FOUND, e))
         row = await conn.fetchrow(
             """
             SELECT pd.slug AS prop_slug, pd.label, pd.type, pd.required,
@@ -1695,15 +2162,19 @@ async def _get_property_value(
             WHERE pd.slug = $3
             """,
             wk,
-            uuid.UUID(doc_id),
+            doc_uuid,
             prop_slug,
         )
     if row is None:
-        return _text({"error": f"propriété '{prop_slug}' introuvable sur ce document"})
+        return _text(
+            errors.err(errors.NOT_FOUND, f"propriété '{prop_slug}' introuvable sur ce document")
+        )
     return _text(dict(row))
 
 
 async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    from fastapi import HTTPException
+
     from docflow.documents import service as doc_svc
     from docflow.schemas.property_value import PropertyValueSet
 
@@ -1714,10 +2185,18 @@ async def _set_property_value(pool: asyncpg.Pool, args: dict[str, object]) -> li
     allowed_value_slug = str(args["allowed_value_slug"]) if "allowed_value_slug" in args else None
     expected_version = int(str(args.get("expected_version", 0)))
 
+    try:
+        doc_id = uuid.UUID(doc_id_str)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
+
     data = PropertyValueSet(
         value=value, allowed_value_slug=allowed_value_slug, expected_version=expected_version
     )
-    out = await doc_svc.set_property_value(pool, ws_slug, uuid.UUID(doc_id_str), prop_slug, data)
+    try:
+        out = await doc_svc.set_property_value(pool, ws_slug, doc_id, prop_slug, data)
+    except HTTPException as e:
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text({"updated": True, "prop_slug": out.prop_slug})
 
 
@@ -1766,6 +2245,47 @@ def _find_template(template_slug: str) -> object:
     raise ValueError(f"template '{template_slug}' introuvable")
 
 
+async def _export_template(template_slug: str) -> list[TextContent]:
+    """Export aplati (héritage résolu) d'un template global — miroir du REST."""
+    from docflow.templates.inheritance import resolve
+    from docflow.templates.models import Template
+
+    try:
+        tpl = cast(Template, _find_template(template_slug))
+        resolved = resolve(tpl)
+    except ValueError as e:
+        return _text(errors.err(errors.NOT_FOUND, e))
+    except Exception as e:  # héritage incohérent → message explicite
+        return _text(errors.err(errors.INVALID, f"template non résolvable : {e}"))
+
+    return _text(
+        {
+            "template": tpl.template,
+            "label": tpl.label,
+            "version": tpl.version,
+            "functional_types": [r.model_dump(mode="json") for r in resolved],
+        }
+    )
+
+
+async def _get_template_yaml(template_slug: str) -> list[TextContent]:
+    """Définition YAML source (héritage non résolu) d'un template global."""
+    import yaml
+
+    from docflow.templates.models import Template
+
+    if _TEMPLATES_DIR.exists():
+        for yaml_file in sorted(_TEMPLATES_DIR.glob("*.yaml")):
+            try:
+                raw = yaml.safe_load(yaml_file.read_text())
+                tpl = Template.model_validate(raw)
+            except Exception:
+                continue
+            if tpl.template == template_slug:
+                return _text({"template": tpl.template, "yaml_content": yaml_file.read_text()})
+    return _text(errors.err(errors.NOT_FOUND, f"template '{template_slug}' introuvable"))
+
+
 async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from fastapi import HTTPException
     from pydantic import ValidationError
@@ -1783,9 +2303,11 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
         # (l'humain si l'OBO du portail l'a résolu, sinon l'identité de la clé).
         result = await ws_svc.create_workspace(pool, data, owner_id=acting_identity().id)
     except ValidationError as e:
-        return _text({"error": e.errors(include_url=False)})
+        return _text(
+            errors.err(errors.INVALID, "arguments invalides", issues=e.errors(include_url=False))
+        )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -1799,7 +2321,9 @@ async def _create_workspace(pool: asyncpg.Pool, args: dict[str, object]) -> list
 
 async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
     from docflow.templates.importer import (
+        ConcurrentImportError,
         ImportConflictError,
+        MissingTemplateDependencyError,
         VersionConflictError,
         run_import,
     )
@@ -1810,13 +2334,20 @@ async def _import_template(pool: asyncpg.Pool, args: dict[str, object]) -> list[
     try:
         tpl = _find_template(template_slug)
         report = await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
-    except VersionConflictError as e:
-        return _text({"error": str(e)})
+    except (VersionConflictError, ConcurrentImportError) as e:
+        return _text(errors.err(errors.CONFLICT, e))
     except ImportConflictError as e:
         conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]
-        return _text({"error": "conflits bloquants", "conflicts": conflicts})
+        return _text(errors.err(errors.CONFLICT, "conflits bloquants", conflicts=conflicts))
+    except MissingTemplateDependencyError as e:
+        # AVANT le `except ValueError` : cette exception en hérite, et y tomber
+        # rendrait « not_found », c'est-à-dire « template introuvable » — alors
+        # que le template existe et que ce sont ses dépendances qui manquent.
+        # Distinguer les deux est tout l'objet de 9190e1af ; le perdre ici
+        # annulerait le bénéfice côté MCP.
+        return _text(errors.err(errors.CONFLICT, e, missing_templates=e.missing))
     except ValueError as e:
-        return _text({"error": str(e)})
+        return _text(errors.err(errors.NOT_FOUND, e))
 
     return _text(
         {
@@ -1834,11 +2365,6 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
 
     from docflow.blocks import service as block_svc
     from docflow.schemas.block import DataBlockCreate
-    from docflow.templates.importer import (
-        ImportConflictError,
-        VersionConflictError,
-        run_import,
-    )
 
     ws_slug = str(args.get("workspace_slug", ""))
     blk_slug = str(args.get("slug", ""))
@@ -1847,27 +2373,23 @@ async def _create_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
     parent_slug = str(args["parent_slug"]) if "parent_slug" in args else None
     template_slug = str(args["template_slug"]) if "template_slug" in args else None
 
-    if template_slug:
-        try:
-            tpl = _find_template(template_slug)
-            await run_import(pool, ws_slug, tpl)  # type: ignore[arg-type]
-        except VersionConflictError:
-            pass  # version plus ancienne déjà installée — on continue
-        except (ImportConflictError, ValueError) as e:
-            return _text({"error": f"import template : {e}"})
-
+    # L'auto-import du template vit désormais dans le service (parité REST/MCP,
+    # transaction commune import+création) — plus de logique d'import ici.
     try:
         data = DataBlockCreate(
             slug=blk_slug,
             label=label,
             functional_type_slug=type_slug,
             parent_slug=parent_slug,
+            template_slug=template_slug,
         )
         result = await block_svc.create_block(pool, ws_slug, data)
     except ValidationError as e:
-        return _text({"error": e.errors(include_url=False)})
+        return _text(
+            errors.err(errors.INVALID, "arguments invalides", issues=e.errors(include_url=False))
+        )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -1889,7 +2411,7 @@ async def _list_blocks(pool: asyncpg.Pool, ws_slug: str) -> list[TextContent]:
     try:
         blocks = await block_svc.list_blocks(pool, ws_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(
         [
             {
@@ -1912,36 +2434,37 @@ async def _delete_block(pool: asyncpg.Pool, args: dict[str, object]) -> list[Tex
 
     ws_slug = str(args.get("workspace_slug", ""))
     block_slug = str(args.get("block_slug", ""))
-    confirm = bool(args.get("confirm", False))
+    confirm = as_bool(args.get("confirm"), default=False)
 
     # Décompte préalable pour un message explicite (miroir de _delete_document).
     try:
         counts = await block_svc.count_block_dependents(pool, ws_slug, block_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     dependents = counts["child_blocks"] + counts["documents"]
     if dependents > 0 and not confirm:
         return _text(
-            {
-                "error": (
-                    f"la suppression du bloc '{block_slug}' détruirait en cascade "
-                    f"{counts['child_blocks']} bloc(s) enfant(s) et "
-                    f"{counts['documents']} document(s) (valeurs et historique compris) ; "
-                    "rappeler avec confirm=true pour confirmer"
-                ),
-                "child_blocks": counts["child_blocks"],
-                "documents": counts["documents"],
-                "dependents": dependents,
-            }
+            errors.err(
+                errors.CONFLICT,
+                f"la suppression du bloc '{block_slug}' détruirait en cascade "
+                f"{counts['child_blocks']} bloc(s) enfant(s) et "
+                f"{counts['documents']} document(s) (valeurs et historique compris) ; "
+                "rappeler avec confirm=true pour confirmer",
+                child_blocks=counts["child_blocks"],
+                documents=counts["documents"],
+                dependents=dependents,
+            )
         )
 
     try:
         await block_svc.delete_block(pool, ws_slug, block_slug, confirm=confirm)
     except DependentsConflictError as e:
-        return _text({"error": e.detail, "dependents": e.dependents})
+        # Pas une HTTPException : l'objet refusé a des dépendants, et la liste
+        # est ce qui permet à l'appelant de décider quoi faire ensuite.
+        return _text(errors.err(errors.CONFLICT, e.detail, dependents=e.dependents))
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text({"deleted": True, "block_slug": block_slug})
 
@@ -1956,7 +2479,7 @@ async def _list_block_properties(
     try:
         out = await list_block_properties(pool, ws_slug, block_slug)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -1973,7 +2496,10 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
     from docflow.documents.block_query import list_block_objects
 
-    page, page_size = _pagination_args(args)
+    try:
+        page, page_size = _pagination_args(args)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "page / page_size : entier invalide"))
     try:
         out = await list_block_objects(
             pool,
@@ -1983,7 +2509,7 @@ async def _list_block_objects(pool: asyncpg.Pool, args: dict[str, object]) -> li
             page_size,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2003,7 +2529,7 @@ async def _list_block_tree(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             page_size,
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2016,7 +2542,10 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
 
     ws = str(args.get("workspace_slug", ""))
     block = str(args.get("block_slug", ""))
-    page, page_size = _pagination_args(args)
+    try:
+        page, page_size = _pagination_args(args)
+    except ValueError:
+        return _text(errors.err(errors.INVALID, "page / page_size : entier invalide"))
 
     clauses: list[FilterClause] = []
     try:
@@ -2038,10 +2567,12 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
         )
         projection = args.get("projection")
         type_slugs = args.get("type_slugs")
+        content_types = args.get("content_types")
         spec = QuerySpec(
             workspace_slug=ws,
             block_slug=block,
             type_slugs=type_slugs if isinstance(type_slugs, list) else None,
+            content_types=content_types if isinstance(content_types, list) else None,
             filters=clauses,
             sort=sort,
             projection=projection if isinstance(projection, list) else None,
@@ -2049,12 +2580,12 @@ async def _query_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[
             page_size=page_size,
         )
     except ValidationError as e:
-        return _text({"error": f"QuerySpec invalide : {e}"})
+        return _text(errors.err(errors.INVALID, f"QuerySpec invalide : {e}"))
 
     try:
         out = await query_documents(pool, ws, spec)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out.model_dump())
 
 
@@ -2066,7 +2597,7 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
 
     name = str(args.get("name", ""))
     ws_slug = str(args.get("workspace_slug", ""))
-    read_only = bool(args.get("read_only", True))
+    read_only = as_bool(args.get("read_only"), default=True)
     description = str(args["description"]) if "description" in args else None
 
     # Le profil est rattaché à l'identité authentifiée de la session MCP —
@@ -2075,19 +2606,14 @@ async def _create_api_profile(pool: asyncpg.Pool, args: dict[str, object]) -> li
     owner_id = _require_identity().id
 
     try:
-        profile = await ak_svc.create_profile(
+        profile = await ak_svc.create_profile_with_scopes(
             pool,
             owner_id,
             ApiProfileCreate(name=name, description=description, is_admin=False),
-        )
-        await ak_svc.set_scopes(
-            pool,
-            owner_id,
-            profile.id,
             [ApiProfileScopeIn(workspace_slug=ws_slug, block_slug=None, read_only=read_only)],
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2120,7 +2646,7 @@ async def _generate_api_key(pool: asyncpg.Pool, args: dict[str, object]) -> list
             ApiKeyCreate(profile_id=uuid.UUID(profile_id_str), label=label),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
 
     return _text(
         {
@@ -2143,12 +2669,37 @@ async def _find_referencing_documents(
     try:
         doc_id = uuid.UUID(str(args.get("doc_id", "")))
     except ValueError:
-        return _text({"error": "doc_id : UUID invalide"})
+        return _text(errors.err(errors.INVALID, "doc_id : UUID invalide"))
     try:
         result = await ref_svc.find_referencing_documents(pool, ws_slug, doc_id)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(result)
+
+
+async def _search_documents(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
+    """Recherche plein-texte cross-workspace, bornée aux droits de l'identité."""
+    from docflow.references import service as ref_svc
+
+    q = str(args.get("q", "")).strip()
+    if not q:
+        return _text(errors.err(errors.INVALID, "q requis (terme non vide)"))
+    raw_limit = args.get("limit", 10)
+    limit = raw_limit if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) else 10
+    limit = max(1, min(50, limit))
+
+    allowed = await accessible_workspace_slugs(pool, require_identity())
+    # Outil cross-workspace : sans argument `workspace_slug`, il ne peut pas passer
+    # par `_WS_TOOLS` (dont le contrôle porte sur cet argument et refuserait tout).
+    # Le périmètre de la clé API s'applique donc ici, en intersection avec l'accès
+    # utilisateur — même composition que `_list_workspaces`. None = superadmin (tout).
+    session = current_session()
+    if session is not None and not session.unrestricted:
+        assert session.api_key_scopes is not None
+        key_allowed = allowed_workspace_slugs(session.api_key_scopes)
+        allowed = key_allowed if allowed is None else allowed & key_allowed
+    results = await ref_svc.search_documents_global(pool, q, limit, allowed_ws=allowed)
+    return _text([r.model_dump(mode="json") for r in results])
 
 
 async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -2159,7 +2710,7 @@ async def _list_workspace_members(pool: asyncpg.Pool, args: dict[str, object]) -
     try:
         out = await members.list_members(pool, str(args.get("workspace_slug", "")))
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)
 
 
@@ -2170,15 +2721,16 @@ async def _add_workspace_member(pool: asyncpg.Pool, args: dict[str, object]) -> 
 
     role = str(args["role"]) if args.get("role") else "member"
     try:
+        # Contrôle de droits (owner/superadmin) → porteur de la clé, pas l'acteur OBO.
         out = await members.add_member(
             pool,
             str(args.get("workspace_slug", "")),
             str(args.get("member_email", "")),
             role,
-            acting_identity(),
+            require_identity(),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)
 
 
@@ -2190,12 +2742,13 @@ async def _remove_workspace_member(
     from docflow.workspaces import members
 
     try:
+        # Contrôle de droits (owner/superadmin) → porteur de la clé, pas l'acteur OBO.
         out = await members.remove_member(
             pool,
             str(args.get("workspace_slug", "")),
             str(args.get("member_email", "")),
-            acting_identity(),
+            require_identity(),
         )
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     return _text(out)

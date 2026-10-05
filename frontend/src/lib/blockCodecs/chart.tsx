@@ -14,7 +14,7 @@ const SKELETON_BODY = 'Fait | 12\nEn cours | 5\nÀ faire | 3'
 
 export const chartCodec = {
   type: 'dfChart',
-  pattern: /```df-chart([^\n]*)\n([\s\S]*?)```/g,
+  pattern: /```df-chart(?=\s|$)([^\n]*)\n([\s\S]*?)```/g,
   toBlock: (match: RegExpExecArray): ChartProps => ({
     attrs: match[1] ?? '',
     body: match[2].replace(/\n$/, ''),

@@ -29,6 +29,18 @@ class ContractOut(BaseModel):
     updated_at: datetime
 
 
+class OrphanedOperation(BaseModel):
+    """Opération disparue du contrat rafraîchi mais encore utilisée."""
+
+    operation_id: str
+    automations: list[str]
+
+
+class ContractRefreshOut(BaseModel):
+    contract: ContractOut
+    orphaned_operations: list[OrphanedOperation] = []
+
+
 class AuthHeaderRequirement(BaseModel):
     """En-tête d'authentification requis par un schéma de sécurité du contrat."""
 

@@ -1,17 +1,30 @@
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') + '/api'
 
-const TOKEN_KEY = 'docflow_token'
+// L'authentification réelle est un cookie de session HttpOnly, illisible en JS
+// (posé/effacé par le serveur). Ce drapeau localStorage n'est qu'un INDICE d'UI
+// pour le routage (afficher la mire vs l'app) — aucune valeur sensible. S'il est
+// périmé, l'API répond 401 et `handleUnauthorized` redirige vers /login.
+const AUTHED_KEY = 'docflow_authed'
+// Indice d'UI du rôle admin (afficher/masquer les liens d'administration). PAS
+// une décision de sécurité : le serveur revalide is_admin à chaque requête admin.
+const ADMIN_KEY = 'docflow_is_admin'
 
+/** Indice d'UI « une session est censée être ouverte » (pas un jeton). */
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return localStorage.getItem(AUTHED_KEY)
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
+/** Marque l'UI comme authentifiée après un login réussi (le cookie fait foi),
+ *  et mémorise le rôle admin retourné pour le routage/affichage. */
+export function setToken(isAdmin = false): void {
+  localStorage.setItem(AUTHED_KEY, '1')
+  if (isAdmin) localStorage.setItem(ADMIN_KEY, '1')
+  else localStorage.removeItem(ADMIN_KEY)
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(AUTHED_KEY)
+  localStorage.removeItem(ADMIN_KEY)
 }
 
 /** Erreur HTTP enrichie : porte le code statut et le corps `detail` brut. */
@@ -66,13 +79,12 @@ function detailMessage(detail: unknown, fallback: string): string {
 }
 
 async function requestText(path: string, options: RequestInit = {}): Promise<string> {
-  const token = getToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  // credentials:'include' → le cookie de session HttpOnly accompagne la requête.
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -83,13 +95,12 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
 
 /** Requête retournant un Blob (téléchargement de fichier), avec la même gestion 401 / erreurs que `request`. */
 async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
-  const token = getToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  // credentials:'include' → le cookie de session HttpOnly accompagne la requête.
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -99,15 +110,13 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: 'include' })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
@@ -120,17 +129,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 /** Requête multipart (upload de fichier) : pas de Content-Type manuel, le
  *  navigateur pose lui-même la boundary du FormData. */
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: form, headers })
-  if (res.status === 401) handleUnauthorized(path, Boolean(token))
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    body: form,
+    headers,
+    credentials: 'include',
+  })
+  if (res.status === 401) handleUnauthorized(path, getToken() !== null)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const detail = (body as { detail?: unknown }).detail ?? null
     throw new ApiError(res.status, detail, detailMessage(detail, res.statusText))
   }
   return res.json() as Promise<T>
+}
+
+/** URL absolue d'un chemin API — pour les consommateurs hors `request`
+ *  (flux SSE fetch-streaming, qui gèrent eux-mêmes la lecture du corps). */
+export function apiUrl(path: string): string {
+  return `${BASE_URL}${path}`
 }
 
 export const api = {
@@ -189,6 +207,10 @@ export interface WorkspaceOut {
   archived_at: string | null
   created_at: string
   updated_at: string
+  /** Renseignés par l'index (`GET /workspaces`) ; 0/null sur une lecture unitaire. */
+  blocks_count: number
+  documents_count: number
+  last_activity_at: string | null
 }
 
 export interface TemplateInfo {
@@ -198,6 +220,17 @@ export interface TemplateInfo {
   path: string
   concrete_types: number
   type_slugs: string[]
+  /** Blocs utilisateurs (tous workspaces) portés par les types de ce template. */
+  blocks_count: number
+}
+
+export interface GalleryPullDiff {
+  template: string
+  installed_version: number | null
+  remote_version: number
+  new_types: string[]
+  /** Propriétés ajoutées aux types déjà installés : « type.prop ». */
+  new_properties: string[]
 }
 
 export interface RemoteTemplateInfo {
@@ -221,6 +254,20 @@ export interface GallerySourceOut {
   builtin: boolean
 }
 
+export interface DocumentVersionInfo {
+  version_number: number
+  title: string
+  content_length: number
+  created_at: string
+}
+
+export interface DocumentVersionOut {
+  version_number: number
+  title: string
+  content: string | null
+  created_at: string
+}
+
 export interface DocumentOut {
   doc_technical_key: string
   title: string
@@ -235,6 +282,8 @@ export interface DocumentOut {
   exposed: boolean
   created_at: string
   updated_at: string
+  /** Auteur de la dernière écriture ; null = inconnu. */
+  updated_by: string | null
 }
 
 export interface DataBlockOut {
@@ -247,6 +296,9 @@ export interface DataBlockOut {
   exposed: boolean
   created_at: string
   updated_at: string
+  /** Renseignés par le listing (`GET /blocks`) ; 0/null sur une lecture unitaire. */
+  documents_count: number
+  last_write_at: string | null
 }
 
 export interface PropertyValueOut {
@@ -306,6 +358,8 @@ export interface PropertyDefRich {
 /** Type fonctionnel enrichi de ses propriétés + allowed_values (endpoint /types/rich). */
 export interface FunctionalTypeRich extends FunctionalType {
   properties: PropertyDefRich[]
+  /** Nombre de documents portant ce type (renseigné par /types/rich). */
+  documents_count: number
 }
 
 // ── Moteur de requête (QuerySpec) ───────────────────────────────────────────
@@ -340,8 +394,55 @@ export interface SortKey {
 /** Corps REST de POST .../blocks/{block}/query — miroir de `BlockQueryBody`
  *  (backend `schemas/query.py`). Structure partagée : rejouable telle quelle
  *  par une requête nommée (milestone ultérieur). */
+export interface ViewOut {
+  id: string
+  slug: string
+  label: string
+  layout: string
+  filter: FilterClause[]
+  sort: SortKey[]
+  group_by: string | null
+  columns: string[]
+  bloc_ref: string | null
+  owner_ref: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ViewCreateBody {
+  slug: string
+  label: string
+  layout: string
+  filter?: FilterClause[]
+  sort?: SortKey[]
+  columns?: string[]
+  bloc_ref?: string | null
+  shared?: boolean
+}
+
+/** Préférences d'interface par utilisateur (suivent le compte, pas le navigateur). */
+export const prefsApi = {
+  get: <T>(key: string) =>
+    api.get<{ key: string; value: T | null }>(`/me/preferences/${encodeURIComponent(key)}`),
+  set: <T>(key: string, value: T | null) =>
+    api.put<{ key: string; value: T | null }>(`/me/preferences/${encodeURIComponent(key)}`, { value }),
+}
+
+/** Vues enregistrées : un jeu tri + filtres + colonnes, rappelable. */
+export const viewsApi = {
+  list: (ws: string) => api.get<ViewOut[]>(`/workspaces/${ws}/views`),
+  create: (ws: string, body: ViewCreateBody) =>
+    api.post<ViewOut>(`/workspaces/${ws}/views`, body),
+  remove: (ws: string, slug: string) => api.delete<void>(`/workspaces/${ws}/views/${slug}`),
+}
+
 export interface BlockQueryBody {
+  /** Types FONCTIONNELS (ce que le document représente métier). */
   type_slugs?: string[] | null
+  /** Types de CONTENU (la grammaire du corps). Axe distinct, combinable. */
+  content_types?: string[] | null
+  /** Remonte aussi les ancêtres des résultats, pour un arbre élagué. */
+  include_ancestors?: boolean
   filters: FilterClause[]
   sort: SortKey[]
   projection?: string[] | null
@@ -363,7 +464,16 @@ export interface BlockObjectOut {
   id: string
   title: string
   functional_type_slug: string | null
+  /** Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…). */
+  type: string
+  /** Parent direct — permet de reconstruire l'arbre en mode requête. */
+  parent_id: string | null
+  /** `false` pour un ANCÊTRE remonté en contexte : il porte le chemin, il n'est
+   *  pas un résultat du filtre. */
+  matched: boolean
   properties: PropertyValueBrief[]
+  updated_at: string | null
+  updated_by: string | null
 }
 
 export interface BlockObjectsPage {
@@ -380,9 +490,13 @@ export interface BlockTreeNode {
   id: string
   title: string
   functional_type_slug: string | null
+  /** Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…). */
+  type: string
   parent_id: string | null
   properties: PropertyValueBrief[]
   children: BlockTreeNode[]
+  updated_at: string | null
+  updated_by: string | null
 }
 
 /** Page de racines d'un bloc (mode browse) : `total`/`has_next` comptent les
@@ -410,6 +524,14 @@ export const docsApi = {
   getBlockValues: (ws: string, block: string) =>
     api.get<Record<string, DocPropValue[]>>(`/workspaces/${ws}/blocks/${block}/values`),
 
+  /** Slugs des types fonctionnels présents dans le bloc (léger — colonnes). */
+  getPresentTypeSlugs: (ws: string, block: string) =>
+    api.get<string[]>(`/workspaces/${ws}/blocks/${block}/type-slugs`),
+
+  /** Types de CONTENU présents dans le bloc (léger — options du filtre). */
+  getPresentContentTypes: (ws: string, block: string) =>
+    api.get<string[]>(`/workspaces/${ws}/blocks/${block}/content-types`),
+
   getAllowedTypes: (ws: string, block: string, parentId?: string) => {
     const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : ''
     return api.get<AllowedTypeOut[]>(`/workspaces/${ws}/blocks/${block}/allowed-types${qs}`)
@@ -419,10 +541,19 @@ export const docsApi = {
   queryBlockDocuments: (ws: string, block: string, body: BlockQueryBody) =>
     api.post<BlockObjectsPage>(`/workspaces/${ws}/blocks/${block}/query`, body),
 
-  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs. */
-  getBlockTree: (ws: string, block: string, page: number, pageSize: number) =>
+  /** Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs.
+   *  `sort`/`dir` ordonnent côté serveur (tri correct à travers la pagination). */
+  getBlockTree: (
+    ws: string,
+    block: string,
+    page: number,
+    pageSize: number,
+    sort: 'title' | 'updated_at' = 'title',
+    dir: 'asc' | 'desc' = 'asc',
+  ) =>
     api.get<BlockTreePage>(
-      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}`,
+      `/workspaces/${ws}/blocks/${block}/tree?page=${page}&page_size=${pageSize}` +
+        `&sort=${sort}&dir=${dir}`,
     ),
 
   createDocument: (
@@ -473,11 +604,21 @@ export const docsApi = {
   deleteDocument: (ws: string, docId: string) =>
     api.delete(`/workspaces/${ws}/documents/${docId}`),
 
+  /** Historique des versions (métadonnées, la plus récente d'abord). */
+  listVersions: (ws: string, docId: string) =>
+    api.get<DocumentVersionInfo[]>(`/workspaces/${ws}/documents/${docId}/versions`),
+  getVersion: (ws: string, docId: string, n: number) =>
+    api.get<DocumentVersionOut>(`/workspaces/${ws}/documents/${docId}/versions/${n}`),
+
   setDocumentExposed: (ws: string, docId: string, exposed: boolean) =>
     api.patch<DocumentOut>(`/workspaces/${ws}/documents/${docId}/exposed`, { exposed }),
 
   setBlockExposed: (ws: string, blockSlug: string, exposed: boolean) =>
     api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}/exposed`, { exposed }),
+
+  /** Renommage / rattachement d'un bloc (label, parent). */
+  updateBlock: (ws: string, blockSlug: string, patch: { label?: string; parent_slug?: string | null }) =>
+    api.patch<DataBlockOut>(`/workspaces/${ws}/blocks/${blockSlug}`, patch),
 
   /** Supprime un bloc. Sans `confirm`, l'API refuse (409) si le bloc a des
    *  dépendants — le message d'erreur porte le décompte à afficher avant de
@@ -502,13 +643,69 @@ export interface ArtifactCreatedOut {
   crc32: number
 }
 
+export interface ArtifactMetaOut {
+  id: string
+  filename: string
+  extension: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  crc32: number
+  refcount: number
+}
+
+export interface ArtifactLinkOut {
+  url: string
+  expires_in_seconds: number
+}
+
+export interface PreviewLinkOut {
+  url: string
+  revision: number
+  expires_in_seconds: number
+}
+
+export interface ArtifactTypeOut {
+  extension: string
+  media_type: string
+  label: string
+  created_at: string
+  updated_at: string
+}
+
+export const artifactTypesApi = {
+  /** Liste des types acceptés — lecture pour tout utilisateur authentifié. */
+  list: () => api.get<ArtifactTypeOut[]>('/artifact-types'),
+  adminList: () => api.get<ArtifactTypeOut[]>('/admin/artifact-types'),
+  create: (body: { extension: string; media_type: string; label: string }) =>
+    api.post<ArtifactTypeOut>('/admin/artifact-types', body),
+  update: (extension: string, body: { media_type: string; label: string }) =>
+    api.patch<ArtifactTypeOut>(`/admin/artifact-types/${extension}`, body),
+  delete: (extension: string) => api.delete<void>(`/admin/artifact-types/${extension}`),
+}
+
 export const artifactsApi = {
-  upload: (ws: string, file: File) => {
+  /** Upload multipart ; `filename`/`mediaType` surchargent le fichier (F3). */
+  upload: (ws: string, file: File, overrides?: { filename?: string; mediaType?: string }) => {
     const form = new FormData()
     form.append('file', file)
+    if (overrides?.filename) form.append('filename', overrides.filename)
+    if (overrides?.mediaType) form.append('media_type', overrides.mediaType)
     return requestForm<ArtifactCreatedOut>(`/workspaces/${ws}/artifacts`, form)
   },
-  getBlob: (ws: string, id: string) => requestBlob(`/workspaces/${ws}/artifacts/${id}`),
+  getMeta: (ws: string, id: string) =>
+    api.get<ArtifactMetaOut>(`/workspaces/${ws}/artifacts/${id}/meta`),
+  /** Blob du contenu ; `attachment` demande une disposition de téléchargement. */
+  getBlob: (ws: string, id: string, attachment = false) =>
+    requestBlob(
+      `/workspaces/${ws}/artifacts/${id}${attachment ? '?disposition=attachment' : ''}`,
+    ),
+  /** Lien signé de courte durée (ouverture dans un nouvel onglet, sans Bearer). */
+  getLink: (ws: string, id: string) =>
+    api.get<ArtifactLinkOut>(`/workspaces/${ws}/artifacts/${id}/link`),
+  /** Lien de preview signé d'une maquette HTML mutable (origine dédiée, iframe). */
+  previewLink: (ws: string, id: string) =>
+    api.get<PreviewLinkOut>(`/workspaces/${ws}/artifacts/${id}/preview-link`),
 }
 
 // ── API publique (sans authentification) ────────────────────────────────────
@@ -553,6 +750,11 @@ export const templatesApi = {
   getYaml: (slug: string) => requestText(`/templates/${slug}/yaml`),
   saveYaml: (slug: string, content: string) =>
     api.put<TemplateInfo>(`/templates/${slug}/yaml`, { yaml_content: content }),
+  /** Installe un nouveau template global depuis un YAML natif uploadé (création seule). */
+  create: (content: string) =>
+    api.post<TemplateInfo>('/templates', { yaml_content: content }),
+  /** Export aplati (héritage résolu) en JSON téléchargeable, appel authentifié. */
+  exportBlob: (slug: string) => requestBlob(`/templates/${slug}/export`),
   delete: (slug: string) => api.delete(`/templates/${slug}`),
 }
 
@@ -566,6 +768,9 @@ export const galleryApi = {
     api.get<RemoteTemplateInfo[]>(`/templates/gallery?source_url=${encodeURIComponent(source_url)}`),
   pull: (source_url: string, template_slug: string) =>
     api.post<TemplateInfo>('/templates/gallery/pull', { source_url, template_slug }),
+  /** Ce que la mise à jour changerait — avant confirmation, aucune écriture. */
+  pullDiff: (source_url: string, template_slug: string) =>
+    api.post<GalleryPullDiff>('/templates/gallery/pull/diff', { source_url, template_slug }),
 }
 
 // ── Types réactions / commentaires ───────────────────────────────────────────
@@ -650,7 +855,31 @@ export interface BacklinkOut {
   target_label: string
 }
 
+export interface GlobalSearchResult {
+  id: string
+  title: string
+  type: string | null
+  workspace_slug: string
+  block_slug: string | null
+}
+
+export interface DocLocationOut {
+  id: string
+  title: string
+  workspace_slug: string
+  block_slug: string | null
+}
+
 export const referencesApi = {
+  /** Résout un lien interne docflow://doc/{id} en workspace/bloc. */
+  locate: (docId: string) =>
+    api.get<DocLocationOut>(`/documents/locate/${docId}`),
+
+  /** Recherche par titre sur tous les workspaces accessibles à l'appelant. */
+  searchGlobal: (q: string, limit = 10) =>
+    api.get<GlobalSearchResult[]>(
+      `/search/documents?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
   searchDocuments: (ws: string, q: string, limit = 10, type?: string) =>
     api.get<DocumentSearchResult[]>(
       `/workspaces/${ws}/documents/search?q=${encodeURIComponent(q)}&limit=${limit}${type ? `&type=${encodeURIComponent(type)}` : ''}`
@@ -678,11 +907,18 @@ export interface WebhookOut {
   active: boolean
   created_at: string
   updated_at: string
+  /** Journal de livraison (renseignés par le listing). */
+  last_delivery_at: string | null
+  last_delivery_status: number | null
+  last_delivery_error: string | null
+  failures_24h: number
 }
 
 export interface WebhookTestOut {
   status_code: number | null
   error: string | null
+  /** Temps de réponse de la cible, en ms. */
+  duration_ms: number
 }
 
 export const ALL_EVENTS = ['document.created', 'document.updated', 'document.deleted'] as const
@@ -711,27 +947,38 @@ export interface AppUserOut {
   has_local_password: boolean
   created_at: string
   updated_at: string
+  /** Dernière connexion réussie (local ou OIDC) ; null = jamais. */
+  last_login_at: string | null
+  /** Workspaces accessibles (membre ou owner). */
+  workspaces_count: number
 }
 
 /** Décode le payload JWT localement (sans vérification — le serveur valide). */
+/** Rôle admin pour l'UI, mémorisé au login (indice, jamais une décision de
+ *  sécurité — le serveur revalide is_admin à chaque route d'administration). */
 export function isSuperAdmin(): boolean {
-  const token = getToken()
-  if (!token) return false
-  try {
-    const segment = token.split('.')[1]
-    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
-    const payload = JSON.parse(atob(padded))
-    return Boolean(payload.is_admin)
-  } catch {
-    return false
-  }
+  return localStorage.getItem(ADMIN_KEY) === '1'
+}
+
+export interface InviteCreated {
+  user_id: string
+  email: string
+  /** Chemin à copier — le jeton n'apparaît qu'ici, une seule fois. */
+  invite_path: string
+  expires_at: string
 }
 
 export const usersApi = {
   list: () => api.get<AppUserOut[]>('/admin/users'),
+  /** Invitation par lien à usage unique (docflow n'envoie pas d'e-mail). */
+  invite: (body: { email: string; label: string; is_admin?: boolean }) =>
+    api.post<InviteCreated>('/admin/users/invite', body),
   validate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/validate`, {}),
   unvalidate: (id: string) => api.post<AppUserOut>(`/admin/users/${id}/unvalidate`, {}),
+  /** Rôle et état — le garde anti-lock-out du backend refuse de démonter le
+   *  dernier admin local connectable. */
+  update: (id: string, body: { is_admin?: boolean; disabled?: boolean }) =>
+    api.patch<AppUserOut>(`/admin/users/${id}`, body),
   delete: (id: string) => api.delete(`/admin/users/${id}`),
 }
 
@@ -740,6 +987,14 @@ export const usersApi = {
 export interface VaultWalletOut {
   id: string
   name: string
+  url: string | null
+  description: string | null
+  /** Secret local (type HARPOCRATE_API_KEY) qui porte le token. */
+  api_key_secret_id: string
+  /** Libellé du secret clé — jamais sa valeur. */
+  api_key_secret_label: string
+  /** Consommateurs référençant ${vault://name:…}. */
+  used_by: number
   created_at: string
   updated_at: string
 }
@@ -748,21 +1003,59 @@ export interface VaultSecretOut {
   id: string
   slug: string
   label: string
+  /** Typage fonctionnel (MAJUSCULES) : GENERIC, HARPOCRATE_API_KEY, … */
+  secret_type: string
+  /** Stockage : 'local' (valeur en base) ou 'vault' (dans un endpoint). */
+  storage_type: string
+  /** Endpoint vault (alias) — présent si storage_type === 'vault'. */
+  vault_identifier: string | null
+  /** Chemin du secret dans le coffre — présent si storage_type === 'vault'. */
+  vault_path: string | null
   created_at: string
   updated_at: string
+  /** Automates dont un header référence ce secret. */
+  used_by_automations: number
+  /** Webhooks dont un header référence ce secret. */
+  used_by_webhooks: number
+}
+
+export interface WalletCheckOut {
+  ok: boolean
+  error: string | null
+  expires_at: string | null
 }
 
 export const vaultApi = {
   listWallets: () => api.get<VaultWalletOut[]>('/admin/vault/wallets'),
-  createWallet: (body: { name: string; api_key: string }) =>
-    api.post<VaultWalletOut>('/admin/vault/wallets', body),
+  createWallet: (body: {
+    name: string
+    url: string
+    description?: string
+    api_key_secret_id: string
+  }) => api.post<VaultWalletOut>('/admin/vault/wallets', body),
+  /** Teste la clé auprès de Harpocrate — l'état du jeton, jamais la clé. */
+  checkWallet: (id: string) =>
+    api.post<WalletCheckOut>(`/admin/vault/wallets/${id}/check`, {}),
   deleteWallet: (id: string) => api.delete(`/admin/vault/wallets/${id}`),
 }
 
 export const secretsApi = {
-  list: () => api.get<VaultSecretOut[]>('/admin/secrets'),
-  create: (body: { label: string; slug: string; value: string }) =>
-    api.post<VaultSecretOut>('/admin/secrets', body),
+  /** Liste des secrets, filtrable par type fonctionnel (ex. HARPOCRATE_API_KEY). */
+  list: (secretType?: string) =>
+    api.get<VaultSecretOut[]>(
+      secretType ? `/admin/secrets?secret_type=${encodeURIComponent(secretType)}` : '/admin/secrets',
+    ),
+  /** Référence à coller dans un header d'automate — jamais la valeur. */
+  refOf: (id: string) => `\${secret://${id}}`,
+  create: (body: {
+    label: string
+    slug: string
+    value?: string
+    secret_type?: string
+    storage_type?: 'local' | 'vault'
+    vault_identifier?: string
+    vault_path?: string
+  }) => api.post<VaultSecretOut>('/admin/secrets', body),
   delete: (id: string) => api.delete(`/admin/secrets/${id}`),
 }
 
@@ -862,6 +1155,11 @@ export interface EventCatalogEntry {
   title: string
   description: string
   deprecated: boolean
+  /** Ce sur quoi porte l'event : 'document', ou 'container' (workspace, bloc).
+   *  Un event de contenant ne porte pas de document : les filtres de bloc et de
+   *  type d'un automate ne s'y appliquent pas. L'écran le lit ici plutôt que de
+   *  reconnaître des eventCodes en dur. Absent = 'document' (ancien serveur). */
+  scope?: 'document' | 'container'
 }
 
 export interface EventCatalog {
@@ -946,13 +1244,24 @@ export interface ContractDetailOut {
   servers: string[]
 }
 
+export interface OrphanedOperation {
+  operation_id: string
+  automations: string[]
+}
+
+export interface ContractRefreshOut {
+  contract: ContractOut
+  /** Opérations disparues du contrat rafraîchi mais encore utilisées. */
+  orphaned_operations: OrphanedOperation[]
+}
+
 export const contractsApi = {
   list: () => api.get<ContractOut[]>('/admin/contracts'),
   import: (body: { label: string; source_url?: string; raw_spec: object }) =>
     api.post<ContractOut>('/admin/contracts', body),
   detail: (id: string) => api.get<ContractDetailOut>(`/admin/contracts/${id}`),
   spec: (id: string) => api.get<Record<string, unknown>>(`/admin/contracts/${id}/spec`),
-  refresh: (id: string) => api.post<ContractOut>(`/admin/contracts/${id}/refresh`, {}),
+  refresh: (id: string) => api.post<ContractRefreshOut>(`/admin/contracts/${id}/refresh`, {}),
   delete: (id: string) => api.delete(`/admin/contracts/${id}`),
 }
 
@@ -978,16 +1287,30 @@ export interface AutomationHeaderOut {
 }
 
 export interface AutomationOut {
+  /** Dernière exécution — renseignées par le listing, null sinon. */
+  last_run_at?: string | null
+  last_run_status?: string | null
+  last_run_http_status?: number | null
   id: string
   workspace_technical_key: string
   label: string
   active: boolean
   pending_count: number
-  /** Position d'évaluation dans le workspace demandé (1..n). */
-  position: number
+  /** Fin de la fenêtre de debounce du prochain event en attente. `null` = rien
+   *  n'est différé. Sans cette donnée, « en attente » ne dit pas si l'automate
+   *  patiente ou s'il est en panne. */
+  deferred_until?: string | null
+  /** Position d'évaluation dans le workspace demandé (1..n). `null` quand
+   *  l'automate n'a pas de rang ici — aucun filtre de portée, donc évalué
+   *  après tous les autres. */
+  position: number | null
   workspace_slugs: string[]
   event_codes: string[]
   block_slugs: string[]
+  /** Templates dont les blocs sont couverts — UNION avec `block_slugs` : un bloc
+   *  entre s'il est nommé OU s'il vient d'un template listé. Un bloc créé plus
+   *  tard depuis un template coché entre sans qu'on touche à l'automate. */
+  block_templates: string[]
   stop_chain: boolean
   functional_type_slugs: string[]
   on_create: boolean
@@ -1009,6 +1332,7 @@ export interface AutomationCreate {
   workspace_slugs?: string[]
   event_codes?: string[]
   block_slugs?: string[]
+  block_templates?: string[]
   stop_chain?: boolean
   functional_type_slugs?: string[]
   on_create?: boolean
@@ -1038,27 +1362,28 @@ export interface AutomationRunOut {
   manual: boolean
 }
 
+/** Automates : objets d'INSTANCE (une règle couvre plusieurs workspaces).
+ *  Routes globales /automations — réservées aux admins côté backend. */
 export const automationsApi = {
-  list: (ws: string) => api.get<AutomationOut[]>(`/workspaces/${ws}/automations`),
-  create: (ws: string, body: AutomationCreate) =>
-    api.post<AutomationOut>(`/workspaces/${ws}/automations`, body),
-  get: (ws: string, id: string) => api.get<AutomationOut>(`/workspaces/${ws}/automations/${id}`),
-  update: (ws: string, id: string, body: Partial<AutomationCreate>) =>
-    api.patch<AutomationOut>(`/workspaces/${ws}/automations/${id}`, body),
-  delete: (ws: string, id: string) => api.delete(`/workspaces/${ws}/automations/${id}`),
-  listRuns: (ws: string, id: string, limit = 50) =>
-    api.get<AutomationRunOut[]>(`/workspaces/${ws}/automations/${id}/runs?limit=${limit}`),
-  replay: (ws: string, id: string, runId: string) =>
-    api.post<AutomationRunOut>(`/workspaces/${ws}/automations/${id}/runs/${runId}/replay`, {}),
-  runNext: (ws: string, id: string) =>
+  list: () => api.get<AutomationOut[]>('/automations'),
+  create: (body: AutomationCreate) => api.post<AutomationOut>('/automations', body),
+  get: (id: string) => api.get<AutomationOut>(`/automations/${id}`),
+  update: (id: string, body: Partial<AutomationCreate>) =>
+    api.patch<AutomationOut>(`/automations/${id}`, body),
+  delete: (id: string) => api.delete(`/automations/${id}`),
+  listRuns: (id: string, limit = 50) =>
+    api.get<AutomationRunOut[]>(`/automations/${id}/runs?limit=${limit}`),
+  replay: (id: string, runId: string) =>
+    api.post<AutomationRunOut>(`/automations/${id}/runs/${runId}/replay`, {}),
+  runNext: (id: string) =>
     api.post<{
       status: string
       http_status?: number | null
       body?: string | null
       event_code?: string
       event_seq?: number
-    }>(`/workspaces/${ws}/automations/${id}/run-next`, {}),
-  advance: (ws: string, id: string) =>
+    }>(`/automations/${id}/run-next`, {}),
+  advance: (id: string) =>
     api.post<{
       status: string
       http_status?: number | null
@@ -1066,21 +1391,21 @@ export const automationsApi = {
       event_code?: string
       event_seq?: number
       advanced?: boolean
-    }>(`/workspaces/${ws}/automations/${id}/advance`, {}),
-  cursorBack: (ws: string, id: string) =>
-    api.post<{ cursor: number }>(`/workspaces/${ws}/automations/${id}/cursor-back`, {}),
-  /** Ordre d'évaluation dans le workspace (drag & drop) — ids dans le nouvel ordre. */
-  reorder: (ws: string, ids: string[]) =>
-    api.put<AutomationOut[]>(`/workspaces/${ws}/automations/order`, { ids }),
+    }>(`/automations/${id}/advance`, {}),
+  cursorBack: (id: string) =>
+    api.post<{ cursor: number }>(`/automations/${id}/cursor-back`, {}),
+  /** Ordre global d'évaluation (projeté sur chaque workspace couvert). */
+  reorder: (ids: string[]) => api.put<AutomationOut[]>('/automations/order', { ids }),
   /** Clone (config + portée + headers), créé désactivé. */
-  clone: (ws: string, id: string) =>
-    api.post<AutomationOut>(`/workspaces/${ws}/automations/${id}/clone`, {}),
+  clone: (id: string) => api.post<AutomationOut>(`/automations/${id}/clone`, {}),
   /** Vide l'historique d'exécutions (le curseur est conservé). */
-  clearRuns: (ws: string, id: string) =>
-    api.delete<{ deleted: number }>(`/workspaces/${ws}/automations/${id}/runs`),
+  clearRuns: (id: string) => api.delete<{ deleted: number }>(`/automations/${id}/runs`),
   /** Émet des events de modification synthétiques (re-déclenchement d'automates). */
   pushEvents: (selections: { workspace_slug: string; block_slugs?: string[] }[]) =>
-    api.post<{ events: number }>('/automations/push-events', { selections }),
+    api.post<{
+      events: number
+      details: { workspace_slug: string; block_slugs: string[]; events: number }[]
+    }>('/automations/push-events', { selections }),
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
@@ -1331,6 +1656,14 @@ export interface InitAdminRequest {
   password: string
 }
 
+/** Flux public d'invitation (sans authentification). */
+export const inviteApi = {
+  info: (token: string) =>
+    api.get<{ email: string; label: string }>(`/invite/${encodeURIComponent(token)}`),
+  accept: (token: string, password: string) =>
+    api.post<void>(`/invite/${encodeURIComponent(token)}`, { password }),
+}
+
 export const setupApi = {
   methods: () => api.get<AuthMethodsOut>('/auth/methods'),
   initAdmin: (body: InitAdminRequest) => api.post<{ id: string }>('/setup/init-admin', body),
@@ -1354,5 +1687,5 @@ export interface OidcCallbackRequest {
 export const oidcLoginApi = {
   config: () => api.get<OidcPublicConfig | null>('/auth/oidc/config'),
   callback: (body: OidcCallbackRequest) =>
-    api.post<{ access_token: string; token_type: string }>('/auth/oidc/callback', body),
+    api.post<{ is_admin: boolean }>('/auth/oidc/callback', body),
 }

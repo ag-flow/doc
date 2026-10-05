@@ -4,8 +4,9 @@ import './lib/i18n'
 import { getToken } from './lib/api'
 import { WorkspaceProvider } from './contexts/WorkspaceContext'
 import { ToastProvider } from './components/Toast'
-import { Sidebar } from './components/Sidebar'
-import { Breadcrumb } from './components/Breadcrumb'
+import { AppRail } from './components/AppRail'
+import { AppHeader } from './components/AppHeader'
+import { HeaderSlotProvider } from './components/HeaderSlot'
 import { PublicDocumentViewer } from './pages/PublicDocumentViewer'
 import { Login } from './pages/Login'
 import { OidcCallback } from './pages/OidcCallback'
@@ -21,11 +22,16 @@ import { OidcAdmin } from './pages/OidcAdmin'
 import { EventsProducerAdmin } from './pages/EventsProducerAdmin'
 import { VaultAdmin } from './pages/VaultAdmin'
 import { AutomatesPage } from './pages/AutomatesPage'
+import { PrintDocumentPage } from './pages/PrintDocumentPage'
 import { UsersAdmin } from './pages/UsersAdmin'
+import { ArtifactTypesAdmin } from './pages/ArtifactTypesAdmin'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { RemotePage } from './pages/RemotePage'
 import { ContractsAdmin } from './pages/ContractsAdmin'
 import { MyProfilePage } from './pages/MyProfilePage'
+import { DesignSystemPage } from './pages/DesignSystemPage'
+import { InvitePage } from './pages/InvitePage'
+import { OnboardingOverlay } from './onboarding/OnboardingOverlay'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
@@ -36,18 +42,30 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-/** Layout principal : sidebar fixe à gauche + contenu scrollable. */
+/** Layout principal : rail fixe à gauche, en-tête collé, contenu scrollable.
+ *  La marge gauche suit `--rail-width` — pas une classe d'espacement, qui
+ *  dériverait de la largeur du rail au premier changement de densité. */
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      <div className="ml-14 flex flex-1 flex-col overflow-hidden">
-        <Breadcrumb />
-        <main className="flex-1 overflow-y-auto">
-          {children}
-        </main>
+    <HeaderSlotProvider>
+      <div className="flex h-screen bg-paper">
+        <AppRail />
+        <div
+          className="flex flex-1 flex-col overflow-hidden"
+          style={{ marginLeft: 'var(--rail-width)' }}
+        >
+          <AppHeader />
+          <main className="flex-1 overflow-y-auto">
+            {children}
+          </main>
+        </div>
+        {/* Parcours guidé : monté dans le layout authentifié (a le contexte
+            routeur pour useLocation). L'état « fermé pour cette session » vit
+            hors composant (variable de module) car AppLayout se remonte à
+            chaque navigation. */}
+        <OnboardingOverlay />
       </div>
-    </div>
+    </HeaderSlotProvider>
   )
 }
 
@@ -85,8 +103,26 @@ const router = createBrowserRouter([
       { path: 'blocs/:blocSlug/documents', element: <BlockDocumentList /> },
       { path: 'blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> },
       { path: 'webhooks', element: <WebhooksAdmin /> },
-      { path: 'automations', element: <AutomatesPage /> },
+      // Les automates ont quitté le workspace : redirection vers l'écran global.
+      { path: 'automations', element: <Navigate to="/automations" replace /> },
     ],
+  },
+  {
+    // Vue d'impression : pas de chrome (rail/en-tête) — un onglet dédié.
+    path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId/print',
+    element: (
+      <ProtectedRoute>
+        <PrintDocumentPage />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/automations',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><AutomatesPage /></AppLayout>
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/admin/vault',
@@ -117,6 +153,14 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute>
         <AppLayout><UsersAdmin /></AppLayout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/admin/artifact-types',
+    element: (
+      <ProtectedRoute>
+        <AppLayout><ArtifactTypesAdmin /></AppLayout>
       </ProtectedRoute>
     ),
   },
@@ -152,7 +196,18 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+  // Référence interne du système de design : hors navigation, route directe.
+  {
+    path: '/design-system',
+    element: (
+      <ProtectedRoute>
+        <DesignSystemPage />
+      </ProtectedRoute>
+    ),
+  },
   { path: '/pub/:docId', element: <PublicDocumentViewer /> },
+  // Invitation : page publique (l'invité n'a pas encore de compte utilisable).
+  { path: '/invite/:token', element: <InvitePage /> },
   { path: '/', element: <Navigate to="/workspaces" replace /> },
   { path: '*', element: <Navigate to="/workspaces" replace /> },
 ])

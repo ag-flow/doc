@@ -6,7 +6,13 @@ export type WindowMode = 'browse' | 'query'
 const DEFAULT_PAGE_SIZE = 100
 
 function emptySpec(pageSize: number): BlockQueryBody {
-  return { filters: [], sort: [], projection: null, page: 1, page_size: pageSize }
+  return {
+    type_slugs: null, content_types: null,
+    // Le front reconstruit un arbre élagué : il lui faut le chemin des résultats.
+    // Opt-in au niveau du contrat ; ici c'est toujours ce qu'on veut.
+    include_ancestors: true,
+    filters: [], sort: [], projection: null, page: 1, page_size: pageSize,
+  }
 }
 
 export interface UseQuerySpecStateResult {
@@ -16,6 +22,17 @@ export interface UseQuerySpecStateResult {
   mode: WindowMode
   /** Pose ou retire (clause=null) le filtre d'une propriété. Repart en page 1. */
   setFilter: (prop: string, clause: Omit<FilterClause, 'prop'> | null) => void
+  /** Restreint aux types d'objet donnés (null ou liste vide = tous). Repart en
+   *  page 1. Le type n'est PAS une propriété : il a sa place dédiée dans le
+   *  QuerySpec (`type_slugs`), et le serveur le filtre sur la colonne du
+   *  document, sans passer par la table des valeurs de propriétés. */
+  setTypeSlugs: (slugs: string[] | null) => void
+  /** Restreint aux types de CONTENU donnés (null ou liste vide = tous).
+   *
+   *  Axe distinct de `setTypeSlugs` : celui-ci porte la GRAMMAIRE du corps
+   *  (`md`, `table-schema`…), l'autre ce que le document représente métier. Les
+   *  deux se combinent, aucun ne remplace l'autre. */
+  setContentTypes: (types: string[] | null) => void
   /** Cycle asc → desc → aucun sur une clé de tri. Repart en page 1.
    *  `additive` (Maj-clic) : conserve les autres clés et compose un tri multi-clé
    *  (la clé est ajoutée/retirée en fin de liste) ; sinon remplace le tri courant. */
@@ -35,8 +52,14 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
   const [spec, setSpec] = useState<BlockQueryBody>(() => emptySpec(pageSize))
 
   const mode: WindowMode = useMemo(
-    () => (spec.filters.length > 0 || spec.sort.length > 0 ? 'query' : 'browse'),
-    [spec.filters, spec.sort],
+    () =>
+      spec.filters.length > 0 ||
+      spec.sort.length > 0 ||
+      (spec.type_slugs?.length ?? 0) > 0 ||
+      (spec.content_types?.length ?? 0) > 0
+        ? 'query'
+        : 'browse',
+    [spec.filters, spec.sort, spec.type_slugs, spec.content_types],
   )
 
   const setFilter = useCallback((prop: string, clause: Omit<FilterClause, 'prop'> | null) => {
@@ -45,6 +68,20 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
       if (clause) filters.push({ prop, ...clause })
       return { ...prev, filters, page: 1 }
     })
+  }, [])
+
+  const setTypeSlugs = useCallback((slugs: string[] | null) => {
+    // Liste vide ≡ pas de restriction : la normaliser en `null` évite un mode
+    // requête allumé par un filtre qui ne filtre rien.
+    setSpec((prev) => ({ ...prev, type_slugs: slugs && slugs.length > 0 ? slugs : null, page: 1 }))
+  }, [])
+
+  const setContentTypes = useCallback((types: string[] | null) => {
+    // Même normalisation que les types fonctionnels : une liste vide ne filtre
+    // rien, et ne doit donc pas allumer le mode requête.
+    setSpec((prev) => ({
+      ...prev, content_types: types && types.length > 0 ? types : null, page: 1,
+    }))
   }, [])
 
   const toggleSort = useCallback((key: string, additive = false) => {
@@ -91,5 +128,8 @@ export function useQuerySpecState(pageSize = DEFAULT_PAGE_SIZE): UseQuerySpecSta
     setSpec((prev) => emptySpec(prev.page_size))
   }, [])
 
-  return { spec, mode, setFilter, toggleSort, setProjection, setPage, loadSpec, reset }
+  return {
+    spec, mode, setFilter, setTypeSlugs, setContentTypes,
+    toggleSort, setProjection, setPage, loadSpec, reset,
+  }
 }

@@ -13,6 +13,10 @@ class AdminUserCreate(BaseModel):
     label: str
     password: str
     is_admin: bool = False
+    # Identifiant de CONNEXION. Omis = dérivé de la partie locale de l'email.
+    # L'email lui-même n'authentifie jamais (STANDARD utilisateurs, U7) : sans
+    # username, le compte créé serait inconnectable.
+    username: str | None = None
 
 
 class AdminUserUpdate(BaseModel):
@@ -43,3 +47,7 @@ class AdminUserOut(BaseModel):
     has_local_password: bool
     created_at: datetime
     updated_at: datetime
+    # Dernière connexion réussie (login local ou OIDC) ; null = jamais.
+    last_login_at: datetime | None = None
+    # Workspaces accessibles (membre ou owner) — l'admin voit tout de toute façon.
+    workspaces_count: int = 0

@@ -3,6 +3,7 @@ import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import {
   SuggestionMenuController,
+  FilePanelController,
   getDefaultReactSlashMenuItems,
   type DefaultReactSuggestionItem,
 } from '@blocknote/react'
@@ -18,8 +19,11 @@ import {
   type SlashContext,
 } from '../lib/blockCodecs'
 import { type DocumentSearchResult } from '../lib/api'
+import type { ContentEditorHandle, ContentEditorProps } from '../lib/contentSurfaces'
 import { makeUploadFile, resolveArtifactUrl } from '../lib/artifacts'
 import { LinkSearchPopup } from './LinkSearchPopup'
+import { EditorFilePanel } from './editorFilePanel'
+import { useToast } from './Toast'
 
 function filterItems<T extends { title: string; aliases?: string[] }>(
   items: T[],
@@ -34,21 +38,39 @@ function filterItems<T extends { title: string; aliases?: string[] }>(
   )
 }
 
-export interface MarkdownEditorHandle {
-  getMarkdown: () => Promise<string>
+/** Surface du type de contenu `md` — cf. `lib/contentSurfaces`. Le handle et les
+ *  props suivent le contrat générique : la page ne sait pas qu'elle parle à
+ *  BlockNote. */
+export type MarkdownEditorHandle = ContentEditorHandle
+
+/**
+ * Collage : garder le HTML quand il existe. Le défaut BlockNote
+ * (`prioritizeMarkdownOverHTML: true`) jette le `text/html` dès que le
+ * `text/plain` « ressemble à du markdown » — un tableau copié depuis
+ * Confluence/Excel/Sheets arrive avec les deux saveurs et son texte brut
+ * déclenche l'heuristique : on collait du texte au lieu du tableau. Avec le
+ * HTML prioritaire, ces tableaux collent en vrais blocs table ; un texte brut
+ * SEUL (éditeur de code, fichier .md) reste interprété comme markdown.
+ */
+export function docflowPasteHandler({
+  defaultPasteHandler,
+}: {
+  defaultPasteHandler: (context?: {
+    prioritizeMarkdownOverHTML?: boolean
+    plainTextAsMarkdown?: boolean
+  }) => boolean | undefined
+}): boolean | undefined {
+  return defaultPasteHandler({ prioritizeMarkdownOverHTML: false })
 }
 
-interface MarkdownEditorProps {
-  initialContent: string
-  onDirty: () => void
-  wsSlug?: string
-}
+type MarkdownEditorProps = ContentEditorProps
 
 // ── Éditeur principal ─────────────────────────────────────────────────────────
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   ({ initialContent, onDirty, wsSlug }, ref) => {
     const { t } = useTranslation()
+    const { toast } = useToast()
     // uploadFile : collage/drop d'une image → POST artefact, l'URL retournée est
     // stockée dans le bloc image et sérialisée en markdown ![nom](url).
     // resolveFileUrl : l'endpoint est authentifié Bearer, l'affichage passe par
@@ -58,6 +80,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         schema: docflowSchema,
         uploadFile: wsSlug ? makeUploadFile(wsSlug) : undefined,
         resolveFileUrl: resolveArtifactUrl,
+        pasteHandler: docflowPasteHandler,
       },
       [wsSlug],
     )
@@ -85,7 +108,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     }, [editor, initialContent])
 
     useImperativeHandle(ref, () => ({
-      getMarkdown: () => serializeMarkdownWithCodecs(editor as unknown as CodecEditorApi),
+      getContent: () => serializeMarkdownWithCodecs(editor as unknown as CodecEditorApi),
     }), [editor])
 
     const handleLinkSelect = useCallback((doc: DocumentSearchResult) => {
@@ -110,6 +133,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
           editor: editor as unknown as SlashContext['editor'],
           wsSlug,
           t,
+          onError: (msg) => toast(msg, 'error'),
         })
       : []
 
@@ -118,8 +142,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         <BlockNoteView
           editor={editor}
           slashMenu={false}
+          filePanel={wsSlug ? false : undefined}
           onChange={() => { if (settledRef.current) onDirtyRef.current() }}
         >
+          {wsSlug && (
+            <FilePanelController
+              filePanel={(p) => <EditorFilePanel {...p} wsSlug={wsSlug} />}
+            />
+          )}
           {wsSlug && (
             <SuggestionMenuController
               triggerCharacter="/"

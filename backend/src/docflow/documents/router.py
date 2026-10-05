@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from docflow.auth.deps import check_api_key_scope, require_authenticated
-from docflow.documents import service
+from docflow.documents import service, watch
 from docflow.references import service as ref_service
 from docflow.references.service import DocumentSearchResult
 from docflow.schemas.auth import AuthUser
-from docflow.schemas.document import DocumentCreate, DocumentOut, DocumentUpdate
+from docflow.schemas.document import (
+    DocumentCreate,
+    DocumentOut,
+    DocumentUpdate,
+    DocumentVersionInfo,
+    DocumentVersionOut,
+)
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
 from docflow.webhooks import service as wh_service
 from docflow.workspaces.access import require_ws_access
@@ -43,6 +50,7 @@ def _fire(request: Request, event: str, ws_slug: str, snapshot: dict[str, Any]) 
             event,
             snapshot,
             encryption_key=_enc_key(request),
+            harpocrate_url=getattr(request.app.state.settings, "harpocrate_url", None),
         )
     )
     _background_tasks.add(task)
@@ -89,10 +97,10 @@ async def list_documents(
 
 @router.post(_WS + "/documents", response_model=DocumentOut, status_code=201)
 async def create_document(
-    ws_slug: str, body: DocumentCreate, request: Request, _: AuthUser = _Auth
+    ws_slug: str, body: DocumentCreate, request: Request, user: AuthUser = _Auth
 ) -> DocumentOut:
     check_api_key_scope(request, ws_slug, write=True)
-    doc = await service.create_document(request.app.state.pool, ws_slug, body)
+    doc = await service.create_document(request.app.state.pool, ws_slug, body, author=user.label)
     _fire(
         request,
         "document.created",
@@ -119,6 +127,44 @@ async def search_documents(
     return await ref_service.search_documents(request.app.state.pool, ws_slug, q, limit)
 
 
+# Routes littérales AVANT la route paramétrique {doc_id} du même préfixe.
+@router.get(_DOC + "/versions", response_model=list[DocumentVersionInfo])
+async def list_document_versions(
+    ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> list[DocumentVersionInfo]:
+    check_api_key_scope(request, ws_slug)
+    return await service.list_document_versions(request.app.state.pool, ws_slug, doc_id)
+
+
+@router.get(_DOC + "/versions/{version_number}", response_model=DocumentVersionOut)
+async def get_document_version(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    _: AuthUser = _Auth,
+) -> DocumentVersionOut:
+    check_api_key_scope(request, ws_slug)
+    return await service.get_document_version(
+        request.app.state.pool, ws_slug, doc_id, version_number
+    )
+
+
+@router.get(_DOC + "/watch")
+async def watch_document(
+    ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
+) -> StreamingResponse:
+    """Flux SSE : signal minimal `{document_id, version, updated_at, updated_by}`
+    à chaque écriture backend (journal document_event) — jamais le contenu."""
+    pool = request.app.state.pool
+    wk = await watch.ensure_document(pool, ws_slug, doc_id)
+    return StreamingResponse(
+        watch.stream_document(pool, wk, doc_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get(_DOC, response_model=DocumentOut)
 async def get_document(
     ws_slug: str, doc_id: uuid.UUID, request: Request, _: AuthUser = _Auth
@@ -133,10 +179,53 @@ async def update_document(
     doc_id: uuid.UUID,
     body: DocumentUpdate,
     request: Request,
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> DocumentOut:
     check_api_key_scope(request, ws_slug, write=True)
-    doc = await service.update_document(request.app.state.pool, ws_slug, doc_id, body)
+    doc = await service.update_document(
+        request.app.state.pool, ws_slug, doc_id, body, author=user.label
+    )
+    _fire(
+        request,
+        "document.updated",
+        ws_slug,
+        {
+            "id": str(doc.doc_technical_key),
+            "title": doc.title,
+            "type": doc.type,
+            "version": doc.version,
+        },
+    )
+    return doc
+
+
+class _AppendBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    content: str = Field(min_length=1)
+    position: Literal["top", "bottom"] = "bottom"
+
+
+@router.post(_DOC + "/append", response_model=DocumentOut)
+async def append_to_document(
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    body: _AppendBody,
+    request: Request,
+    user: AuthUser = _Auth,
+) -> DocumentOut:
+    """Ajoute un fragment markdown en tête (`top`) ou en pied (`bottom`) du
+    document. Passe-plat atomique : positionnement LITTÉRAL au bord du contenu,
+    sans tenir compte de l'affichage (le titre vit hors du contenu). La
+    nouvelle révision est diffusée automatiquement (live-reload)."""
+    check_api_key_scope(request, ws_slug, write=True)
+    doc = await service.append_to_document(
+        request.app.state.pool,
+        ws_slug,
+        doc_id,
+        content=body.content,
+        position=body.position,
+        author=user.label,
+    )
     _fire(
         request,
         "document.updated",

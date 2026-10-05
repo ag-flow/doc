@@ -1,11 +1,33 @@
 import { useEffect, useState } from 'react'
-import { useMatch, Link } from 'react-router-dom'
+import { useMatch, useLocation, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight } from 'lucide-react'
-import { HomeNavPopover } from './HomeNavPopover'
+import { truncateMiddle } from '../lib/truncateMiddle'
 import { api, docsApi, type DataBlockOut, type DocumentOut, type WorkspaceOut } from '../lib/api'
 
 interface Crumb { label: string; href: string | null }
+
+/** Écrans hors workspace : leur fil d'Ariane est le nom de l'écran. Il remplace
+ *  le titre de page — d'où une entrée par route, sans titre redondant ailleurs. */
+const STATIC_LABELS: Record<string, string> = {
+  '/workspaces': 'Workspaces',
+  '/templates': 'Templates',
+  '/contracts': 'Contrats OpenAPI',
+  '/api-keys': 'Clés API',
+  '/me': 'Mon profil',
+  '/admin/users': 'Utilisateurs',
+  '/admin/vault': 'Wallets Vault',
+  '/admin/oidc': 'Config OIDC',
+  '/admin/events-producer': 'Connexion workflow',
+  '/admin/remote': 'Connexions & Sauvegarde',
+}
+
+/** Sections d'un workspace : dernier segment de l'URL → libellé affiché. */
+const WS_SECTIONS: Record<string, string> = {
+  types: 'Types fonctionnels',
+  blocs: 'Blocs',
+  webhooks: 'Webhooks',
+  automations: 'Automates',
+}
 
 function useDocumentChain(ws: string | null, docId: string | null): DocumentOut[] {
   const [chain, setChain] = useState<DocumentOut[]>([])
@@ -44,7 +66,10 @@ function useDocumentChain(ws: string | null, docId: string | null): DocumentOut[
   return chain
 }
 
+/** Fil d'Ariane `workspace / bloc / document`. Chaque segment est cliquable,
+ *  le dernier est la page courante. */
 export function Breadcrumb() {
+  const { pathname } = useLocation()
   const wsMatch = useMatch('/ws/:wsSlug/*')
   const blocMatch = useMatch('/ws/:wsSlug/blocs/:blocSlug/*')
   const docMatch = useMatch('/ws/:wsSlug/blocs/:blocSlug/documents/:docId')
@@ -69,39 +94,46 @@ export function Breadcrumb() {
   const docChain = useDocumentChain(wsSlug, docId)
 
   const crumbs: Crumb[] = []
-  if (workspace) crumbs.push({ label: workspace.label, href: `/ws/${wsSlug}/blocs` })
-  if (bloc) crumbs.push({ label: bloc.label, href: `/ws/${wsSlug}/blocs/${blocSlug}/documents` })
-  for (const d of docChain) {
-    crumbs.push({
-      label: d.title,
-      href: `/ws/${wsSlug}/blocs/${blocSlug}/documents/${d.doc_technical_key}`,
-    })
+  if (wsSlug) {
+    crumbs.push({ label: workspace?.label ?? wsSlug, href: `/ws/${wsSlug}/blocs` })
+    if (bloc) {
+      crumbs.push({ label: bloc.label, href: `/ws/${wsSlug}/blocs/${blocSlug}/documents` })
+    } else {
+      const section = WS_SECTIONS[pathname.split('/')[3] ?? '']
+      if (section) crumbs.push({ label: section, href: null })
+    }
+    for (const d of docChain) {
+      crumbs.push({
+        label: d.title,
+        href: `/ws/${wsSlug}/blocs/${blocSlug}/documents/${d.doc_technical_key}`,
+      })
+    }
+  } else {
+    const label = STATIC_LABELS[pathname]
+    if (label) crumbs.push({ label, href: null })
   }
 
-  // Le dernier élément n'est pas cliquable (page courante)
+  // Le dernier segment est la page courante : jamais cliquable.
   if (crumbs.length > 0) crumbs[crumbs.length - 1].href = null
 
   if (crumbs.length === 0) return null
 
   return (
-    <div className="sticky top-0 z-30 flex items-center gap-1 px-6 py-2.5 text-sm border-b border-gray-100 bg-white">
-      <HomeNavPopover />
-      <span className="mx-1 text-gray-200">|</span>
+    <span className="crumbs" data-testid="breadcrumb">
       {crumbs.map((crumb, i) => (
-        <span key={i} className="flex items-center gap-1">
-          {i > 0 && <ChevronRight size={13} className="text-gray-300 shrink-0" />}
+        <span key={i} className="crumbs">
           {crumb.href ? (
-            <Link
-              to={crumb.href}
-              className="text-gray-400 hover:text-gray-700 transition-colors"
-            >
-              {crumb.label}
+            <Link to={crumb.href} className="crumb" title={crumb.label}>
+              {truncateMiddle(crumb.label)}
             </Link>
           ) : (
-            <span className="font-medium text-gray-800">{crumb.label}</span>
+            <span className="crumb crumb-current" title={crumb.label}>
+              {truncateMiddle(crumb.label)}
+            </span>
           )}
+          {i < crumbs.length - 1 && <span className="crumb-sep">/</span>}
         </span>
       ))}
-    </div>
+    </span>
   )
 }

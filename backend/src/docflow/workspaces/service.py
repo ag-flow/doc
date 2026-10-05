@@ -6,6 +6,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from docflow.db.helpers import require_workspace
+from docflow.events import outbox
 from docflow.schemas.workspace import WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
 
 _COLS = (
@@ -13,7 +14,21 @@ _COLS = (
     " archived_at, created_at, updated_at"
 )
 _SELECT_WS = f"SELECT {_COLS} FROM workspace WHERE slug = $1"
-_SELECT_ALL = f"SELECT {_COLS} FROM workspace {{where}} ORDER BY created_at"
+# Index des workspaces : compteurs de blocs / documents et dernière activité
+# (le plus récent updated_at des documents) en sous-requêtes scalaires — la
+# liste est courte et l'alternative (N requêtes côté appelant) est pire.
+_SELECT_ALL = f"""
+    SELECT {_COLS},
+           (SELECT count(*) FROM data_block b
+             WHERE b.workspace_technical_key = w.workspace_technical_key) AS blocks_count,
+           (SELECT count(*) FROM document d
+             WHERE d.workspace_technical_key = w.workspace_technical_key) AS documents_count,
+           (SELECT max(d.updated_at) FROM document d
+             WHERE d.workspace_technical_key = w.workspace_technical_key) AS last_activity_at
+    FROM workspace w
+    {{where}}
+    ORDER BY created_at
+"""
 _UPDATE_WS = (
     f"UPDATE workspace SET {{cols}}, updated_at = now() WHERE workspace_technical_key = $1 "
     f"RETURNING {_COLS}"
@@ -22,6 +37,7 @@ _UPDATABLE = frozenset({"label", "description"})
 
 
 def _row(row: asyncpg.Record) -> WorkspaceOut:
+    keys = row.keys()
     return WorkspaceOut(
         workspace_technical_key=row["workspace_technical_key"],
         slug=row["slug"],
@@ -31,6 +47,9 @@ def _row(row: asyncpg.Record) -> WorkspaceOut:
         archived_at=row["archived_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        blocks_count=row["blocks_count"] if "blocks_count" in keys else 0,
+        documents_count=row["documents_count"] if "documents_count" in keys else 0,
+        last_activity_at=row["last_activity_at"] if "last_activity_at" in keys else None,
     )
 
 
@@ -72,7 +91,16 @@ async def create_workspace(
                 raise HTTPException(
                     status_code=409, detail=f"workspace '{data.slug}' existe déjà"
                 ) from exc
-    assert row is not None
+            assert row is not None
+            # Dans la MÊME transaction que la création : jamais un workspace sans
+            # son event, jamais un event pour un workspace qui n'existe pas.
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.workspace.created.v1",
+                workspace_wk=row["workspace_technical_key"],
+                business={"workspaceSlug": data.slug, "workspaceLabel": data.label},
+                dedup_key=str(row["workspace_technical_key"]),
+            )
     return _row(row)
 
 

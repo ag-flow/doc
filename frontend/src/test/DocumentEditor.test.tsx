@@ -1,21 +1,26 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
 
 // BlockNote est lourd à charger en jsdom : on mocke le wrapper éditeur.
+// Fidèle au vrai éditeur : le contenu n'est lu qu'AU MONTAGE — un changement
+// ultérieur de la prop (refetch d'arrière-plan) ne recharge rien sans remontage.
 vi.mock('../components/MarkdownEditor', () => ({
   MarkdownEditor: React.forwardRef(
     (
       { initialContent }: { initialContent?: string; onDirty?: () => void },
-      ref: React.Ref<{ getMarkdown: () => Promise<string> }>,
+      ref: React.Ref<{ getContent: () => Promise<string> }>,
     ) => {
+      const [content] = React.useState(initialContent ?? '')
       React.useImperativeHandle(ref, () => ({
-        getMarkdown: () => Promise.resolve(initialContent ?? ''),
+        getContent: () => Promise.resolve(content),
       }))
-      return <div data-testid="markdown-editor-mock">{initialContent}</div>
+      return <div data-testid="markdown-editor-mock">{content}</div>
     },
   ),
 }))
@@ -66,11 +71,19 @@ vi.mock('../lib/api', async () => {
       ...actual.docsApi,
       getDocument: vi.fn(),
       patchDocument: vi.fn(),
+      deleteDocument: vi.fn(),
     },
   }
 })
 
 import { docsApi, ApiError, type DocumentOut } from '../lib/api'
+// Le suivi SSE est mocké : on capture les handlers pour simuler les événements.
+vi.mock('../lib/docWatch', () => ({
+  watchDocument: vi.fn(() => () => {}),
+}))
+
+import { watchDocument } from '../lib/docWatch'
+import { ToastProvider } from '../components/Toast'
 import { DocumentEditor } from '../pages/DocumentEditor'
 
 function renderEditor() {
@@ -79,11 +92,15 @@ function renderEditor() {
     [{ path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> }],
     { initialEntries: ['/ws/ws/blocs/b1/documents/d1'] },
   )
-  return render(
-    <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  )
+  return {
+    ...render(
+      <QueryClientProvider client={qc}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    qc,
+    router,
+  }
 }
 
 // Le mode lecture « wiki » est celui par défaut : on bascule en édition pour
@@ -103,7 +120,7 @@ async function enterEditMode() {
 const doc: DocumentOut = {
   doc_technical_key: 'd1',
   title: 'Mon document',
-  type: 'page',
+  type: 'md',
   slug: null,
   content: '# Hello',
   version: 3,
@@ -114,6 +131,7 @@ const doc: DocumentOut = {
   exposed: false,
   created_at: '',
   updated_at: '',
+  updated_by: null,
 }
 
 describe('DocumentEditor', () => {
@@ -201,5 +219,573 @@ describe('DocumentEditor', () => {
     await waitFor(() =>
       expect(screen.getByText('Conflit de version')).toBeInTheDocument(),
     )
+  })
+})
+
+// ── Écran document Broadsheet : feuille partagée, Cmd+S, pas de débordement ──
+
+describe('DocumentEditor — ossature Broadsheet', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lecture et édition rendent la MÊME feuille (aucun décalage du texte)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const { container } = renderEditor()
+
+    const readSheet = await waitFor(() => {
+      const el = container.querySelector('.doc-sheet')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    const readShell = readSheet.parentElement?.parentElement?.className
+    const readClasses = readSheet.className
+
+    await enterEditMode()
+    const editSheet = container.querySelector('.doc-sheet')!
+    // Même classe de feuille et même conteneur de grille : les métriques (mesure,
+    // interlignage, marges) viennent d'une seule source, donc rien ne bouge.
+    // Seule exception voulue : le sommaire (doc-grid-nav) n'existe qu'en lecture.
+    const dropNav = (cls?: string) => (cls ?? '').replace(' doc-grid-nav', '')
+    expect(editSheet.className).toBe(readClasses)
+    expect(dropNav(editSheet.parentElement?.parentElement?.className)).toBe(dropNav(readShell))
+  })
+
+  it('Cmd/Ctrl+S enregistre et affiche un accusé discret (pas de toast)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
+    renderEditor()
+    await enterEditMode()
+
+    // Rendre le document « sale » pour que la sauvegarde ait lieu.
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    expect(screen.getByTestId('document-dirty')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    })
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(1))
+
+    // Accusé en place de « non enregistré », dans le flux — aucun dialogue.
+    const ack = await screen.findByTestId('document-saved')
+    expect(ack).toHaveTextContent('Enregistré')
+    expect(screen.queryByTestId('document-dirty')).not.toBeInTheDocument()
+    expect(document.querySelector('.dialog-backdrop')).toBeNull()
+  })
+})
+
+// ── Mode focus ───────────────────────────────────────────────────────────────
+
+describe('DocumentEditor — mode focus', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function enterFocus() {
+    await enterEditMode()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-focus-btn'))
+    })
+  }
+
+  it('une surface de PROSE garde la mesure de lecture', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await enterFocus()
+
+    const sheet = screen.getByTestId('focus-sheet')
+    expect(sheet.className).toContain('wiki-prose')
+    expect(sheet.className).not.toContain('doc-sheet-wide')
+  })
+
+  it('une surface NON textuelle prend toute la largeur', async () => {
+    // Défaut réparé : le mode focus codait `wiki-prose` en dur. Un diagramme ou
+    // une grille de champs s'y retrouvait enfermé dans 72 caractères — soit
+    // exactement ce que `fullWidth` existe pour éviter. La coquille normale
+    // l'honorait déjà ; la branche focus l'avait oublié.
+    vi.mocked(docsApi.getDocument).mockResolvedValue({ ...doc, type: 'model-layout' })
+    renderEditor()
+    await enterFocus()
+
+    const sheet = screen.getByTestId('focus-sheet')
+    expect(sheet.className).toContain('doc-sheet-wide')
+    expect(sheet.className).not.toContain('wiki-prose')
+  })
+})
+
+describe('DocumentEditor — une seule coquille, un seul pied de page', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('le pied de page est monté une seule fois, en lecture comme en édition', async () => {
+    // Il était ÉCRIT deux fois, avec sa propre requête de réactions de chaque
+    // côté. Les deux copies n'avaient pas encore divergé — il s'agissait de les
+    // réunir avant que ça n'arrive.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getAllByTestId('document-footer')).toHaveLength(1)
+
+    await enterEditMode()
+    expect(screen.getAllByTestId('document-footer')).toHaveLength(1)
+  })
+
+  it('le mode focus passe par la coquille — plus de branche parallèle', async () => {
+    // C'est ce rapatriement qui empêche la divergence de revenir : la classe de
+    // feuille est calculée à un seul endroit pour les trois modes.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await enterEditMode()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-focus-btn'))
+    })
+
+    expect(screen.getByTestId('focus-sheet')).toBeInTheDocument()
+    // La coquille reste montée : le focus est un MODE, pas un écran à part.
+    expect(screen.getByTestId('document-editor')).toBeInTheDocument()
+  })
+})
+
+describe('actions de page — offertes dans les modes où elles ont du sens', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('l\'historique est offert en lecture ET en édition', async () => {
+    // Il n'existait qu'en édition — par oubli, pas par choix : c'est une action
+    // en LECTURE SEULE sur le document, rien ne s'opposait à l'offrir des deux
+    // côtés. Réunie en un composant, la prochaine évolution profitera aux deux.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getByTestId('document-history-btn')).toBeInTheDocument()
+
+    await enterEditMode()
+    expect(screen.getByTestId('document-history-btn')).toBeInTheDocument()
+  })
+
+  it('l\'export PDF reste réservé à la LECTURE, et c\'est délibéré', async () => {
+    // Il exporte la version ENREGISTRÉE. L'offrir en édition exporterait autre
+    // chose que ce qu'on a sous les yeux dès qu'il y a des modifications non
+    // sauvées — un piège silencieux. L'absence est ici une décision, plus un
+    // oubli de branche, et ce test l'acte.
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+
+    await waitFor(() => expect(screen.getByTestId('export-pdf-btn')).toBeInTheDocument())
+
+    await enterEditMode()
+    expect(screen.queryByTestId('export-pdf-btn')).not.toBeInTheDocument()
+  })
+})
+
+describe('règle de titre — différenciée À DESSEIN entre lecture et édition', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('l\'édition montre le corps RÉEL, titre dupliqué compris', async () => {
+    // Ce n'est pas un oubli : en édition on doit voir ce qu'on modifie. Retirer
+    // le doublon ferait éditer une projection. Le test acte la différence pour
+    // qu'elle ne dérive pas d'un côté ou de l'autre.
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      content: '# Mon document\n\nCorps.',
+    })
+    renderEditor()
+    await enterEditMode()
+
+    expect(screen.getByTestId('markdown-editor-mock')).toHaveTextContent('# Mon document')
+  })
+})
+
+describe('feuille document — aucun débordement horizontal possible', () => {
+  // jsdom ne calcule pas de layout : on verrouille les règles CSS qui empêchent
+  // le débordement, seul garde-fou automatisable.
+  const css = readFileSync(join(process.cwd(), 'src/styles/document.css'), 'utf-8')
+
+  it('la colonne de texte a un minimum à 0 (sinon un tableau large pousse la page)', () => {
+    expect(css).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+    // Panneaux flottants : le shell réserve leur espace par padding — s'ils
+    // sont fixes sans padding réservé, ils recouvrent le texte.
+    expect(css).toMatch(/\.doc-shell-nav\s*\{\s*padding-left/)
+    expect(css).toMatch(/\.doc-shell-aside\s*\{\s*padding-right/)
+    expect(css).toMatch(/\.doc-aside\s*\{[^}]*position:\s*fixed/)
+    expect(css).toMatch(/\.doc-nav-col\s*\{[^}]*position:\s*fixed/)
+  })
+
+  it('tableaux, blocs de code et images sont contenus dans la feuille', () => {
+    expect(css).toMatch(/\.doc-sheet table\s*\{[^}]*overflow-x:\s*auto/)
+    expect(css).toMatch(/\.doc-sheet table\s*\{[^}]*max-width:\s*100%/)
+    expect(css).toMatch(/\.doc-sheet pre\s*\{[^}]*overflow-x:\s*auto/)
+    expect(css).toMatch(/\.doc-sheet img\s*\{[^}]*max-width:\s*100%/)
+  })
+
+  it('aucune règle BlockNote ne subsiste dans les feuilles GLOBALES', () => {
+    // F4f : la présentation du DOM d'une bibliothèque tierce appartient à la
+    // surface qui le produit. Tant qu'elle vit dans les feuilles de page,
+    // celles-ci supposent que tout document est du markdown.
+    const globales = ['src/index.css', 'src/styles/document.css', 'src/styles/print.css']
+    for (const f of globales) {
+      const contenu = readFileSync(join(process.cwd(), f), 'utf-8')
+      expect(contenu, `${f} contient encore un sélecteur BlockNote`).not.toMatch(/\.bn-/)
+    }
+  })
+
+  it('la surface markdown porte ces règles, et elle seule', () => {
+    // L'autre sens : les avoir retirées ne suffit pas, encore faut-il qu'elles
+    // existent quelque part — sinon le rendu markdown se dégrade en silence.
+    const surface = readFileSync(
+      join(process.cwd(), 'src/lib/contentSurfaces/markdown.css'),
+      'utf-8',
+    )
+    expect(surface).toMatch(/\.wiki-prose \.bn-editor/)
+    expect(surface).toMatch(/\.doc-sheet \.bn-editor/)
+    expect(surface).toMatch(/\.bn-container \[data-content-type='quote'\] blockquote/)
+    // Et qu'elles soient effectivement chargées avec la surface.
+    const module = readFileSync(
+      join(process.cwd(), 'src/lib/contentSurfaces/markdown.ts'),
+      'utf-8',
+    )
+    expect(module).toMatch(/import '\.\/markdown\.css'/)
+  })
+
+  it('la feuille LARGE rend ses grilles en tableau pleine largeur, et gagne', () => {
+    // La feuille porte les DEUX classes. À spécificité égale, `.doc-sheet table`
+    // — plus bas dans le fichier — reprenait la main : la grille restait en
+    // `display: block`, tassée à gauche, police clouée à celle de la prose.
+    // Le sélecteur doublé rend la variante indépendante de l'ordre des lignes.
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*display:\s*table/)
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*width:\s*100%/)
+    expect(css).toMatch(/\.doc-sheet\.doc-sheet-wide table\s*\{[^}]*font-size:\s*inherit/)
+    // Un sélecteur simple se ferait battre : il ne doit plus en rester.
+    expect(css).not.toMatch(/(^|[^.\w])\.doc-sheet-wide table\s*\{/m)
+  })
+})
+
+describe('lecture — pas de titre en double', () => {
+  it('un corps commençant par « # <titre> » ne répète pas le titre du shell', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      title: 'Mon document',
+      content: '# Mon document\n\nLe vrai contenu.',
+    })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    const body = screen.getByTestId('markdown-viewer-mock')
+    expect(body.textContent).not.toContain('# Mon document')
+    expect(body.textContent).toContain('Le vrai contenu.')
+  })
+
+  it('un H1 différent du titre reste affiché (on ne retire que le doublon exact)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue({
+      ...doc,
+      title: 'Mon document',
+      content: '# Autre chapeau\n\nContenu.',
+    })
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(screen.getByTestId('markdown-viewer-mock').textContent).toContain('# Autre chapeau')
+  })
+})
+
+// ── Live-reload (phase A) : suivi SSE branché sur les deux modes ──
+
+describe('DocumentEditor — live-reload (phase A)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  function lastHandlers() {
+    const calls = vi.mocked(watchDocument).mock.calls
+    return calls[calls.length - 1][2]
+  }
+
+  it('lecture : un change distant re-fetch le document (rendu auto)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    expect(watchDocument).toHaveBeenCalledWith('ws', 'd1', expect.anything())
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 9, updated_at: '', updated_by: 'agent' })
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBeGreaterThan(before),
+    )
+  })
+
+  it('édition : un change distant NE recharge rien — toast « modifié par X »', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const router = createMemoryRouter(
+      [{ path: '/ws/:wsSlug/blocs/:blocSlug/documents/:docId', element: <DocumentEditor /> }],
+      { initialEntries: ['/ws/ws/blocs/b1/documents/d1'] },
+    )
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider><RouterProvider router={router} /></ToastProvider>
+      </QueryClientProvider>,
+    )
+    await enterEditMode()
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 9, updated_at: '', updated_by: 'pocket' })
+    })
+    expect(await screen.findByText(/modifié par pocket/)).toBeInTheDocument()
+    // Aucun re-fetch pendant la saisie.
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
+  })
+
+  it('version distante ≤ locale (écho de sa propre écriture) : ignorée', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    await act(async () => {
+      lastHandlers().onChange({ document_id: 'd1', version: 3, updated_at: '', updated_by: 'moi' })
+    })
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
+  })
+})
+
+// ── Live-reload phase B : fusion three-way au 409 ──
+
+describe('DocumentEditor — fusion automatique (phase B)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function makeDirtyAndSave() {
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Titre édité' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+  }
+
+  it('409 sans conflit réel : le fusionné est enregistré, pas de resolver', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    // Le serveur a ajouté un paragraphe (ours == base : l'éditeur mocké rend
+    // initialContent) → fusion = contenu serveur, zéro conflit.
+    const serverContent = '# Hello\n\nAjout agent.'
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { title: 'Mon document', content: serverContent, version: 7 }, 'conflit'),
+      )
+      .mockResolvedValueOnce({ ...doc, content: serverContent, version: 8 })
+
+    renderEditor()
+    await enterEditMode()
+    await makeDirtyAndSave()
+
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.patchDocument)).toHaveBeenLastCalledWith(
+        'ws', 'd1',
+        expect.objectContaining({ content: serverContent, expected_version: 7 }),
+      ),
+    )
+    expect(screen.queryByTestId('conflict-resolver')).not.toBeInTheDocument()
+  })
+
+  it('re-409 sur l’enregistrement du fusionné : resolver sur l’état frais', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { content: '# Hello\n\nAjout agent.', version: 7 }, 'conflit'),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(409, { content: '# Hello\n\nEncore bougé.', version: 9 }, 'conflit'),
+      )
+
+    renderEditor()
+    await enterEditMode()
+    await makeDirtyAndSave()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('conflict-resolver')).toBeInTheDocument(),
+    )
+  })
+})
+
+// ── FE-03 durci : un refetch d'arrière-plan pendant l'édition ne doit JAMAIS
+//    réaligner le verrou optimiste (expectedVersion / ancestor), même à l'état
+//    idle — sinon la sauvegarde suivante écrase une version distante sans 409
+//    ni fusion three-way (perte silencieuse d'écritures concurrentes). ──
+
+describe('DocumentEditor — resync gelée en édition (perte concurrente)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it("édition à l'état idle : un refetch d'arrière-plan ne réaligne pas expectedVersion — le 409 et la fusion s'engagent", async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const remoteContent = '# Hello\n\nAjout agent.'
+    const { qc } = renderEditor()
+    await enterEditMode()
+
+    // Poll du change feed : la v5 distante arrive dans le cache alors que
+    // l'éditeur (monté sur la v3) n'est pas remonté — il affiche toujours la v3.
+    await act(async () => {
+      qc.setQueryData(['document', 'ws', 'd1'], { ...doc, content: remoteContent, version: 5 })
+    })
+    // Le rendu de la v5 est traité PENDANT l'état idle (c'est le cœur du bug) ;
+    // l'éditeur monté sur la v3 n'a pas rechargé le contenu distant.
+    await waitFor(() => expect(screen.getByText(/v5/)).toBeInTheDocument())
+    expect(screen.getByTestId('markdown-editor-mock')).not.toHaveTextContent('Ajout agent.')
+
+    vi.mocked(docsApi.patchDocument)
+      .mockRejectedValueOnce(
+        new ApiError(409, { title: 'Mon document', content: remoteContent, version: 5 }, 'conflit'),
+      )
+      .mockResolvedValueOnce({ ...doc, content: remoteContent, version: 6 })
+
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Titre édité' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(2))
+    // Cœur du fix : la sauvegarde porte la version réellement éditée (3), pas
+    // la v5 du refetch — c'est ce qui force le VRAI 409 côté serveur.
+    expect(vi.mocked(docsApi.patchDocument).mock.calls[0][2]).toMatchObject({
+      expected_version: 3,
+    })
+    // Le 409 engage la fusion three-way (base = v3 gelée) : la reprise porte la
+    // v5 et CONSERVE l'ajout de l'agent au lieu de l'écraser.
+    expect(vi.mocked(docsApi.patchDocument).mock.calls[1][2]).toMatchObject({
+      expected_version: 5,
+      content: remoteContent,
+    })
+  })
+
+  it('changement de document : le resync initial a lieu même en mode édition', async () => {
+    const doc2: DocumentOut = {
+      ...doc, doc_technical_key: 'd2', title: 'Deuxième', content: '# Deux', version: 7,
+    }
+    vi.mocked(docsApi.getDocument).mockImplementation((_ws: string, id: string) =>
+      Promise.resolve(id === 'd2' ? doc2 : doc),
+    )
+    const { router } = renderEditor()
+    await enterEditMode()
+    expect(screen.getByDisplayValue('Mon document')).toBeInTheDocument()
+
+    await act(async () => {
+      await router.navigate('/ws/ws/blocs/b1/documents/d2')
+    })
+    // Titre, contenu et verrou réalignés sur le doc chargé.
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('Deuxième')).toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('markdown-editor-mock')).toHaveTextContent('# Deux')
+
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc2, version: 8 })
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Deuxième bis' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('document-save-btn')).not.toBeDisabled(),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-save-btn'))
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.patchDocument)).toHaveBeenCalledWith(
+        'ws', 'd2', expect.objectContaining({ expected_version: 7 }),
+      ),
+    )
+  })
+
+  it('lecture : un refetch réaligne toujours (une version distante déjà connue est ignorée)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    const { qc } = renderEditor()
+    await waitFor(() => expect(screen.getByTestId('document-reader')).toBeInTheDocument())
+
+    await act(async () => {
+      qc.setQueryData(['document', 'ws', 'd1'], { ...doc, version: 5 })
+    })
+    // Attendre que le rendu (et l'effet de resync) de la v5 soit traité.
+    await waitFor(() => expect(screen.getByText(/v5/)).toBeInTheDocument())
+
+    const calls = vi.mocked(watchDocument).mock.calls
+    const handlers = calls[calls.length - 1][2]
+    const before = vi.mocked(docsApi.getDocument).mock.calls.length
+    // expectedVersion réaligné sur 5 par le refetch : l'écho v5 est ignoré…
+    await act(async () => {
+      handlers.onChange({ document_id: 'd1', version: 5, updated_at: '', updated_by: 'agent' })
+    })
+    expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBe(before)
+    // …mais une v6 réellement nouvelle déclenche bien le re-fetch.
+    await act(async () => {
+      handlers.onChange({ document_id: 'd1', version: 6, updated_at: '', updated_by: 'agent' })
+    })
+    await waitFor(() =>
+      expect(vi.mocked(docsApi.getDocument).mock.calls.length).toBeGreaterThan(before),
+    )
+  })
+})
+
+// ── Double Cmd+S / double clic « Enregistrer » : un seul PATCH en vol ──
+
+describe('DocumentEditor — garde de réentrance de la sauvegarde', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('deux Cmd+S rapprochés (avant le re-rendu) n’émettent qu’un seul PATCH', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.patchDocument).mockResolvedValue({ ...doc, version: 4 })
+    renderEditor()
+    await enterEditMode()
+
+    fireEvent.change(screen.getByTestId('document-title-input'), {
+      target: { value: 'Mon document modifié' },
+    })
+    expect(screen.getByTestId('document-dirty')).toBeInTheDocument()
+
+    // Les deux raccourcis sont dispatchés dans le même tick, avant que React
+    // n'ait eu l'occasion de re-rendre avec status='saving' — c'est exactement
+    // le scénario du double Cmd+S qui déclenchait deux PATCH concurrents.
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+      fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    })
+
+    await waitFor(() => expect(docsApi.patchDocument).toHaveBeenCalledTimes(1))
+  })
+})
+
+// ── Suppression depuis l'éditeur : la liste (browse + requête) doit se
+//    rafraîchir aussitôt, pas seulement l'ancienne clé `block-documents` ──
+
+describe('DocumentEditor — invalidation du cache à la suppression', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('supprimer un document invalide les mêmes clés que la création (handleCreated)', async () => {
+    vi.mocked(docsApi.getDocument).mockResolvedValue(doc)
+    vi.mocked(docsApi.deleteDocument).mockResolvedValue(undefined)
+
+    const { qc } = renderEditor()
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
+    await enterEditMode()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-delete-btn'))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('document-delete-confirm-btn'))
+    })
+
+    await waitFor(() => expect(docsApi.deleteDocument).toHaveBeenCalledWith('ws', 'd1'))
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey,
+    )
+    // Même liste que `handleCreated` de BlockDocumentList (block-type-slugs,
+    // block-tree, block-query), plus l'ancienne clé `block-documents`.
+    for (const key of [
+      ['block-type-slugs', 'ws', 'b1'],
+      ['block-tree', 'ws', 'b1'],
+      ['block-query', 'ws', 'b1'],
+      ['block-documents', 'ws', 'b1'],
+    ]) {
+      expect(invalidatedKeys).toContainEqual(key)
+    }
   })
 })

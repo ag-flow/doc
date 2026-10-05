@@ -1,0 +1,309 @@
+/* Broadsheet — écran document : la colonne de texte est une page imprimée.
+   Lecture et édition partagent EXACTEMENT ces métriques : basculer de l'une à
+   l'autre ne doit pas déplacer le texte d'un pixel. */
+
+.doc-grid {
+  display: grid;
+  /* `minmax(0, 1fr)` et non `1fr` : sans le minimum à 0, un tableau large ou un
+     bloc de code long pousse la colonne et fait déborder toute la page. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 44px;
+}
+/* ── Enveloppe de l'écran document ─────────────────────────────────────────
+   La feuille exploite toute la largeur ; sommaire et propriétés FLOTTENT aux
+   bords du viewport (fixes, sous l'en-tête). Le padding du shell réserve leur
+   espace : rien ne se recouvre, et fermer le sommaire rend sa place au texte. */
+.doc-shell { padding: 48px 30px 96px; }
+
+@media (min-width: 1100px) {
+  .doc-shell-nav { padding-left: 296px; }
+  .doc-shell-aside { padding-right: 342px; }
+
+  .doc-nav-col {
+    position: fixed;
+    left: calc(var(--rail-width) + 18px);
+    top: 64px;
+    bottom: 18px;
+    width: 250px;
+    z-index: 20;
+    padding-top: 14px;
+    background: var(--color-paper);
+  }
+
+  .doc-aside {
+    position: fixed;
+    right: 18px;
+    top: 64px;
+    bottom: 18px;
+    width: 294px;
+    overflow-y: auto;
+    z-index: 20;
+    padding-top: 14px;
+    background: var(--color-paper);
+  }
+}
+/* Sous 1100px : le sommaire s'efface, les propriétés redescendent sous la
+   feuille (flux normal de la grille monocolonne). */
+@media (max-width: 1099.98px) {
+  .doc-nav-col { display: none; }
+}
+
+/* ── Sommaire du bloc (flottant à gauche, lecture) ── */
+.doc-toc {
+  max-height: 100%;
+  overflow-y: auto;
+  padding-right: 22px;
+  border-right: 1px solid var(--color-divider);
+}
+.doc-toc li { margin: 0 0 2px; }
+.doc-toc-link {
+  display: block;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--color-ink) 78%, transparent);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.doc-toc-link:hover { color: var(--color-accent-700); }
+.doc-toc-current {
+  color: var(--color-accent-700);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+
+/* ── Précédent / Suivant en bas de feuille ── */
+.doc-pagenav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-divider);
+}
+.doc-pagenav-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+}
+.doc-pagenav-next { text-align: right; align-items: flex-end; }
+.doc-pagenav-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+}
+.doc-pagenav-title {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 17px;
+  color: var(--color-ink);
+}
+.doc-pagenav-link:hover .doc-pagenav-title { color: var(--color-accent-700); }
+
+/* La feuille : encre sur papier légèrement teinté, mesure limitée à ~72
+   caractères, interlignage de lecture. */
+.doc-sheet {
+  min-width: 0;
+  background: var(--color-neutral-100);
+  padding: 44px 52px;
+  border-left: 5px solid var(--color-neutral-200);
+  border-right: 5px solid var(--color-neutral-200);
+  /* Échelle de lecture pilotée par une variable de racine (défaut 1). */
+  font-size: calc(var(--reading-scale, 1) * 18px);
+  line-height: 1.8;
+}
+.doc-sheet > * { max-width: var(--reading-measure, 72ch); }
+
+/* Surface NON textuelle (diagramme, grille de champs) : la mesure de lecture
+   n'a pas de sens pour elle — un canvas bridé à 72ch se retrouve dans une
+   colonne étroite, et une grille s'y écrase jusqu'à tronquer ses colonnes.
+   Elle prend toute la largeur de la feuille, qui perd aussi ses marges
+   typographiques (calibrées pour du texte, pas pour un plan de travail). */
+.doc-sheet-wide { padding: 20px 24px; }
+.doc-sheet-wide > * { max-width: none; }
+/* Un tableau de PROSE est mis en `display: block` pour défiler horizontalement
+   sans déborder de la feuille (`.doc-sheet table`, plus bas). Une grille
+   d'interface, elle, doit occuper la largeur qu'on lui donne : en `block`, elle
+   se réduit à son contenu et laisse un grand vide à sa droite. Le défilement est
+   assuré par son conteneur.
+
+   Sélecteur DOUBLÉ à dessein : la feuille porte les deux classes, et
+   `.doc-sheet table` — à spécificité égale, mais plus bas dans le fichier —
+   reprenait la main. La grille restait donc en `display: block`, tassée à
+   gauche, et sa police clouée à celle de la prose. Une variante ne doit pas
+   dépendre de l'ordre des lignes pour gagner. */
+.doc-sheet.doc-sheet-wide table {
+  display: table;
+  width: 100%;
+  overflow-x: visible;
+  font-size: inherit;
+}
+
+/* Le corps du document (éditeur BlockNote ou rendu de lecture) exploite TOUTE
+   la surface de la feuille : pas de page blanche dans la page. Le wrapper perd
+   sa bordure et son fond propres — la feuille porte déjà le cadre. */
+.doc-sheet > [data-testid='markdown-editor'],
+.doc-sheet > .wiki-prose {
+  max-width: none;
+  width: 100%;
+}
+.doc-sheet > [data-testid='markdown-editor'] {
+  border: 0;
+  background: transparent;
+}
+
+.doc-sheet h1 { font-size: calc(var(--reading-scale, 1) * 32px); margin: 40px 0 12px; }
+.doc-sheet h2 { font-size: calc(var(--reading-scale, 1) * 26px); margin: 34px 0 10px; }
+.doc-sheet h3 { font-size: calc(var(--reading-scale, 1) * 21px); margin: 28px 0 8px; }
+.doc-sheet p { margin: 0 0 var(--space-3); }
+.doc-sheet em { font-style: italic; }
+
+/* Citation : filet cyan 4px, jamais un encadré. */
+.doc-sheet blockquote {
+  border-left: 4px solid var(--color-accent);
+  padding-left: 18px;
+  margin: 26px 0;
+  font-size: calc(var(--reading-scale, 1) * 16px);
+  color: color-mix(in srgb, var(--color-ink) 72%, transparent);
+}
+.doc-sheet code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+.doc-sheet pre {
+  /* Un bloc de code long défile DANS la feuille : il ne l'élargit pas. */
+  max-width: 100%;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+.doc-sheet pre code { background: transparent; padding: 0; }
+
+/* Tableau de données dans le corps : défilement horizontal contenu dans la
+   largeur de la feuille — il ne passe jamais sous le panneau propriétés. */
+.doc-sheet table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: calc(var(--reading-scale, 1) * 15px);
+}
+.doc-sheet img { max-width: 100%; height: auto; }
+
+/* Panneau propriétés : une colonne, séparée par un filet, jamais une carte. */
+.doc-aside {
+  min-width: 0;
+  padding-left: 30px;
+  border-left: 1px solid var(--color-divider);
+}
+.doc-aside-kicker {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+  margin-bottom: 14px;
+}
+.doc-prop-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 45%, transparent);
+  margin-bottom: 2px;
+}
+
+/* Valeur texte longue : plafonnée à N lignes (var --clamp-lines) puis dépliable.
+   -webkit-line-clamp reste la seule voie multi-navigateur pour l'ellipsis multi-lignes. */
+.doc-prop-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 5);
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+.doc-prop-more {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-accent);
+}
+.doc-prop-more:hover { text-decoration: underline; }
+
+/* Ligne méta sous le titre : slug, version, statut. */
+.doc-meta {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: 14px;
+  margin-bottom: 28px;
+}
+
+/* ── Plein écran d'un rendu (diagramme, maquette, image d'artefact) ─────────
+   Overlay plein viewport sur fond neutre : le rendu s'affiche à sa taille
+   naturelle maximale, un SVG reste net (pas de bitmap étiré). */
+.df-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background: color-mix(in srgb, var(--color-ink) 84%, transparent);
+}
+.df-fullscreen-body {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-fullscreen-body > * { max-width: 100%; }
+.df-fullscreen-body svg,
+.df-fullscreen-body img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+}
+.df-fullscreen-iframe {
+  width: min(1600px, 96vw);
+  height: calc(100vh - 96px);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-100);
+}
+.df-fullscreen-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 101;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+.df-fullscreen-close:hover { color: var(--color-accent-700); }

@@ -3,10 +3,12 @@ from __future__ import annotations
 import uuid
 
 import asyncpg
+import structlog
 from fastapi import HTTPException
 
-from docflow.db.helpers import require_prop_def, require_type, require_workspace
+from docflow.db.helpers import require_prop_def, require_type, require_workspace, validate_slug
 from docflow.documents.changelog import log_structure_change
+from docflow.documents.service import validate_constraint_operand, validate_scalar_value
 from docflow.errors import DependentsConflictError
 from docflow.schemas.constraint import ConstraintCreate, ConstraintOut
 from docflow.schemas.properties import (
@@ -17,6 +19,8 @@ from docflow.schemas.properties import (
     PropertiesDefOut,
     PropertiesDefUpdate,
 )
+
+log = structlog.get_logger(__name__)
 
 # ── Properties defs ───────────────────────────────────────────────────────────
 
@@ -143,6 +147,64 @@ async def _log_property_change(
     await log_structure_change(conn, wk, "property", nature, entity_ref)
 
 
+async def _check_default_value(
+    conn: asyncpg.Connection,
+    prop_id: uuid.UUID | None,
+    prop_type: str,
+    default_value: str | None,
+    prop_slug: str,
+) -> None:
+    """Refuse (422) un ``default_value`` incompatible avec le type déclaré.
+
+    Sans ce contrôle, le défaut est matérialisé tel quel sur chaque document créé
+    et casse tout tri/filtre du bloc (Postgres caste ``pvv.value::numeric``).
+
+    ``restricted_list`` : le défaut est un slug de valeur autorisée, or le
+    vocabulaire se déclare APRÈS la définition (``create_def`` n'a donc rien à
+    vérifier, ``prop_id`` est None). On ne contrôle que si le vocabulaire est
+    déjà peuplé ; sinon le filet reste l'instanciation, qui ignore un défaut
+    hors vocabulaire.
+
+    ``reference`` : seul le format UUID est vérifiable ici — l'existence de la
+    cible est contrôlée à l'écriture (la cible peut être créée après la def).
+    """
+    if default_value is None:
+        return
+    if prop_type == "restricted_list":
+        if prop_id is None:
+            return
+        rows = await conn.fetch(
+            "SELECT slug FROM properties_allowed_values WHERE property_def_ref = $1 "
+            "ORDER BY position, created_at",
+            prop_id,
+        )
+        if not rows:
+            return
+        slugs = [r["slug"] for r in rows]
+        if default_value not in slugs:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"default_value '{default_value}' n'est pas une valeur autorisée de la "
+                    f"propriété '{prop_slug}' ; valeurs autorisées : {', '.join(slugs)}"
+                ),
+            )
+        return
+    if prop_type == "reference":
+        try:
+            uuid.UUID(default_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"default_value de la propriété '{prop_slug}' de type reference : "
+                    f"'{default_value}' n'est pas un UUID valide"
+                ),
+            ) from exc
+        return
+    await validate_scalar_value(prop_type, default_value, prop_slug)
+
+
 async def list_defs(pool: asyncpg.Pool, ws_slug: str, type_slug: str) -> list[PropertiesDefOut]:
     async with pool.acquire() as conn:
         type_id = await _resolve_type_id(conn, ws_slug, type_slug)
@@ -178,6 +240,8 @@ async def create_def(
                     )
                 target_ft_id = await require_type(conn, wk, data.target_functional_type_slug)
 
+            await _check_default_value(conn, None, data.type, data.default_value, data.slug)
+
             try:
                 row = await conn.fetchrow(
                     _INSERT_DEF,
@@ -201,6 +265,142 @@ async def create_def(
     return await get_def(pool, ws_slug, type_slug, data.slug)
 
 
+# Transitions de type permises quand des VALEURS existent en base : seules les
+# familles où les données restent cohérentes (règle utilisateur — ex. passer de
+# text à url ou restricted_list). Tout le reste exige une propriété vide.
+_TYPE_TRANSITIONS: dict[str, frozenset[str]] = {
+    "text": frozenset({"url", "restricted_list"}),
+    "url": frozenset({"text", "restricted_list"}),
+    "restricted_list": frozenset({"text", "url"}),
+    "int": frozenset({"float"}),
+}
+
+_SELECT_CURRENT_TEXT_VALUES = """
+SELECT DISTINCT v.value
+FROM properties_values pv
+JOIN properties_value_version v
+  ON v.property_value_ref = pv.id AND v.version_number = pv.version
+WHERE pv.property_def_ref = $1 AND v.value IS NOT NULL
+ORDER BY v.value
+"""
+
+_LINK_CURRENT_VALUES = """
+UPDATE properties_value_version v
+SET value = NULL, allowed_value_ref = $2
+FROM properties_values pv
+WHERE v.property_value_ref = pv.id
+  AND v.version_number = pv.version
+  AND pv.property_def_ref = $1
+  AND v.value = $3
+"""
+
+
+def _as_allowed_slug(value: str) -> str | None:
+    try:
+        return validate_slug(value, "valeur")
+    except ValueError:
+        return None
+
+
+async def _promote_values_to_vocabulary(
+    conn: asyncpg.Connection, prop_id: uuid.UUID, prop_slug: str
+) -> None:
+    """Transforme en vocabulaire les valeurs texte courantes d'une propriété (→ restricted_list).
+
+    Une valeur de ``restricted_list`` se stocke comme référence au vocabulaire, jamais
+    comme texte (invariant « value XOR allowed_value_ref »). Sans cette migration, les
+    documents déjà renseignés gardent leur texte avec ``allowed_value_ref = NULL`` : ils
+    disparaissent des filtres, du tri et du board, et ne comptent pas comme dépendants
+    d'une valeur autorisée — le tout sans la moindre erreur.
+
+    La migration s'exécute dans la transaction du changement de type : soit la propriété
+    change de type ET ses valeurs sont reliées, soit rien. Seules les versions COURANTES
+    sont réécrites (représentation d'une valeur inchangée, pas nouvelle valeur : ni bump
+    de version, ni entrée de changelog par document) ; l'historique reste immuable.
+
+    Une valeur libre qui ne peut pas être un slug rend la transition impossible : on
+    refuse (422) en listant les valeurs fautives plutôt que d'en perdre une en route.
+    """
+    rows = await conn.fetch(_SELECT_CURRENT_TEXT_VALUES, prop_id)
+    values: list[str] = [r["value"] for r in rows]
+    if not values:
+        return
+    invalid = [v for v in values if _as_allowed_slug(v) is None]
+    if invalid:
+        shown = ", ".join(f"'{v}'" for v in invalid[:5])
+        suffix = f" (et {len(invalid) - 5} autre(s))" if len(invalid) > 5 else ""
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"changement de type refusé : {len(invalid)} valeur(s) existante(s) de la "
+                f"propriété '{prop_slug}' ne peuvent pas devenir des valeurs autorisées "
+                f"(format attendu ^[a-z0-9][a-z0-9_-]*, longueur 1–100) : {shown}{suffix} — "
+                "corriger ou effacer ces valeurs, puis relancer le changement de type"
+            ),
+        )
+    next_position: int = await conn.fetchval(
+        "SELECT coalesce(max(position) + 1, 0) FROM properties_allowed_values "
+        "WHERE property_def_ref = $1",
+        prop_id,
+    )
+    for value in values:
+        # Un aller-retour restricted_list → text → restricted_list retrouve son
+        # vocabulaire : on relie à la valeur existante au lieu d'en créer une jumelle.
+        val_id: uuid.UUID | None = await conn.fetchval(_SELECT_VAL_ID, prop_id, value)
+        if val_id is None:
+            val_id = await conn.fetchval(
+                "INSERT INTO properties_allowed_values (property_def_ref, slug, label, position) "
+                "VALUES ($1, $2, $2, $3) RETURNING id",
+                prop_id,
+                value,
+                next_position,
+            )
+            next_position += 1
+        await conn.execute(_LINK_CURRENT_VALUES, prop_id, val_id, value)
+    log.info(
+        "property_values_promoted_to_vocabulary",
+        prop_id=str(prop_id),
+        prop_slug=prop_slug,
+        vocabulary=values,
+    )
+
+
+async def _check_updated_default(
+    conn: asyncpg.Connection,
+    prop_id: uuid.UUID,
+    prop_slug: str,
+    prop_type: str,
+    updates: dict[str, object | None],
+) -> None:
+    """Valide le couple (type, défaut) résultant de la mise à jour.
+
+    Un changement de type peut invalider un défaut déjà stocké : la transition
+    est alors refusée plutôt que d'effacer silencieusement le défaut — l'appelant
+    ajuste ou efface ``default_value`` dans la même requête.
+    """
+    effective_type = str(updates["type"]) if "type" in updates else prop_type
+    default_in_request = "default_value" in updates
+    if default_in_request:
+        raw = updates["default_value"]
+        effective_default = raw if isinstance(raw, str) else None
+    else:
+        effective_default = await conn.fetchval(
+            "SELECT default_value FROM properties_defs WHERE id = $1", prop_id
+        )
+    try:
+        await _check_default_value(conn, prop_id, effective_type, effective_default, prop_slug)
+    except HTTPException as exc:
+        if default_in_request:
+            raise
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"changement de type refusé : {exc.detail} — ajuster ou effacer "
+                "default_value dans la même requête"
+            ),
+        ) from exc
+
+
 async def update_def(
     pool: asyncpg.Pool,
     ws_slug: str,
@@ -212,12 +412,12 @@ async def update_def(
     # default_value peut être remis explicitement à NULL ; label/required (NOT NULL)
     # ne peuvent pas devenir null → on ignore un null envoyé sur ces champs.
     raw = data.model_dump(exclude_unset=True)
-    _ALLOWED = frozenset({"label", "default_value", "required", "behavior"})
+    _ALLOWED = frozenset({"label", "default_value", "required", "behavior", "type"})
     updates: dict[str, object | None] = {}
     for k, v in raw.items():
         if k not in _ALLOWED:
             raise ValueError(f"champ non modifiable : {k}")
-        if k in {"label", "required"} and v is None:
+        if k in {"label", "required", "type"} and v is None:
             continue
         updates[k] = v
     if not updates:
@@ -231,6 +431,43 @@ async def update_def(
                     status_code=422,
                     detail="behavior est réservé aux propriétés de type 'date'",
                 )
+            new_type = updates.get("type")
+            if new_type == prop_type:
+                updates.pop("type")
+                new_type = None
+            if new_type is not None:
+                current_behavior = await conn.fetchval(
+                    "SELECT behavior FROM properties_defs WHERE id = $1", prop_id
+                )
+                if current_behavior is not None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="type non modifiable : la propriété porte un "
+                        "comportement automatique (réservé au type 'date')",
+                    )
+                dependents: int = await conn.fetchval(
+                    "SELECT count(*) FROM properties_values WHERE property_def_ref = $1",
+                    prop_id,
+                )
+                allowed = _TYPE_TRANSITIONS.get(prop_type, frozenset())
+                if dependents > 0 and str(new_type) not in allowed:
+                    permitted = ", ".join(sorted(allowed)) or "aucune"
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"type non modifiable : {dependents} valeur(s) "
+                        f"existante(s) — transitions permises depuis "
+                        f"'{prop_type}' : {permitted}",
+                    )
+                if str(new_type) == "restricted_list" and prop_type != "restricted_list":
+                    # Avant la revalidation du défaut : un default_value égal à une
+                    # valeur existante devient légitime dès que le vocabulaire existe.
+                    await _promote_values_to_vocabulary(conn, prop_id, prop_slug)
+            # Le défaut n'est revalidé que si la requête touche le défaut ou le
+            # type : un PATCH sur le seul label ne doit pas buter sur un défaut
+            # hérité (ex. slug de restricted_list déclaré avant son vocabulaire).
+            if "default_value" in updates or "type" in updates:
+                await _check_updated_default(conn, prop_id, prop_slug, prop_type, updates)
+
             cols = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(updates))
             row = await conn.fetchrow(
                 _UPDATE_DEF.format(cols=cols), prop_id, *list(updates.values())
@@ -364,6 +601,23 @@ async def delete_allowed_value(
             val_id = await conn.fetchval(_SELECT_VAL_ID, prop_id, val_slug)
             if val_id is None:
                 raise HTTPException(status_code=404, detail=f"valeur '{val_slug}' introuvable")
+            # Le 409 porte le NOMBRE de documents concernés : l'utilisateur ne
+            # confirme pas à l'aveugle. Le FK restrict reste le garde-fou.
+            # Valeurs versionnées (0005) : seule la version COURANTE compte —
+            # une valeur abandonnée dans l'historique ne bloque pas la suppression
+            # applicative (le FK restrict de l'historique, lui, la bloquera).
+            used = await conn.fetchval(
+                "SELECT count(*) FROM properties_values pv "
+                "JOIN properties_value_version v ON v.property_value_ref = pv.id "
+                " AND v.version_number = pv.version "
+                "WHERE v.allowed_value_ref = $1",
+                val_id,
+            )
+            if used:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"valeur utilisée par {used} document(s) existant(s)",
+                )
             try:
                 await conn.execute("DELETE FROM properties_allowed_values WHERE id = $1", val_id)
             except asyncpg.ForeignKeyViolationError as exc:
@@ -426,6 +680,18 @@ async def upsert_constraint(
                         "de type int, float ou date"
                     ),
                 )
+            # Un opérande illisible produirait une contrainte inerte (min/max) ou
+            # fatale (min_length/max_length/pattern → 500 à chaque écriture).
+            try:
+                validate_constraint_operand(data.kind, prop_type, data.value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"contrainte '{data.kind}' sur la propriété '{prop_slug}' "
+                        f"(type {prop_type}) : opérande '{data.value}' inexploitable — {exc}"
+                    ),
+                ) from exc
             row = await conn.fetchrow(
                 """
                 INSERT INTO properties_constraints (property_def_ref, kind, value, message)

@@ -25,8 +25,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Tout le script vit dans main() : bash parse le fichier entier avant de
-# l'exécuter, ce qui rend le `git reset --hard` de l'étape 1 inoffensif
-# même quand il remplace ce fichier pendant l'exécution.
+# l'exécuter, ce qui rend la synchro git de l'étape 1 inoffensive même
+# quand elle remplace ce fichier pendant l'exécution.
 main() {
     local APP_DIR="${APP_DIR:-/opt/docflow}"
     local DATA_ROOT="${DATA_ROOT:-/data}"
@@ -113,19 +113,21 @@ main() {
     fi
 
     # ─── 1) Git sync ──────────────────────────────────────────────────────────
-    # reset --hard (et non pull --ff-only) : robuste quand le script se met à
-    # jour lui-même lors de la synchro — cf. main() ci-dessus.
+    # git pull --ff-only : affiche le diffstat des fichiers mis à jour (visuel
+    # d'un pull). Le script vit entièrement dans main() — bash a déjà parsé le
+    # fichier, donc le remplacer pendant l'exécution reste sans effet. Le
+    # fast-forward échoue franchement si l'arbre a divergé (préférable à un
+    # écrasement silencieux).
     if [[ -n "$TARGET_BRANCH" ]]; then
         echo "==> [1/4] Sync vers ${TARGET_BRANCH}..."
         git fetch origin
         git checkout "$TARGET_BRANCH"
-        git reset --hard "origin/${TARGET_BRANCH}"
+        git pull --ff-only origin "${TARGET_BRANCH}"
     else
         local CURRENT
         CURRENT="$(git branch --show-current)"
         echo "==> [1/4] Sync (${CURRENT})..."
-        git fetch origin
-        git reset --hard "origin/${CURRENT}"
+        git pull --ff-only origin "${CURRENT}"
     fi
 
     # ─── 2) Initialisation + réparation de /data ──────────────────────────────
@@ -183,6 +185,25 @@ main() {
         echo "  ✓ ENCRYPTION_KEY générée"
     fi
 
+    if [[ -z "$(_env_get RUNTIME_ENV_PATH)" ]]; then
+        # Le backend doit savoir où vit CE fichier pour désarmer un flag break-glass
+        # (PRUNE_USERS) après usage. Sans lui, la purge est refusée au démarrage.
+        _env_set RUNTIME_ENV_PATH "$ENV_FILE"
+        echo "  ✓ RUNTIME_ENV_PATH=${ENV_FILE}"
+    fi
+
+    if [[ -z "$(_env_get SESSION_COOKIE_SECURE)" ]]; then
+        # La stack dev est publiée en CLAIR sur le LAN (pas de proxy TLS devant,
+        # cf. le port 8080 du compose). Avec Secure, le navigateur jette le cookie
+        # de session et la connexion échoue sans message côté serveur : le symptôme
+        # est un écran de login qui boucle, pas une erreur.
+        # Le défaut du code est `true` (fail closed) et c'est la bonne valeur ; c'est
+        # bien ce script — le seul qui connaisse le mode de publication — qui doit
+        # poser l'exception. Ne JAMAIS poser ça dans prod-deploy.sh.
+        _env_set SESSION_COOKIE_SECURE "false"
+        echo "  ✓ SESSION_COOKIE_SECURE=false (stack dev servie en http)"
+    fi
+
     unset -f _env_get _env_set
 
     if [[ "$FIRST_ENV" -eq 1 ]]; then
@@ -215,6 +236,9 @@ main() {
     echo "==> [4/4] Smoke /health (timeout 90s)..."
     smoke_test_health "$COMPOSE_FILE"
 
+    # ─── Déclaration au portail (après le smoke, best-effort) ─────────────────
+    declarer_exposition_portail
+
     # ─── Récapitulatif ────────────────────────────────────────────────────────
     local IP ADMIN_INFO
     IP="$(hostname -I | awk '{print $1}')"
@@ -243,6 +267,42 @@ main() {
     echo "  Logs  : docker compose -f ${COMPOSE_FILE} logs -f app"
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
+
+    # ─── Entretien hebdomadaire du cache Docker (non bloquant) ────────────────
+    # Placé APRÈS le récapitulatif à dessein : le déploiement est déjà confirmé
+    # (smoke vert) et n'attend jamais la purge, qui peut durer plusieurs minutes
+    # sur un gros cache. Bornée à une fois/semaine par témoin, jamais bloquante.
+    echo ""
+    echo "==> Entretien Docker (au plus hebdomadaire)..."
+    prune_docker_cache "$DATA_ROOT" || true
+}
+
+# ─── Déclaration au portail (annuaire des services exposés) ─────────────────
+# STANDARD « Exposer un service interne… » : après le smoke, la stack déclare
+# ses services au portail via scripts/declarer-exposition.sh, voie AGENT (--me,
+# code TOTP). Best-effort et 100 % piloté par l'ENVIRONNEMENT — on ne touche
+# jamais /data/.env pour ça :
+#   PORTAL_URL       base du portail (ex. https://dev.yoops.org) — vide = no-op
+#   PORTAL_TOKEN     code TOTP « <login>:<code> » (jamais journalisé, jamais argv)
+#   EXPOSE_WORKSPACE workspace propriétaire côté portail
+#   EXPOSE_SERVICE   nom du service (défaut : docflow)
+# Le script sous-jacent no-op sans PORTAL_TOKEN/PORTAL_URL et n'échoue jamais :
+# docflow reste déployable hors de tout contexte portail. docflow expose UNE
+# origine (UI + API + MCP sous /api/mcp), page d'entrée `/` → pas de --path.
+declarer_exposition_portail() {
+    [[ -x scripts/declarer-exposition.sh ]] || return 0
+    local ip
+    ip="$(hostname -I | awk '{print $1}')"
+    echo ""
+    echo "==> Déclaration au portail (best-effort)..."
+    scripts/declarer-exposition.sh \
+        --me \
+        --portal "${PORTAL_URL:-}" \
+        --workspace "${EXPOSE_WORKSPACE:-}" \
+        --service "${EXPOSE_SERVICE:-docflow}" \
+        --target-host "$ip" \
+        --target-port 8080 \
+        --scheme http || true
 }
 
 # ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────
@@ -264,6 +324,43 @@ smoke_test_health() {
         echo "  Vérifier : docker compose -f ${COMPOSE_FILE} logs --tail=80 app" >&2
         exit 1
     fi
+}
+
+# ─── Entretien hebdomadaire du cache Docker ────────────────────────────────────
+# Chaque build empile de nouvelles couches ; l'image précédente est détaggée
+# mais ses snapshots restent sur disque, et rien ne les récupère. Purge bornée
+# AU PLUS une fois par semaine (témoin horodaté), au périmètre volontairement
+# restreint :
+#   - `docker builder prune -a`  → cache de build (le plus gros gain, sans risque) ;
+#   - `docker image prune`       → images dangling (builds précédents détaggés).
+# JAMAIS `system prune -a` (supprimerait les images de base, rallongeant tous les
+# builds) ni `volume prune` (détruirait les volumes persistants : pgdata Postgres
+# et stockage d'artefacts de docflow). La purge ne peut jamais faire échouer le
+# déploiement : chaque commande est isolée par `|| true`, la fonction retourne 0.
+prune_docker_cache() {
+    local DATA_ROOT="$1"
+    local WITNESS="${DATA_ROOT}/.last-docker-prune"
+
+    # Témoin frais (< 7 jours) → entretien sauté. `find -mtime +7` n'imprime le
+    # fichier que s'il a plus de 7×24 h ; témoin absent → chaîne vide au test
+    # `-f` → on purge (et on crée le témoin). Deux déploiements le même jour ne
+    # déclenchent donc qu'une purge.
+    if [[ -f "$WITNESS" ]] && [[ -z "$(find "$WITNESS" -mtime +7 -print 2>/dev/null)" ]]; then
+        echo "  → dernière purge < 7 jours ($(date -r "$WITNESS" '+%Y-%m-%d' 2>/dev/null)), ignorée"
+        return 0
+    fi
+
+    echo "  → purge du cache de build et des images détaggées..."
+    local reclaimed
+    reclaimed="$(docker builder prune -a -f 2>/dev/null | tail -1 || true)"
+    echo "    builder : ${reclaimed:-—}"
+    reclaimed="$(docker image prune -f 2>/dev/null | tail -1 || true)"
+    echo "    images  : ${reclaimed:-—}"
+
+    # Témoin posé APRÈS la purge : le prochain déploiement dans les 7 jours
+    # sautera l'entretien. Un échec de `touch` ne casse pas le déploiement.
+    touch "$WITNESS" 2>/dev/null || true
+    echo "  ✓ entretien Docker effectué"
 }
 
 # ─── Purge complète de la base ─────────────────────────────────────────────────

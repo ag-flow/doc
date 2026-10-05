@@ -233,3 +233,31 @@ async def test_target_functional_type_only_for_reference(
             ),
         )
     assert exc.value.status_code == 422
+
+
+async def test_create_document_reference_invalid_uuid_returns_422(
+    db_pool: asyncpg.Pool, test_workspace: dict, make_block
+) -> None:
+    """create_document(properties={...}) passe par upsert_value (property_writes.py) :
+    une valeur non-UUID sur une propriété reference doit être un 422 propre, pas un 500."""
+    ws = "test-ws"
+    await type_svc.create_type(db_pool, ws, FunctionalTypeCreate(slug="rtype5", label="R5"))
+    await prop_svc.create_def(
+        db_pool,
+        ws,
+        "rtype5",
+        PropertiesDefCreate(slug="ref-create", label="Réf create", type="reference"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.create_document(
+            db_pool,
+            ws,
+            DocumentCreate(
+                title="Src",
+                parent_id=None,
+                functional_type_slug="rtype5",
+                block_id=await make_block(ws, "rtype5", "rtype5-block"),
+                properties={"ref-create": "not-a-uuid"},
+            ),
+        )
+    assert exc.value.status_code == 422

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -162,6 +163,80 @@ async def test_purge_delivered_keeps_recent_and_dead_letter(
     assert old not in remaining  # livré + ancien → purgé
     assert recent in remaining  # livré mais récent → conservé
     assert dead in remaining  # dead-letter → conservé pour inspection
+
+
+def test_lease_covers_worst_case_of_a_claim() -> None:
+    # Invariant : le bail posé par le claim couvre le traitement SÉQUENTIEL de
+    # tout le lot réclamé. Sinon une réplique concurrente peut re-réclamer une
+    # ligne que le worker est encore en train de livrer → double livraison.
+    chunk = ev_worker._CLAIM_CHUNK
+    assert ev_worker.lease_seconds(chunk) >= chunk * ev_worker._DELIVERY_BUDGET
+    # Le budget par livraison borne réellement un POST : il doit couvrir le
+    # timeout httpx (appliqué par opération : connect, write, read).
+    assert ev_worker._DELIVERY_BUDGET >= ev_worker._HTTP_TIMEOUT
+    assert 0 < chunk <= ev_worker._CLAIM_BATCH
+
+
+async def test_claim_lease_covers_the_whole_batch(
+    db_pool: asyncpg.Pool, clean_outbox: None
+) -> None:
+    # Pendant le traitement de la n-ième ligne du lot, le bail restant sur les
+    # lignes non encore traitées doit couvrir leur pire cas de traitement.
+    for _ in range(ev_worker._CLAIM_CHUNK):
+        await _insert(db_pool)
+    remaining_lease: list[float] = []
+
+    async def poster(body: bytes, headers: dict[str, str]) -> int:
+        left = await db_pool.fetchval(
+            "SELECT min(extract(epoch FROM next_attempt_at - now())) FROM event_outbox "
+            "WHERE sent_at IS NULL AND failed_at IS NULL"
+        )
+        remaining_lease.append(float(left))
+        return 200
+
+    n = await ev_worker.drain_once(db_pool, secret="s", poster=poster)
+    assert n == ev_worker._CLAIM_CHUNK
+    assert len(remaining_lease) == ev_worker._CLAIM_CHUNK
+    for index, left in enumerate(remaining_lease):
+        still_to_process = len(remaining_lease) - index
+        assert left >= still_to_process * ev_worker._DELIVERY_BUDGET
+
+
+async def test_drain_bounds_a_hung_delivery(
+    db_pool: asyncpg.Pool, clean_outbox: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Un poster qui ne rend jamais la main est coupé au budget : le pire cas par
+    # livraison est imposé, pas espéré (c'est ce qui rend le bail vérifiable).
+    monkeypatch.setattr(ev_worker, "_DELIVERY_BUDGET", 0.05)
+    pid = await _insert(db_pool)
+
+    async def poster(body: bytes, headers: dict[str, str]) -> int:
+        await asyncio.sleep(30)
+        return 200
+
+    n = await asyncio.wait_for(
+        ev_worker.drain_once(db_pool, secret="s", poster=poster, limit=1), timeout=5
+    )
+    assert n == 1
+    row = await db_pool.fetchrow("SELECT sent_at, attempts FROM event_outbox WHERE id=$1", pid)
+    assert row["sent_at"] is None
+    assert row["attempts"] == 1
+
+
+async def test_drain_processes_more_than_one_claim_chunk(
+    db_pool: asyncpg.Pool, clean_outbox: None
+) -> None:
+    total = ev_worker._CLAIM_CHUNK + 1
+    for _ in range(total):
+        await _insert(db_pool)
+
+    async def poster(body: bytes, headers: dict[str, str]) -> int:
+        return 200
+
+    n = await ev_worker.drain_once(db_pool, secret="s", poster=poster, limit=total)
+    assert n == total
+    pending = await db_pool.fetchval("SELECT count(*) FROM event_outbox WHERE sent_at IS NULL")
+    assert pending == 0
 
 
 async def test_drain_skips_not_due(db_pool: asyncpg.Pool, clean_outbox: None) -> None:

@@ -22,7 +22,7 @@ from docflow.schemas.auth import AuthUser
 
 
 def _json(result: list) -> dict:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 def _admin_user(uid: uuid.UUID) -> AuthUser:

@@ -62,3 +62,31 @@ LOG_LEVEL=INFO
 ```
 
 Le premier compte admin est créé via le wizard in-app (POST /api/setup/init-admin) au premier démarrage.
+
+## Licence
+
+docflow est distribué sous la **Functional Source License, Version 1.1, Apache 2.0
+Future License** — identifiant SPDX **`FSL-1.1-ALv2`**. Texte intégral :
+[LICENSE](LICENSE) ; mentions tierces : [NOTICE](NOTICE).
+
+C'est une licence **source-available** : le code est ouvert et librement
+utilisable, à la seule exception d'un usage concurrent, et chaque version
+**bascule automatiquement sous Apache 2.0 deux ans** après sa mise à disposition.
+
+| Usage | Autorisé |
+|-------|:--------:|
+| Usage interne (entreprise, perso), auto-hébergement | ✅ |
+| Lire, modifier, forker, redistribuer le code | ✅ |
+| Recherche et enseignement non commerciaux | ✅ |
+| Services professionnels rendus à un utilisateur légitime de docflow | ✅ |
+| Revendre docflow, ou en faire un produit/SaaS concurrent | ❌ |
+| Offrir un service qui s'y substitue ou en reproduit la fonctionnalité | ❌ |
+
+Deux ans après la publication d'une version donnée, ces restrictions tombent :
+cette version devient utilisable sous **Apache License 2.0**, sans réserve.
+
+Le résumé ci-dessus est indicatif ; seul le fichier [LICENSE](LICENSE) fait foi.
+FAQ officielle de la licence : <https://fsl.software>.
+
+Toute contribution est acceptée selon les termes décrits dans
+[CONTRIBUTING.md](CONTRIBUTING.md).

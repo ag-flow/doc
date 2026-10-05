@@ -51,6 +51,27 @@ Déploiement | Ouvrir au premier groupe d'utilisateurs.
 - **La numérotation est positionnelle** — ne jamais écrire de numéro dans le
   corps (l'insertion d'une étape renumérote automatiquement).
 
+## `df-conversation` — échange en bulles
+
+````markdown
+```df-conversation title="Point CRM" me="Alice"
+Alice | On livre vendredi ?
+Bob | Oui, si la recette passe jeudi.
+Alice | Je bloque ma journée de jeudi.
+```
+````
+
+- Attributs : `title`, `me` (ses messages s'alignent à droite),
+  `format` (`records` | `transcript` | `vtt` — défaut : détection automatique).
+- **Trois formats de corps acceptés** :
+  1. `records` (canonique) : `Interlocuteur | message`, une ligne par message ;
+  2. `transcript` : en-tête `Interlocuteur • 0:32 \` puis le texte sur les
+     lignes suivantes (exports d'outils de transcription) ;
+  3. `vtt` : contenu WebVTT (Teams) collé tel quel — voix `<v Nom>…</v>`,
+     cues consécutives du même interlocuteur fusionnées, identifiants ignorés.
+- L'horodatage (transcript/vtt) s'affiche à côté du nom ; les messages
+  consécutifs du même interlocuteur sont groupés sous un seul nom.
+
 ## `df-chart` — graphique
 
 ````markdown
@@ -90,12 +111,76 @@ Février | 8 | 7
 - Valeur non numérique → ligne ignorée + badge. Virgule décimale acceptée.
 - Rendu : SVG natif docflow (aucune dépendance), export SVG via l'en-tête du bloc.
 
+## `df-display` — composition libre (A2UI simplifié)
+
+`````markdown
+```df-display title="Comparatif"
+[
+  {"id": "root", "component": "Column", "children": ["title", "cards"]},
+  {"id": "title", "component": "Text", "text": "Comparatif", "hint": "h2"},
+  {"id": "cards", "component": "Row", "children": ["c1", "c2"]},
+  {"id": "c1", "component": "Card", "children": ["c1t", "c1b"]},
+  {"id": "c1t", "component": "Text", "text": "Option A", "hint": "h3"},
+  {"id": "c1b", "component": "Badge", "text": "Recommandé", "variant": "accent"},
+  {"id": "c2", "component": "Card", "children": ["c2t"]},
+  {"id": "c2t", "component": "Text", "text": "Option B", "hint": "h3"}
+]
+```
+`````
+
+- Corps : **tableau JSON plat** (adjacency list) — `id` unique, `component` du
+  catalogue, `children` = ids, autres clés = props à plat. Racine = `id "root"`
+  sinon le premier composant.
+- Fence canonique **`df-display`** ; alias `display` toléré en lecture,
+  revendiqué seulement si le corps est un tableau JSON (sinon bloc de code
+  ordinaire). La fence d'origine est préservée au round-trip.
+- **Catalogue** : Row, Column, Card, List (`ordered`), Divider · Text
+  (`hint: h1|h2|h3|body|caption`), Image (`src`, `alt`), Icon (`name`),
+  Badge/Chip (`text`, `variant: neutral|accent|alert`) · ProgressBar
+  (`value` 0–100, `label`).
+- **Image** : `https:` ou artefact docflow (`/api/…`) uniquement — le reste
+  rend « image non autorisée ». **Icon** : 30 noms kebab-case stables
+  (`check`, `x`, `warning`, `info`, `clock`, `calendar`, `user`, `users`,
+  `gear`, `lightning`, `flag`, `star`, `arrow-right`, `arrow-up`,
+  `arrow-down`, `link`, `file`, `folder`, `tag`, `chat`, `envelope`, `globe`,
+  `lock`, `shield`, `database`, `rocket`, `target`, `trend-up`, `trend-down`,
+  `circle`) — inconnu → cercle grisé.
+- **Gardes** : 500 composants max, profondeur 32, cycles coupés ; composant
+  inconnu → texte grisé (ses enfants rendent) ; doublons/orphelins/références
+  mortes → badges de diagnostic, rendu partiel — jamais d'échec.
+- Hors MVP (phases ultérieures) : data binding datasets, actions utilisateur,
+  Chart/Mermaid/DataTable au catalogue.
+
 ## Graphes orientés : utiliser `mermaid`
 
 Pas de composant `df-flowchart` : les fences ```` ```mermaid ```` sont rendues
 nativement et couvrent le graphe orienté. Attention : dans mermaid, **l'identité
 d'un nœud est son libellé exact** (`Public ID` ≠ `Public ID (Clé)`) — utiliser
 la forme `id[Libellé]` pour un même nœud sous plusieurs libellés.
+
+## Puce artefact — fichier téléchargeable
+
+Un **artefact** (fichier binaire uploadé : PDF, audio, archive, image…) se
+référence dans un document par un lien de schéma `artifact://<uuid>`.
+
+- **Seule sur sa ligne**, la forme `[libellé](artifact://<uuid>)` devient une
+  **puce fichier** : icône selon le type, nom, extension, taille lisible, plus
+  **Télécharger** (téléchargement authentifié) et **Ouvrir** (lien signé de
+  courte durée dans un nouvel onglet). Un **libellé vide** retombe sur le nom
+  de fichier de l'artefact :
+
+  ```
+  [](artifact://550e8400-e29b-41d4-a716-446655440000)
+  ```
+
+- **Au fil du texte**, la même forme reste un **lien cliquable** (ouvre le
+  fichier via un lien signé) — elle n'est PAS transformée en puce.
+
+La distinction est purement positionnelle : ligne isolée = puce, inline = lien.
+
+Dans l'éditeur, la commande **`/fichier`** ouvre le sélecteur, téléverse le
+fichier en artefact et insère la puce automatiquement (le nom de fichier sert
+de libellé). Un glisser-déposer d'**image** reste inséré en image inline.
 
 ## Chrome commun
 

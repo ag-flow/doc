@@ -7,12 +7,16 @@ Couverture : chemin nominal, erreur métier, idempotence, guard admin.
 from __future__ import annotations
 
 import json
+import pathlib
 import uuid
 from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
+import yaml
+from mcp.types import CallToolResult
 
+import docflow.mcp.server as mcp_server_mod
 from docflow.mcp.server import (
     _TOOLS,
     _block_exists,
@@ -22,9 +26,12 @@ from docflow.mcp.server import (
     _create_workspace,
     _delete_block,
     _delete_document,
+    _export_template,
+    _finalize_tool_result,
     _get_block_type,
     _get_document,
     _get_property_value,
+    _get_template_yaml,
     _import_template,
     _list_blocks,
     _list_documents,
@@ -45,7 +52,7 @@ from docflow.mcp.server import (
 
 
 def _json(result: list) -> object:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +188,8 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "get_property_value",
         "set_property_value",
         "list_templates",
+        "export_template",
+        "get_template_yaml",
         "create_workspace",
         "import_template",
         "create_block",
@@ -194,9 +203,17 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "get_block_type",
         "list_blocks",
         "delete_block",
+        "create_upload",
         "create_artifact",
+        "update_artifact",
+        "patch_artifact",
+        "prune_artifact_revisions",
         "get_artifact",
         "get_artifact_link",
+        "get_preview_link",
+        "get_maquette_png",
+        "get_artifact_data",
+        "list_artifacts",
         "list_block_properties",
         "list_block_objects",
         "query_documents",
@@ -207,6 +224,7 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "add_workspace_member",
         "remove_workspace_member",
         "find_referencing_documents",
+        "search_documents",
         "create_dataset",
         "list_datasets",
         "get_dataset",
@@ -219,6 +237,10 @@ async def test_tools_count(db_pool: asyncpg.Pool) -> None:
         "query_dataset",
         "import_dataset_csv",
         "export_dataset_csv",
+        "set_mockup_base",
+        "apply_mockup_base",
+        "propagate_mockup_base",
+        "mockup_base_drift",
     }
     assert names == expected, f"Outils inattendus ou manquants : {names ^ expected}"
 
@@ -285,6 +307,14 @@ async def test_get_document_nominal(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
 
 async def test_get_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
     data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], str(uuid.uuid4())))  # type: ignore[arg-type]
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_get_document_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un doc_id qui n'est pas un UUID doit renvoyer {"error": ...}, pas lever ValueError."""
+    data = _json(await _get_document(db_pool, mcp_ws["ws_slug"], "pas-un-uuid"))  # type: ignore[arg-type]
     assert "error" in data  # type: ignore[operator]
 
 
@@ -464,6 +494,73 @@ async def test_create_document_enfant_type_invalide_refuse(
     assert "error" in data  # type: ignore[operator]
 
 
+async def test_create_document_sans_type_est_REFUSE(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Rupture de contrat assumée (T2) : l'interface exige le type depuis
+    toujours, le MCP le laissait optionnel. L'écart produisait des documents sans
+    type — qui échappaient aussi à la contrainte de hiérarchie du bloc."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Sans type",
+            },
+        )
+    )
+
+    assert data["error_code"] == "functional_type_required"  # type: ignore[index]
+
+
+async def test_le_refus_NOMME_les_types_admissibles(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Un refus doit suffire à se corriger seul : sinon on remplace un document
+    mal typé par un agent bloqué."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Sans type",
+            },
+        )
+    )
+
+    assert "epic" in data["error_detail"]["allowed"]  # type: ignore[index]
+    assert "epic" in data["error"]  # type: ignore[index]
+
+
+async def test_create_document_avec_type_reste_inchange(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Les appelants qui passaient déjà le type ne voient aucune différence."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": "epics",
+                "title": "Avec type",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+
+    assert data["created"] is True  # type: ignore[index]
+
+
+def test_create_document_declare_le_type_comme_REQUIS() -> None:
+    """Le schéma doit dire la vérité : un outil qui annonce « optionnel » ce
+    qu'il refuse fait échouer l'agent sans qu'il comprenne."""
+    tool = next(t for t in _TOOLS if t.name == "create_document")
+    assert "functional_type_slug" in tool.inputSchema["required"]
+    assert "optionnel" not in tool.inputSchema["properties"]["functional_type_slug"]["description"]
+
+
 # ---------------------------------------------------------------------------
 # 7. update_document
 # ---------------------------------------------------------------------------
@@ -477,13 +574,140 @@ async def test_update_document_titre(db_pool: asyncpg.Pool, mcp_ws: dict[str, ob
                 "workspace_slug": mcp_ws["ws_slug"],
                 "doc_id": mcp_ws["doc_id"],
                 "title": "Epic A — modifié",
+                "expected_version": 1,
             },
         )
     )
     assert data["updated"] is True  # type: ignore[index]
+    # Le retour porte la NOUVELLE version, directement réutilisable en écriture.
+    assert data["version"] == 2  # type: ignore[index]
 
     check = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
     assert check["title"] == "Epic A — modifié"  # type: ignore[index]
+    assert check["version"] == 2  # type: ignore[index]
+    assert check["is_current"] is True  # type: ignore[index]
+
+
+async def test_update_document_pose_le_type_fonctionnel(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le trou que ce ticket comble : un agent qui oubliait le type à la création
+    ne pouvait plus le rattraper — aucun outil MCP ne l'exposait."""
+    # Un document SANS type. Le MCP ne permet plus d'en créer (T2), mais il en
+    # existe : créés avant, ou par un autre chemin. C'est exactement la
+    # population que T3 devra reprendre — et qu'on doit pouvoir réparer.
+    # `create_document_in_block` DÉDUIT le type du bloc à la racine : il ne
+    # produit donc pas de document typeless. Seul `create_document` laisse le
+    # type à None quand on ne le passe pas — c'est par là que la population
+    # historique est arrivée.
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
+    block_id = await db_pool.fetchval(
+        "SELECT b.id FROM data_block b JOIN workspace w "
+        "ON w.workspace_technical_key = b.workspace_technical_key "
+        "WHERE w.slug = $1 AND b.slug = $2",
+        mcp_ws["ws_slug"],
+        "epics",
+    )
+    legacy = await doc_svc.create_document(
+        db_pool,
+        str(mcp_ws["ws_slug"]),
+        DocumentCreate(title="Sans type", slug="sans-type", block_id=block_id),
+    )
+    doc_id = str(legacy.doc_technical_key)
+    before = _json(await _get_document(db_pool, mcp_ws["ws_slug"], doc_id))  # type: ignore[arg-type]
+    assert before["functional_type_slug"] is None  # type: ignore[index]
+
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": doc_id,
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+
+    assert data["updated"] is True  # type: ignore[index]
+    after = _json(await _get_document(db_pool, mcp_ws["ws_slug"], doc_id))  # type: ignore[arg-type]
+    assert after["functional_type_slug"] == "epic"  # type: ignore[index]
+
+
+async def test_poser_le_type_seul_ne_cree_PAS_de_revision(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le type fonctionnel n'est pas du contenu : le poser ne versionne rien,
+    et n'exige donc aucune version attendue."""
+    before = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+
+    await _update_document(
+        db_pool,
+        {
+            "workspace_slug": mcp_ws["ws_slug"],
+            "doc_id": mcp_ws["doc_id"],
+            "functional_type_slug": "epic",
+        },
+    )
+
+    after = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    assert after["version"] == before["version"]  # type: ignore[index]
+
+
+async def test_update_document_titre_exige_TOUJOURS_une_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """La concurrence optimiste ne se relâche que pour le type : dès qu'on touche
+    au contenu, un appel sans version reste refusé."""
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "title": "Sans version",
+            },
+        )
+    )
+    assert data["error_code"] == "version_required"  # type: ignore[index]
+
+
+async def test_update_document_type_interdit_a_cette_position(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Poser un type fait entrer le document dans la contrainte de hiérarchie :
+    un type incompatible se REFUSE, il ne se force pas."""
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, workspace_technical_key) "
+        "SELECT $1, $2, workspace_technical_key FROM workspace WHERE slug = $3",
+        "story",
+        "Story",
+        mcp_ws["ws_slug"],
+    )
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "functional_type_slug": "story",
+            },
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_update_document_sans_rien_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": mcp_ws["ws_slug"], "doc_id": mcp_ws["doc_id"]},
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
 
 
 async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
@@ -494,10 +718,107 @@ async def test_update_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, 
                 "workspace_slug": mcp_ws["ws_slug"],
                 "doc_id": str(uuid.uuid4()),
                 "title": "Ghost",
+                "expected_version": 1,
+            },
+        )
+    )
+    assert data["error_code"] == "not_found"  # type: ignore[index]
+
+
+async def test_update_document_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": "pas-un-uuid",
+                "title": "Ghost",
+                "expected_version": 1,
             },
         )
     )
     assert "error" in data  # type: ignore[operator]
+
+
+async def test_update_document_sans_version_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Bascule franche : expected_version obligatoire (pas d'écriture aveugle)."""
+    data = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": mcp_ws["ws_slug"], "doc_id": mcp_ws["doc_id"], "title": "X"},
+        )
+    )
+    assert data["error_code"] == "version_required"  # type: ignore[index]
+    # Refus = aucune écriture : le document reste à sa version initiale.
+    check = _json(await _get_document(db_pool, mcp_ws["ws_slug"], mcp_ws["doc_id"]))  # type: ignore[arg-type]
+    assert check["version"] == 1  # type: ignore[index]
+    assert check["title"] == "Epic A"  # type: ignore[index]
+
+
+async def test_update_document_version_perimee_refuse(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Conflit optimiste : version périmée → refus discriminable, sans écrasement."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    # Première écriture : passe la version à 2.
+    ok = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": ws, "doc_id": doc_id, "contenu": "v2", "expected_version": 1},
+        )
+    )
+    assert ok["version"] == 2  # type: ignore[index]
+    # Deuxième écriture sur la version 1 périmée : refus.
+    conflict = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "contenu": "écrasement",
+                "expected_version": 1,
+            },
+        )
+    )
+    assert conflict["error_code"] == "version_conflict"  # type: ignore[index]
+    err = conflict["error_detail"]  # type: ignore[index]
+    # L'erreur porte l'état COURANT pour réappliquer sans relecture.
+    assert err["version"] == 2
+    assert err["contenu"] == "v2"
+    # Aucun écrasement : le contenu courant est intact.
+    got = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert got["contenu"] == "v2"  # type: ignore[index]
+    assert got["version"] == 2  # type: ignore[index]
+
+
+async def test_update_conflict_code_distinct_du_not_found(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le code du conflit est distinct de celui du document introuvable."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    conflict = _json(
+        await _update_document(
+            db_pool,
+            {"workspace_slug": ws, "doc_id": doc_id, "title": "z", "expected_version": 99},
+        )
+    )
+    not_found = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": str(uuid.uuid4()),
+                "title": "z",
+                "expected_version": 1,
+            },
+        )
+    )
+    assert conflict["error_code"] == "version_conflict"  # type: ignore[index]
+    assert not_found["error_code"] == "not_found"  # type: ignore[index]
 
 
 # Bug MCO : omission d'un champ (title ou contenu) ne doit PAS écraser l'autre à NULL.
@@ -511,7 +832,13 @@ async def test_update_document_titre_seul_preserve_contenu(
     # Le doc de la fixture a été créé avec contenu "# Epic A".
     res = _json(
         await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "title": "Epic A renommé"}
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "title": "Epic A renommé",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -527,7 +854,13 @@ async def test_update_document_contenu_seul_preserve_titre(
     ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
     res = _json(
         await _update_document(
-            db_pool, {"workspace_slug": ws, "doc_id": doc_id, "contenu": "# Nouveau corps"}
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "contenu": "# Nouveau corps",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -544,7 +877,13 @@ async def test_update_document_deux_champs(
     res = _json(
         await _update_document(
             db_pool,
-            {"workspace_slug": ws, "doc_id": doc_id, "title": "T2", "contenu": "C2"},
+            {
+                "workspace_slug": ws,
+                "doc_id": doc_id,
+                "title": "T2",
+                "contenu": "C2",
+                "expected_version": 1,
+            },
         )
     )
     assert res["updated"] is True  # type: ignore[index]
@@ -559,6 +898,82 @@ async def test_update_document_sans_champ_refuse(
     ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
     res = _json(await _update_document(db_pool, {"workspace_slug": ws, "doc_id": doc_id}))
     assert "error" in res  # type: ignore[operator]
+
+
+async def test_get_document_version_anterieure(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """get_document(version=N) restitue titre+contenu d'alors, sans effet de bord."""
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    # Fixture : v1 = "# Epic A". On écrit une v2.
+    await _update_document(
+        db_pool,
+        {"workspace_slug": ws, "doc_id": doc_id, "contenu": "corps v2", "expected_version": 1},
+    )
+    v1 = _json(await _get_document(db_pool, ws, doc_id, 1))  # type: ignore[arg-type]
+    assert v1["contenu"] == "# Epic A"  # type: ignore[index]
+    assert v1["version"] == 1  # type: ignore[index]
+    assert v1["is_current"] is False  # type: ignore[index]
+
+    v2 = _json(await _get_document(db_pool, ws, doc_id, 2))  # type: ignore[arg-type]
+    assert v2["contenu"] == "corps v2"  # type: ignore[index]
+    assert v2["is_current"] is True  # type: ignore[index]
+
+    # La lecture d'une version ne crée aucune révision : le head reste à 2.
+    cur = _json(await _get_document(db_pool, ws, doc_id))  # type: ignore[arg-type]
+    assert cur["version"] == 2  # type: ignore[index]
+
+
+async def test_get_document_version_inexistante_donne_les_bornes(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    data = _json(await _get_document(db_pool, ws, doc_id, 99))  # type: ignore[arg-type]
+    assert data["error_code"] == "version_not_found"  # type: ignore[index]
+    err = data["error_detail"]  # type: ignore[index]
+    assert err["available_min"] == 1
+    assert err["available_max"] == 1
+
+
+async def test_get_document_version_malformee(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    ws, doc_id = mcp_ws["ws_slug"], mcp_ws["doc_id"]
+    data = _json(await _get_document(db_pool, ws, doc_id, "abc"))  # type: ignore[arg-type]
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_create_document_retourne_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """create_document expose la version initiale (utilisable en expected_version)."""
+    data = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "block_slug": mcp_ws["block_slug"],
+                "title": "Epic Neuf",
+                "contenu": "# Neuf",
+                "functional_type_slug": "epic",
+            },
+        )
+    )
+    assert data["created"] is True  # type: ignore[index]
+    assert data["version"] == 1  # type: ignore[index]
+    # La version initiale permet un update immédiat sans relecture.
+    upd = _json(
+        await _update_document(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": data["id"],  # type: ignore[index]
+                "contenu": "# Neuf v2",
+                "expected_version": data["version"],  # type: ignore[index]
+            },
+        )
+    )
+    assert upd["version"] == 2  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +997,19 @@ async def test_list_property_values_retourne_prop(
     # Chaque entrée expose le flag required (ici priority n'est pas obligatoire)
     priority = next(p for p in data if p["prop_slug"] == "priority")  # type: ignore[union-attr,index]
     assert priority["required"] is False
+
+
+async def test_list_property_values_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _list_property_values(
+            db_pool,
+            mcp_ws["ws_slug"],  # type: ignore[arg-type]
+            "pas-un-uuid",
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +1039,20 @@ async def test_get_property_value_introuvable(
             mcp_ws["ws_slug"],
             mcp_ws["doc_id"],
             "inexistant",  # type: ignore[arg-type]
+        )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_get_property_value_doc_id_malforme(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    data = _json(
+        await _get_property_value(
+            db_pool,
+            mcp_ws["ws_slug"],  # type: ignore[arg-type]
+            "pas-un-uuid",
+            "priority",
         )
     )
     assert "error" in data  # type: ignore[operator]
@@ -651,10 +1093,9 @@ async def test_set_then_get_property_value(
 async def test_set_property_value_double_field_interdit(
     db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
 ) -> None:
-    """Fournir value ET allowed_value_slug en même temps doit lever une erreur."""
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException):
+    """Fournir value ET allowed_value_slug en même temps doit renvoyer un refus
+    JSON structuré {"error": ...} — jamais une HTTPException qui remonte au SDK."""
+    data = _json(
         await _set_property_value(
             db_pool,
             {
@@ -665,6 +1106,65 @@ async def test_set_property_value_double_field_interdit(
                 "allowed_value_slug": "haute",
             },
         )
+    )
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_set_property_value_uuid_invalide(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """doc_id malformé → refus JSON propre, pas une exception qui remonte au SDK."""
+    data = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": "pas-un-uuid",
+                "prop_slug": "priority",
+                "value": "haute",
+            },
+        )
+    )
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
+
+
+async def test_set_property_value_conflit_de_version(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Deux écritures concurrentes avec un expected_version périmée : le conflit
+    409 (detail structuré côté service) doit ressortir en JSON exploitable,
+    jamais en str(dict) façon repr Python."""
+    first = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "prop_slug": "priority",
+                "value": "haute",
+                "expected_version": 0,
+            },
+        )
+    )
+    assert first["updated"] is True  # type: ignore[index]
+
+    stale = _json(
+        await _set_property_value(
+            db_pool,
+            {
+                "workspace_slug": mcp_ws["ws_slug"],
+                "doc_id": mcp_ws["doc_id"],
+                "prop_slug": "priority",
+                "value": "basse",
+                "expected_version": 0,
+            },
+        )
+    )
+    assert isinstance(stale, dict)
+    assert stale["error_code"] == "conflict"  # type: ignore[index]
+    assert stale["error_detail"]["version"] == 1  # type: ignore[index]
+    assert stale["error_detail"]["value"] == "haute"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +1180,66 @@ async def test_list_templates_retourne_liste(db_pool: asyncpg.Pool) -> None:
         assert "template" in tpl
         assert "version" in tpl
         assert isinstance(tpl["type_slugs"], list)
+
+
+# ---------------------------------------------------------------------------
+# 11bis. export_template / get_template_yaml (lecture pour agents)
+# ---------------------------------------------------------------------------
+
+_MCP_TPL = {
+    "version": 2,
+    "template": "mcp-tpl",
+    "label": "Modèle MCP",
+    "functional_types": [
+        {
+            "slug": "base",
+            "label": "Base",
+            "abstract": True,
+            "properties": [{"slug": "statut", "label": "Statut", "type": "text"}],
+        },
+        {
+            "slug": "epic",
+            "label": "Epic",
+            "inherit": "base",
+            "properties": [{"slug": "titre", "label": "Titre", "type": "text"}],
+        },
+    ],
+}
+
+
+@pytest.fixture()
+def mcp_templates_dir(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    (tmp_path / "mcp-tpl.yaml").write_text(yaml.dump(_MCP_TPL, allow_unicode=True))
+    monkeypatch.setattr(mcp_server_mod, "_TEMPLATES_DIR", tmp_path)
+    return tmp_path
+
+
+async def test_export_template_mcp_flattens(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _export_template("mcp-tpl"))
+    assert data["template"] == "mcp-tpl"  # type: ignore[index]
+    assert data["version"] == 2  # type: ignore[index]
+    types = {t["slug"]: t for t in data["functional_types"]}  # type: ignore[index]
+    # Type abstract exclu ; propriété héritée aplatie sur le concret.
+    assert set(types) == {"epic"}
+    prop_slugs = [p["slug"] for p in types["epic"]["properties"]]
+    assert "statut" in prop_slugs and "titre" in prop_slugs
+
+
+async def test_export_template_mcp_unknown(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _export_template("inconnu"))
+    assert "error" in data  # type: ignore[operator]
+
+
+async def test_get_template_yaml_mcp(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _get_template_yaml("mcp-tpl"))
+    assert data["template"] == "mcp-tpl"  # type: ignore[index]
+    # Source native : l'héritage (inherit/abstract) est présent, non résolu.
+    assert "inherit" in data["yaml_content"]  # type: ignore[index]
+
+
+async def test_get_template_yaml_mcp_unknown(mcp_templates_dir: pathlib.Path) -> None:
+    data = _json(await _get_template_yaml("inconnu"))
+    assert "error" in data  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +1410,7 @@ async def test_delete_document_avec_descendants_refuse_sans_confirm(
     refused = _json(
         await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
     )
-    assert refused["dependents"] == 1  # type: ignore[index]
+    assert refused["error_detail"]["dependents"] == 1  # type: ignore[index]
     assert "confirm" in str(refused["error"])
 
     # Le document et son enfant existent toujours
@@ -867,6 +1427,41 @@ async def test_delete_document_avec_descendants_refuse_sans_confirm(
     # Cascade DB : l'enfant a disparu avec le parent
     child_gone = _json(await _get_document(db_pool, ws, str(child["id"])))
     assert "error" in child_gone  # type: ignore[operator]
+
+
+async def test_delete_document_avec_descendants_finalize_is_error(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object]
+) -> None:
+    """Le refus à clés multiples ({"error": ..., "dependents": N}) doit porter
+    isError=True une fois passé par _finalize_tool_result (bug isError manquant
+    dès que le payload d'erreur a plus d'une clé)."""
+    ws = str(mcp_ws["ws_slug"])
+    await db_pool.execute(
+        "INSERT INTO functional_type (slug, label, parent, workspace_technical_key) "
+        "VALUES ('story', 'Story', $1, $2)",
+        mcp_ws["type_id"],
+        mcp_ws["wk"],
+    )
+    child = _json(
+        await _create_document(
+            db_pool,
+            {
+                "workspace_slug": ws,
+                "block_slug": str(mcp_ws["block_slug"]),
+                "title": "Story 1",
+                "functional_type_slug": "story",
+                "parent_id": str(mcp_ws["doc_id"]),
+            },
+        )
+    )
+    assert child.get("created") is True, child
+
+    result = await _delete_document(db_pool, {"workspace_slug": ws, "doc_id": mcp_ws["doc_id"]})
+    finalized = _finalize_tool_result(result)
+    assert isinstance(finalized, CallToolResult)
+    assert finalized.isError is True
+    payload = json.loads(finalized.content[0].text)
+    assert payload["error_detail"]["dependents"] == 1
 
 
 async def test_delete_document_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, object]) -> None:
@@ -886,7 +1481,8 @@ async def test_delete_document_uuid_invalide(
             db_pool, {"workspace_slug": mcp_ws["ws_slug"], "doc_id": "pas-un-uuid"}
         )
     )
-    assert data == {"error": "doc_id : UUID invalide"}
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1005,7 +1601,7 @@ async def test_api_profile_is_admin_true(db_pool: asyncpg.Pool) -> None:
         True,
     )
     body = ApiProfileCreate(name="profil-admin", description=None, is_admin=True)
-    profile = await create_profile(db_pool, owner_id, body)
+    profile = await create_profile(db_pool, owner_id, body, caller_is_superadmin=True)
     assert profile.is_admin is True
 
     profiles = await list_profiles(db_pool, owner_id)
@@ -1038,7 +1634,10 @@ async def test_resolve_api_key_retourne_profile_is_admin(db_pool: asyncpg.Pool) 
         True,
     )
     profile = await create_profile(
-        db_pool, owner_id, ApiProfileCreate(name="admin-prof", is_admin=True)
+        db_pool,
+        owner_id,
+        ApiProfileCreate(name="admin-prof", is_admin=True),
+        caller_is_superadmin=True,
     )
     key_created = await generate_key(
         db_pool, owner_id, ApiKeyCreate(profile_id=profile.id, label="test-key")
@@ -1232,7 +1831,8 @@ async def test_set_parent_uuid_invalide(db_pool: asyncpg.Pool, mcp_ws: dict[str,
             {"workspace_slug": str(mcp_ws["ws_slug"]), "doc_id": "pas-un-uuid"},
         )
     )
-    assert result == {"error": "doc_id / parent_id : UUID invalide"}
+    assert result["error_code"] == "invalid"  # type: ignore[index]
+    assert result["error"] == "doc_id / parent_id : UUID invalide"  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -1290,8 +1890,8 @@ async def test_delete_block_non_vide_sans_confirm_refuse(
         await _delete_block(db_pool, {"workspace_slug": ws, "block_slug": mcp_ws["block_slug"]})
     )
     assert "error" in res  # type: ignore[operator]
-    assert res["documents"] == 1  # type: ignore[index]
-    assert res["dependents"] >= 1  # type: ignore[index]
+    assert res["error_detail"]["documents"] == 1  # type: ignore[index]
+    assert res["error_detail"]["dependents"] >= 1  # type: ignore[index]
     # Le bloc est toujours là.
     slugs = [b["slug"] for b in _json(await _list_blocks(db_pool, ws))]  # type: ignore[arg-type,union-attr]
     assert mcp_ws["block_slug"] in slugs
@@ -1320,3 +1920,73 @@ async def test_delete_block_inconnu(db_pool: asyncpg.Pool, mcp_ws: dict[str, obj
         )
     )
     assert "error" in res  # type: ignore[operator]
+
+
+# ---------------------------------------------------------------------------
+# 18. create_api_profile — workspace vérifié + création atomique profil/scope
+# ---------------------------------------------------------------------------
+
+
+async def test_create_api_profile_workspace_inconnu_sans_profil_orphelin(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    """Un slug de workspace inexistant est refusé, sans laisser de profil sans scope."""
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool, {"name": "profil-fantome", "workspace_slug": "ws-qui-nexiste-pas"}
+        )
+    )
+    assert "error" in res  # type: ignore[operator]
+    assert "ws-qui-nexiste-pas" in str(res["error"])  # type: ignore[index]
+    count = await db_pool.fetchval(
+        "SELECT count(*) FROM api_profile WHERE owner_id = $1", mcp_session
+    )
+    assert count == 0
+
+
+async def test_create_api_profile_nominal_pose_profil_et_scope(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool,
+            {
+                "name": "profil-lecture",
+                "workspace_slug": mcp_ws["ws_slug"],
+                "read_only": True,
+            },
+        )
+    )
+    assert res["created"] is True  # type: ignore[index]
+    profile_id = uuid.UUID(str(res["profile_id"]))  # type: ignore[index]
+    row = await db_pool.fetchrow(
+        "SELECT workspace_slug, block_slug, read_only FROM api_profile_scope WHERE profile_id = $1",
+        profile_id,
+    )
+    assert row is not None
+    assert row["workspace_slug"] == mcp_ws["ws_slug"]
+    assert row["block_slug"] is None
+    assert row["read_only"] is True
+
+
+async def test_create_api_profile_reste_non_admin(
+    db_pool: asyncpg.Pool, mcp_ws: dict[str, object], mcp_session: uuid.UUID
+) -> None:
+    """Garde anti-escalade : un profil créé via MCP n'est jamais admin."""
+    from docflow.mcp.server import _create_api_profile
+
+    res = _json(
+        await _create_api_profile(
+            db_pool,
+            {"name": "profil-mcp", "workspace_slug": mcp_ws["ws_slug"], "is_admin": True},
+        )
+    )
+    assert res["created"] is True  # type: ignore[index]
+    is_admin = await db_pool.fetchval(
+        "SELECT is_admin FROM api_profile WHERE id = $1", uuid.UUID(str(res["profile_id"]))
+    )
+    assert is_admin is False

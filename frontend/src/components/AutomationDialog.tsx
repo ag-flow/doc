@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { CaretRight, Plus, Trash, X } from '@phosphor-icons/react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { JsonEditor, type JsonEditorHandle } from './JsonEditor'
 import {
   api, contractsApi, docsApi, eventsProducerApi, secretsApi,
   type AutomationCreate, type AutomationHeaderIn, type AutomationOut,
-  type DataBlockOut, type FunctionalType, type OperationOut, type WorkspaceOut,
+  type DataBlockOut, type FunctionalType, type OperationOut, type TemplateInfo,
+  type WorkspaceOut,
 } from '../lib/api'
 
 // Variables de propriétés d'event proposées comme raccourcis (sur-ensemble des
@@ -43,51 +44,94 @@ function newRow(): HeaderRow {
   return { id: crypto.randomUUID(), name: '', value: '', secretRef: '', valuePrefix: '', isSecret: false, required: false, enabled: true }
 }
 
-/** Blocs d'un workspace couvert (arbre de couverture) : cases de filtre + type. */
+/** Blocs d'un workspace couvert (arbre de couverture) : cases de filtre + type.
+ *
+ *  `coveredTypeSlugs` = types portés par les templates cochés. Un bloc dont le
+ *  type racine en fait partie est DÉJÀ couvert par l'union : on le montre comme
+ *  tel plutôt que de laisser croire qu'il faut aussi le cocher. */
 function WorkspaceBlocksNode({
-  wsSlug, blockSlugs, onToggleBlock,
+  wsSlug, blockSlugs, onToggleBlock, coveredTypeSlugs,
 }: {
   wsSlug: string
   blockSlugs: string[]
   onToggleBlock: (slug: string) => void
+  coveredTypeSlugs: Set<string>
 }) {
   const { data: blocks = [], isLoading } = useQuery<DataBlockOut[]>({
     queryKey: ['blocs', wsSlug],
     queryFn: () => docsApi.getBlocks(wsSlug),
     staleTime: 60_000,
   })
-  if (isLoading) return <p className="ml-6 text-xs text-gray-400">Chargement des blocs…</p>
-  if (blocks.length === 0) return <p className="ml-6 text-xs text-gray-400">Aucun bloc</p>
+  if (isLoading) return <p className="text-muted ml-6 text-[12px]">Chargement des blocs…</p>
+  if (blocks.length === 0) return <p className="text-muted ml-6 text-[12px]">Aucun bloc</p>
   return (
-    <div className="ml-6 space-y-0.5 border-l border-gray-100 pl-3">
-      {blocks.map((b) => (
-        <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
-          <input type="checkbox" checked={blockSlugs.includes(b.slug)}
-            onChange={() => onToggleBlock(b.slug)} />
-          <span className="truncate">{b.label}</span>
-          <span className="ml-auto shrink-0 rounded bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">
-            {b.functional_type_slug}
-          </span>
-        </label>
-      ))}
+    <div className="ml-6 space-y-0.5 border-l border-[var(--color-divider)] pl-3">
+      {blocks.map((b) => {
+        const viaTemplate = coveredTypeSlugs.has(b.functional_type_slug)
+        return (
+          <label key={b.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-block-${wsSlug}-${b.slug}`}>
+            <input type="checkbox" checked={blockSlugs.includes(b.slug) || viaTemplate}
+              disabled={viaTemplate}
+              onChange={() => onToggleBlock(b.slug)} />
+            <span className="truncate">{b.label}</span>
+            {viaTemplate && (
+              <span className="shrink-0 text-[10px] text-accent-700" data-testid={`auto-block-via-template-${b.slug}`}>
+                via template
+              </span>
+            )}
+            <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
+              {b.functional_type_slug}
+            </span>
+          </label>
+        )
+      })}
     </div>
   )
 }
 
-/** Section repliable de l'onglet Events (ouverte par défaut). */
-function Section({ title, hint, children }: {
+/** Mention posée sous une section de filtre qui ne filtre rien.
+ *
+ *  Un critère vide laisse TOUT passer : sans ce rappel, une section repliée et
+ *  vide se lit comme « rien à signaler » alors qu'elle ouvre le déclenchement en
+ *  grand. Elle s'efface dès qu'un élément est coché — c'est l'absence de coche
+ *  qui est l'information, pas sa présence. */
+function NoFilter({ active, id, what }: { active: boolean; id: string; what: string }) {
+  if (!active) return null
+  return (
+    <p className="field-error m-0 mt-1" data-testid={`auto-nofilter-${id}`} role="status">
+      Aucun filtre : {what} — tout passe.
+    </p>
+  )
+}
+
+/** Section repliable de l'onglet Events. Repliée, elle tient sur une ligne
+ *  avec son résumé ; dépliée, son corps défile dans une hauteur bornée au lieu
+ *  de pousser le reste de l'onglet. */
+function Section({ title, hint, summary, defaultOpen = true, maxBody = false, children }: {
   title: string
   hint?: string
+  /** Résumé affiché quand la section est repliée (« 2 workspaces · 3 blocs »). */
+  summary?: string
+  defaultOpen?: boolean
+  /** Borne la hauteur du corps (~200px) avec défilement interne. */
+  maxBody?: boolean
   children: React.ReactNode
 }) {
   return (
-    <details open className="group rounded border border-gray-200">
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
-        <ChevronRight size={14} className="shrink-0 text-gray-400 transition-transform group-open:rotate-90" />
+    <details open={defaultOpen} className="group rounded-md border border-[var(--color-divider)]">
+      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[14px] font-[600] [font-family:var(--font-heading)] hover:bg-ink/[0.04] [&::-webkit-details-marker]:hidden">
+        <CaretRight size={13} weight="duotone" className="shrink-0 text-ink/[0.4] transition-transform group-open:rotate-90" />
         {title}
-        {hint && <span className="font-normal text-xs text-gray-400">{hint}</span>}
+        {summary && (
+          <span className="font-normal text-[12px] text-accent-700 [font-family:var(--font-body)] group-open:hidden">
+            {summary}
+          </span>
+        )}
+        {hint && <span className="font-normal text-[11px] text-ink/[0.45] [font-family:var(--font-body)]">{hint}</span>}
       </summary>
-      <div className="border-t border-gray-100 p-2">{children}</div>
+      <div className={`border-t border-[var(--color-divider)] p-2.5 ${maxBody ? 'dialog-scroll max-h-[200px] overflow-y-auto' : ''}`}>
+        {children}
+      </div>
     </details>
   )
 }
@@ -95,6 +139,14 @@ function Section({ title, hint, children }: {
 export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }: Props) {
   const jsonRef = useRef<JsonEditorHandle>(null)
   const [tab, setTab] = useState<Tab>('label')
+
+  // Le focus revient à l'élément qui a ouvert la modale (le bouton de la ligne) :
+  // capturé au montage, restauré au démontage — Échap comme Annuler.
+  const openerRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    openerRef.current = document.activeElement as HTMLElement | null
+    return () => openerRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -110,6 +162,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   const [eventCodes, setEventCodes] = useState<string[]>(initial?.event_codes ?? [])
   const [stopChain, setStopChain] = useState(initial?.stop_chain ?? false)
   const [blockSlugs, setBlockSlugs] = useState<string[]>(initial?.block_slugs ?? [])
+  const [blockTemplates, setBlockTemplates] = useState<string[]>(initial?.block_templates ?? [])
   const [typeSlugs, setTypeSlugs] = useState<string[]>(initial?.functional_type_slugs ?? [])
   const [delay, setDelay] = useState(String(initial?.delay_minutes ?? 0))
   const [url, setUrl] = useState(initial?.url ?? '')
@@ -158,6 +211,22 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     queryKey: ['types', ws], queryFn: () => api.get<FunctionalType[]>(`/workspaces/${ws}/types`),
     enabled: !!ws, staleTime: 60_000,
   })
+
+  // Templates installés (filtre « par provenance »), global : un template couvre
+  // les blocs de TOUS les workspaces, pas seulement du workspace courant.
+  const { data: blockTemplateChoices = [] } = useQuery<TemplateInfo[]>({
+    queryKey: ['templates'], queryFn: () => api.get<TemplateInfo[]>('/templates'), staleTime: 60_000,
+  })
+  // Types portés par les templates cochés — sert à marquer les blocs déjà couverts.
+  const coveredTypeSlugs = new Set(
+    blockTemplateChoices
+      .filter((t) => blockTemplates.includes(t.template))
+      .flatMap((t) => t.type_slugs),
+  )
+
+  const hasContainerEvent = eventTypes.some(
+    (ev) => ev.scope === 'container' && eventCodes.includes(ev.eventCode),
+  )
 
   const operations = contractDetail?.operations ?? []
 
@@ -226,7 +295,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
     onSave({
       label, event_codes: eventCodes,
       workspace_slugs: workspaceSlugs,
-      block_slugs: blockSlugs, functional_type_slugs: typeSlugs,
+      block_slugs: blockSlugs, block_templates: blockTemplates,
+      functional_type_slugs: typeSlugs,
       stop_chain: stopChain,
       delay_minutes: parseInt(delay) || 0,
       contract_ref: contractId || null,
@@ -237,48 +307,51 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
 
   const TabBtn = ({ id, children }: { id: Tab; children: React.ReactNode }) => (
     <button type="button" onClick={() => setTab(id)}
-      className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-        tab === id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+      className={`border-0 border-b-2 bg-transparent px-4 py-2 text-[14px] font-[600] [font-family:var(--font-heading)] transition-colors ${
+        tab === id
+          ? 'border-b-accent text-accent-700 [border-bottom-style:solid]'
+          : 'border-b-transparent text-ink/[0.55] hover:text-ink [border-bottom-style:solid]'
       }`} data-testid={`auto-tab-${id}`}>
       {children}
     </button>
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4"
-      onClick={onClose}>
+    <div className="dialog-backdrop z-50 overflow-y-auto" onClick={onClose}>
       {/* Taille FIXE (celle du plus grand onglet, « Appel ») : changer d'onglet
-          ne fait pas sauter la fenêtre ; le contenu scrolle à l'intérieur. */}
-      <div className="my-4 flex h-[min(94vh,980px)] w-full max-w-2xl flex-col gap-4 rounded-lg bg-white p-6 shadow-xl"
+          ne fait pas sauter la fenêtre ; seul le corps défile, les onglets et
+          les actions restent visibles (DoD). */}
+      <div className="dialog my-4 h-[min(94vh,980px)] w-full !max-w-4xl"
+        role="dialog" aria-modal="true"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">{initial ? 'Modifier' : 'Nouvel automate'}</h2>
+          <h4 className="dialog-title m-0">{initial ? 'Modifier' : 'Nouvel automate'}</h4>
           <button type="button" onClick={onClose} title="Fermer" aria-label="Fermer"
-            className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            className="border-0 bg-transparent p-1 text-ink/[0.4] transition-colors hover:text-ink"
             data-testid="auto-dialog-close">
-            <X size={18} />
+            <X size={18} weight="bold" />
           </button>
         </div>
 
-        <div className="flex gap-1 border-b border-gray-200">
+        <div className="flex gap-1 border-b border-[var(--color-divider)]">
           <TabBtn id="label">Libellé</TabBtn>
           <TabBtn id="events">Events déclencheurs</TabBtn>
           <TabBtn id="call">Appel</TabBtn>
         </div>
 
-        <div className="dialog-scroll min-h-0 flex-1 overflow-y-auto pr-2">
+        <div className="dialog-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-2">
         {/* ── Onglet Libellé ── */}
         {tab === 'label' && (
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium">Libellé</label>
+              <label className="mb-1 block text-[12px] text-ink/[0.7]">Libellé</label>
               <Input value={label} onChange={(e) => setLabel(e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Délai débounce (minutes)</label>
+              <label className="mb-1 block text-[12px] text-ink/[0.7]">Délai débounce (minutes)</label>
               <Input type="number" min={0} value={delay} onChange={(e) => setDelay(e.target.value)} className="w-32" />
             </div>
-            <p className="text-xs text-gray-400">
+            <p className="text-[12px] text-ink/[0.5]">
               La règle est créée <strong>désactivée</strong> ; activez-la ensuite via le toggle de la carte.
             </p>
           </div>
@@ -287,8 +360,14 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         {/* ── Onglet Events déclencheurs + filtres ── */}
         {tab === 'events' && (
           <div className="space-y-4">
-            <Section title="Couverture de déclenchement"
-              hint="workspaces couverts — au moins un ; blocs cochés = filtre, aucun = tous">
+            <Section
+              title="Couverture de déclenchement"
+              defaultOpen={false}
+              maxBody
+              summary={`${workspaceSlugs.length} workspace${workspaceSlugs.length > 1 ? 's' : ''} · ${
+                blockSlugs.length > 0 ? `${blockSlugs.length} bloc${blockSlugs.length > 1 ? 's' : ''}` : 'tous les blocs'
+              }${blockTemplates.length > 0 ? ` · ${blockTemplates.length} template${blockTemplates.length > 1 ? 's' : ''}` : ''}`}
+              hint="cochés = filtre ; aucun coché = tous les workspaces">
               <div className="space-y-1.5">
                 {workspaces.map((w) => {
                   const covered = workspaceSlugs.includes(w.slug)
@@ -298,25 +377,63 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                         <input type="checkbox" checked={covered}
                           onChange={() => setWorkspaceSlugs((p) => toggle(p, w.slug))} />
                         <span className="truncate">{w.label}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-gray-400">{w.slug}</span>
+                        <span className="shrink-0 text-[10px] text-accent-700 [font-family:var(--font-mono)]">{w.slug}</span>
                       </label>
                       {covered && (
                         <WorkspaceBlocksNode
                           wsSlug={w.slug}
                           blockSlugs={blockSlugs}
                           onToggleBlock={(slug) => setBlockSlugs((p) => toggle(p, slug))}
+                          coveredTypeSlugs={coveredTypeSlugs}
                         />
                       )}
                     </div>
                   )
                 })}
               </div>
-              {workspaceSlugs.length === 0 && (
-                <p className="mt-1 text-xs text-red-600" data-testid="auto-ws-empty">
-                  Un automate doit couvrir au moins un workspace.
-                </p>
-              )}
             </Section>
+
+            <NoFilter active={workspaceSlugs.length === 0} id="workspaces" what="tous les workspaces" />
+
+            <Section
+              title="Blocs issus d'un template"
+              defaultOpen={false}
+              maxBody
+              summary={blockTemplates.length > 0
+                ? `${blockTemplates.length} template${blockTemplates.length > 1 ? 's' : ''}`
+                : 'aucun'}
+              hint="union avec les blocs cochés — un bloc créé plus tard entre sans geste">
+              <div className="space-y-1">
+                {blockTemplateChoices.length === 0 && (
+                  <p className="text-[12px] text-ink/[0.5]">Aucun template installé</p>
+                )}
+                {blockTemplateChoices.map((t) => (
+                  <label key={t.template} className="flex items-center gap-1.5 text-sm"
+                    data-testid={`auto-block-template-${t.template}`}>
+                    <input type="checkbox" checked={blockTemplates.includes(t.template)}
+                      onChange={() => setBlockTemplates((p) => toggle(p, t.template))} />
+                    <span className="truncate">{t.label}</span>
+                    <span className="tag tag-neutral ml-auto shrink-0 text-[10px]">
+                      {t.blocks_count} bloc{t.blocks_count > 1 ? 's' : ''}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Section>
+
+            <NoFilter active={blockSlugs.length === 0 && blockTemplates.length === 0} id="blocs" what="tous les blocs" />
+
+            {/* Un event de contenant ne porte pas de document : les filtres
+                documentaires ne s'y appliquent pas. Le taire donnerait un
+                automate « qui ne se déclenche jamais » sans rien d'anormal à
+                l'écran — exactement le mode de panne qu'on vient de corriger
+                ailleurs. */}
+            {hasContainerEvent && (blockSlugs.length > 0 || blockTemplates.length > 0 || typeSlugs.length > 0) && (
+              <p className="text-[12px] text-accent-700" data-testid="auto-container-scope-note">
+                Les events de contenant (workspace, bloc) ne portent pas de document :
+                ils se déclenchent quels que soient les filtres de bloc et de type.
+              </p>
+            )}
 
             <Section title="Events déclencheurs">
               <div className="grid grid-cols-2 gap-1.5">
@@ -326,16 +443,18 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                       checked={eventCodes.includes(ev.eventCode)}
                       onChange={() => setEventCodes((p) => toggle(p, ev.eventCode))} />
                     <span>{ev.title}
-                      <span className="block font-mono text-[10px] text-gray-400">{ev.eventCode}</span>
+                      <span className="block text-[10px] text-accent-700 [font-family:var(--font-mono)]">{ev.eventCode}</span>
                     </span>
                   </label>
                 ))}
               </div>
             </Section>
 
+            <NoFilter active={eventCodes.length === 0} id="events" what="tous les events" />
+
             <Section title="Filtre type de document" hint="combiné en ET — vide = tous">
               <div className="grid grid-cols-2 gap-1">
-                {types.length === 0 && <p className="text-xs text-gray-400">Aucun type</p>}
+                {types.length === 0 && <p className="text-[12px] text-ink/[0.5]">Aucun type</p>}
                 {types.map((t) => (
                   <label key={t.slug} className="flex items-center gap-1.5 text-sm" data-testid={`auto-type-${t.slug}`}>
                     <input type="checkbox" checked={typeSlugs.includes(t.slug)}
@@ -346,12 +465,14 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               </div>
             </Section>
 
-            <label className="flex items-start gap-2 text-sm text-gray-700" data-testid="auto-stop-chain">
+            <NoFilter active={typeSlugs.length === 0} id="types" what="tous les types de document" />
+
+            <label className="flex items-start gap-2 text-[14px]" data-testid="auto-stop-chain">
               <input type="checkbox" className="mt-0.5" checked={stopChain}
                 onChange={(e) => setStopChain(e.target.checked)} />
               <span>
                 Stopper la chaîne si déclenché
-                <span className="block text-xs text-gray-500">
+                <span className="block text-[12px] text-ink/[0.55]">
                   Si cet automate matche l'event ET que l'appel réussit, les automates de
                   priorité inférieure ne traitent pas cet event.
                 </span>
@@ -365,8 +486,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium">Contrat OpenAPI</label>
-                <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Contrat OpenAPI</label>
+                <select className="input"
                   value={contractId} onChange={(e) => { setContractId(e.target.value); setOperationId('') }}
                   data-testid="auto-contract-select">
                   <option value="">— aucun —</option>
@@ -374,8 +495,8 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Opération</label>
-                <select className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Opération</label>
+                <select className="input"
                   value={operationId} onChange={(e) => selectOperation(e.target.value)} disabled={!contractId}
                   data-testid="auto-operation-select">
                   <option value="">— sélectionner —</option>
@@ -387,12 +508,12 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </select>
               </div>
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium">URL</label>
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">URL</label>
                 <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" data-testid="auto-url" />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Méthode</label>
-                <select className="rounded border border-gray-300 px-3 py-2 text-sm"
+                <label className="mb-1 block text-[12px] text-ink/[0.7]">Méthode</label>
+                <select className="input w-auto"
                   value={method} onChange={(e) => setMethod(e.target.value)}>
                   {['GET','POST','PUT','PATCH','DELETE'].map((m) => <option key={m}>{m}</option>)}
                 </select>
@@ -407,7 +528,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                     <button key={v} type="button" onClick={() => copyVariable(v)}
                       title="Copier dans le presse-papier"
                       className={`rounded px-2 py-0.5 font-mono text-xs transition-colors ${
-                        copiedVar === v ? 'bg-green-100 text-green-700' : 'bg-gray-100 hover:bg-gray-200'
+                        copiedVar === v ? 'bg-accent-100 text-accent-800' : 'bg-surface hover:bg-neutral-300/60'
                       }`}>
                       {copiedVar === v ? '✓ copié' : `{${v}}`}
                     </button>
@@ -421,41 +542,51 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
               <div className="mb-2 flex items-center justify-between">
                 <label className="text-sm font-medium">Headers</label>
                 <button type="button" onClick={() => setHeaders((h) => [...h, newRow()])}
-                  className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
-                  <Plus size={12} /> Ajouter
+                  className="flex items-center gap-1 border-0 bg-transparent p-0 text-[12px] text-accent-700 hover:underline">
+                  <Plus size={12} weight="duotone" /> Ajouter
                 </button>
               </div>
+              {/* Proportions par WRAPPERS : `.input` (non-layered) impose
+                  width:100% et bat les utilitaires w-* posés sur le champ —
+                  la largeur se fixe donc sur un conteneur. Nom et préfixe
+                  fixes, la valeur (ou le choix du secret) prend le reste. */}
               {headers.map((h, i) => (
                 <div key={h.id} className="mb-2 flex items-center gap-2">
-                  <Input value={h.name} onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, name:e.target.value} : r))}
-                    placeholder="Nom" className="w-36" data-testid={`header-name-${i}`} />
-                  <Input value={h.valuePrefix}
-                    onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, valuePrefix:e.target.value} : r))}
-                    placeholder="préfixe" title="Préfixe de valeur (ex. « Bearer »)"
-                    className="w-24 font-mono text-xs" />
-                  <label className="flex items-center gap-1 whitespace-nowrap text-xs">
+                  <div className="w-44 shrink-0">
+                    <Input value={h.name} onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, name:e.target.value} : r))}
+                      placeholder="Nom" data-testid={`header-name-${i}`} />
+                  </div>
+                  <div className="w-28 shrink-0">
+                    <Input value={h.valuePrefix}
+                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, valuePrefix:e.target.value} : r))}
+                      placeholder="préfixe" title="Préfixe de valeur (ex. « Bearer »)"
+                      className="font-mono text-xs" />
+                  </div>
+                  <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs">
                     <input type="checkbox" checked={h.isSecret}
                       onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, isSecret:e.target.checked} : r))} />
                     Secret
                   </label>
-                  {h.isSecret ? (
-                    <select value={h.secretRef}
-                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
-                      className="flex-1 rounded border border-gray-300 px-2 py-2 text-xs"
-                      data-testid={`header-secret-${i}`}>
-                      <option value="">— choisir un secret —</option>
-                      {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
-                      {h.secretRef && !secrets.some((s) => `\${secret://${s.id}}` === h.secretRef) && (
-                        <option value={h.secretRef}>{h.secretRef} (existant)</option>
-                      )}
-                    </select>
-                  ) : (
-                    <Input value={h.value}
-                      onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
-                      placeholder="Valeur" className="flex-1" />
-                  )}
+                  <div className="min-w-0 flex-1">
+                    {h.isSecret ? (
+                      <select value={h.secretRef}
+                        onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, secretRef:e.target.value} : r))}
+                        className="input text-[12px]"
+                        data-testid={`header-secret-${i}`}>
+                        <option value="">— choisir un secret —</option>
+                        {secrets.map((s) => <option key={s.id} value={`\${secret://${s.id}}`}>{s.label}</option>)}
+                        {h.secretRef && !secrets.some((s) => `\${secret://${s.id}}` === h.secretRef) && (
+                          <option value={h.secretRef}>{h.secretRef} (existant)</option>
+                        )}
+                      </select>
+                    ) : (
+                      <Input value={h.value}
+                        onChange={(e) => setHeaders((arr) => arr.map((r, j) => j===i ? {...r, value:e.target.value} : r))}
+                        placeholder="Valeur" />
+                    )}
+                  </div>
                   <button type="button" onClick={() => setHeaders((arr) => arr.filter((_, j) => j !== i))}
-                    className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                    className="shrink-0 border-0 bg-transparent p-0 text-ink/[0.4] hover:text-accent-2-700"><Trash size={14} weight="duotone" /></button>
                 </div>
               ))}
             </div>
@@ -463,16 +594,17 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
         )}
         </div>
 
-        {error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
-            data-testid="auto-dialog-error">
-            Échec de l'enregistrement : {error}
-          </p>
-        )}
+        <div aria-live="polite" className="empty:hidden">
+          {error && (
+            <p className="field-error m-0" data-testid="auto-dialog-error">
+              Échec de l'enregistrement : {error}
+            </p>
+          )}
+        </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
+        <div className="dialog-actions m-0 border-t border-[var(--color-divider)] pt-3">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Annuler</Button>
-          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim() || workspaceSlugs.length === 0}>
+          <Button onClick={submit} disabled={saving || !label.trim() || !url.trim()}>
             {saving ? 'Enregistrement…' : 'Enregistrer'}
           </Button>
         </div>

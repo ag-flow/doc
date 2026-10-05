@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +32,14 @@ def _row_to_out(row: asyncpg.Record, headers: dict[str, str]) -> WebhookOut:
         active=row["active"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_delivery_at=row["last_delivery_at"] if "last_delivery_at" in row.keys() else None,
+        last_delivery_status=(
+            row["last_delivery_status"] if "last_delivery_status" in row.keys() else None
+        ),
+        last_delivery_error=(
+            row["last_delivery_error"] if "last_delivery_error" in row.keys() else None
+        ),
+        failures_24h=row["failures_24h"] if "failures_24h" in row.keys() else 0,
     )
 
 
@@ -42,7 +52,7 @@ def _decrypt_safe(key: str | None, data: bytes | None) -> dict[str, str]:
     try:
         return decrypt_headers(key, data)
     except Exception:
-        log.warning("webhook_headers_decrypt_failed")
+        log.warning("webhook_headers_decrypt_failed", exc_info=True)
         return {}
 
 
@@ -52,9 +62,23 @@ async def list_webhooks(
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
         rows = await conn.fetch(
-            "SELECT id, workspace_technical_key, label, url, headers_encrypted, "
-            "       events, active, created_at, updated_at "
-            "FROM webhook_subscription WHERE workspace_technical_key = $1 ORDER BY created_at",
+            """
+            SELECT w.id, w.workspace_technical_key, w.label, w.url, w.headers_encrypted,
+                   w.events, w.active, w.created_at, w.updated_at,
+                   d.status_code  AS last_delivery_status,
+                   d.error        AS last_delivery_error,
+                   d.delivered_at AS last_delivery_at,
+                   (SELECT count(*) FROM webhook_delivery f
+                     WHERE f.webhook_ref = w.id
+                       AND f.delivered_at > now() - interval '24 hours'
+                       AND (f.status_code IS NULL OR f.status_code >= 400)) AS failures_24h
+            FROM webhook_subscription w
+            LEFT JOIN LATERAL (
+                SELECT status_code, error, delivered_at FROM webhook_delivery
+                WHERE webhook_ref = w.id ORDER BY delivered_at DESC LIMIT 1
+            ) d ON true
+            WHERE w.workspace_technical_key = $1 ORDER BY w.created_at
+            """,
             wk,
         )
     return [_row_to_out(r, _decrypt_safe(encryption_key, r["headers_encrypted"])) for r in rows]
@@ -188,9 +212,12 @@ async def test_webhook(
     webhook_id: uuid.UUID,
     *,
     encryption_key: str | None,
-) -> tuple[int | None, str | None]:
-    """Envoie un payload synthétique et retourne (status_code, error)."""
+) -> tuple[int | None, str | None, int]:
+    """Envoie un payload synthétique : (status_code, error, durée en ms)."""
     wh = await get_webhook(pool, ws_slug, webhook_id, encryption_key=encryption_key)
+    resolved_headers = await _resolve_headers(
+        wh.headers, pool=pool, encryption_key=encryption_key, harpocrate_url=None
+    )
     payload = {
         "event": "document.created",
         "occurred_at": datetime.now(UTC).isoformat(),
@@ -203,13 +230,87 @@ async def test_webhook(
         },
     }
     url = wh.url.replace("{id_document}", "00000000-0000-0000-0000-000000000000")
+    started = time.monotonic()
     try:
         await validate_public_url(url)
         async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
-            resp = await client.post(url, json=payload, headers=wh.headers)
-        return resp.status_code, None
+            resp = await client.post(url, json=payload, headers=resolved_headers)
+        return resp.status_code, None, int((time.monotonic() - started) * 1000)
     except Exception as exc:
-        return None, str(exc)
+        return None, str(exc), int((time.monotonic() - started) * 1000)
+
+
+_REF_RE = re.compile(r"^\$\{(?:vault|secret|hmac)://.+\}$")
+
+
+async def _resolve_headers(
+    headers: dict[str, str],
+    *,
+    pool: asyncpg.Pool,
+    encryption_key: str | None,
+    harpocrate_url: str | None,
+) -> dict[str, str]:
+    """Résout les références `${vault://…}` / `${secret://…}` / `${hmac://…}`
+    des valeurs de header AU MOMENT de l'envoi — parité avec les automates.
+
+    Une référence irrésolvable vaut chaîne vide et se journalise : on n'envoie
+    JAMAIS la référence littérale à la cible (ce serait révéler sa forme sans
+    authentifier la requête, et un secret supprimé doit se voir en logs).
+    """
+    from docflow.secrets.resolver import resolve
+    from docflow.secrets.secret import Secret
+
+    out: dict[str, str] = {}
+    for name, value in headers.items():
+        if not _REF_RE.match(value):
+            out[name] = value
+            continue
+        try:
+            out[name] = await resolve(
+                Secret(value),
+                harpocrate_url=harpocrate_url,
+                pool=pool,
+                enc_key=encryption_key,
+            )
+        except Exception as exc:
+            log.warning("webhook_header_unresolved", header=name, error=str(exc), exc_info=True)
+            out[name] = ""
+    return out
+
+
+async def _record_delivery(
+    pool: asyncpg.Pool,
+    webhook_id: uuid.UUID,
+    event: str,
+    status_code: int | None,
+    error: str | None,
+    duration_ms: int,
+) -> None:
+    """Trace une livraison et purge le journal au-delà de 7 jours.
+
+    Best-effort : un journal en échec ne doit jamais faire échouer l'émission.
+    """
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO webhook_delivery "
+                "(webhook_ref, event, status_code, error, duration_ms) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                webhook_id,
+                event,
+                status_code,
+                error[:2000] if error else None,
+                duration_ms,
+            )
+            await conn.execute(
+                "DELETE FROM webhook_delivery WHERE webhook_ref = $1 "
+                "AND delivered_at < now() - interval '7 days'",
+                webhook_id,
+            )
+    except Exception as exc:
+        log.warning(
+            "webhook_delivery_log_failed", webhook_id=str(webhook_id), error=str(exc), exc_info=True
+        )
 
 
 async def emit_event(
@@ -219,6 +320,7 @@ async def emit_event(
     doc_snapshot: dict[str, Any],
     *,
     encryption_key: str | None,
+    harpocrate_url: str | None = None,
 ) -> None:
     """Fire-and-forget : à lancer via asyncio.create_task() après commit.
 
@@ -250,10 +352,26 @@ async def emit_event(
             for row in rows:
                 doc_id = str(doc_snapshot.get("id", ""))
                 url = row["url"].replace("{id_document}", doc_id)
-                headers = _decrypt_safe(encryption_key, row["headers_encrypted"])
+                headers = await _resolve_headers(
+                    _decrypt_safe(encryption_key, row["headers_encrypted"]),
+                    pool=pool,
+                    encryption_key=encryption_key,
+                    harpocrate_url=harpocrate_url,
+                )
+                # Frontière EXTERNE (STANDARD « Traçabilité du contexte » §4) :
+                # un webhook part vers une URL CLIENTE. On n'y pose JAMAIS de
+                # `traceparent` — la topologie interne (ids de spans, structure
+                # des services) ne se publie pas au-delà de la frontière de
+                # confiance. Contraste voulu avec l'automate → cible interne, qui
+                # lui propage (automations/worker._dispatch). `headers` reste donc
+                # ce que le client a configuré, rien de plus.
+                started = time.monotonic()
+                status_code: int | None = None
+                error: str | None = None
                 try:
                     await validate_public_url(url)
                     resp = await client.post(url, json=payload, headers=headers)
+                    status_code = resp.status_code
                     log.info(
                         "webhook_sent",
                         webhook_id=str(row["id"]),
@@ -261,11 +379,21 @@ async def emit_event(
                         status=resp.status_code,
                     )
                 except Exception as exc:
+                    error = str(exc)
                     log.warning(
                         "webhook_send_failed",
                         webhook_id=str(row["id"]),
                         webhook_event=event,
                         error=str(exc),
+                        exc_info=True,
                     )
+                await _record_delivery(
+                    pool,
+                    row["id"],
+                    event,
+                    status_code,
+                    error,
+                    int((time.monotonic() - started) * 1000),
+                )
     except Exception as exc:
-        log.error("webhook_emit_error", webhook_event=event, error=str(exc))
+        log.error("webhook_emit_error", webhook_event=event, error=str(exc), exc_info=True)

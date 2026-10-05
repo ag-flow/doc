@@ -2,26 +2,20 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Archive, ArrowRight, Plus, Search, Trash2 } from 'lucide-react'
+import { Archive, Plus, Trash } from '@phosphor-icons/react'
 import { api } from '../lib/api'
 import type { WorkspaceOut } from '../lib/api'
 import { labelToSlug } from '../lib/slug'
+import { relativeDate } from '../lib/relativeDate'
 import { useWorkspace } from '../contexts/WorkspaceContext'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { Field } from '../components/ui/field'
+import { SectionHead } from '../components/SectionHead'
+import { EmptyState, ErrorLine, TableSkeleton } from '../components/ui/states'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/
-
-// Couleur du monogramme dérivée du slug (stable, variée entre workspaces).
-const MONOGRAM_COLORS = [
-  'bg-indigo-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500',
-  'bg-sky-500', 'bg-violet-500', 'bg-teal-500', 'bg-fuchsia-500',
-]
-function monogramColor(slug: string): string {
-  let h = 0
-  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) >>> 0
-  return MONOGRAM_COLORS[h % MONOGRAM_COLORS.length]
-}
 
 export default function WorkspaceList() {
   const { t } = useTranslation()
@@ -85,8 +79,7 @@ export default function WorkspaceList() {
   })
 
   const validateSlug = (v: string) => {
-    if (!SLUG_RE.test(v)) setSlugError(t('ws.slugInvalid'))
-    else setSlugError('')
+    setSlugError(SLUG_RE.test(v) ? '' : t('ws.slugInvalid'))
   }
 
   const handleSelect = (ws: WorkspaceOut) => {
@@ -94,46 +87,54 @@ export default function WorkspaceList() {
     navigate(`/ws/${ws.slug}/blocs`)
   }
 
-  if (isLoading) return <p className="p-4">{t('common.loading')}</p>
+  const q = filter.trim().toLowerCase()
+  const shown = q
+    ? workspaces.filter((ws) =>
+        `${ws.label} ${ws.slug} ${ws.description ?? ''}`.toLowerCase().includes(q))
+    : workspaces
 
   return (
-    <div className="p-6 sm:p-8 max-w-5xl mx-auto" data-testid="workspace-list">
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{t('ws.title')}</h1>
-          <p className="mt-1 text-sm text-gray-500">{t('ws.subtitle')}</p>
-        </div>
+    // La liste est un TABLEAU de workspaces, pas de la prose : la mesure de
+    // lecture ne s'y applique pas. Plus large, chaque ligne tient sur un seul
+    // niveau — nom, slug, description, volumétrie et fraîcheur alignés — au lieu
+    // d'empiler deux étages et de laisser la moitié de l'écran vide.
+    <div className="mx-auto max-w-[1600px] px-6 pt-11 pb-24" data-testid="workspace-list">
+      <SectionHead kicker={t('ws.kicker')} title={t('ws.title')}>
+        {/* Filtre en simple soulignement : un champ encadré ferait boîte. */}
+        <Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('ws.filter')}
+          className="w-[220px] rounded-none border-0 border-b border-[var(--color-divider)] bg-transparent pl-0"
+          data-testid="ws-filter"
+        />
         <Button
           onClick={() => { setSlug(''); setSlugTouched(false); setShowCreate(true) }}
           data-testid="create-ws-btn"
-          className="inline-flex shrink-0 items-center gap-1.5"
         >
-          <Plus size={16} /> {t('ws.create')}
+          <Plus size={16} weight="duotone" /> {t('ws.create')}
         </Button>
-      </div>
+      </SectionHead>
 
-      {redirectMsg && (
-        <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800" data-testid="redirect-msg">
-          {redirectMsg}
-        </p>
-      )}
+      <p className="mb-8 max-w-[56ch] text-[16px] leading-[1.6] text-ink/[0.68]">
+        {t('ws.chapo')}
+      </p>
 
-      {apiError && (
-        <p className="text-red-600 mb-4" data-testid="api-error">{apiError}</p>
-      )}
+      <ErrorLine message={redirectMsg} testId="redirect-msg" />
+      <ErrorLine message={apiError} testId="api-error" />
 
       {showCreate && (
         <form
           data-testid="create-ws-form"
-          className="mb-6 space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm"
-          onSubmit={e => { e.preventDefault(); if (!slugError) createMutation.mutate() }}
+          className="card elev-sm mb-8 max-w-[520px]"
+          onSubmit={(e) => { e.preventDefault(); if (!slugError) createMutation.mutate() }}
         >
-          <div>
-            <label className="block text-sm font-medium mb-1">{t('ws.label')}</label>
+          <Field label={t('ws.label')} htmlFor="ws-label">
             <Input
+              id="ws-label"
               data-testid="label-input"
               value={label}
-              onChange={e => {
+              onChange={(e) => {
                 setLabel(e.target.value)
                 if (!slugTouched) {
                   const derived = labelToSlug(e.target.value)
@@ -143,25 +144,21 @@ export default function WorkspaceList() {
               }}
               required
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">{t('ws.slug')}</label>
+          </Field>
+          <Field label={t('ws.slug')} htmlFor="ws-slug" error={slugError || null}>
             <Input
+              id="ws-slug"
               data-testid="slug-input"
               value={slug}
-              onChange={e => { setSlugTouched(true); setSlug(e.target.value); validateSlug(e.target.value) }}
+              onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); validateSlug(e.target.value) }}
               placeholder="mon-workspace"
+              aria-invalid={slugError ? 'true' : undefined}
               required
             />
-            {slugError && <p className="text-red-500 text-xs mt-1">{slugError}</p>}
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">{t('ws.description')}</label>
-            <Input
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-            />
-          </div>
+          </Field>
+          <Field label={t('ws.description')} htmlFor="ws-desc">
+            <Input id="ws-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </Field>
           <div className="flex gap-2">
             <Button type="submit" disabled={!!slugError || createMutation.isPending}>
               {t('common.save')}
@@ -173,127 +170,163 @@ export default function WorkspaceList() {
         </form>
       )}
 
-      {workspaces.length > 0 && (
-        <div className="relative mb-4 max-w-sm">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <Input
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            placeholder={t('ws.filter')}
-            className="pl-9"
-            data-testid="ws-filter"
-          />
-        </div>
-      )}
-
-      {(() => {
-        const q = filter.trim().toLowerCase()
-        const shown = q
-          ? workspaces.filter(ws => `${ws.label} ${ws.slug} ${ws.description ?? ''}`.toLowerCase().includes(q))
-          : workspaces
-        if (workspaces.length === 0) return (
-        <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 py-16 text-center text-sm text-gray-500">
-          {t('ws.empty')}
-        </div>
-        )
-        if (shown.length === 0) return (
-        <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 py-12 text-center text-sm text-gray-500" data-testid="ws-no-match">
-          {t('ws.noMatch', { q: filter.trim() })}
-        </div>
-        )
-        return (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map(ws => (
-            <div
+      {isLoading ? (
+        <TableSkeleton rows={5} columns={4} />
+      ) : workspaces.length === 0 ? (
+        <EmptyState
+          testId="ws-empty"
+          message={t('ws.empty')}
+          action={
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus size={16} weight="duotone" /> {t('ws.create')}
+            </Button>
+          }
+        />
+      ) : shown.length === 0 ? (
+        <EmptyState testId="ws-no-match" message={t('ws.noMatch', { q: filter.trim() })} />
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {shown.map((ws, i) => (
+            <WorkspaceRow
               key={ws.slug}
-              data-testid={`ws-row-${ws.slug}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => handleSelect(ws)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelect(ws) } }}
-              className="group relative flex cursor-pointer flex-col rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <div className="flex items-start gap-3">
-                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-white ${monogramColor(ws.slug)}`}>
-                  {(ws.label || ws.slug).charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-gray-900">{ws.label}</p>
-                  <p className="truncate font-mono text-xs text-gray-400">{ws.slug}</p>
-                </div>
-                {ws.archived_at && (
-                  <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-                    {t('ws.archivedBadge')}
-                  </span>
-                )}
-              </div>
-
-              {ws.description && (
-                <p className="mt-3 line-clamp-2 text-sm text-gray-500">{ws.description}</p>
-              )}
-
-              <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-                <span className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 transition-all group-hover:gap-2">
-                  {t('ws.select')} <ArrowRight size={15} />
-                </span>
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    title={t('ws.archive')}
-                    aria-label={t('ws.archive')}
-                    onClick={() => archiveMutation.mutate(ws.slug)}
-                    disabled={archiveMutation.isPending}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
-                  >
-                    <Archive size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    title={t('common.delete')}
-                    aria-label={t('common.delete')}
-                    data-testid={`delete-ws-${ws.slug}`}
-                    onClick={() => { setDeleteTarget(ws); setDeleteConfirm('') }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
+              ws={ws}
+              index={i + 1}
+              onOpen={() => handleSelect(ws)}
+              onArchive={() => archiveMutation.mutate(ws.slug)}
+              archiving={archiveMutation.isPending}
+              onDelete={() => { setDeleteTarget(ws); setDeleteConfirm('') }}
+            />
           ))}
-        </div>
-        )
-      })()}
+        </ul>
+      )}
 
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" data-testid="delete-modal">
-          <div className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-600">{t('ws.deleteConfirmTitle')}</h2>
-            <p className="text-sm">
-              {t('ws.deleteConfirmMsg', { slug: deleteTarget.slug })}
-            </p>
-            <Input
-              data-testid="delete-confirm-input"
-              value={deleteConfirm}
-              onChange={e => setDeleteConfirm(e.target.value)}
-              placeholder={deleteTarget.slug}
-            />
-            <div className="flex gap-2">
-              <Button
-                variant="danger"
-                data-testid="confirm-delete-btn"
-                disabled={deleteConfirm !== deleteTarget.slug || deleteMutation.isPending}
-                onClick={() => deleteMutation.mutate(deleteTarget.slug)}
-              >
-                {t('ws.deleteConfirm')}
-              </Button>
-              <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
-                {t('common.cancel')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          testId="delete-modal"
+          title={t('ws.deleteConfirmTitle')}
+          message={
+            <>
+              <p className="m-0">{t('ws.deleteConfirmMsg', { slug: deleteTarget.slug })}</p>
+              <Input
+                data-testid="delete-confirm-input"
+                className="mt-3"
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                placeholder={deleteTarget.slug}
+                autoFocus
+              />
+            </>
+          }
+          impactMessage={t('ws.deleteImpact', {
+            docs: deleteTarget.documents_count,
+            blocks: deleteTarget.blocks_count,
+          })}
+          confirmLabel={t('ws.deleteConfirm')}
+          confirmTestId="confirm-delete-btn"
+          pending={deleteMutation.isPending}
+          // Garde de saisie : le bouton reste verrouillé tant que le slug exact
+          // n'est pas retapé — on ne détruit pas un workspace par inadvertance.
+          confirmDisabled={deleteConfirm !== deleteTarget.slug}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.slug)}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
+  )
+}
+
+/**
+ * Une ligne d'index : numéro, label + slug, description, compteurs. La ligne
+ * entière est l'élément cliquable et focusable ; les deux actions de fin de
+ * ligne restent des boutons distincts (elles n'ouvrent pas le workspace).
+ */
+function WorkspaceRow({ ws, index, onOpen, onArchive, archiving, onDelete }: {
+  ws: WorkspaceOut
+  index: number
+  onOpen: () => void
+  onArchive: () => void
+  archiving: boolean
+  onDelete: () => void
+}) {
+  const { t } = useTranslation()
+  const counts = [
+    t('ws.blocksCount', { count: ws.blocks_count }),
+    t('ws.docsCount', { count: ws.documents_count }),
+  ].join(' · ')
+
+  return (
+    <li className="group relative border-b border-[var(--color-divider)]">
+      <button
+        type="button"
+        onClick={onOpen}
+        data-testid={`ws-row-${ws.slug}`}
+        className={`grid w-full grid-cols-[36px_1fr] items-baseline gap-5 px-1 py-2 text-left
+          transition-colors hover:bg-ink/[0.04]
+          sm:grid-cols-[36px_minmax(0,1fr)_minmax(0,1.4fr)_150px_120px]
+          ${ws.archived_at ? 'opacity-50' : ''}`}
+      >
+        <span className="text-right text-[15px] font-[600] text-ink/[0.38] [font-family:var(--font-heading)]">
+          {String(index).padStart(2, '0')}
+        </span>
+        {/* Nom et slug sur UNE ligne : le slug est une précision du nom, pas une
+            information d'un autre ordre — l'empiler doublait la hauteur de
+            chaque ligne pour rien. */}
+        <span className="flex min-w-0 items-baseline gap-2.5">
+          <span className="truncate text-[18px] font-[600] leading-tight [font-family:var(--font-heading)]">
+            {ws.label}
+          </span>
+          <span className="shrink-0 text-[12px] tracking-[0.04em] text-accent-700">{ws.slug}</span>
+          {ws.archived_at && (
+            <span className="tag tag-neutral shrink-0 align-middle">{t('ws.archivedBadge')}</span>
+          )}
+        </span>
+        <span className="hidden truncate text-[14px] text-ink/[0.62] sm:block">
+          {ws.description}
+        </span>
+        {/* Volumétrie masquée au survol/focus : les actions absolues prennent
+            sa place à droite (plus de chevauchement texte / boutons). */}
+        <span
+          className="hidden text-right text-[13px] text-ink/[0.5] transition-opacity
+            group-hover:opacity-0 group-focus-within:opacity-0 sm:block"
+        >
+          {counts}
+        </span>
+        <span
+          className="hidden text-right text-[12px] text-ink/[0.4] transition-opacity
+            group-hover:opacity-0 group-focus-within:opacity-0 sm:block"
+        >
+          {ws.last_activity_at ? relativeDate(ws.last_activity_at) : t('ws.noActivity')}
+        </span>
+      </button>
+
+      {/* Actions révélées au survol ou au focus clavier — jamais cachées au
+          clavier, sinon elles deviennent inatteignables. */}
+      <span
+        className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-1 opacity-0
+          transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+      >
+        <Button
+          variant="icon"
+          size="sm"
+          title={t('ws.archive')}
+          aria-label={`${t('ws.archive')} ${ws.label}`}
+          onClick={onArchive}
+          disabled={archiving}
+        >
+          <Archive size={16} weight="duotone" />
+        </Button>
+        <Button
+          variant="icon"
+          size="sm"
+          title={t('common.delete')}
+          aria-label={`${t('common.delete')} ${ws.label}`}
+          data-testid={`delete-ws-${ws.slug}`}
+          onClick={onDelete}
+          className="text-accent-2-700"
+        >
+          <Trash size={16} weight="duotone" />
+        </Button>
+      </span>
+    </li>
   )
 }

@@ -12,6 +12,7 @@ import uuid
 import asyncpg
 
 from docflow.datasets.parser import extract_dataset_ids
+from docflow.documents.content_refs import refresh_content_references
 
 # ── Parser (unitaire, sans DB) ────────────────────────────────────────────────
 
@@ -90,21 +91,20 @@ def _token(dataset_id: uuid.UUID) -> str:
 async def test_refresh_creates_reference_then_removes_and_purges(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
 ) -> None:
-    from docflow.datasets import references
 
     wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
     ds = await _make_dataset(db_pool, wk, "ventes")
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc dataset")
 
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_id, wk, _token(ds))
+        await refresh_content_references(conn, doc_id, wk, _token(ds))
     count = await db_pool.fetchval(
         "SELECT count(*) FROM dataset_reference WHERE document_ref = $1", doc_id
     )
     assert count == 1
 
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_id, wk, "plus de tableau")
+        await refresh_content_references(conn, doc_id, wk, "plus de tableau")
     gone = await db_pool.fetchval("SELECT 1 FROM dataset WHERE id = $1", ds)
     assert gone is None  # dernière référence retirée → refcount 0 → purge
 
@@ -112,7 +112,6 @@ async def test_refresh_creates_reference_then_removes_and_purges(
 async def test_refresh_keeps_dataset_referenced_elsewhere(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
 ) -> None:
-    from docflow.datasets import references
 
     wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
     ds = await _make_dataset(db_pool, wk, "partage")
@@ -120,15 +119,15 @@ async def test_refresh_keeps_dataset_referenced_elsewhere(
     doc_b = await _create_doc(db_pool, test_workspace, test_block, "Doc B")
 
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_a, wk, _token(ds))
-        await references.refresh_dataset_references(conn, doc_b, wk, _token(ds))
+        await refresh_content_references(conn, doc_a, wk, _token(ds))
+        await refresh_content_references(conn, doc_b, wk, _token(ds))
         # A retire sa référence : le dataset reste (utilisé par B)
-        await references.refresh_dataset_references(conn, doc_a, wk, "rien")
+        await refresh_content_references(conn, doc_a, wk, "rien")
     still = await db_pool.fetchval("SELECT 1 FROM dataset WHERE id = $1", ds)
     assert still == 1
     # Retirer aussi de B → refcount 0 → purge
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_b, wk, "rien")
+        await refresh_content_references(conn, doc_b, wk, "rien")
     gone = await db_pool.fetchval("SELECT 1 FROM dataset WHERE id = $1", ds)
     assert gone is None
 
@@ -138,7 +137,6 @@ async def test_refresh_ignores_unknown_and_foreign_datasets(
 ) -> None:
     """Référence vers un dataset inexistant ou d'un autre workspace : ignorée
     (aucune ligne, le save ne casse pas)."""
-    from docflow.datasets import references
 
     wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
     other = await db_pool.fetchrow(
@@ -152,7 +150,7 @@ async def test_refresh_ignores_unknown_and_foreign_datasets(
         doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc étranger")
         content = f"dataset://{uuid.uuid4()} et dataset://{foreign_ds}"
         async with db_pool.acquire() as conn:
-            await references.refresh_dataset_references(conn, doc_id, wk, content)
+            await refresh_content_references(conn, doc_id, wk, content)
         count = await db_pool.fetchval(
             "SELECT count(*) FROM dataset_reference WHERE document_ref = $1", doc_id
         )
@@ -177,7 +175,7 @@ async def test_purge_stale_only_old_unreferenced(
     referenced = await _make_dataset(db_pool, wk, "referenced")
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc ref")
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_id, wk, _token(referenced))
+        await refresh_content_references(conn, doc_id, wk, _token(referenced))
     # Vieillir artificiellement stale + referenced
     await db_pool.execute(
         "UPDATE dataset SET created_at = now() - interval '48 hours' WHERE id = ANY($1::uuid[])",
@@ -195,11 +193,10 @@ async def test_never_referenced_dataset_survives_save(
 ) -> None:
     """Un dataset créé puis jamais référencé n'est PAS supprimé par un save qui
     ne le mentionne pas (pas d'ancienne référence à retirer)."""
-    from docflow.datasets import references
 
     wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
     ds = await _make_dataset(db_pool, wk, "orphelin")
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc sans ref")
     async with db_pool.acquire() as conn:
-        await references.refresh_dataset_references(conn, doc_id, wk, "aucun tableau ici")
+        await refresh_content_references(conn, doc_id, wk, "aucun tableau ici")
     assert await db_pool.fetchval("SELECT 1 FROM dataset WHERE id = $1", ds) == 1

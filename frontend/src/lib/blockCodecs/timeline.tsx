@@ -14,7 +14,7 @@ const SKELETON_BODY = 'Première étape | Décrire ce qui se passe ici.\nDeuxiè
 
 export const timelineCodec = {
   type: 'dfTimeline',
-  pattern: /```df-timeline([^\n]*)\n([\s\S]*?)```/g,
+  pattern: /```df-timeline(?=\s|$)([^\n]*)\n([\s\S]*?)```/g,
   toBlock: (match: RegExpExecArray): TimelineProps => ({
     attrs: match[1] ?? '',
     body: match[2].replace(/\n$/, ''),

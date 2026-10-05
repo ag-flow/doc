@@ -10,20 +10,27 @@ from typing import Any
 import asyncpg
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docflow.admin.users.router import router as users_router
 from docflow.apikeys.router import router as apikeys_router
+from docflow.artifacts.mockup_router import router as mockup_base_router
+from docflow.artifacts.preview_router import router as preview_router
 from docflow.artifacts.router import router as artifacts_router
+from docflow.artifacts.types_router import admin_router as artifact_types_admin_router
+from docflow.artifacts.types_router import read_router as artifact_types_read_router
 from docflow.artifacts.worker import purge_loop as artifact_purge_loop
+from docflow.auth.invite import router as invite_router
+from docflow.auth.purge import maybe_purge_users
 from docflow.auth.router import router as auth_router
 from docflow.automations.router import router as automations_router
 from docflow.automations.worker import worker_loop
 from docflow.backup.router import router as backup_router
 from docflow.backup.worker import worker_loop as backup_worker_loop
 from docflow.blocks.router import router as blocks_router
-from docflow.config.base_url import set_derived_base_url
+from docflow.config.base_url import effective_base_url, set_derived_base_url
 from docflow.config.settings import Settings
 from docflow.contracts.router import router as contracts_router
 from docflow.datasets.router import router as datasets_router
@@ -37,9 +44,12 @@ from docflow.events.producer_router import router as events_producer_router
 from docflow.events.router import router as events_router
 from docflow.events.worker import worker_loop as events_worker_loop
 from docflow.export.router import router as export_router
+from docflow.mcp.oauth import router as mcp_oauth_router
 from docflow.mcp.router import router as mcp_router
 from docflow.mcp.server import configure as configure_mcp
+from docflow.me.preferences import router as me_prefs_router
 from docflow.me.router import router as me_router
+from docflow.observability.middleware import CorrelationMiddleware
 from docflow.oidc.router import router as oidc_router
 from docflow.properties.router import router as properties_router
 from docflow.public.router import router as public_router
@@ -62,17 +72,19 @@ _STATIC = pathlib.Path(__file__).parent.parent.parent / "static"
 def _configure_logging(level: str) -> None:
     if structlog.is_configured():
         return
+    # Rendu CONSOLE key-value (pas JSON) : la flotte (Alloy → Loki) est bâtie sur
+    # ce format et filtre par filtres de ligne, jamais `| json` (STANDARD logs §7/§8).
+    # ConsoleRenderer rend lui-même exc_info (traceback lisible) — pas de format_exc_info.
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
             structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer(colors=False),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -87,6 +99,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     pool = await open_pool(settings.database_url)
     await apply(pool)
+    # Reprise de lockout : APRÈS les migrations (la table doit exister) et AVANT de
+    # servir du trafic. Lève si le flag est armé sans pouvoir être désarmé — mieux
+    # vaut un démarrage qui échoue qu'une purge silencieuse à chaque boot.
+    await maybe_purge_users(pool, settings)
     configure_mcp(pool, settings)
     # Producteur d'events : seed initial depuis l'env (si jamais configuré) puis
     # reconcile → l'émission (enqueue) est pilotée par la config DB, à chaud.
@@ -121,6 +137,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="docflow", lifespan=lifespan)
 
 
+def _custom_openapi() -> dict[str, Any]:
+    """Schéma OpenAPI enrichi d'un bloc `servers` à URL ABSOLUE.
+
+    Sans lui, un importeur de contrat (les automates devpod) construit des URLs
+    relatives (`/api/workspaces`) qui échouent son anti-SSRF (pas de hostname).
+    La source de l'URL est `effective_base_url` : `public_base_url` si configurée
+    (prod), sinon la base dérivée des en-têtes X-Forwarded par `_capture_base_url`
+    (dev / derrière proxy). Jamais codée en dur — chaque instance produit son URL.
+    Le reste du schéma (lourd) est mis en cache ; seul `servers` est réévalué à
+    chaque appel, car l'URL dérivée n'est connue qu'une fois des requêtes reçues.
+    """
+    if app.openapi_schema is None:
+        app.openapi_schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    base = effective_base_url(getattr(app.state, "settings", None))
+    if base:
+        app.openapi_schema["servers"] = [{"url": base.rstrip("/")}]
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+# Ingress de corrélation (STANDARD « Traçabilité du contexte », A3) : middleware
+# ASGI pur pour que le contextvar posé soit vu par le service qui `enqueue`.
+app.add_middleware(CorrelationMiddleware)
+
+
 @app.middleware("http")
 async def _capture_base_url(request: Request, call_next: Any) -> Any:
     """Dérive l'URL de base publique depuis la requête portail si non configurée.
@@ -152,15 +194,28 @@ app.include_router(auth_router, prefix=_API)
 app.include_router(templates_router, prefix=_API)
 app.include_router(users_router, prefix=_API)
 app.include_router(me_router, prefix=_API)
+app.include_router(me_prefs_router, prefix=_API)
+app.include_router(invite_router, prefix=_API)
 app.include_router(workspaces_router, prefix=_API)
 app.include_router(types_router, prefix=_API)
 app.include_router(properties_router, prefix=_API)
 app.include_router(documents_router, prefix=_API)
 app.include_router(artifacts_router, prefix=_API)
+# Maquettes : origine de preview DÉDIÉE, servie à la racine (jamais sous /api).
+# Le tunnel route preview.<domaine> → cet endpoint ; la route se garde elle-même
+# par l'hôte (fail closed si preview_base_url non configuré).
+app.include_router(preview_router)
+app.include_router(mockup_base_router, prefix=_API)
+app.include_router(artifact_types_read_router, prefix=_API)
+app.include_router(artifact_types_admin_router, prefix=_API)
 app.include_router(blocks_router, prefix=_API)
 app.include_router(oidc_router, prefix=_API)
 app.include_router(vault_router, prefix=_API)
 app.include_router(mcp_router, prefix=_API)
+# Métadonnées de ressource protégée (RFC 9728) : chemin racine /.well-known/…,
+# public, sans préfixe /api — enregistré avant le catch-all SPA qui, sinon,
+# l'intercepterait.
+app.include_router(mcp_oauth_router)
 app.include_router(webhooks_router, prefix=_API)
 app.include_router(remote_router, prefix=_API)
 app.include_router(backup_router, prefix=_API)

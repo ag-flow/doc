@@ -1,0 +1,140 @@
+/**
+ * Registre de surfaces d'affichage par type de contenu (épic MLD — F4).
+ *
+ * Miroir côté front du registre de codecs du backend (`docflow.codecs`) : le
+ * type de contenu d'un document (`DocumentOut.type`) est une CLÉ DE REGISTRE,
+ * jamais une condition dans la page. BlockNote cesse d'être « l'éditeur de
+ * docflow » pour n'être que la surface du type `md`.
+ *
+ * La coquille de page (titre, propriétés, commentaires, révisions, export,
+ * protocole de sauvegarde) vit AU-DESSUS et ne change pas d'une surface à
+ * l'autre — c'est `DocumentShell`.
+ *
+ * Ajouter un type de contenu = son fichier de surface + une entrée ici.
+ * Un type absent du registre retombe sur la surface de repli (texte brut) :
+ * jamais de page cassée.
+ */
+
+import type { ForwardRefExoticComponent, RefAttributes } from 'react'
+import type { PrintLayout } from '../print/layout'
+import { markdownSurface } from './markdown'
+import { modelLayoutSurface } from './modelLayout'
+import { plainTextSurface } from './plainText'
+import { tableSchemaSurface } from './tableSchema'
+
+// ── Contrat ───────────────────────────────────────────────────────────────────
+
+export interface ContentEditorProps {
+  /** Corps du document au montage. La surface est NON CONTRÔLÉE : elle ne relit
+   *  pas cette prop ensuite (la page force un remontage via `key`). */
+  initialContent: string
+  /** Signale une modification locale. Sans argument : la page n'apprend le
+   *  contenu courant qu'au moment de la sauvegarde, via `getContent()`. */
+  onDirty: () => void
+  /** Workspace courant — upload d'artefacts, recherche de documents liés. */
+  wsSlug?: string
+  /** Identité du document affiché.
+   *
+   *  Nécessaire aux surfaces dont le contenu ne se suffit pas à lui-même : le
+   *  diagramme de modèle de données (F7) tire ses entités des documents ENFANTS,
+   *  puisque l'appartenance au modèle est l'arborescence et non le corps du
+   *  document. Optionnel — une surface autonome (markdown) l'ignore. */
+  docId?: string
+}
+
+export interface ContentEditorHandle {
+  /** Contenu courant sérialisé pour la persistance (ce qui part en base). */
+  getContent: () => Promise<string>
+}
+
+export interface ContentViewerProps {
+  content: string
+  /** Rendu sans cadre (bordure / fond) — pour la lecture prose « wiki ». */
+  bare?: boolean
+  /** Identité du document affiché — même rôle que côté éditeur. */
+  docId?: string
+  /** Rendu pour IMPRESSION : la surface rend son contenu ENTIER — ni fenêtre de
+   *  visualisation, ni zoom, ni défilement.
+   *
+   *  Sans ce signal, une surface qui n'offre qu'un hublot (un canevas) ne met
+   *  dans le DOM que ce que ce hublot montre : le reste est perdu à l'impression,
+   *  et AUCUNE stratégie de découpe ne peut le rattraper — on ne pagine pas ce
+   *  qui n'a pas été rendu. */
+  forPrint?: boolean
+}
+
+export interface ContentViewerHandle {
+  /** Copie riche (HTML + composants en images). Optionnelle : toutes les
+   *  surfaces n'ont pas de représentation riche à mettre au presse-papiers. */
+  copyRich?: () => Promise<void>
+}
+
+export type ContentEditorComponent = ForwardRefExoticComponent<
+  ContentEditorProps & RefAttributes<ContentEditorHandle>
+>
+
+export type ContentViewerComponent = ForwardRefExoticComponent<
+  ContentViewerProps & RefAttributes<ContentViewerHandle>
+>
+
+export interface ContentSurface {
+  /** Valeur de `DocumentOut.type` servie par cette surface. Unique dans le registre. */
+  contentType: string
+  /** Clef i18n de l'étiquette lisible du type — ce qu'on affiche en liste.
+   *
+   *  Elle vit ICI et pas dans une table à part : le registre est déjà la source
+   *  de vérité des types de contenu, et une seconde table dériverait de lui dès
+   *  le premier type ajouté. */
+  labelKey: string
+  Editor: ContentEditorComponent
+  Viewer: ContentViewerComponent
+  /** La surface sait produire une copie riche (HTML + composants en images).
+   *  Déclaratif : la page doit décider d'afficher l'action AVANT le montage,
+   *  quand la `ref` est encore nulle. Défaut : non. */
+  supportsRichCopy?: boolean
+  /** La surface n'est pas de la prose : elle veut toute la largeur de la feuille.
+   *
+   *  La mesure de lecture (~72ch) est faite pour du texte. Un diagramme ou une
+   *  grille de champs s'y retrouvent enfermés dans une colonne étroite — au
+   *  point de tronquer les colonnes d'un tableau. Défaut : non (prose). */
+  fullWidth?: boolean
+  /** Régime de pagination à l'impression, mesuré sur le rendu de la surface.
+   *
+   *  Absent = repli `plane` mesuré sur la boîte : le contenu est tuilé plutôt
+   *  que tranché au hasard. Un repli qui tuile ne perd rien — au pire il
+   *  consomme du papier, ce qui se voit ; un repli qui tronque ne se voit pas. */
+  getPrintLayout?: (root: HTMLElement) => PrintLayout
+}
+
+// ── Registre ──────────────────────────────────────────────────────────────────
+
+/** Surface de repli de tout type inconnu. */
+export const FALLBACK_SURFACE: ContentSurface = plainTextSurface
+
+export const SURFACES: Record<string, ContentSurface> = {
+  [markdownSurface.contentType]: markdownSurface,
+  [modelLayoutSurface.contentType]: modelLayoutSurface,
+  [tableSchemaSurface.contentType]: tableSchemaSurface,
+}
+
+/** Surface servant ce type de contenu, ou le repli si le type est inconnu. */
+export function surfaceFor(contentType: string | null | undefined): ContentSurface {
+  if (!contentType) return FALLBACK_SURFACE
+  return SURFACES[contentType] ?? FALLBACK_SURFACE
+}
+
+/**
+ * Clef i18n de l'étiquette d'un type de contenu, ou `null` s'il est inconnu.
+ *
+ * Volontairement SANS repli sur la surface de secours : un type non enregistré
+ * doit s'afficher tel quel, brut. Le masquer derrière « Texte » ferait passer un
+ * type qu'on ne sait pas servir pour un type ordinaire — l'appelant décide quoi
+ * en faire, il n'hérite pas d'un mensonge.
+ */
+export function contentTypeLabelKey(contentType: string | null | undefined): string | null {
+  if (!contentType) return null
+  return SURFACES[contentType]?.labelKey ?? null
+}
+
+export type { FlowBlock, PrintLayout, Tile } from '../print/layout'
+export { markdownSurface, modelLayoutSurface, plainTextSurface, tableSchemaSurface }

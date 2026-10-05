@@ -8,6 +8,8 @@ Trois primitives, indépendantes des slugs (découverte dynamique) :
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -63,6 +65,18 @@ class BlockObjectOut(BaseModel):
     id: str
     title: str
     functional_type_slug: str | None
+    # Type de CONTENU du corps (`md`, `table-schema`, `model-layout`…) — la
+    # grammaire du document, à ne pas confondre avec son type FONCTIONNEL, qui
+    # dit ce qu'il représente métier.
+    type: str = "md"
+    # Parent direct — sans lui, impossible de reconstruire l'arbre côté client.
+    parent_id: str | None = None
+    # `False` pour un ANCÊTRE remonté en contexte : il porte le chemin, il n'est
+    # pas un résultat. Sans cette distinction, le compte affiché contredirait ce
+    # que l'écran montre.
+    matched: bool = True
+    updated_at: datetime | None = None
+    updated_by: str | None = None
     properties: list[PropertyValueBrief]
 
 

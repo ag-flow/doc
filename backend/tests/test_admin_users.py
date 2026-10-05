@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import asyncpg
@@ -7,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from docflow.admin.users import service as svc
+from docflow.auth.lockout import assert_not_last_local_admin
 from docflow.schemas.admin_user import AdminUserCreate, AdminUserUpdate
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -202,3 +204,60 @@ async def test_anti_lockout_ok_si_admin_non_local(
     with pytest.raises(HTTPException) as exc:
         await svc.delete_user(db_pool, local_admin.id)
     assert exc.value.status_code == 422
+
+
+_COUNT_CONNECTABLE = """
+SELECT count(*) FROM app_user
+WHERE password_hash IS NOT NULL AND disabled = false
+  AND is_admin = true AND validated = true
+"""
+
+
+async def test_anti_lockout_hors_transaction_refuse(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Le garde doit refuser de s'exécuter hors transaction : sinon il ne protège rien.
+
+    Son verrou est transactionnel ; appelé en autocommit, il serait relâché avant
+    l'écriture qu'il protège.
+    """
+    admin = await svc.create_user(db_pool, _create("no-tx@test.local", is_admin=True))
+    async with db_pool.acquire() as conn:
+        with pytest.raises(RuntimeError):
+            await assert_not_last_local_admin(conn, admin.id)
+
+
+async def test_anti_lockout_concurrent_write_skew(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """I-7 sous concurrence : deux désactivations simultanées ne peuvent pas tout vider.
+
+    Write-skew classique : sous READ COMMITTED, chacune des deux transactions lit
+    `remaining = 1` (elle ne voit pas l'écriture non commitée de l'autre), passe le
+    garde et commite → zéro admin local connectable. Le garde doit donc se
+    sérialiser lui-même.
+    """
+    a = await svc.create_user(db_pool, _create("race-a@test.local", is_admin=True))
+    b = await svc.create_user(db_pool, _create("race-b@test.local", is_admin=True))
+    assert await db_pool.fetchval(_COUNT_CONNECTABLE) == 2
+
+    barrier = asyncio.Barrier(2)
+
+    async def _disable(user_id: uuid.UUID) -> None:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                # Les deux transactions sont ouvertes avant que l'une n'atteigne le garde.
+                await barrier.wait()
+                await assert_not_last_local_admin(conn, user_id)
+                await conn.execute("UPDATE app_user SET disabled = true WHERE id = $1", user_id)
+
+    results = await asyncio.wait_for(
+        asyncio.gather(_disable(a.id), _disable(b.id), return_exceptions=True),
+        timeout=30,
+    )
+    unexpected = [r for r in results if isinstance(r, BaseException)]
+    refused = [r for r in unexpected if isinstance(r, HTTPException) and r.status_code == 422]
+    assert len(unexpected) == len(refused), unexpected
+
+    assert await db_pool.fetchval(_COUNT_CONNECTABLE) >= 1
+    assert len(refused) == 1, "exactement une des deux désactivations doit être refusée"

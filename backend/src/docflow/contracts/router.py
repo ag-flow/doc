@@ -5,17 +5,22 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from docflow.auth.deps import require_authenticated
+from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.contracts import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.contracts import (
     ContractDetailOut,
     ContractImport,
     ContractOut,
+    ContractRefreshOut,
     ContractUpdate,
 )
 
-router = APIRouter(tags=["contracts"])
+# Toutes les routes de ce module sont sous /admin/contracts : un contrat porte
+# l'URL et la spec d'une intégration sortante (et son rafraîchissement va la
+# chercher). Superadmin au niveau du router — protection héritée par les routes
+# ajoutées ensuite.
+router = APIRouter(tags=["contracts"], dependencies=[Depends(require_superadmin)])
 
 _Auth = Depends(require_authenticated)
 
@@ -54,10 +59,10 @@ async def update_contract(
     return await service.update_contract(request.app.state.pool, contract_id, body)
 
 
-@router.post("/admin/contracts/{contract_id}/refresh", response_model=ContractOut)
+@router.post("/admin/contracts/{contract_id}/refresh", response_model=ContractRefreshOut)
 async def refresh_contract(
     contract_id: uuid.UUID, request: Request, _: AuthUser = _Auth
-) -> ContractOut:
+) -> ContractRefreshOut:
     return await service.refresh_contract(request.app.state.pool, contract_id)
 
 

@@ -70,16 +70,36 @@ async def require_ws_access(
 
     - Route sans `ws_slug` dans le chemin → no-op (la dépendance peut être posée
       au niveau du router, même mixte).
-    - Requête par clé API → no-op : les scopes de la clé gouvernent
-      (`check_api_key_scope`), inchangé.
+    - Requête par clé API : ``user`` est le **propriétaire** de la clé (résolu
+      par ``get_current_user``) — son accès réel s'applique aussi, EN PLUS des
+      scopes de la clé (`check_api_key_scope`). Accès effectif = accès
+      propriétaire ∩ scopes de clé, comme `_check_user_access` côté MCP.
     - Workspace inconnu → no-op : les services rendent leur 404 habituel.
     - Sans accès → **404** (fail closed : ne pas révéler l'existence).
     """
     ws_slug = request.path_params.get("ws_slug")
     if not ws_slug:
         return
-    if getattr(request.state, "api_key_scopes", None) is not None:
-        return
+    await assert_ws_access(request, ws_slug, user)
+
+
+async def assert_ws_access(
+    request: Request, ws_slug: str, user: AuthUser, *, write: bool = False
+) -> None:
+    """Même contrôle que `require_ws_access`, pour un workspace qui N'EST PAS
+    dans le chemin de la route (corps ou query).
+
+    `require_ws_access` ne lit que le paramètre de chemin `ws_slug` : posée sur
+    une route qui reçoit le workspace autrement, la dépendance est un no-op
+    SILENCIEUX et la route se retrouve sans contrôle d'accès. Toute route de ce
+    genre doit donc appeler ceci explicitement, une fois par workspace visé, et
+    AVANT le moindre effet de bord.
+
+    `write=True` exige en plus le droit d'écriture du scope de clé API.
+    """
+    from docflow.auth.deps import check_api_key_scope
+
+    check_api_key_scope(request, ws_slug, write=write)
     if user.is_admin:
         return
     pool = request.app.state.pool

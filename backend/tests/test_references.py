@@ -4,6 +4,7 @@ import uuid
 
 import asyncpg
 
+from docflow.documents.content_refs import refresh_content_references
 from docflow.references.parser import extract_references
 
 # ── Parser (unitaire, sans DB) ────────────────────────────────────────────────
@@ -67,7 +68,6 @@ def test_extract_empty_label() -> None:
 async def test_refresh_references_inserts(db_pool: asyncpg.Pool) -> None:
     """Le save insère les références extraites du contenu."""
     from docflow.documents import service as doc_svc
-    from docflow.references.service import refresh_references
     from docflow.schemas.document import DocumentCreate
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
@@ -112,7 +112,7 @@ async def test_refresh_references_inserts(db_pool: asyncpg.Pool) -> None:
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, source.doc_technical_key, wk, content)
+                await refresh_content_references(conn, source.doc_technical_key, wk, content)
 
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -129,7 +129,6 @@ async def test_refresh_references_inserts(db_pool: asyncpg.Pool) -> None:
 async def test_refresh_references_replaces(db_pool: asyncpg.Pool) -> None:
     """Un lien retiré du contenu disparaît de la table au save suivant."""
     from docflow.documents import service as doc_svc
-    from docflow.references.service import refresh_references
     from docflow.schemas.document import DocumentCreate
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
@@ -173,12 +172,14 @@ async def test_refresh_references_replaces(db_pool: asyncpg.Pool) -> None:
         content_with = f"[Cible](docflow://doc/{target.doc_technical_key})"
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, source.doc_technical_key, wk, content_with)
+                await refresh_content_references(conn, source.doc_technical_key, wk, content_with)
 
         # Deuxième save : lien retiré
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, source.doc_technical_key, wk, "Texte sans lien.")
+                await refresh_content_references(
+                    conn, source.doc_technical_key, wk, "Texte sans lien."
+                )
 
         async with db_pool.acquire() as conn:
             count = await conn.fetchval(
@@ -193,7 +194,7 @@ async def test_refresh_references_replaces(db_pool: asyncpg.Pool) -> None:
 async def test_orphan_after_target_deleted(db_pool: asyncpg.Pool) -> None:
     """Supprimer la cible crée un orphelin sans bloquer la suppression."""
     from docflow.documents import service as doc_svc
-    from docflow.references.service import broken_links_by_bloc, refresh_references
+    from docflow.references.service import broken_links_by_bloc
     from docflow.schemas.document import DocumentCreate
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
@@ -236,7 +237,7 @@ async def test_orphan_after_target_deleted(db_pool: asyncpg.Pool) -> None:
         content = f"[Cible](docflow://doc/{target.doc_technical_key})"
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, source.doc_technical_key, wk, content)
+                await refresh_content_references(conn, source.doc_technical_key, wk, content)
 
         # Supprime la cible — doit réussir (pas de FK dure)
         await doc_svc.delete_document(db_pool, ws_slug, target.doc_technical_key)
@@ -269,7 +270,7 @@ async def test_orphan_after_target_deleted(db_pool: asyncpg.Pool) -> None:
 async def test_backlinks_basic(db_pool: asyncpg.Pool) -> None:
     """A référence B → backlinks(B) liste A ; backlinks(A) est vide."""
     from docflow.documents import service as doc_svc
-    from docflow.references.service import get_backlinks, refresh_references
+    from docflow.references.service import get_backlinks
     from docflow.schemas.document import DocumentCreate
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
@@ -313,7 +314,7 @@ async def test_backlinks_basic(db_pool: asyncpg.Pool) -> None:
         content = f"[Spec auth](docflow://doc/{doc_b.doc_technical_key})"
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, doc_a.doc_technical_key, wk, content)
+                await refresh_content_references(conn, doc_a.doc_technical_key, wk, content)
 
         backlinks_b = await get_backlinks(db_pool, ws_slug, doc_b.doc_technical_key)
         assert len(backlinks_b) == 1
@@ -329,7 +330,7 @@ async def test_backlinks_basic(db_pool: asyncpg.Pool) -> None:
 async def test_backlinks_workspace_isolation(db_pool: asyncpg.Pool) -> None:
     """Référence dans W2 invisible dans backlinks d'un doc de W1."""
     from docflow.documents import service as doc_svc
-    from docflow.references.service import get_backlinks, refresh_references
+    from docflow.references.service import get_backlinks
     from docflow.schemas.document import DocumentCreate
     from docflow.schemas.workspace import WorkspaceCreate
     from docflow.workspaces import service as ws_svc
@@ -392,7 +393,7 @@ async def test_backlinks_workspace_isolation(db_pool: asyncpg.Pool) -> None:
         content = f"[Target](docflow://doc/{doc_b.doc_technical_key})"
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await refresh_references(conn, doc_a2.doc_technical_key, wk2, content)
+                await refresh_content_references(conn, doc_a2.doc_technical_key, wk2, content)
 
         # backlinks pour doc_b scopé à ws1 doit être vide
         backlinks = await get_backlinks(db_pool, ws1, doc_b.doc_technical_key)

@@ -2,26 +2,52 @@ from __future__ import annotations
 
 import uuid
 
+import asyncpg
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from docflow.auth.deps import require_authenticated
+from docflow.auth.deps import require_authenticated, require_superadmin
 from docflow.automations import service
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.automations import (
     AutomationCreate,
+    AutomationHeaderIn,
     AutomationOrderIn,
     AutomationOut,
     AutomationRunOut,
     AutomationUpdate,
 )
-from docflow.workspaces.access import require_ws_access
+from docflow.vault import service as vault_svc
+from docflow.workspaces.access import assert_ws_access, require_ws_access
 
 router = APIRouter(tags=["automations"], dependencies=[Depends(require_ws_access)])
+
+
+async def _assert_header_secrets_owned(
+    pool: asyncpg.Pool, headers: list[AutomationHeaderIn] | None, owner_id: uuid.UUID
+) -> None:
+    """Isolation des secrets (STANDARD Gestion des secrets §1/§6) : une réf
+    ${secret://}/${hmac://} d'un header d'automate doit appartenir à l'agissant.
+    Point d'application = ce routeur (l'identité y est présente ; la résolution
+    ultérieure vit dans le worker, sans contexte requête). None = pas de headers
+    dans le body (update partiel) → rien à valider."""
+    if headers is None:
+        return
+    refs = [h.secret_ref for h in headers]
+    await vault_svc.assert_refs_owned(pool, refs, owner_id)
+    # Résolubilité à la configuration (STANDARD Harpocrate §6).
+    await vault_svc.assert_refs_resolvable(pool, refs)
+
 
 _WS = "/workspaces/{ws_slug}"
 _AUTO = _WS + "/automations/{automation_id}"
 _Auth = Depends(require_authenticated)
+
+# Vue GLOBALE (hors workspace) : les automates sont des objets d'instance —
+# une règle couvre plusieurs workspaces. Réservée aux admins : la liste expose
+# URLs et en-têtes d'appel de tous les workspaces.
+_GAUTO = "/automations/{automation_id}"
+_Admin = Depends(require_superadmin)
 
 
 class PushEventsSelection(BaseModel):
@@ -40,14 +66,136 @@ class PushEventsIn(BaseModel):
 
 @router.post("/automations/push-events")
 async def push_events(
-    body: PushEventsIn, request: Request, _: AuthUser = _Auth
-) -> dict[str, int]:
+    body: PushEventsIn, request: Request, user: AuthUser = _Auth
+) -> dict[str, object]:
     """Émet des events de modification synthétiques sur les documents des
     workspaces/blocs sélectionnés (re-déclenchement des automates)."""
+    # Le workspace vient du CORPS : `require_ws_access` (posée sur ce router) ne
+    # lit que le param de chemin et n'y voit rien. Tout est contrôlé AVANT le
+    # premier event émis — sinon un refus sur la 2ᵉ sélection laisserait la 1ʳᵉ
+    # déjà déclenchée.
+    for selection in body.selections:
+        await assert_ws_access(request, selection.workspace_slug, user, write=True)
     return await service.push_update_events(
         request.app.state.pool,
         [s.model_dump() for s in body.selections],
     )
+
+
+# ── Routes globales (admin) ──────────────────────────────────────────────────
+
+
+@router.get("/automations", response_model=list[AutomationOut])
+async def list_all_automations(request: Request, _: AuthUser = _Admin) -> list[AutomationOut]:
+    """Tous les automates de l'instance, ordonnés par meilleure priorité."""
+    return await service.list_automations(request.app.state.pool, None)
+
+
+@router.put("/automations/order", response_model=list[AutomationOut])
+async def reorder_all_automations(
+    body: AutomationOrderIn, request: Request, _: AuthUser = _Admin
+) -> list[AutomationOut]:
+    """Ordre global, projeté sur chaque workspace couvert."""
+    return await service.reorder_automations(request.app.state.pool, None, body.ids)
+
+
+@router.post("/automations", response_model=AutomationOut, status_code=201)
+async def create_automation_global(
+    body: AutomationCreate, request: Request, user: AuthUser = _Admin
+) -> AutomationOut:
+    """Création hors workspace : `workspace_slugs` obligatoire (422 sinon)."""
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
+    return await service.create_automation(request.app.state.pool, None, body)
+
+
+@router.get(_GAUTO, response_model=AutomationOut)
+async def get_automation_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> AutomationOut:
+    return await service.get_automation(request.app.state.pool, None, automation_id)
+
+
+@router.patch(_GAUTO, response_model=AutomationOut)
+async def update_automation_global(
+    automation_id: uuid.UUID,
+    body: AutomationUpdate,
+    request: Request,
+    user: AuthUser = _Admin,
+) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
+    return await service.update_automation(request.app.state.pool, None, automation_id, body)
+
+
+@router.delete(_GAUTO, status_code=204)
+async def delete_automation_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> None:
+    await service.delete_automation(request.app.state.pool, None, automation_id)
+
+
+@router.get(_GAUTO + "/runs", response_model=list[AutomationRunOut])
+async def list_runs_global(
+    automation_id: uuid.UUID,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    _: AuthUser = _Admin,
+) -> list[AutomationRunOut]:
+    return await service.list_runs(request.app.state.pool, None, automation_id, limit)
+
+
+@router.post(_GAUTO + "/clone", response_model=AutomationOut, status_code=201)
+async def clone_automation_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> AutomationOut:
+    return await service.clone_automation(request.app.state.pool, None, automation_id)
+
+
+@router.post(_GAUTO + "/run-next")
+async def run_next_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> dict[str, object]:
+    return await service.run_next_pending(
+        request.app.state.pool, None, automation_id, request.app.state.settings
+    )
+
+
+@router.post(_GAUTO + "/advance")
+async def advance_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> dict[str, object]:
+    return await service.advance_pending(
+        request.app.state.pool, None, automation_id, request.app.state.settings
+    )
+
+
+@router.post(_GAUTO + "/cursor-back")
+async def cursor_back_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> dict[str, object]:
+    return await service.cursor_back(request.app.state.pool, None, automation_id)
+
+
+@router.delete(_GAUTO + "/runs", status_code=200)
+async def clear_runs_global(
+    automation_id: uuid.UUID, request: Request, _: AuthUser = _Admin
+) -> dict[str, int]:
+    deleted = await service.clear_runs(request.app.state.pool, None, automation_id)
+    return {"deleted": deleted}
+
+
+@router.post(_GAUTO + "/runs/{run_id}/replay", response_model=AutomationRunOut)
+async def replay_run_global(
+    automation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    request: Request,
+    _: AuthUser = _Admin,
+) -> AutomationRunOut:
+    return await service.replay_run(
+        request.app.state.pool, None, automation_id, run_id, request.app.state.settings
+    )
+
+
+# ── Routes par workspace (vue filtrée : automates couvrant le workspace) ─────
 
 
 @router.get(_WS + "/automations", response_model=list[AutomationOut])
@@ -67,8 +215,9 @@ async def reorder_automations(
 
 @router.post(_WS + "/automations", response_model=AutomationOut, status_code=201)
 async def create_automation(
-    ws_slug: str, body: AutomationCreate, request: Request, _: AuthUser = _Auth
+    ws_slug: str, body: AutomationCreate, request: Request, user: AuthUser = _Auth
 ) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.create_automation(request.app.state.pool, ws_slug, body)
 
 
@@ -85,8 +234,9 @@ async def update_automation(
     automation_id: uuid.UUID,
     body: AutomationUpdate,
     request: Request,
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> AutomationOut:
+    await _assert_header_secrets_owned(request.app.state.pool, body.headers, user.id)
     return await service.update_automation(request.app.state.pool, ws_slug, automation_id, body)
 
 

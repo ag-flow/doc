@@ -12,9 +12,8 @@ from fastapi import HTTPException
 from docflow.artifacts.service import (
     collect_subtree_artifacts,
     purge_unreferenced,
-    refresh_artifact_references,
 )
-from docflow.datasets.references import refresh_dataset_references
+from docflow.codecs import codec_for, codec_for_document
 from docflow.db.helpers import require_workspace
 from docflow.documents import property_writes as prop_writes
 from docflow.documents.block_ops import (
@@ -23,14 +22,19 @@ from docflow.documents.block_ops import (
     list_block_documents,
 )
 from docflow.documents.changelog import log_change
+from docflow.documents.content_refs import refresh_content_references
+from docflow.documents.content_validation import ensure_valid
 from docflow.documents.slug import document_base_slug, next_free_child_suffix
 from docflow.documents.template_apply import compute_initial_content
+from docflow.documents.version_writes import insert_document_version
+from docflow.errors import DependentsConflictError
 from docflow.events import outbox
-from docflow.references.service import refresh_references
 from docflow.schemas.document import (
     DocumentCreate,
     DocumentOut,
     DocumentUpdate,
+    DocumentVersionInfo,
+    DocumentVersionOut,
 )
 from docflow.schemas.property_value import PropertyValueOut, PropertyValueSet
 
@@ -47,7 +51,7 @@ __all__ = [
 
 _SELECT_HEAD = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
-       d.parent, d.created_at, d.updated_at,
+       d.parent, d.created_at, d.updated_at, d.updated_by,
        d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug
@@ -60,7 +64,7 @@ ORDER BY d.created_at
 
 _SELECT_DOC = """
 SELECT d.doc_technical_key, d.title, d.type, d.version,
-       d.parent, d.created_at, d.updated_at,
+       d.parent, d.created_at, d.updated_at, d.updated_by,
        d.data_block_ref, d.exposed, d.slug,
        ft.slug AS functional_type_slug,
        w.slug  AS workspace_slug,
@@ -87,6 +91,7 @@ def _row_head(row: asyncpg.Record) -> DocumentOut:
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=row["updated_by"] if "updated_by" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -105,6 +110,7 @@ def _row_doc(row: asyncpg.Record) -> DocumentOut:
         workspace_slug=row["workspace_slug"],
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=row["updated_by"] if "updated_by" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -140,6 +146,13 @@ async def _validate_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_id: u
         )
 
 
+# Clé arbitraire mais stable (distincte de auth/lockout.py::_LOCKOUT_ADVISORY_KEY),
+# dédiée à l'invariant « hiérarchie des documents acyclique » : sans verrou, deux
+# reparentages croisés A→B / B→A valident chacun l'absence de cycle (READ COMMITTED
+# masque l'écriture non commitée de l'autre) puis commitent un cycle — check-then-act.
+_DOC_HIERARCHY_ADVISORY_KEY = 4_027_311_002
+
+
 async def _check_no_document_cycle(
     conn: asyncpg.Connection, doc_id: uuid.UUID, proposed_parent_id: uuid.UUID
 ) -> None:
@@ -149,13 +162,31 @@ async def _check_no_document_cycle(
     refuse si `doc_id` figure dans la chaîne d'ancêtres du nouveau parent
     (c.-à-d. si le nouveau parent est un descendant de doc_id). Prévient la
     boucle infinie de la CTE récursive de parcours d'arbre (DOC-02).
+
+    Must be called inside the same transaction as the UPDATE du parent : le
+    verrou consultatif est transactionnel, il ne couvre l'écriture que si elle
+    partage la transaction du garde.
     """
+    if not conn.is_in_transaction():
+        raise RuntimeError(
+            "_check_no_document_cycle doit s'exécuter dans la transaction de l'écriture "
+            "qu'il protège : hors transaction, son verrou est relâché immédiatement"
+        )
+    await conn.execute("SELECT pg_advisory_xact_lock($1)", _DOC_HIERARCHY_ADVISORY_KEY)
     if proposed_parent_id == doc_id:
         raise HTTPException(
             status_code=422, detail="un document ne peut pas être son propre parent"
         )
+    seen: set[uuid.UUID] = set()
     ancestor: uuid.UUID | None = proposed_parent_id
     while ancestor is not None:
+        if ancestor in seen:
+            # Cycle préexistant dans la chaîne d'ancêtres (donnée corrompue) :
+            # refuser plutôt que de boucler indéfiniment.
+            raise HTTPException(
+                status_code=422, detail="cycle détecté dans la hiérarchie des documents"
+            )
+        seen.add(ancestor)
         row = await conn.fetchrow(
             "SELECT parent FROM document WHERE doc_technical_key = $1", ancestor
         )
@@ -323,8 +354,9 @@ async def get_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> D
 
 _DOC_INSERT_SQL = """
 INSERT INTO document
-    (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref, exposed)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+    (title, slug, parent, functional_type_ref, workspace_technical_key, data_block_ref,
+     exposed, updated_by, type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, 'md'))
 RETURNING doc_technical_key, title, type, version, parent,
           data_block_ref, exposed, slug, created_at, updated_at
 """
@@ -336,6 +368,7 @@ async def _insert_document(
     data: DocumentCreate,
     ft_id: uuid.UUID | None,
     parent_exposed: bool,
+    author: str | None = None,
 ) -> asyncpg.Record:
     """Insère le document en gérant le slug d'instance.
 
@@ -346,8 +379,16 @@ async def _insert_document(
     if data.slug is not None:
         try:
             row = await conn.fetchrow(
-                _DOC_INSERT_SQL, data.title, data.slug, data.parent_id,
-                ft_id, wk, data.block_id, parent_exposed,
+                _DOC_INSERT_SQL,
+                data.title,
+                data.slug,
+                data.parent_id,
+                ft_id,
+                wk,
+                data.block_id,
+                parent_exposed,
+                author,
+                data.content_type,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -364,8 +405,16 @@ async def _insert_document(
         try:
             async with conn.transaction():  # savepoint : rejeu sûr sur collision
                 row = await conn.fetchrow(
-                    _DOC_INSERT_SQL, data.title, candidate, data.parent_id,
-                    ft_id, wk, data.block_id, parent_exposed,
+                    _DOC_INSERT_SQL,
+                    data.title,
+                    candidate,
+                    data.parent_id,
+                    ft_id,
+                    wk,
+                    data.block_id,
+                    parent_exposed,
+                    author,
+                    data.content_type,
                 )
         except asyncpg.UniqueViolationError:
             i = 2 if i == 0 else i + 1
@@ -378,7 +427,9 @@ async def _insert_document(
         return row
 
 
-async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate) -> DocumentOut:
+async def create_document(
+    pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate, author: str | None = None
+) -> DocumentOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
@@ -416,18 +467,16 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
             await _validate_type_position(conn, data.block_id, data.parent_id, ft_id)
             # Appliquer le template si corps vide et modèle défini
             initial_content = await compute_initial_content(conn, ft_id, data.title, data.content)
-            row = await _insert_document(conn, wk, data, ft_id, parent_exposed)
-            await conn.execute(
-                "INSERT INTO document_version (document_ref, version_number, title, content) "
-                "VALUES ($1, 1, $2, $3)",
-                row["doc_technical_key"],
-                data.title,
-                initial_content,
+            # Refus AVANT écriture : le type demandé décide de la grammaire.
+            ensure_valid(codec_for(data.content_type), initial_content)
+            row = await _insert_document(conn, wk, data, ft_id, parent_exposed, author)
+            await insert_document_version(
+                conn, row["doc_technical_key"], 1, data.title, initial_content
             )
             await log_change(conn, wk, row["doc_technical_key"], "C")
-            await refresh_references(conn, row["doc_technical_key"], wk, initial_content)
-            await refresh_artifact_references(conn, row["doc_technical_key"], wk, initial_content)
-            await refresh_dataset_references(conn, row["doc_technical_key"], wk, initial_content)
+            await refresh_content_references(
+                conn, row["doc_technical_key"], wk, initial_content
+            )
 
             # Valeurs initiales de propriétés + contrat required (contrat dur :
             # la création échoue si une required sans default/behavior manque).
@@ -487,13 +536,18 @@ async def create_document(pool: asyncpg.Pool, ws_slug: str, data: DocumentCreate
         workspace_slug=ws_slug,
         data_block_ref=row["data_block_ref"],
         exposed=row["exposed"],
+        updated_by=author,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
 async def update_document(
-    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, data: DocumentUpdate
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    data: DocumentUpdate,
+    author: str | None = None,
 ) -> DocumentOut:
     raw = data.model_dump(exclude_unset=True)
     if not raw:
@@ -512,6 +566,14 @@ async def update_document(
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
+
+            # Ordre des verrous : le verrou consultatif de hiérarchie AVANT le
+            # FOR UPDATE de la ligne. Pris après, deux reparentages croisés
+            # s'entre-bloquent : chacun tient sa ligne, attend le verrou de
+            # l'autre, et l'UPDATE du parent exige un FOR KEY SHARE sur la
+            # ligne verrouillée en face → deadlock détecté par Postgres.
+            if raw.get("parent_id") is not None:
+                await conn.execute("SELECT pg_advisory_xact_lock($1)", _DOC_HIERARCHY_ADVISORY_KEY)
 
             # Existence + verrou optimiste
             head = await conn.fetchrow(
@@ -554,25 +616,19 @@ async def update_document(
                     new_content: str | None = prev["content"] if prev else None
                 else:
                     new_content = raw.get("content")
+                ensure_valid(await codec_for_document(conn, doc_id), new_content)
+                await insert_document_version(conn, doc_id, new_v, new_title, new_content)
                 await conn.execute(
-                    "INSERT INTO document_version (document_ref, version_number, title, content) "
-                    "VALUES ($1, $2, $3, $4)",
-                    doc_id,
-                    new_v,
-                    new_title,
-                    new_content,
-                )
-                await conn.execute(
-                    "UPDATE document SET version = $1, title = $2, updated_at = now() "
+                    "UPDATE document SET version = $1, title = $2, updated_at = now(), "
+                    "updated_by = coalesce($4, updated_by) "
                     "WHERE doc_technical_key = $3",
                     new_v,
                     new_title,
                     doc_id,
+                    author,
                 )
                 await log_change(conn, wk, doc_id, "U")
-                await refresh_references(conn, doc_id, wk, new_content)
-                await refresh_artifact_references(conn, doc_id, wk, new_content)
-                await refresh_dataset_references(conn, doc_id, wk, new_content)
+                await refresh_content_references(conn, doc_id, wk, new_content)
                 await outbox.enqueue(
                     conn,
                     event_code="docflow.document.updated.v1",
@@ -701,6 +757,80 @@ async def update_document(
     return await get_document(pool, ws_slug, doc_id)
 
 
+def _concat_append(existing: str | None, addition: str, position: str) -> str:
+    """Concatène `addition` en tête ou en pied du contenu, avec une ligne vide
+    de séparation. Positionnement LITTÉRAL : aucune lecture du titre ou de la
+    structure markdown — le fragment est posé tel quel au bord du document."""
+    body = (existing or "").strip("\n")
+    add = addition.strip("\n")
+    if not body:
+        return add
+    if position == "top":
+        return f"{add}\n\n{body}"
+    return f"{body}\n\n{add}"
+
+
+async def append_to_document(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    doc_id: uuid.UUID,
+    *,
+    content: str,
+    position: str,
+    author: str | None = None,
+) -> DocumentOut:
+    """Ajoute un fragment markdown en tête ou en pied du document, en une seule
+    transaction atomique (lecture + nouvelle révision sous verrou) — pas de
+    concurrence optimiste côté appelant, la lecture se fait sous FOR UPDATE.
+    Alimente le même cycle que update_document (références, change feed, outbox)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            head = await conn.fetchrow(
+                "SELECT version, title FROM document "
+                "WHERE doc_technical_key = $1 AND workspace_technical_key = $2 FOR UPDATE",
+                doc_id,
+                wk,
+            )
+            if head is None:
+                raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+
+            current_v = head["version"]
+            prev = await conn.fetchrow(
+                "SELECT content FROM document_version "
+                "WHERE document_ref = $1 AND version_number = $2",
+                doc_id,
+                current_v,
+            )
+            new_content = _concat_append(prev["content"] if prev else None, content, position)
+            new_v = current_v + 1
+            ensure_valid(await codec_for_document(conn, doc_id), new_content)
+            await insert_document_version(conn, doc_id, new_v, head["title"], new_content)
+            await conn.execute(
+                "UPDATE document SET version = $1, updated_at = now(), "
+                "updated_by = coalesce($3, updated_by) "
+                "WHERE doc_technical_key = $2",
+                new_v,
+                doc_id,
+                author,
+            )
+            await log_change(conn, wk, doc_id, "U")
+            await refresh_content_references(conn, doc_id, wk, new_content)
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.document.updated.v1",
+                workspace_wk=wk,
+                business={
+                    "documentId": str(doc_id),
+                    "workspaceSlug": ws_slug,
+                    "version": new_v,
+                    "title": head["title"],
+                },
+                dedup_key=f"{doc_id}:{new_v}",
+            )
+    return await get_document(pool, ws_slug, doc_id)
+
+
 _COUNT_DOCUMENT_DESCENDANTS = """
 WITH RECURSIVE descendants AS (
     SELECT doc_technical_key FROM document WHERE doc_technical_key = $1
@@ -708,33 +838,23 @@ WITH RECURSIVE descendants AS (
     SELECT d.doc_technical_key
     FROM document d
     JOIN descendants p ON d.parent = p.doc_technical_key
-)
-SELECT count(*) - 1 AS descendants FROM descendants
+) CYCLE doc_technical_key SET is_cycle USING path
+SELECT count(*) - 1 AS descendants FROM descendants WHERE NOT is_cycle
 """
 
 
-async def count_document_descendants(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> int:
-    """Compte les documents descendants d'un document (lui-même exclu).
-
-    Miroir de blocks/service.py::_COUNT_BLOCK_DEPENDENTS — sert de garde
-    « confirm si dépendants » côté appelant (primitive MCP delete_document) ;
-    delete_document lui-même reste sans garde (comportement REST inchangé).
-    """
-    async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
-        exists = await conn.fetchval(
-            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
-            doc_id,
-            wk,
-        )
-        if not exists:
-            raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
-        count = await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id)
-    return int(count)
-
-
-async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -> dict[str, object]:
+async def delete_document(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, *, confirm: bool = True
+) -> dict[str, object]:
     """Supprime le document et tous ses descendants (ON DELETE CASCADE sur document.parent).
+
+    ``confirm=False`` refuse la suppression tant qu'il reste des descendants
+    (``DependentsConflictError``). Le décompte a lieu **dans la transaction de
+    suppression** : compté par l'appelant, un enfant créé entre le décompte et
+    le DELETE partait en cascade sans que la garde ait joué.
+
+    Le défaut ``True`` préserve le contrat REST historique, où la confirmation
+    est portée par l'interface et non par l'API.
 
     Retourne un snapshot {id, title, type} capturé avant suppression.
     """
@@ -753,6 +873,17 @@ async def delete_document(pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID) -
             )
             if snap is None:
                 raise HTTPException(status_code=404, detail=f"document {doc_id} introuvable")
+            if not confirm:
+                dependents = int(await conn.fetchval(_COUNT_DOCUMENT_DESCENDANTS, doc_id))
+                if dependents > 0:
+                    raise DependentsConflictError(
+                        detail=(
+                            f"la suppression de ce document détruirait en cascade {dependents} "
+                            "document(s) descendant(s) (valeurs, commentaires, réactions "
+                            "compris) ; rappeler avec confirm=true pour confirmer"
+                        ),
+                        dependents=dependents,
+                    )
             # Capturés AVANT la suppression : les références partent en cascade
             # avec le document et ses descendants.
             artifact_candidates = await collect_subtree_artifacts(conn, doc_id)
@@ -799,13 +930,14 @@ async def set_document_exposed(
                     SELECT d.doc_technical_key
                     FROM document d
                     JOIN descendants p ON d.parent = p.doc_technical_key
-                )
+                ) CYCLE doc_technical_key SET is_cycle USING path
                 UPDATE document SET exposed = $2, updated_at = now()
                 WHERE doc_technical_key IN (SELECT doc_technical_key FROM descendants)
                 """,
                 doc_id,
                 value,
             )
+            await log_change(conn, wk, doc_id, "U")
     return await get_document(pool, ws_slug, doc_id)
 
 
@@ -905,6 +1037,110 @@ def _validate_value_for_type(prop_type: str, data: PropertyValueSet, prop_slug: 
             ) from exc
 
 
+_RANGE_KINDS = frozenset({"min", "max"})
+_LENGTH_KINDS = frozenset({"min_length", "max_length"})
+_ORDERED_TYPES = frozenset({"int", "float", "date"})
+
+
+def _constraint_applies(kind: str, prop_type: str) -> bool:
+    """Une contrainte de ce genre est-elle évaluable sur ce type de propriété ?"""
+    if kind in _RANGE_KINDS:
+        return prop_type in _ORDERED_TYPES
+    if kind in _LENGTH_KINDS or kind == "pattern":
+        return prop_type == "text"
+    return False
+
+
+def validate_constraint_operand(kind: str, prop_type: str, operand: str) -> None:
+    """Vérifie que l'opérande d'une contrainte est exploitable ; lève ``ValueError`` sinon.
+
+    Source unique de vérité, partagée par la déclaration de la contrainte
+    (``properties.service.upsert_constraint``, qui rejette en 422) et son
+    application (``_apply_constraints``, qui ignore et trace une contrainte
+    héritée inexploitable). Une borne qu'on ne sait pas relire ne protège rien :
+    la laisser passer, c'est une contrainte inerte — ou un 500 à chaque écriture.
+    """
+    if kind in _RANGE_KINDS:
+        _parse_ordered(prop_type, operand)
+        return
+    if kind in _LENGTH_KINDS:
+        length = int(operand)
+        if length < 0:
+            raise ValueError(f"'{kind}' attend un entier positif ou nul, reçu '{operand}'")
+        return
+    if kind == "pattern":
+        try:
+            re.compile(operand)
+        except re.error as exc:
+            raise ValueError(f"expression régulière invalide : {exc}") from exc
+        return
+    raise ValueError(f"genre de contrainte inconnu : '{kind}'")
+
+
+def _parse_ordered(prop_type: str, raw: str) -> int | float | datetime.date:
+    """Relit un scalaire ordonnable selon le type de la propriété (``ValueError`` sinon)."""
+    if prop_type == "int":
+        return int(raw)
+    if prop_type == "float":
+        return float(raw)
+    if prop_type == "date":
+        return datetime.date.fromisoformat(raw)
+    raise ValueError(f"type '{prop_type}' sans ordre total")
+
+
+def _violates_bound(kind: str, prop_type: str, value: str, operand: str) -> bool:
+    """La valeur utilisateur dépasse-t-elle la borne ? (opérande déjà validé)
+
+    Une valeur utilisateur illisible n'est PAS traitée ici : elle a été refusée
+    en amont par ``validate_scalar_value``. La distinguer de l'opérande est
+    justement l'objet de cette découpe — ce sont deux fautes de nature
+    différente (donnée du rédacteur vs modèle de l'administrateur).
+    """
+    bound = _parse_ordered(prop_type, operand)
+    try:
+        parsed = _parse_ordered(prop_type, value)
+    except ValueError:
+        return False
+    if isinstance(bound, datetime.date) and isinstance(parsed, datetime.date):
+        return parsed < bound if kind == "min" else parsed > bound
+    if isinstance(bound, datetime.date) or isinstance(parsed, datetime.date):
+        return False
+    return parsed < bound if kind == "min" else parsed > bound
+
+
+def _constraint_error(
+    kind: str, prop_type: str, value: str, operand: str, message: str | None
+) -> str | None:
+    """Message d'erreur si la valeur viole la contrainte, sinon None."""
+    if kind in _RANGE_KINDS:
+        if not _violates_bound(kind, prop_type, value, operand):
+            return None
+        if prop_type == "date":
+            default = (
+                f"date antérieure au minimum ({operand})"
+                if kind == "min"
+                else f"date postérieure au maximum ({operand})"
+            )
+        else:
+            default = (
+                f"valeur < minimum ({operand})"
+                if kind == "min"
+                else f"valeur > maximum ({operand})"
+            )
+        return message or default
+    if kind == "min_length":
+        if len(value) >= int(operand):
+            return None
+        return message or f"longueur < minimum ({operand})"
+    if kind == "max_length":
+        if len(value) <= int(operand):
+            return None
+        return message or f"longueur > maximum ({operand})"
+    if re.fullmatch(operand, value):
+        return None
+    return message or f"valeur ne correspond pas au pattern ({operand})"
+
+
 async def _apply_constraints(
     conn: asyncpg.Connection, prop_id: uuid.UUID, prop_type: str, value: str
 ) -> None:
@@ -913,55 +1149,51 @@ async def _apply_constraints(
         prop_id,
     )
     for r in rows:
-        kind, cval, msg = r["kind"], r["value"], r["message"]
-        error: str | None = None
-        if kind == "min" and prop_type == "int":
-            try:
-                if int(value) < int(cval):
-                    error = msg or f"valeur < minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "int":
-            try:
-                if int(value) > int(cval):
-                    error = msg or f"valeur > maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min" and prop_type == "float":
-            try:
-                if float(value) < float(cval):
-                    error = msg or f"valeur < minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "float":
-            try:
-                if float(value) > float(cval):
-                    error = msg or f"valeur > maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min" and prop_type == "date":
-            try:
-                if datetime.date.fromisoformat(value) < datetime.date.fromisoformat(cval):
-                    error = msg or f"date antérieure au minimum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "max" and prop_type == "date":
-            try:
-                if datetime.date.fromisoformat(value) > datetime.date.fromisoformat(cval):
-                    error = msg or f"date postérieure au maximum ({cval})"
-            except ValueError:
-                pass
-        elif kind == "min_length" and prop_type == "text":
-            if len(value) < int(cval):
-                error = msg or f"longueur < minimum ({cval})"
-        elif kind == "max_length" and prop_type == "text":
-            if len(value) > int(cval):
-                error = msg or f"longueur > maximum ({cval})"
-        elif kind == "pattern" and prop_type == "text":
-            if not re.fullmatch(cval, value):
-                error = msg or f"valeur ne correspond pas au pattern ({cval})"
+        kind, operand, msg = r["kind"], r["value"], r["message"]
+        if not _constraint_applies(kind, prop_type):
+            continue
+        try:
+            validate_constraint_operand(kind, prop_type, operand)
+        except ValueError as exc:
+            # Contrainte antérieure au durcissement d'upsert_constraint (ou dont le
+            # type de la propriété a changé depuis) : l'ignorer plutôt que d'infliger
+            # un 500 à chaque écriture, mais la tracer — une contrainte muette qui
+            # ne protège plus rien doit être corrigée, pas oubliée.
+            log.warning(
+                "constraint_operand_invalid_skipped",
+                prop_id=str(prop_id),
+                prop_type=prop_type,
+                kind=kind,
+                operand=operand,
+                reason=str(exc),
+                exc_info=True,
+            )
+            continue
+        error = _constraint_error(kind, prop_type, value, operand, msg)
         if error:
             raise HTTPException(status_code=422, detail=error)
+
+
+async def validate_scalar_value(prop_type: str, value: str, prop_slug: str) -> str:
+    """Valide une valeur scalaire contre le type déclaré et retourne la valeur à stocker.
+
+    Point d'entrée unique des validateurs scalaires : écriture de valeur
+    (``upsert_value``), instanciation d'un défaut et déclaration d'un
+    ``default_value`` passent par ici. Les types sans validateur (``text``) et
+    les types résolus ailleurs (``restricted_list``, ``reference``, qui exigent
+    un accès base) traversent sans contrôle.
+    """
+    if prop_type == "int":
+        await _validate_int(value, prop_slug)
+    elif prop_type == "date":
+        return _validate_date(value, prop_slug)
+    elif prop_type == "bool":
+        _validate_bool(value, prop_slug)
+    elif prop_type == "url":
+        _validate_url(value, prop_slug)
+    elif prop_type == "float":
+        _validate_float(value, prop_slug)
+    return value
 
 
 async def _validate_int(value: str, prop_slug: str) -> None:
@@ -974,15 +1206,34 @@ async def _validate_int(value: str, prop_slug: str) -> None:
         ) from exc
 
 
-def _validate_date(value: str, prop_slug: str) -> None:
+def _validate_date(value: str, prop_slug: str) -> str:
+    """Valide et NORMALISE une valeur de propriété date en `YYYY-MM-DD`.
+
+    Accepte une date pure OU un timestamp/datetime ISO (ex. envoyé par un
+    workflow : `2026-07-30 08:39:09.93267`) — seule la partie date est conservée.
+    Retourne la date normalisée à stocker.
+    """
+    v = value.strip()
+    # 1) déjà une date pure.
     try:
-        datetime.date.fromisoformat(value)
+        return datetime.date.fromisoformat(v).isoformat()
+    except ValueError:
+        pass
+    # 2) datetime/timestamp ISO complet → on garde la date.
+    try:
+        return datetime.datetime.fromisoformat(v.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        pass
+    # 3) dernier recours : préfixe date avant l'espace ou le « T » (gère des
+    # fractions de seconde de longueur inhabituelle que fromisoformat rejette).
+    try:
+        return datetime.date.fromisoformat(re.split(r"[ T]", v, maxsplit=1)[0]).isoformat()
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"propriété '{prop_slug}' de type date : "
-                f"'{value}' n'est pas une date ISO (YYYY-MM-DD)"
+                f"propriété '{prop_slug}' de type date : '{value}' n'est pas une "
+                "date (attendu YYYY-MM-DD, ou un timestamp ISO dont on garde la date)"
             ),
         ) from exc
 
@@ -1095,7 +1346,8 @@ async def set_property_value(
             if prop_type == "int" and data.value is not None:
                 await _validate_int(data.value, prop_slug)
             if prop_type == "date" and data.value is not None:
-                _validate_date(data.value, prop_slug)
+                # Normalise (un timestamp ISO est ramené à sa date) → stocké tel quel.
+                data.value = _validate_date(data.value, prop_slug)
             if prop_type == "bool" and data.value is not None:
                 _validate_bool(data.value, prop_slug)
             if prop_type == "url" and data.value is not None:
@@ -1314,3 +1566,59 @@ async def delete_property_value(
                     status_code=404,
                     detail=f"aucune valeur pour la propriété '{prop_slug}' sur ce document",
                 )
+            await log_change(conn, wk, doc_id, "P")
+
+
+async def list_document_versions(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID
+) -> list[DocumentVersionInfo]:
+    """Historique des versions, la plus récente d'abord (sans contenu)."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        exists = await conn.fetchval(
+            "SELECT 1 FROM document WHERE doc_technical_key = $1 AND workspace_technical_key = $2",
+            doc_id,
+            wk,
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail="document introuvable")
+        rows = await conn.fetch(
+            "SELECT version_number, title, coalesce(length(content), 0) AS content_length, "
+            "created_at FROM document_version WHERE document_ref = $1 "
+            "ORDER BY version_number DESC",
+            doc_id,
+        )
+    return [
+        DocumentVersionInfo(
+            version_number=r["version_number"],
+            title=r["title"],
+            content_length=r["content_length"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+async def get_document_version(
+    pool: asyncpg.Pool, ws_slug: str, doc_id: uuid.UUID, version_number: int
+) -> DocumentVersionOut:
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        row = await conn.fetchrow(
+            "SELECT v.version_number, v.title, v.content, v.created_at "
+            "FROM document_version v "
+            "JOIN document d ON d.doc_technical_key = v.document_ref "
+            "WHERE v.document_ref = $1 AND v.version_number = $2 "
+            "AND d.workspace_technical_key = $3",
+            doc_id,
+            version_number,
+            wk,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="version introuvable")
+    return DocumentVersionOut(
+        version_number=row["version_number"],
+        title=row["title"],
+        content=row["content"],
+        created_at=row["created_at"],
+    )

@@ -7,12 +7,14 @@ du document ET les propriétés de l'event, enregistre le run et dédup.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
 
 import asyncpg
 import pytest
+from structlog.testing import capture_logs
 
 from docflow.automations import worker
 from docflow.events import outbox
@@ -170,7 +172,8 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     )
 
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
@@ -202,6 +205,115 @@ async def test_worker_triggers_on_event_with_variables_and_dedup(
     # Dédup : rejouer le tick ne refait pas l'appel.
     await worker.run_tick(db_pool, automation, object())
     assert len(_CALLS) == 1
+
+
+async def test_un_report_est_journalise_une_fois_par_tick(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un automate qui diffère doit le DIRE.
+
+    Sans cette ligne, « l'automate attend » et « l'automate est mort » produisent
+    exactement les mêmes logs : rien. C'est ce silence qui a fait diagnostiquer
+    un blocage sur 78 events simplement mis en attente par le debounce.
+    """
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+
+    # Event TOUT FRAIS → le document est « chaud » dans la fenêtre de 10 min.
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,10,$4,$5,$6) RETURNING id",
+        wk, "RAG", [_UPDATED], "https://rag.example/index", "POST", json.dumps({"d": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
+        auto_id,
+    )
+
+    class _Settings:
+        public_base_url = "https://doc.example"
+
+    # On capture l'ÉVÉNEMENT STRUCTURÉ, pas le texte rendu : `capsys` dépend de
+    # qui détient `sys.stdout` au moment où structlog crée son logger, donc de
+    # l'ordre d'import — le test passait seul et échouait dans la suite.
+    with capture_logs() as journal:
+        await worker.run_tick(db_pool, automation, _Settings())
+
+    # Rien n'a été appelé : l'event est différé, pas traité.
+    assert _CALLS == []
+    reports = [e for e in journal if e.get("event") == "automation_tick_deferred"]
+    assert len(reports) == 1, "une seule ligne par tick, pas une par event"
+    assert reports[0]["deferred_documents"] == 1
+    assert reports[0]["delay_minutes"] == 10
+    assert reports[0]["resume_at"] is not None
+    assert reports[0]["log_level"] == "info"
+
+
+async def test_aucun_report_aucune_ligne(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pas de bruit périodique : un tick qui ne diffère rien se tait."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    # delay_minutes = 0 → aucun debounce, donc aucun report.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,0,$4,$5,$6) RETURNING id",
+        wk, "RAG", [_UPDATED], "https://rag.example/index", "POST", json.dumps({"d": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template FROM automation WHERE id=$1",
+        auto_id,
+    )
+
+    class _Settings:
+        public_base_url = "https://doc.example"
+
+    with capture_logs() as journal:
+        await worker.run_tick(db_pool, automation, _Settings())
+
+    assert not [e for e in journal if e.get("event") == "automation_tick_deferred"]
 
 
 async def test_run_next_does_not_advance_cursor(
@@ -292,7 +404,8 @@ async def test_run_records_detail_and_prunes_to_20(
         auto_id, wk,
     )
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, "
         "body_template FROM automation WHERE id = $1",
@@ -418,7 +531,8 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
     assert await _pending() == 1
 
     automation = await db_pool.fetchrow(
-        "SELECT id, workspace_technical_key, event_codes, block_slugs, functional_type_slugs, "
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
         "stop_chain, "
         "delay_minutes, url, http_method, body_template FROM automation WHERE id = $1",
         auto_id,
@@ -427,8 +541,76 @@ async def test_block_filter_and(db_pool: asyncpg.Pool, monkeypatch: pytest.Monke
     assert len(_CALLS) == 1
 
 
+async def test_block_template_filter_covers_blocks_by_provenance(db_pool: asyncpg.Pool) -> None:
+    """`block_templates` couvre les blocs par PROVENANCE, en union avec `block_slugs`.
+
+    C'est le point du critère : un bloc qu'aucun automate ne nomme entre quand
+    même dans le périmètre s'il vient d'un template couvert — sinon créer un bloc
+    obligerait à se souvenir d'éditer chaque automate, ce que personne ne fait.
+    """
+    from docflow.automations import service as auto_svc
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # bloc 'b', type racine 't'
+    await db_pool.execute(
+        "UPDATE functional_type SET source_template = 'kb-tpl' "
+        "WHERE slug = 't' AND workspace_technical_key = $1",
+        wk,
+    )
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, delay_minutes, url, http_method) "
+        "VALUES ($1,'RAG',true,$2,'{}','{}',0,$3,'POST') RETURNING id",
+        wk, [_UPDATED], "https://rag.example/index",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next(x for x in autos if x.id == auto_id).pending_count
+
+    # Aucun critère posé : aucune restriction (comportement inchangé).
+    assert await _pending() == 1
+
+    # Template qui ne couvre pas ce bloc → exclu.
+    await db_pool.execute(
+        "UPDATE automation SET block_templates = ARRAY['autre-tpl'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+
+    # Le bon template → couvert SANS que le bloc soit nommé.
+    await db_pool.execute(
+        "UPDATE automation SET block_templates = ARRAY['kb-tpl'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 1
+
+    # Union : un slug qui ne matche pas n'annule pas la couverture par template.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['autre-bloc'], "
+        "block_templates = ARRAY['kb-tpl'] WHERE id = $1",
+        auto_id,
+    )
+    assert await _pending() == 1
+
+    # Symétrique : le slug seul couvre, template non couvrant.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['b'], "
+        "block_templates = ARRAY['autre-tpl'] WHERE id = $1",
+        auto_id,
+    )
+    assert await _pending() == 1
+
+
 async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
-    from fastapi import HTTPException
 
     from docflow.automations import service as auto_svc
     from docflow.schemas.automations import AutomationCreate, AutomationUpdate
@@ -469,12 +651,14 @@ async def test_multi_workspace_scope(db_pool: asyncpg.Pool) -> None:
     assert not any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_a))
     assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_b))
 
-    # Jamais aucun workspace → 422.
-    with pytest.raises(HTTPException) as exc:
-        await auto_svc.update_automation(
-            db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
-        )
-    assert exc.value.status_code == 422
+    # Vider la portée est LÉGITIME : « aucun filtre de portée » = toute
+    # l'instance. L'automate redevient alors visible dans les DEUX workspaces,
+    # puisqu'il s'y déclenche.
+    await auto_svc.update_automation(
+        db_pool, slug_b, out.id, AutomationUpdate(workspace_slugs=[])
+    )
+    assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_a))
+    assert any(x.id == out.id for x in await auto_svc.list_automations(db_pool, slug_b))
 
 
 async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
@@ -499,18 +683,23 @@ async def test_reorder_per_workspace_independent(db_pool: asyncpg.Pool) -> None:
         )
         ids.append(out.id)
 
-    # Ordre initial identique (création) dans les deux workspaces.
-    order_a = [a.id for a in await auto_svc.list_automations(db_pool, slug_a)]
+    # Ordre initial identique (création) dans les deux workspaces. On ne retient
+    # que NOS automates : un automate sans portée (donc visible partout) créé par
+    # un autre cas apparaît légitimement dans cette liste.
+    def _mine(rows: list) -> list:  # type: ignore[type-arg]
+        return [a.id for a in rows if a.id in ids]
+
+    order_a = _mine(await auto_svc.list_automations(db_pool, slug_a))
     assert order_a == ids
 
     # Inverser DANS A seulement.
     await auto_svc.reorder_automations(db_pool, slug_a, [ids[1], ids[0]])
-    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_a)] == [ids[1], ids[0]]
+    assert _mine(await auto_svc.list_automations(db_pool, slug_a)) == [ids[1], ids[0]]
     # B garde SON ordre (indépendance par workspace).
-    assert [a.id for a in await auto_svc.list_automations(db_pool, slug_b)] == ids
+    assert _mine(await auto_svc.list_automations(db_pool, slug_b)) == ids
 
     # Positions exposées dans le contexte du workspace demandé.
-    a_list = await auto_svc.list_automations(db_pool, slug_a)
+    a_list = [a for a in await auto_svc.list_automations(db_pool, slug_a) if a.id in ids]
     assert [a.position for a in a_list] == [1, 2]
 
     # Couverture inexacte → 422.
@@ -528,7 +717,7 @@ async def test_clone_automation(db_pool: asyncpg.Pool) -> None:
         db_pool,
         slug,
         AutomationCreate(
-            label="Rag", event_codes=[_UPDATED], block_slugs=["b"],
+            label="Rag", event_codes=[_UPDATED], block_slugs=["b"], workspace_slugs=[slug],
             url="https://rag.example/index", http_method="POST",
             body_template='{"doc": "{content}"}',
             headers=[AutomationHeaderIn(name="Authorization", value_prefix="Bearer ",
@@ -586,12 +775,12 @@ async def test_stop_chain_blocks_lower_priority(
     # A (priorité 1, stop_chain) et B (priorité 2) sur le même event.
     a = await auto_svc.create_automation(
         db_pool, slug,
-        AutomationCreate(label="A", event_codes=[_UPDATED], stop_chain=True,
+        AutomationCreate(label="A", event_codes=[_UPDATED], stop_chain=True, workspace_slugs=[slug],
                          url="https://a.example/hook", http_method="POST"),
     )
     b = await auto_svc.create_automation(
         db_pool, slug,
-        AutomationCreate(label="B", event_codes=[_UPDATED],
+        AutomationCreate(label="B", event_codes=[_UPDATED], workspace_slugs=[slug],
                          url="https://b.example/hook", http_method="POST"),
     )
     await db_pool.execute("UPDATE automation SET active = true WHERE id = ANY($1)", [a.id, b.id])
@@ -646,13 +835,15 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     auto = await auto_svc.create_automation(
         db_pool, slug,
         AutomationCreate(
-            label="Rag", event_codes=[_REFRESHED], url="https://x/api", http_method="POST"
+            label="Rag", event_codes=[_REFRESHED], workspace_slugs=[slug],
+            url="https://x/api", http_method="POST"
         ),
     )
     upd_only = await auto_svc.create_automation(
         db_pool, slug,
         AutomationCreate(
-            label="UpdOnly", event_codes=[_UPDATED], url="https://x/api", http_method="POST"
+            label="UpdOnly", event_codes=[_UPDATED], workspace_slugs=[slug],
+            url="https://x/api", http_method="POST"
         ),
     )
 
@@ -662,13 +853,21 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     )
     assert r["events"] == 1
 
-    # Sélection workspace entier (blocs vides = tous) → 2 events de plus.
+    # Sélection workspace entier (blocs vides = tous) → 2 events de plus,
+    # ET le détail par sélection dit ce que chacune a émis.
     r = await auto_svc.push_update_events(db_pool, [{"workspace_slug": slug}])
+    assert r["events"] == 2
+    assert r["details"] == [{"workspace_slug": slug, "block_slugs": [], "events": 2}]
+
+    # Forme exacte envoyée par la fenêtre (block_slugs: []) : même contrat.
+    r = await auto_svc.push_update_events(
+        db_pool, [{"workspace_slug": slug, "block_slugs": []}]
+    )
     assert r["events"] == 2
 
     # Les events sont bien visibles par l'automate (pending) et portent le contrat.
     listed = await auto_svc.list_automations(db_pool, slug)
-    assert next(a for a in listed if a.id == auto.id).pending_count == 3
+    assert next(a for a in listed if a.id == auto.id).pending_count == 5
     # L'abonné updated N'EST PAS re-déclenché par un push manuel.
     assert next(a for a in listed if a.id == upd_only.id).pending_count == 0
     biz = await db_pool.fetchval(
@@ -684,3 +883,446 @@ async def test_push_update_events(db_pool: asyncpg.Pool) -> None:
     assert await db_pool.fetchval(
         "SELECT count(*) FROM event_outbox WHERE workspace_technical_key = $1", wk
     ) == 0
+
+
+async def test_worker_holds_no_pool_connection_during_http(
+    test_schema_url: str,
+    apply_migrations: None,
+    db_pool: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aucune connexion n'est retenue pendant l'appel HTTP de l'automate.
+
+    Le worker tourne sur un pool de taille 1 : si la connexion restait prise
+    pendant le POST, l'acquisition tentée depuis le faux transport HTTP ne
+    pourrait pas aboutir (c'est l'épuisement de pool constaté en production).
+    """
+    _CALLS.clear()
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,'Probe',true,$2,0,$3,'POST',$4) RETURNING id",
+        wk,
+        [_UPDATED],
+        "https://probe.example/hook",
+        json.dumps({"doc": "{content}"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id,
+        wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template "
+        "FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+    solo_pool: asyncpg.Pool = await asyncpg.create_pool(  # type: ignore[assignment]
+        dsn=test_schema_url, min_size=1, max_size=1
+    )
+    free_during_http: list[bool] = []
+
+    class _ProbeClient(_FakeClient):
+        async def request(
+            self, method: str, url: str, headers: Any = None, content: Any = None
+        ) -> _FakeResp:
+            try:
+                async with asyncio.timeout(2):
+                    async with solo_pool.acquire() as conn:
+                        await conn.fetchval("SELECT 1")
+                free_during_http.append(True)
+            except TimeoutError:
+                free_during_http.append(False)
+            return await super().request(method, url, headers=headers, content=content)
+
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _ProbeClient)
+    try:
+        await worker.run_tick(solo_pool, automation, object())
+    finally:
+        await solo_pool.close()
+
+    assert len(_CALLS) == 1
+    assert free_during_http == [True]
+    # Non-régression fonctionnelle : le run est historisé et le curseur avancé.
+    run = await db_pool.fetchrow(
+        "SELECT status, event_seq FROM automation_run WHERE automation_ref = $1", auto_id
+    )
+    assert run is not None
+    assert run["status"] == "ok"
+    assert (
+        await db_pool.fetchval(
+            "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", auto_id
+        )
+        == run["event_seq"]
+    )
+
+
+async def _mk_automation(
+    pool: asyncpg.Pool, wk: uuid.UUID, body_template: dict[str, Any]
+) -> asyncpg.Record:
+    """Automate abonné à updated.v1, portée sur le workspace wk, avec body donné."""
+    auto_id = await pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "delay_minutes, url, http_method, body_template) "
+        "VALUES ($1,$2,true,$3,0,$4,$5,$6) RETURNING id",
+        wk,
+        "RAG",
+        [_UPDATED],
+        "https://rag.example/index",
+        "POST",
+        json.dumps(body_template),
+    )
+    await pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id,
+        wk,
+    )
+    return await pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "functional_type_slugs, "
+        "stop_chain, delay_minutes, url, http_method, body_template "
+        "FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+
+class _Settings:
+    public_base_url = "https://doc.example"
+
+
+async def test_worker_resout_blockslug_et_type_via_snapshot_sur_updated(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """updated.v1 ne porte pas blockSlug/functionalTypeSlug dans son business ;
+    ils doivent être résolus depuis le snapshot courant du document."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 3}),
+    )
+    automation = await _mk_automation(
+        db_pool,
+        wk,
+        {"bloc": "{event.blockSlug}", "type": "{event.functionalTypeSlug}"},
+    )
+
+    await worker.run_tick(db_pool, automation, _Settings())
+
+    assert len(_CALLS) == 1
+    body = json.loads(_CALLS[0]["content"].decode())
+    assert body["bloc"] == "b"  # slug du bloc, résolu depuis le snapshot
+    assert body["type"] == "t"  # slug du type fonctionnel, résolu depuis le snapshot
+
+
+async def test_worker_refuse_variable_non_resolue_sans_emettre(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une variable non résolue ne part jamais en silence : run échoué, aucun POST."""
+    _CALLS.clear()
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _FakeClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 3}),
+    )
+    automation = await _mk_automation(
+        db_pool,
+        wk,
+        {"inconnue": "{event.variableInexistante}", "doc": "{content}"},
+    )
+
+    await worker.run_tick(db_pool, automation, _Settings())
+
+    # Aucun appel HTTP émis (pas de corpus pollué).
+    assert _CALLS == []
+    # Un run enregistré en échec.
+    runs = await db_pool.fetch(
+        "SELECT status FROM automation_run WHERE automation_ref = $1", automation["id"]
+    )
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+
+
+# ── Reprise persistante des émissions échouées (bug « corpus qui dérive ») ────
+
+
+class _CfgResp:
+    def __init__(self, ok: bool) -> None:
+        self.status_code = 200 if ok else 503
+        self.is_success = ok
+        self.text = "{}" if ok else "boom"
+
+
+_RESP: dict[str, bool] = {"ok": True}
+
+
+class _CfgClient(_FakeClient):
+    async def request(
+        self, method: str, url: str, headers: Any = None, content: Any = None
+    ) -> _CfgResp:
+        _CALLS.append({"method": method, "url": url})
+        return _CfgResp(_RESP["ok"])
+
+
+async def _seed_updated_event(db_pool: asyncpg.Pool) -> asyncpg.Record:
+    _CALLS.clear()
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)
+    await db_pool.execute(
+        "INSERT INTO document_event (workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk,
+        doc_id,
+        _UPDATED,
+        json.dumps({"documentId": str(doc_id), "workspaceSlug": slug, "version": 2}),
+    )
+    return await _mk_automation(db_pool, wk, {"doc": "{content}"})
+
+
+async def test_emission_echouee_est_rejouee_puis_rattrapee(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un POST en échec n'est plus perdu : une passe de retry le rejoue au tick
+    suivant et le rattrape quand ragflow revient."""
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _CfgClient)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    automation = await _seed_updated_event(db_pool)
+
+    _RESP["ok"] = False  # ragflow en panne
+    await worker.run_tick(db_pool, automation, _Settings())
+    run = await db_pool.fetchrow(
+        "SELECT status, attempts, dead_letter FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["status"] == "failed"
+    assert run["dead_letter"] is False
+    assert run["attempts"] >= 2  # scan (1) + au moins une passe de retry
+
+    _RESP["ok"] = True  # ragflow revient
+    await worker.run_tick(db_pool, automation, _Settings())
+    run = await db_pool.fetchrow(
+        "SELECT status, dead_letter FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["status"] == "ok"  # rattrapé, pas perdu
+    assert run["dead_letter"] is False
+
+
+async def test_echec_persistant_finit_en_dead_letter(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Au-delà de _MAX_ATTEMPTS, l'event est dead-letter (visible), pas rejoué à
+    l'infini ni perdu en silence."""
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _CfgClient)
+    monkeypatch.setattr(worker, "_MAX_ATTEMPTS", 2)
+
+    async def _noop(url: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "validate_public_url", _noop)
+    automation = await _seed_updated_event(db_pool)
+
+    _RESP["ok"] = False
+    await worker.run_tick(db_pool, automation, _Settings())  # scan + retry → attempts atteint 2
+    run = await db_pool.fetchrow(
+        "SELECT dead_letter, status FROM automation_run WHERE automation_ref = $1",
+        automation["id"],
+    )
+    assert run["dead_letter"] is True
+    assert run["status"] == "failed"
+
+    # Un tick de plus ne le rejoue plus (dead-letter exclu de la passe de retry).
+    calls_before = len(_CALLS)
+    await worker.run_tick(db_pool, automation, _Settings())
+    assert len(_CALLS) == calls_before
+
+
+async def test_events_de_contenant_emis_et_exemptes_des_filtres(db_pool: asyncpg.Pool) -> None:
+    """Créer un workspace puis un bloc émet les events de contenant, et un
+    automate les voit MÊME avec un filtre de bloc posé.
+
+    Sans l'exemption, le filtre ferait disparaître ces events en silence : les
+    jointures document→bloc sont NULL pour un event qui ne porte pas de document.
+    Le symptôme serait un automate « qui ne se déclenche jamais », sans erreur.
+    """
+    from docflow.automations import service as auto_svc
+    from docflow.blocks import service as block_svc
+    from docflow.schemas.block import DataBlockCreate
+    from docflow.schemas.types import FunctionalTypeCreate
+    from docflow.schemas.workspace import WorkspaceCreate
+    from docflow.types import service as type_svc
+    from docflow.workspaces import service as ws_svc
+
+    slug = f"auto-ct-{uuid.uuid4().hex[:8]}"
+    ws = await ws_svc.create_workspace(db_pool, WorkspaceCreate(slug=slug, label="Contenant"), None)
+    wk = ws.workspace_technical_key
+
+    ev = await db_pool.fetchrow(
+        "SELECT event_code, document_ref, business FROM document_event "
+        "WHERE workspace_technical_key = $1 ORDER BY seq DESC LIMIT 1",
+        wk,
+    )
+    assert ev is not None and ev["event_code"] == "docflow.workspace.created.v1"
+    # Pas de document : c'est ce NULL qui déclenche l'exemption de filtre.
+    assert ev["document_ref"] is None
+    biz = json.loads(ev["business"]) if isinstance(ev["business"], str) else ev["business"]
+    assert biz["workspaceSlug"] == slug and biz["workspaceLabel"] == "Contenant"
+
+    await type_svc.create_type(db_pool, slug, FunctionalTypeCreate(slug="t", label="T"))
+    await block_svc.create_block(
+        db_pool, slug, DataBlockCreate(slug="b", label="B", functional_type_slug="t")
+    )
+    ev = await db_pool.fetchrow(
+        "SELECT event_code, document_ref, business FROM document_event "
+        "WHERE workspace_technical_key = $1 ORDER BY seq DESC LIMIT 1",
+        wk,
+    )
+    assert ev is not None and ev["event_code"] == "docflow.block.created.v1"
+    assert ev["document_ref"] is None
+    biz = json.loads(ev["business"]) if isinstance(ev["business"], str) else ev["business"]
+    assert biz["blockSlug"] == "b" and biz["functionalTypeSlug"] == "t"
+    # Type créé à la main : aucune provenance de template, et le dire est utile.
+    assert biz["sourceTemplate"] is None
+
+    # Un automate avec un filtre de bloc QUI NE MATCHE PAS voit quand même les
+    # deux events de contenant — ils ne portent pas sur un bloc.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, functional_type_slugs, delay_minutes, url, http_method) "
+        "VALUES ($1,'RAG',true,$2,ARRAY['autre-bloc'],'{}',ARRAY['autre-type'],0,$3,'POST') "
+        "RETURNING id",
+        wk,
+        ["docflow.workspace.created.v1", "docflow.block.created.v1"],
+        "https://rag.example/ws",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    autos = await auto_svc.list_automations(db_pool, slug)
+    assert next(x for x in autos if x.id == auto_id).pending_count == 2
+
+
+async def test_un_filtre_vide_ne_filtre_pas(db_pool: asyncpg.Pool) -> None:
+    """Chaque section est un filtre INDÉPENDANT : rien de coché = tout passe.
+
+    C'est la règle uniforme demandée côté écran. Elle vaut aussi pour la portée
+    workspace, qui n'est plus obligatoire : un automate sans workspace coché
+    s'applique à l'instance entière, au même titre qu'aucun bloc coché veut dire
+    tous les blocs.
+    """
+    from docflow.automations import service as auto_svc
+
+    wk, slug, doc_id = await _mk_ws_doc(db_pool)  # bloc 'b', type 't'
+    await db_pool.execute(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business) "
+        "VALUES ($1,$2,$3,$4::jsonb)",
+        wk, doc_id, _UPDATED, json.dumps({"documentId": str(doc_id), "workspaceSlug": slug}),
+    )
+
+    # Automate SANS aucun critère : ni workspace, ni event_code, ni bloc, ni type.
+    auto_id = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "block_slugs, block_templates, functional_type_slugs, delay_minutes, url, http_method) "
+        "VALUES (NULL,'Tout',true,'{}','{}','{}','{}',0,$1,'POST') RETURNING id",
+        "https://rag.example/index",
+    )
+
+    async def _pending() -> int:
+        autos = await auto_svc.list_automations(db_pool, slug)
+        return next((x.pending_count for x in autos if x.id == auto_id), -1)
+
+    # Sans rattachement, il doit rester VISIBLE dans l'écran du workspace —
+    # invisible et actif serait la pire combinaison — et compter des events.
+    # Le compteur porte sur TOUTE l'instance : on ne peut pas l'égaler à 1, la
+    # base de test portant les events des autres cas. Ce qui se vérifie ici,
+    # c'est qu'il voit au-delà de son (absence de) portée.
+    sans_filtre = await _pending()
+    assert sans_filtre >= 1
+
+    # On borne la portée à NOTRE workspace : la mesure devient exacte.
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        auto_id, wk,
+    )
+    assert await _pending() == 1
+
+    # Section « events » : un code qui ne correspond pas → elle filtre.
+    await db_pool.execute(
+        "UPDATE automation SET event_codes = ARRAY[$2::text] WHERE id = $1", auto_id, _CREATED
+    )
+    assert await _pending() == 0
+
+    # Le bon code → il repasse.
+    await db_pool.execute(
+        "UPDATE automation SET event_codes = ARRAY[$2::text] WHERE id = $1", auto_id, _UPDATED
+    )
+    assert await _pending() == 1
+
+    # Section « blocs » : un bloc qui ne correspond pas → elle filtre.
+    await db_pool.execute(
+        "UPDATE automation SET block_slugs = ARRAY['autre-bloc'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+
+    # Vidée, elle cesse de filtrer — sans qu'on ait à cocher le bon bloc.
+    await db_pool.execute("UPDATE automation SET block_slugs = '{}' WHERE id = $1", auto_id)
+    assert await _pending() == 1
+
+    # Section « types de document » : même règle.
+    await db_pool.execute(
+        "UPDATE automation SET functional_type_slugs = ARRAY['autre-type'] WHERE id = $1", auto_id
+    )
+    assert await _pending() == 0
+    await db_pool.execute(
+        "UPDATE automation SET functional_type_slugs = '{}' WHERE id = $1", auto_id
+    )
+    assert await _pending() == 1

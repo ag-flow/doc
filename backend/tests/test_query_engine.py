@@ -204,6 +204,24 @@ async def test_sort_int_and_title(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert desc == ["T4", "T2", "T3", "T1"]
 
 
+async def test_sort_by_updated_at(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Le moteur trie par updated_at (clé transverse, comme title/created_at)."""
+    await _setup(db_pool)
+    for title, ts in {
+        "T1": "2026-01-01T00:00:00Z",
+        "T2": "2026-04-01T00:00:00Z",
+        "T3": "2026-02-01T00:00:00Z",
+        "T4": "2026-03-01T00:00:00Z",
+    }.items():
+        await db_pool.execute(
+            "UPDATE document SET updated_at = $1::text::timestamptz WHERE title = $2", ts, title
+        )
+    desc = await _titles(db_pool, type_slugs=["task"], sort=[SortKey(key="updated_at", dir="desc")])
+    assert desc == ["T2", "T4", "T3", "T1"]
+    asc = await _titles(db_pool, type_slugs=["task"], sort=[SortKey(key="updated_at", dir="asc")])
+    assert asc == ["T1", "T3", "T4", "T2"]
+
+
 async def test_sort_restricted_list_by_pipeline(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
@@ -217,6 +235,197 @@ async def test_sort_restricted_list_by_pipeline(
         st = next((p.allowed_value_slug for p in o.properties if p.prop_slug == "statut"), None)
         positions.append({"todo": 0, "doing": 1, "done": 2}[st])
     assert positions == sorted(positions)  # non-décroissant : todo < doing < done
+
+
+# ── include_ancestors : l'arbre élagué ────────────────────────────────────────
+
+
+async def test_sans_le_drapeau_la_reponse_est_inchangee(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Contrat MCP : enrichir en silence fausserait la logique d'un appelant."""
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(filters=[FilterClause(prop="statut", op="eq", value="todo")])
+    )
+    assert {o.title for o in page.objects} == {"T1", "T4"}
+    assert all(o.matched for o in page.objects)
+
+
+async def test_ancetres_remontes_et_marques_comme_contexte(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    # S1 est un subtask sous T1. Filtrer sur le type `subtask` ne rend que S1 —
+    # sans son parent, l'arbre affiché n'aurait aucun sens.
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    par_titre = {o.title: o for o in page.objects}
+    assert par_titre["S1"].matched is True
+    assert par_titre["T1"].matched is False, "l'ancêtre est du CONTEXTE, pas un résultat"
+    assert par_titre["S1"].parent_id == par_titre["T1"].id
+
+
+async def test_total_ne_compte_QUE_les_resultats(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """« 12 documents » doit vouloir dire douze résultats — pas douze résultats
+    plus le chemin qui y mène."""
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    assert page.total == 1
+    assert len(page.objects) == 2  # S1 + son ancêtre T1
+
+
+async def test_un_resultat_a_la_racine_n_ajoute_aucun_ancetre(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    await _setup(db_pool)
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["task"], include_ancestors=True)
+    )
+
+    assert all(o.matched for o in page.objects)
+    assert all(o.parent_id is None for o in page.objects)
+
+
+async def test_un_ancetre_commun_n_est_remonte_qu_une_fois(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    # Deux subtasks sous le MÊME parent : le dédoublonnage est fait par le
+    # `UNION` du CTE, pas par l'appelant.
+    block_id = await _setup(db_pool)
+    t1_id: uuid.UUID = await db_pool.fetchval(
+        "SELECT doc_technical_key FROM document WHERE title='T1'"
+    )
+    await doc_svc.create_document(
+        db_pool,
+        _WS,
+        DocumentCreate(
+            title="S2", slug="s2", block_id=block_id,
+            functional_type_slug="subtask", parent_id=t1_id,
+        ),
+    )
+
+    page = await query_documents(
+        db_pool, _WS, _spec(type_slugs=["subtask"], include_ancestors=True)
+    )
+
+    assert page.total == 2
+    assert [o.title for o in page.objects].count("T1") == 1
+
+
+async def test_parent_id_est_toujours_remonte(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Sans lui, le front ne peut pas reconstruire l'arbre."""
+    await _setup(db_pool)
+    page = await query_documents(db_pool, _WS, _spec(type_slugs=["subtask"]))
+    assert page.objects[0].parent_id is not None
+
+
+# ── content_types : l'autre axe ───────────────────────────────────────────────
+
+
+async def _seed_content_types(pool: asyncpg.Pool, block_id: uuid.UUID) -> None:
+    """Deux documents de GRAMMAIRE différente, même type fonctionnel.
+
+    C'est le cas qui distingue les deux axes : si `content_types` retombait sur le
+    type fonctionnel, ces deux-là seraient indiscernables."""
+    # Contenus VALIDES : les codecs refusent un corps vide (F9), et c'est voulu —
+    # on ne contourne pas la validation pour les besoins d'un test.
+    bodies = {
+        "model-layout": "schemaVersion: 1\nentities: []\n",
+        "table-schema": "name: entite\nfields:\n  - name: id\n    type: uuid\n",
+    }
+    for slug, title, ct in [("m1", "Modele", "model-layout"), ("e1", "Entite", "table-schema")]:
+        await doc_svc.create_document(
+            pool,
+            _WS,
+            DocumentCreate(
+                title=title,
+                slug=slug,
+                block_id=block_id,
+                functional_type_slug="task",
+                content_type=ct,
+                content=bodies[ct],
+            ),
+        )
+
+
+async def test_content_types_filtre_sur_la_grammaire(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    assert set(await _titles(db_pool, content_types=["model-layout"])) == {"Modele"}
+    assert set(await _titles(db_pool, content_types=["table-schema"])) == {"Entite"}
+    # Les documents markdown de la fixture : tout le reste.
+    md = set(await _titles(db_pool, content_types=["md"]))
+    assert {"T1", "T2", "T3", "T4", "S1"} <= md
+    assert "Modele" not in md and "Entite" not in md
+
+
+async def test_content_types_plusieurs_valeurs(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    assert set(await _titles(db_pool, content_types=["model-layout", "table-schema"])) == {
+        "Modele",
+        "Entite",
+    }
+
+
+async def test_content_types_et_type_slugs_se_combinent(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Les deux axes sont indépendants : les croiser restreint, ne remplace pas."""
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    # `Modele` est un `task` en `model-layout` : les deux clauses passent.
+    assert set(
+        await _titles(db_pool, type_slugs=["task"], content_types=["model-layout"])
+    ) == {"Modele"}
+    # `S1` est un `subtask` en `md` : la grammaire passe, le type fonctionnel non.
+    assert await _titles(db_pool, type_slugs=["subtask"], content_types=["model-layout"]) == []
+
+
+async def test_content_types_vide_ou_absent_ne_filtre_rien(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Une liste vide ≡ aucune restriction — sinon on masquerait tout le bloc."""
+    block_id = await _setup(db_pool)
+    await _seed_content_types(db_pool, block_id)
+
+    sans = set(await _titles(db_pool))
+    assert set(await _titles(db_pool, content_types=[])) == sans
+    assert set(await _titles(db_pool, content_types=None)) == sans
+
+
+async def test_content_types_inconnu_ne_rend_rien_sans_lever(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Un type absent du bloc est une réponse vide, pas une erreur : le filtre est
+    une question, pas une assertion sur le contenu du bloc."""
+    await _setup(db_pool)
+    assert await _titles(db_pool, content_types=["type-qui-nexiste-pas"]) == []
+
+
+async def test_content_types_ne_sinjecte_pas(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """La valeur passe en paramètre, jamais dans le SQL."""
+    await _setup(db_pool)
+    assert await _titles(db_pool, content_types=["md' OR '1'='1"]) == []
 
 
 # ── type_slugs & projection ───────────────────────────────────────────────────

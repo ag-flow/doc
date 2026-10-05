@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   ApiError,
@@ -46,24 +46,28 @@ export function AddDocumentDialog({
   onClose,
 }: AddDocumentDialogProps) {
   const { t } = useTranslation()
-  const qc = useQueryClient()
   const [title, setTitle] = useState('')
   const [slug, setSlug] = useState('')
   const [selectedType, setSelectedType] = useState(initialType ?? '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Slugs des siblings depuis le cache (déjà chargé par BlockDocumentList)
-  const siblingSlugSet = (() => {
-    const cached = qc.getQueryData<DocumentOut[]>(['block-documents', ws, block])
-    if (!cached) return new Set<string>()
+  // Slugs des siblings : requête active (et non une lecture passive du cache,
+  // qui peut être vide — la page liste actuelle (block-tree/block-query) ne
+  // peuple plus cette clé). Partage son cache avec DocumentChildrenPanel /
+  // ExportPdfDialog, déjà branchés sur `['block-documents', ws, block]`.
+  const { data: blockDocs = [] } = useQuery<DocumentOut[]>({
+    queryKey: ['block-documents', ws, block],
+    queryFn: () => docsApi.getBlockDocuments(ws, block),
+  })
+  const siblingSlugSet = useMemo(() => {
     const pid = parentId ?? null
     return new Set(
-      cached
+      blockDocs
         .filter((d) => (d.parent_id ?? null) === pid && d.slug)
         .map((d) => d.slug as string),
     )
-  })()
+  }, [blockDocs, parentId])
 
   function handleTitleChange(v: string) {
     setTitle(v)

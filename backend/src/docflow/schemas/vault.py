@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,15 +10,34 @@ from pydantic import BaseModel, Field
 class VaultWalletCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
-    name: str
-    api_key: str
+    # Alias GLOBAL (unique) : sert dans les références ${vault://name:/path}.
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    url: str = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=500)
+    # Référence vers un secret local typé HARPOCRATE_API_KEY (jamais le token).
+    api_key_secret_id: uuid.UUID
 
 
 class VaultWalletOut(BaseModel):
     id: uuid.UUID
     name: str
+    url: str | None
+    description: str | None
+    api_key_secret_id: uuid.UUID
+    # Libellé du secret clé (jamais sa valeur), pour l'affichage.
+    api_key_secret_label: str
+    # Nombre de consommateurs référençant ${vault://name:…} (automates + producteur).
+    used_by: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class WalletCheckOut(BaseModel):
+    """État du jeton d'un wallet, testé auprès de Harpocrate."""
+
+    ok: bool
+    error: str | None = None
+    expires_at: datetime | None = None
 
 
 class VaultSecretCreate(BaseModel):
@@ -25,15 +45,31 @@ class VaultSecretCreate(BaseModel):
 
     label: str = Field(min_length=1, max_length=200)
     slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
-    value: str = Field(min_length=1)
+    # Requise pour un stockage local ; interdite pour un stockage vault.
+    value: str | None = Field(default=None, min_length=1)
+    # Typage fonctionnel (liste extensible en MAJUSCULES), orthogonal à `kind`.
+    # `GENERIC` par défaut ; `HARPOCRATE_API_KEY` pour une clé d'API de coffre.
+    secret_type: str = Field(default="GENERIC", max_length=64, pattern=r"^[A-Z][A-Z0-9_]*$")
+    # Stockage explicite (aucun repli automatique) : local ou un endpoint vault déclaré.
+    storage_type: Literal["local", "vault"] = "local"
+    vault_identifier: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    vault_path: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class VaultSecretOut(BaseModel):
     id: uuid.UUID
     slug: str
     label: str
+    secret_type: str
+    storage_type: str
+    vault_identifier: str | None = None
+    vault_path: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Usage (renseigné au listing) : headers d'automates et de webhooks
+    # référençant ${secret://<id>}.
+    used_by_automations: int = 0
+    used_by_webhooks: int = 0
 
 
 # ── Secrets HMAC (partagés, copiables par leur propriétaire) ──────────────────

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorView, basicSetup } from 'codemirror'
 import { unifiedMergeView } from '@codemirror/merge'
 import { markdown } from '@codemirror/lang-markdown'
+import { Button } from '../components/ui/button'
 import './conflict.css'
 
 export interface ConflictResolverProps {
@@ -61,7 +62,7 @@ export function ConflictResolver({
       <div className="conflict">
         <header className="conflict-head">
           <p className="conflict-title">Conflit de version</p>
-          <p className="muted">
+          <p className="text-muted m-0 text-[13px]">
             Ce document a changé pendant ton édition (tu partais de la v{baseVersion},
             il est en v{serverVersion}). Les différences entre le serveur et ton texte
             sont surlignées : accepte, rejette ou édite chaque bloc, puis enregistre
@@ -74,12 +75,12 @@ export function ConflictResolver({
         {error && <p className="conflict-error">{error}</p>}
 
         <footer className="conflict-foot">
-          <button className="btn btn--ghost" onClick={onCancel} disabled={saving}>
+          <Button variant="secondary" onClick={onCancel} disabled={saving}>
             Annuler
-          </button>
-          <button className="btn" onClick={() => void handleSave()} disabled={saving}>
+          </Button>
+          <Button onClick={() => void handleSave()} disabled={saving}>
             {saving ? 'Enregistrement…' : `Enregistrer sur v${serverVersion}`}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

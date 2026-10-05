@@ -65,6 +65,20 @@ const richTypes = [
   },
 ]
 
+function budget(value: string, version: number): PropertyValueOut {
+  return {
+    prop_slug: 'budget',
+    prop_label: 'Budget',
+    type: 'int',
+    version,
+    value,
+    allowed_value_slug: null,
+    allowed_value_label: null,
+    required: false,
+    behavior: null,
+  }
+}
+
 function renderPanel(functionalTypeSlug: string | null = 'epic') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -74,8 +88,109 @@ function renderPanel(functionalTypeSlug: string | null = 'epic') {
   )
 }
 
+function renderReadPanel() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" readOnly />
+    </QueryClientProvider>,
+  )
+}
+
 describe('PropertiesPanel', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('lecture : une valeur texte longue est plafonnée à 5 lignes et dépliable', async () => {
+    // jsdom ne calcule pas les hauteurs : on force un débordement mesurable,
+    // puis on retire la surcharge (jsdom n'a pas de descripteur propre à restaurer).
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, value: 400 })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, value: 100 })
+    try {
+      vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+        {
+          prop_slug: 'transcription',
+          prop_label: 'Transcription',
+          type: 'text',
+          version: 1,
+          value: 'Ligne très longue répétée '.repeat(60),
+          allowed_value_slug: null,
+          allowed_value_label: null,
+          required: false,
+          behavior: null,
+        },
+      ])
+      vi.mocked(api.get).mockResolvedValue(richTypes)
+
+      renderReadPanel()
+      const clamp = await screen.findByTestId('clamp-text')
+      // Plafond visuel à 5 lignes.
+      expect(clamp).toHaveClass('doc-prop-clamp')
+      expect(clamp.style.getPropertyValue('--clamp-lines')).toBe('5')
+
+      // Débordement détecté → bouton « voir plus » ; clic → déplié, plus de clamp.
+      const toggle = screen.getByTestId('clamp-toggle')
+      expect(toggle).toHaveTextContent('voir plus')
+      fireEvent.click(toggle)
+      expect(screen.getByTestId('clamp-text')).not.toHaveClass('doc-prop-clamp')
+      expect(screen.getByTestId('clamp-toggle')).toHaveTextContent('voir moins')
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight
+    }
+  })
+
+  it('lecture : une valeur courte n’affiche pas de bouton « voir plus »', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue([
+      {
+        prop_slug: 'note',
+        prop_label: 'Note',
+        type: 'text',
+        version: 1,
+        value: 'court',
+        allowed_value_slug: null,
+        allowed_value_label: null,
+        required: false,
+        behavior: null,
+      },
+    ])
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    renderReadPanel()
+    await screen.findByTestId('clamp-text')
+    expect(screen.queryByTestId('clamp-toggle')).not.toBeInTheDocument()
+  })
+
+  it('après enregistrement d’une valeur, invalide la liste du bloc (fix cache périmé)', async () => {
+    vi.mocked(docsApi.getDocumentValues).mockResolvedValue(baseValues)
+    vi.mocked(api.get).mockResolvedValue(richTypes)
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue({
+      prop_slug: 'status',
+      prop_label: 'Statut',
+      type: 'restricted_list',
+      version: 2,
+      value: null,
+      allowed_value_slug: 'done',
+      allowed_value_label: 'Terminé',
+      required: true,
+      behavior: null,
+    })
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" />
+      </QueryClientProvider>,
+    )
+
+    const select = await screen.findByTestId('property-input-status')
+    fireEvent.change(select, { target: { value: 'done' } })
+
+    await waitFor(() => expect(docsApi.putDocumentValue).toHaveBeenCalled())
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey))
+    expect(keys).toContain(JSON.stringify(['block-query', 'ws']))
+    expect(keys).toContain(JSON.stringify(['block-documents', 'ws']))
+    expect(keys).toContain(JSON.stringify(['block-tree', 'ws']))
+  })
 
   // DoD 25.1 — rendu des champs
   it('renders fields for each property', async () => {
@@ -96,9 +211,11 @@ describe('PropertiesPanel', () => {
     renderPanel()
     await waitFor(() => expect(screen.getByTestId('property-status')).toBeInTheDocument())
     expect(screen.getByTestId('property-input-status')).toBeInTheDocument()
-    // Pastille couleur visible car todo est sélectionné
-    await waitFor(() => expect(screen.getByTestId('property-pill-status')).toBeInTheDocument())
-    expect(screen.getByTestId('property-pill-status').textContent).toBe('À faire')
+    // La couleur de la valeur choisie = un point discret à côté du select —
+    // pas une pastille qui répéterait le libellé (doublon d'affichage).
+    await waitFor(() => expect(screen.getByTestId('property-color-status')).toBeInTheDocument())
+    expect(screen.getByTestId('property-color-status')).toHaveAttribute('title', 'À faire')
+    expect(screen.queryByTestId('property-pill-status')).not.toBeInTheDocument()
   })
 
   // DoD 25.3 — budget_jours = -1 → 422 → message erreur
@@ -411,6 +528,93 @@ describe('PropertiesPanel', () => {
     expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'status', {
       allowed_value_slug: 'done',
       expected_version: 1,
+    })
+  })
+
+  // Régression : naviguer du document A vers B (même route, panneau non remonté)
+  // alors qu'un champ de A est en cours de saisie. Les champs sont réconciliés par
+  // `key` : sans le docId dans la clé, l'instance de A est réutilisée et conserve sa
+  // valeur ET son `baseVersion` → la sauvegarde suivante écrit sur B avec la version de A.
+  it('navigation A→B (cache chaud) : affiche les valeurs de B, pas celles de A', async () => {
+    const valuesA = [budget('5', 1)]
+    const valuesB = [budget('99', 5)]
+    vi.mocked(docsApi.getDocumentValues).mockImplementation(async (_ws: string, docId: string) =>
+      docId === 'dA' ? valuesA : valuesB,
+    )
+    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue(budget('100', 6))
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // Cache chaud : les valeurs de B sont déjà connues (document visité récemment).
+    qc.setQueryData(['doc-values', 'ws', 'dB'], valuesB)
+    const panel = (docId: string) => (
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId={docId} functionalTypeSlug="epic" />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(panel('dA'))
+
+    const inputA = await screen.findByTestId('property-input-budget')
+    fireEvent.change(inputA, { target: { value: '7' } }) // saisie non commitée sur A
+
+    rerender(panel('dB'))
+    await waitFor(() =>
+      expect((screen.getByTestId('property-input-budget') as HTMLInputElement).value).toBe('99'),
+    )
+
+    // La sauvegarde suivante porte sur B, avec la version de B.
+    const inputB = screen.getByTestId('property-input-budget')
+    fireEvent.change(inputB, { target: { value: '100' } })
+    await act(async () => {
+      fireEvent.blur(inputB)
+    })
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'dB', 'budget', {
+      value: '100',
+      expected_version: 5,
+    })
+  })
+
+  // Régression : un refetch (change feed, retour d'onglet) doit rafraîchir l'affichage
+  // ET `baseVersion` quand le champ est au repos — sinon la sauvegarde suivante part
+  // avec une version périmée (409). Mais il ne doit JAMAIS écraser une saisie en cours.
+  it('refetch : resynchronise au repos, préserve une saisie en cours', async () => {
+    let remote = [budget('5', 1)]
+    vi.mocked(docsApi.getDocumentValues).mockImplementation(async () => remote)
+    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(docsApi.putDocumentValue).mockResolvedValue(budget('7', 4))
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <PropertiesPanel ws="ws" docId="d1" functionalTypeSlug="epic" />
+      </QueryClientProvider>,
+    )
+    const value = () => (screen.getByTestId('property-input-budget') as HTMLInputElement).value
+    await waitFor(() => expect(value()).toBe('5'))
+
+    // Champ au repos : la valeur distante s'affiche.
+    remote = [budget('42', 2)]
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['doc-values', 'ws', 'd1'] })
+    })
+    await waitFor(() => expect(value()).toBe('42'))
+
+    // Saisie en cours : un refetch d'arrière-plan ne la réinitialise pas…
+    fireEvent.change(screen.getByTestId('property-input-budget'), { target: { value: '7' } })
+    remote = [budget('99', 3)]
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['doc-values', 'ws', 'd1'] })
+    })
+    expect(value()).toBe('7')
+
+    // … et la sauvegarde part avec la version connue au moment de la saisie (2),
+    // pas avec celle du refetch ignoré : le conflit reste détectable côté serveur.
+    await act(async () => {
+      fireEvent.blur(screen.getByTestId('property-input-budget'))
+    })
+    expect(vi.mocked(docsApi.putDocumentValue)).toHaveBeenCalledWith('ws', 'd1', 'budget', {
+      value: '7',
+      expected_version: 2,
     })
   })
 

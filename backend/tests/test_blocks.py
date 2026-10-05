@@ -122,6 +122,30 @@ async def test_update_block_label(db_pool: asyncpg.Pool, test_workspace: dict) -
     assert updated.label == "New Label"
 
 
+async def test_update_block_detach_root_i5_wrong_type_rejected(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """I-5 : détacher un bloc (parent_slug -> null) doit vérifier que son type
+    est racine, comme à la création — aujourd'hui update_block l'omettait."""
+    await _make_types(db_pool)
+    await block_svc.create_block(
+        db_pool, _WS, DataBlockCreate(slug="epic-d", label="Epic D", functional_type_slug="epic")
+    )
+    await block_svc.create_block(
+        db_pool,
+        _WS,
+        DataBlockCreate(
+            slug="feat-d", label="Feat D", functional_type_slug="feature", parent_slug="epic-d"
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await block_svc.update_block(db_pool, _WS, "feat-d", DataBlockUpdate(parent_slug=None))
+    assert exc.value.status_code == 422
+    assert "I-5" in exc.value.detail
+    # Rien n'a été modifié : le bloc reste attaché à son parent.
+    assert (await block_svc.get_block(db_pool, _WS, "feat-d")).parent_slug == "epic-d"
+
+
 async def test_delete_block_with_children_needs_confirm(
     db_pool: asyncpg.Pool, test_workspace: dict
 ) -> None:
@@ -264,3 +288,23 @@ async def test_dod5_create_block_duplicate_slug_409(
         )
     assert exc.value.status_code == 409
     assert "dup-agile" in exc.value.detail
+
+
+async def test_list_blocks_carries_volume(
+    db_pool: asyncpg.Pool, test_workspace: dict, test_block: dict
+) -> None:
+    """Le listing porte la volumétrie ; la lecture unitaire ne la paie pas."""
+    from docflow.documents import service as doc_svc
+    from docflow.schemas.document import DocumentCreate
+
+    await doc_svc.create_document(
+        db_pool, "test-ws", DocumentCreate(title="Un doc", block_id=test_block["id"])
+    )
+
+    blocks = await block_svc.list_blocks(db_pool, "test-ws")
+    listed = next(b for b in blocks if b.slug == "test-block")
+    assert listed.documents_count == 1
+    assert listed.last_write_at is not None
+
+    single = await block_svc.get_block(db_pool, "test-ws", "test-block")
+    assert (single.documents_count, single.last_write_at) == (0, None)

@@ -1,252 +1,332 @@
 # docflow — Instructions Claude Code
 
-> Nom de travail : **docflow** (à renommer une fois le produit nommé). Domaine de travail : `doc.yoops.org`.
-> Projet **indépendant** d'ag.flow, devpod-ui (aucun couplage runtime ni de source).
+> Nom de travail : **docflow** (à renommer une fois le produit nommé). Domaine : `doc.yoops.org`.
+> **Projet indépendant** : aucun couplage de source ni de runtime avec ag.flow, devpod-ui ou un projet voisin.
+> **Ce fichier prime sur ton comportement par défaut.** Tu le lis en tête de chaque session et tu le suis
+> littéralement : ses règles sont impératives, pas indicatives. Quand un outil, un workflow tiers ou une
+> habitude le contredit, c'est ce fichier qui gagne.
+
+> Généré depuis les standards globaux (docflow, workspace `globals`, bloc `documentation`).
+> Génération : **2026-10-03** — mode complet, profil de skills résolu `full` (32 skills, déposées dans `~/.claude/skills/`).
+> Standards repris : *Fichier d'instructions agent de projet* — **v42** · *Exposer un service interne derrière
+> l'authentification du portail* — v3 · *Gestion des logs* — v3 · *Gestion des secrets* — v4 ·
+> *Authentification OIDC & liaison d'identité* — v7 · *Instance de dev/test* — v10.
+> Skills requises : `backlog-workflow`, `rag-search`, `interface-contracts`, `python`, `typescript-frontend`,
+> `postgresql`, `tests`, `static-analysis`, `code-comments`, `design-patterns`, `secrets`,
+> `oidc-authentication`, `observability-logs`, `test-machine-deployment`, `portal-exposed-service`,
+> `agent-chat`, `self-improvement`, `cadrage-projet`, `redaction-tickets`, `outillage-agflow`,
+> `instructions-file-generation`, `writing-plans`, `executing-plans`, `subagent-driven-development`,
+> `dispatching-parallel-agents`, `using-git-worktrees`, `systematic-debugging`, `test-driven-development`,
+> `verification-before-completion`, `requesting-code-review`, `receiving-code-review`, `using-superpowers`,
+> `docflow-logs-query`, `docflow-deployment` (dernière version publiée, déposées par le profil du workspace).
+> Mise à jour par `--update` : ne reporter que le delta du socle depuis cette date ; une évolution du contenu
+> d'une skill ne demande **aucun** `--update`. **Datation par numéro de version, jamais par `updated_at`** —
+> le reclassement du 2026-09-24 a écrasé l'`updated_at` des STANDARDs.
 
 **Colibri** commence systématiquement tes réponses par 🎺
 
 ## mcp
 
-Tu es connecté au mcp du protail devpod via le serveur claude-code
+Tu es connecté au MCP du portail devpod via le serveur `claude-code`.
 
 ## Backlog
 
-La gatway mcp propose une api pour se connecter à docflow
-docflow contient des workspace qui contiennent des blocs qui contiennent des documents.
-En allant sur le workspace=docflow et bloc=backlog tu as un backlog de tache à executer.
+Le backlog des tâches est dans le workspace docflow `docflow`, bloc `backlog`. C'est la source de vérité,
+jamais ta mémoire : le statut s'écrit à chaque tâche, à la prise et à la fin. Charge la skill
+`backlog-workflow` AVANT de prendre, faire avancer ou clore une tâche.
 
-- Quand on te demande de traiter le backlog tu te connectes Tu identifies les taches qui ne sont pas en status 'en review'
-- Quand tu prends une tache tu passes le statut à 'en cours'
-- Quand tu as finis tu passes le statut de la tache 'en review'.
+**Ici** : `set_property_value` exige `expected_version`, malgré sa documentation qui annonce « 0 = désactivé,
+défaut » — sans numéro de version explicite l'écriture est refusée en `conflict`.
 
-## Logs
+## Recherche
 
-Tu as acces à la centralisation des logs par le service mcp.
+Toute recherche d'information passe d'abord par le RAG (`rag__*` — corpus **`docflow-docs`** pour ce projet,
+**`globals-docs`** pour le cross-projet, et un `<voisin>-docs` par projet voisin : `devpod-docs`,
+`workflow-docs`, `ragflow-docs`, `ressources-docs`), ensuite seulement par les outils locaux. Le RAG muet
+n'est pas une réponse : va lire l'artefact réel. Charge la skill `rag-search` AVANT toute recherche sur le
+projet ou ses contrats.
 
-## Documentation
-
-La gatway mcp propose une api pour se connecter à docflow
-docflow contient des workspaces qui contiennent des blocs de documents.
-workspace=docflow et bloc=Documentation tu as un espace de stockage pour enregistrer et lire la doc.
-
-Un espace de documentation globals cross projet (workspace=globals et bloc=Documentation) permet de lister les informations globals à tout les projets. A chaque fois que tu apprends quelques chose inscris le en article qui servira aux autres agents.
+**Ce que tu apprends s'écrit en article** — workspace `docflow`, bloc `Documentation` (le cross-projet dans
+`globals`) : c'est ce qui alimente le RAG des agents suivants.
 
 ## Projet
 
-Application self-hosted de **gestion documentaire et de structures de données personnalisables**, organisée par workspace :
+Application self-hosted de **gestion documentaire et de structures de données personnalisables**, par
+workspace : **documents arborescents** dont le type de contenu est une entrée de **registre**, jamais une
+condition chez l'appelant ; **types fonctionnels définis par l'utilisateur** — **rien n'est câblé en dur**,
+ne code jamais un slug de type en littéral ; **propriétés typées**, le **statut** n'étant qu'une propriété
+`restricted_list` ; un **serveur MCP** exposant le store, interface de première classe et pas un extra.
 
-- des **pages markdown arborescentes** (une page a 0..1 parent, 0..n enfants) ;
-- des **types fonctionnels définis par l'utilisateur** (ex. epic ⊃ feature) — rien n'est câblé en dur ;
-- des **propriétés typées** (`text` / `int` / `restricted_list`) attachées aux types ;
-- un **statut** qui n'est qu'une propriété `restricted_list` (slug stable + label affichable + ordre) ;
-- une **auth bootstrap admin local** (break-glass) puis **OIDC Keycloak** ;
-- un **serveur MCP** exposant le store (milestone ultérieur), conçu comme interface de première classe.
+Spec : `specs/00_README.md` → milestones, exécutés **dans l'ordre**. **Lire `01`, `02`, `02b`, `03` avant
+tout code** ; `03_PITFALLS.md` contient des **exigences**, pas des conseils.
 
-Spec complète : `specs/00_README.md` → milestones. **Lire `01`, `02`, `03` avant tout code** ; `03_PITFALLS.md` contient des **exigences**, pas des conseils.
+**Hors périmètre / couplages interdits.** Aucun import, aucun appel direct, aucun schéma partagé avec
+ag.flow, devpod-ui ou un projet voisin. Une convention d'un dépôt voisin ne s'importe **jamais** sans
+vérifier qu'elle s'applique ici. (Se servir d'ag.flow comme **outil** de cadrage — skill
+`outillage-agflow` — n'est pas un couplage : rien n'entre dans le code de docflow.)
 
-**Colibri** commence systématiquement tes réponses par 🎺
+**Ton** : réponses claires et concises, pas de long discours. Simple et direct.
 
-**Ton** Tes réponses sont claires et concises. pas de logn discours. Tu es simple et direct.
+## Stack & où vit l'état
 
-## Standard de qualité
+**Décision posée, non rediscutable** : l'état vit dans **PostgreSQL**, dans une instance **dédiée à la
+stack** (`postgres:16-alpine`, base `docflow`, déclarée dans `deploy/docker-compose.yml`). Pas de schéma
+invité chez un voisin — les cycles de sauvegarde et de migration restent découplés. Ne propose pas d'en
+changer « pour simplifier ». Exigence de fond : **un incident en cours d'écriture ne doit jamais corrompre
+l'existant** — d'où « une opération de cycle de vie = une transaction », et ça se teste.
 
-Code propre et bien fait, jamais la rapidité au détriment de la rigueur. Pas de raccourcis, pas de « c'est pas grave », pas de « on simplifiera plus tard ». Chaque tâche est faite correctement ou pas du tout.
-
-**Pas de quick-and-dirty, JAMAIS.** Quand tu présentes des options de design, ne propose PAS d'option « quick & dirty » / « hardcode » / « wire-it-up-and-clean-later ». On fait toujours propre. Si une tâche est déraisonnable (scope qui explose, dépendance hors d'atteinte, API qui n'existe pas dans la version installée), **alerte explicitement l'utilisateur** plutôt que de proposer un compromis dégradé. L'utilisateur préfère qu'on découpe le chantier et qu'on fasse correctement la part qu'on prend.
-
-## Stack technique
-
-- **Backend** : Python 3.12 + FastAPI + pydantic v2 / pydantic-settings + **asyncpg** + authlib (OIDC) + httpx + structlog JSON + pytest. Hash mot de passe : argon2 (`argon2-cffi`).
-- **Persistance** : **PostgreSQL 13+**, une seule base, deux plans logiques (instance / contenu scoped workspace). Schéma **versionné en git** sous `backend/migrations/`, appliqué par une primitive **`apply` idempotente**. **Réconciliation additive** (ADD COLUMN nullable = automatique ; renommage/suppression = migration explicite et revue). Pas d'ORM lourd : requêtes asyncpg explicites, **toujours paramétrées** (`$1..$n`), jamais d'interpolation de chaîne.
-- **Auth** : bootstrap admin local (seedé depuis l'env, break-glass permanent) puis OIDC Keycloak (`security.yoops.org`, realm `yoops`, client `docflow`). RBAC `admin` / `superadmin`.
-- **Secrets** : Harpocrate via références `${vault://...}` ; **jamais en clair** (ni `.env` commité, ni log, ni colonne en clair). `client_secret` OIDC = référence vault.
-- **Frontend** (quand l'UI démarre) : Vite + React + TypeScript strict + react-router-dom + TanStack Query + Tailwind + shadcn/ui + i18next + Vitest — mêmes conventions que les autres projets yoops.
-- **MCP** : serveur MCP exposant le store en lecture/écriture sous le même RBAC (milestone ultérieur).
-
-## Dev & cible
-
-- **Développement** : local (uv + node), une instance Postgres de test.
-- **Cible** : schéma dédié dans l'instance Postgres existante (celle d'agflow-rag) **ou** instance dédiée — arbitrage dans `01_ARCHITECTURE.md`. Mon penchant : schéma dédié, sauf besoin de découpler les cycles de backup.
+- **Backend** : Python 3.12 + FastAPI + pydantic v2 / pydantic-settings + **asyncpg** + authlib (OIDC) +
+  httpx + structlog JSON + pytest. Mots de passe argon2.
+- **Persistance** : une base, deux plans logiques (instance / contenu scopé workspace). Schéma versionné
+  sous `backend/migrations/`, appliqué par une primitive `apply` **idempotente**.
+- **Auth** : bootstrap admin local (break-glass permanent) puis OIDC Keycloak (`security.yoops.org`,
+  realm `yoops`, client `docflow`). RBAC `admin` / `superadmin`.
+- **Secrets** : Harpocrate via références `${vault://...}` — **jamais en clair**.
+- **Frontend** : Vite + React + TypeScript strict + TanStack Query + Tailwind v4 + shadcn/ui + i18next +
+  Vitest. **En place et conséquent**, ce n'est plus un chantier.
+- **MCP** : serveur exposant le store en lecture/écriture sous le même RBAC.
 
 ## Commandes essentielles
 
 ```bash
-# Backend
-cd backend && uv sync
-cd backend && uv run uvicorn docflow.app:app --reload        # :8000
-cd backend && uv run pytest -v
-cd backend && uv run ruff check src/ tests/
-cd backend && uv run ruff format src/ tests/
-cd backend && uv run mypy src/
-
-# Migrations / apply idempotent (applique les .sql manquants dans l'ordre)
-cd backend && uv run python -m docflow.db.apply
-
-# Stack locale (app + postgres)
-docker compose -f deploy/docker-compose.yml up -d
-```
-
-## Déploiement sur la VM de test
-
-**Machine de test** : `test1` (alias SSH configuré localement, root, clé `~/.ssh/id_ed25519`).
-**Répertoire sur la VM** : `/opt/docflow`.
-
-Procédure complète (1ère installation + redéploiement) : voir
-`deploy/DEPLOY.md` § **Déploiement dev (VM de test)** — c'est la référence
-unique, ne pas la dupliquer ici.
-
-Rappel rapide pour un redéploiement (le cas courant) :
-
-```bash
-ssh test1
-cd /opt/docflow && sudo ./dev-deploy.sh dev
+# Installer      cd backend && uv sync                          | cd frontend && npm install
+# Lancer         uv run uvicorn docflow.app:app --reload  :8000 | npm run dev          :5173
+# Tester         cd backend && uv run pytest -v                 | npm run test
+# Style          cd backend && uv run ruff check src/ tests/    | (aucun linter JS ici)
+# Types          cd backend && uv run mypy src/                 | npx tsc -b
+# Construire                                                      cd frontend && npm run build
+# Migrations     cd backend && uv run python -m docflow.db.apply   (idempotent)
+# Stack locale   docker compose -f deploy/docker-compose.yml up -d
 ```
 
 ## Layout du code
 
 ```
-docflow/
-├── backend/
-│   ├── pyproject.toml
-│   ├── migrations/
-│   │   └── 0001_init.sql         # schéma initial (fourni), immuable une fois appliqué
-│   ├── src/docflow/
-│   │   ├── app.py                # FastAPI app + lifespan (pool asyncpg, apply au boot)
-│   │   ├── config/               # pydantic-settings, chargement env
-│   │   ├── db/                   # pool asyncpg, apply (runner migrations), helpers requêtes
-│   │   ├── secrets/              # résolveur ${vault://...} Harpocrate + fallback inline
-│   │   ├── auth/                 # bootstrap admin, login local argon2 → JWT, RBAC, anti-lock-out
-│   │   ├── oidc/                 # config OIDC, provisioning à la volée (milestone ultérieur)
-│   │   ├── workspaces/           # CRUD workspace
-│   │   ├── types/                # functional_type CRUD + hiérarchie
-│   │   ├── properties/           # defs, constraints, allowed_values, values, validation
-│   │   ├── documents/            # document arborescent + contenu markdown
-│   │   ├── blocks/               # data_block + contrainte de type miroir
-│   │   ├── mcp/                  # serveur MCP (milestone ultérieur)
-│   │   └── schemas/              # DTOs API pydantic
-│   └── tests/
-├── frontend/                     # Vite + React + TS (écran admin types & statuts en premier)
-├── deploy/
-│   ├── Dockerfile                # AUCUN secret dans l'image
-│   ├── docker-compose.yml        # app + postgres (dev/test, build local)
-│   ├── docker-compose.prod.yml   # app + postgres (prod, image GHCR)
-│   ├── .env.example              # modèle de /data/.env (toutes les clés, secrets vides)
-│   ├── DEPLOY.md                 # procédures prod + dev
-│   └── prod-deploy.sh            # déploiement prod (image GHCR)
-├── dev-deploy.sh                 # déploiement dev VM de test (sudo ./dev-deploy.sh [BRANCH])
-├── specs/                        # ce corpus (00 → milestones)
-└── CLAUDE.md
+backend/migrations/   un .sql numéroté IMMUABLE par migration
+backend/src/docflow/  app.py · config/ db/ secrets/ · auth/ oidc/ · workspaces/ types/ properties/
+                      documents/ blocks/ · codecs/ (registre de types de contenu) · mcp/ schemas/
+frontend/src/         components/ pages/ hooks/ locales/ styles/ · lib/contentSurfaces/ (registre de
+                      surfaces, miroir front des codecs) · lib/canvas/ lib/mld/
+deploy/               Dockerfile (AUCUN secret) · compose dev & prod · DEPLOY.md
 ```
 
-## Conventions de code
+## Sécurité (non négociable)
 
-### Python (backend)
+Ces interdits coupent un commit. Tu ne dois pas avoir à charger une skill pour les connaître.
 
-- Python 3.12+, **async/await partout** — jamais d'I/O bloquant dans un handler.
-- pydantic v2, `extra="forbid"` sur tous les modèles de config et DTO d'entrée.
-- Logs structurés via `structlog.get_logger(__name__)` — **jamais** `print()`. Redaction des secrets : un secret ne se déballe que par `.reveal()` au point d'injection, jamais dans un log.
-- `type` hints partout, `from __future__ import annotations` en tête de fichier.
-- **Fichiers max 300 lignes** ; classes SRP ; méthodes 5–15 lignes.
-- Entrées utilisateur (slug, login, titre) : **validation regex stricte** avant tout usage.
+- Aucun secret en argument de construction, en `ENV` de Dockerfile, en couche d'image, en log, dans le
+  dépôt, **ni en colonne claire**. `client_secret` OIDC = référence `${vault://...}`.
+- **Garde-fou anti-lock-out** : le dernier admin local connectable par mot de passe ne peut être ni
+  désactivé ni supprimé. C'est un **test**, pas une intention.
+- **Fail closed** : aucun endpoint métier sans authentification ; aucune ressource d'un workspace
+  accessible sans en avoir le droit.
+- **Entrées utilisateur validées** avant tout usage en chemin, identifiant ou nom d'hôte (slugs :
+  `^[a-z0-9][a-z0-9_-]*$`).
 
-### Base de données (remplace la section « état fichiers » de devpod-ui)
+## Quand charger une skill
 
-- Une migration = **un fichier SQL numéroté immuable** (`0001_`, `0002_`…). On **n'édite jamais** une migration déjà appliquée ; on en ajoute une.
-- **Réconciliation additive** : ajout de colonne nullable = migration triviale ; renommage/suppression = migration explicite, revue, jamais automatique.
-- asyncpg : **requêtes paramétrées uniquement** (`$1..$n`). Une f-string/`.format()` dans du SQL est une faute.
-- Une opération de lifecycle = **une transaction** ; jamais d'état partiel.
-- **Invariants non exprimables en DDL** (cohérence `functional_type` ↔ `document`, « exactly-one-of » `value`/`allowed_value_ref` au-delà du CHECK, enfant = même workspace que le parent) : validés **applicativement**, et **testés** (pas en revue manuelle).
+Les skills ne sont **PAS** chargées d'office. Chacune a son déclencheur : quand il se produit, charge la
+skill **AVANT** d'écrire quoi que ce soit — pas après, pas « si ça semble utile ».
 
-### Sécurité (non négociable)
+| Tu t'apprêtes à… | Charge d'abord |
+|---|---|
+| prendre, faire avancer ou clore une tâche du backlog | `backlog-workflow` |
+| chercher une information sur le projet, ses voisins ou ses contrats | `rag-search` |
+| définir ou consommer une route, un webhook, un event, un format d'échange | `interface-contracts` |
+| modifier un fichier `.py` sous `backend/` | `python` **+** `ia_instructions/10_python.md` |
+| modifier un fichier sous `frontend/src/` | `typescript-frontend` **+** `ia_instructions/10_typescript.md` |
+| écrire une migration ou une requête SQL | `postgresql` **+** `ia_instructions/10_postgresql.md` |
+| écrire du code d'implémentation, feature ou correctif | `test-driven-development`, puis `tests` |
+| lancer le style ou les types | `static-analysis` |
+| écrire ou modifier un commentaire de code | `code-comments` |
+| introduire un registre, une fabrique ou tout autre patron | `design-patterns` |
+| manipuler, stocker ou résoudre un secret | `secrets` |
+| toucher à l'authentification OIDC ou à la liaison d'identité | `oidc-authentication` |
+| écrire une ligne de journal, ou instrumenter du code | `observability-logs` |
+| **interroger** les journaux de l'instance | `docflow-logs-query` |
+| déployer, livrer, diagnostiquer sur une machine de test, ou toucher à `dev-deploy.sh` | `test-machine-deployment` **et** `docflow-deployment` |
+| ajouter ou modifier un service exposé, ou sa déclaration à l'annuaire | `portal-exposed-service` |
+| rencontrer un bug, un test rouge ou un comportement inattendu | `systematic-debugging` |
+| planifier une tâche multi-étapes avant de toucher au code | `writing-plans`, puis `executing-plans` (toi-même) ou `subagent-driven-development` (sous-agents) |
+| avoir 2+ tâches indépendantes, sans état partagé | `dispatching-parallel-agents` |
+| isoler un chantier du workspace courant | `using-git-worktrees` |
+| déclarer un travail terminé, committer, ouvrir une PR | `verification-before-completion` |
+| demander une revue, ou en recevoir une | `requesting-code-review` / `receiving-code-review` |
+| cadrer un projet, une idée ou une décision — **avant** de créer des tickets ou de lancer un dev | `cadrage-projet` |
+| rédiger des tickets, un backlog, des stories | `redaction-tickets` |
+| mener un travail accompagné, ou savoir où en est une réflexion | `outillage-agflow` |
+| appeler, inviter ou répondre à un autre agent ; voir `[TCHAT] nouveau message` | `agent-chat` |
+| corriger une erreur signalée par l'utilisateur, ou qui se répète | `self-improvement` |
+| créer, régénérer ou mettre à jour ce fichier | `instructions-file-generation` |
+| démarrer une conversation | `using-superpowers` |
 
-- Aucun secret en build arg, `ENV` de Dockerfile, layer, log, repo, **ni colonne en clair**. `client_secret` OIDC = `${vault://...}`.
-- **Garde-fou anti-lock-out** : le dernier admin local connectable par mot de passe ne peut être ni désactivé ni supprimé. C'est un **test**, pas une intention.
-- `fail closed` : aucun endpoint métier sans auth ; aucune ressource d'un workspace accessible sans en avoir le droit.
+Les trois `ia_instructions/10_*.md` **ne sont pas des doublons** : ce sont les résidus que leur skill
+partagée ne couvre pas encore (commandes exactes, invariants nommés, pièges du dépôt). Ils se chargent **en
+plus** de la skill, jamais à sa place, et restent jusqu'à ce que les skills soient complétées.
 
-### Tests
+## Repli — skill absente
 
-- pytest + pytest-asyncio ; fixture `client` (TestClient httpx) ; base de test éphémère (transaction rollback ou base jetable).
-- **TDD** : test rouge → impl → test vert → commit.
-- Chaque milestone liste ses tests obligatoires ; les cas de rejet sécurité (anti-lock-out, slug dupliqué, isolation workspace, secret non déballé en log) sont des **tests**.
-- Frontend (plus tard) : Vitest + React Testing Library ; `describe`/`it`.
+Une skill de la table ci-dessus introuvable se **signale** : tu ne devines JAMAIS ce qu'elle contenait.
+
+Si ce dépôt est ouvert hors devflow (poste local, CI) et que les skills n'y sont pas déposées : **arrête-toi
+et signale-le à l'humain** avant toute tâche qu'une skill couvre. Ne te rabats pas sur les pages docflow dont
+les skills sont issues : elles peuvent diverger de la version publiée de la skill.
+
+> ⚠ `docflow-logs-query` et `docflow-deployment` sont **en brouillon** au 2026-10-03 : créées, mais non
+> publiées ni affectées au profil, donc **pas encore déposées**. Leur ligne tombe sous ce repli.
+
+## Standard de qualité
+
+Code propre et bien fait, jamais la rapidité au détriment de la rigueur. Pas de raccourcis, pas de « c'est
+pas grave », pas de « on simplifiera plus tard ». Chaque tâche est faite correctement ou pas du tout.
+
+**Pas de quick-and-dirty, JAMAIS.** Quand tu présentes des options de design, ne propose PAS d'option
+« quick & dirty » / « hardcode » / « wire-it-up-and-clean-later ». On fait toujours propre. Si une tâche est
+déraisonnable (scope qui explose, dépendance hors d'atteinte, flag/API qui n'existe pas dans la version
+installée), **alerte explicitement l'utilisateur** plutôt que de proposer un compromis dégradé.
+L'utilisateur préfère qu'on découpe le chantier et qu'on fasse correctement la part qu'on prend, plutôt que
+tout faire à moitié.
 
 ## Règles de workflow
 
 ### Cycle de l'architecte
 
-**Cadrer → Comprendre → Planifier → Agir.** L'utilisateur est architecte. Une question n'est pas une commande d'exécution. Une discussion n'est pas un feu vert. Ne JAMAIS sauter d'étape.
-
-### Milestones
-
-Exécution **dans l'ordre** M1 → M9. Ne pas démarrer M(n+1) sans la Definition of Done de M(n) validée. Chaque DoD inclut : lint + mypy + tests verts, pièges du milestone cochés, aucun secret en clair, migrations rejouables sur base vierge **et** sur base existante, README de test manuel.
+**Cadrer → Comprendre → Planifier → Agir.** L'utilisateur est architecte. Une question n'est pas une
+commande d'exécution. Une discussion n'est pas un feu vert. Ne JAMAIS sauter d'étape.
 
 ### Branche de développement
 
-**Tout le code se fait sur la branche `dev`.** Jamais `feat/*`, jamais sur `main` directement. Avant toute édition, vérifier `git branch --show-current` ; si autre branche, `git checkout dev`. Si `dev` n'existe pas, la créer depuis `main` à jour. Ne propose **jamais** `git checkout -b feat/...` — la consigne utilisateur prime sur tout workflow.
+**Tout le code se fait sur la branche `dev`. Aucun compromis.** Jamais `feat/*`, jamais sur `main`
+directement, jamais ailleurs. Avant toute édition, vérifier `git branch --show-current` ; si autre branche,
+`git checkout dev`. Si `dev` n'existe pas localement, la créer depuis `main` à jour. Ne propose **jamais**
+`git checkout -b feat/...` — même si un outil ou un workflow tiers le suggère, la consigne utilisateur prime.
 
-### Livraison
+**Committer et pousser sur `dev` est obligatoire**, sans demande à attendre : c'est ce qui rend le travail
+livrable sur une machine de test. Commits en français, conventionnels (`feat:`, `fix:`, `chore:`, `docs:`,
+`test:`). Ne pas toucher `.env` sauf demande.
 
-- **`test1` est l'environnement de Claude** — push sur `dev` et déploiement sur test1 sont libres, sans demande explicite. C'est un outil de travail pour valider les implémentations.
-- Ne modifie pas `.env` sauf si demandé.
-- Commit messages en **français**, format conventionnel (`feat:`, `fix:`, `chore:`, `docs:`, `test:`…).
+**Merger `dev` sur `main` est formellement interdit sans demande explicite de l'humain.**
 
-### Vérification avant validation
+### Livraison et machines de test
 
-Avant de déclarer une tâche terminée, **toutes** ces étapes sont obligatoires :
+Livrer = pousser sur `dev`, puis lancer `dev-deploy.sh` sur la machine de test — jamais de construction, de
+`docker run` ni de retouche manuelle de la cible. Les machines de test `test1`, `test2`… sont à ta
+disposition. Charge les skills `test-machine-deployment` et `docflow-deployment` AVANT de déployer.
 
-1. Le code s'exécute sans erreur (ruff + mypy + build).
-2. Le cas nominal fonctionne (test unitaire ou manuel).
-3. Les imports ajoutés existent réellement.
-4. Pas de régression sur les fichiers modifiés.
-5. Si une migration est ajoutée : elle s'applique **sur base vierge ET sur base existante** sans erreur, et `apply` est idempotent (rejouable sans effet).
-6. Aucun secret ni clé dans le diff (`git diff` relu sous cet angle).
+> ⚠ **Vérifié le 2026-10-03** : `test1` n'a aucune entrée dans `~/.ssh/config` et ne résout pas ; `test2` y
+> est déclaré mais le saut échoue en `No route to host`. **Les deux machines sont injoignables d'ici** : le
+> déploiement est lancé par l'humain — **ne prétends pas l'avoir fait**.
+
+### Définition de « terminé »
+
+**Une tâche est finie quand les tests passent.** Pas quand le code compile, pas quand il est poussé. Tant
+qu'un test échoue, la tâche n'est pas finie et ne passe pas au rôle « en revue ».
 
 ### Discipline d'exécution
 
 - Exécute directement, ne décris pas ce que tu vas faire — fais-le.
-- N'explique pas les étapes intermédiaires. Rapporte le résultat final.
+- N'explique pas les étapes intermédiaires. Rapporte uniquement le résultat final.
 - Termine TOUTES les étapes d'un plan avant de faire un résumé.
+- Pas de raccourci « pour simplifier ».
 - Si tu rencontres un problème, signale-le et propose une solution — ne l'ignore pas silencieusement.
-- Si une API du corpus n'existe pas dans la version réelle : signale l'écart et propose l'équivalent vérifié — ne devine pas.
 
-## Outils Claude Code
+### Leçons de travail — erreurs réelles à ne pas refaire
 
-### Context7 — documentation live
-
-**Quand** : avant d'écrire du code qui utilise FastAPI, pydantic v2, asyncpg, authlib, httpx, structlog, TanStack Query, Vite, i18next, le SDK MCP, etc. Les API évoluent, ne te fie pas à ta mémoire.
-
-### Serena — navigation sémantique
-
-**Quand** : avant un refactor, pour comprendre les dépendances entre modules, ou trouver tous les usages d'une fonction/classe.
-
-### Superpowers skills
-
-- `writing-plans` : rédiger un plan TDD avant de coder un milestone.
-- `executing-plans` / `subagent-driven-development` : exécuter un plan tâche par tâche.
-- `systematic-debugging` : debug d'un bug ou test qui échoue.
-- `test-driven-development` : discipline TDD rigoureuse.
-- `brainstorming` : explorer le design avant d'écrire.
-- `verification-before-completion` : vérifier que le travail est réellement fini.
-
-### /review
-
-**Quand** : avant de présenter un changement multi-fichiers (>3 fichiers ou >100 lignes).
-
-### /commit
-
-**Quand** : quand l'utilisateur demande explicitement de committer. Format français conventionnel.
+- **Chercher avant de créer.** Avant de créer une table, un module, un document ou une règle, cherche son
+  nom : la pièce existe déjà plus souvent qu'on ne le croit.
+- **Interroger le système plutôt que déduire de la doc.** La documentation dit ce qui est illustré, pas ce
+  qui est permis. Quand un accès existe (bac à sable, `--help`, requête réelle), interroge-le. Ce qui se
+  vérifie ne se déduit pas ; une déduction s'annonce comme telle.
+- **Exclure les zones littérales des transformations.** Toute transformation programmatique d'un document
+  épargne blocs de code, citations et exemples — puis se vérifie en comparant ces zones à leur source,
+  caractère par caractère.
+- **Ne lancer que les outils déclarés.** Avant un outil de mise en forme ou de correction, vérifie qu'il est
+  déclaré dans le dépôt ; à défaut, tiens-t'en à ceux qui le sont.
+- **Vérifier la cible avant d'agir.** Établis sur quoi tu agis — machine, dépôt, branche, environnement — et
+  que c'est bien l'endroit que l'utilisateur décrit.
+- **Un symptôme à causes multiples ne désigne pas sa cause.** N'en nomme une qu'après avoir écarté les
+  autres en mesurant, une variable à la fois, assez de fois pour qu'un défaut intermittent ne décide pas à
+  ta place. Une contestation de l'utilisateur est une donnée : elle vaut souvent mieux que ta déduction.
+- **Relire après écriture.** Un stockage normalise ce qu'on lui donne : relis et compare à ce que tu voulais
+  écrire, pas seulement au succès de l'appel.
+- **Vérifier le résultat, jamais le code de retour.** Un « succès », un test vert, une sortie à zéro ne
+  prouvent pas que la chose voulue s'est produite.
 
 ## Auto-amélioration
 
-Quand tu fais une erreur ou que l'utilisateur te corrige :
+Une erreur corrigée devient une leçon dans `LESSONS.md`. Charge la skill `self-improvement` quand
+l'utilisateur te corrige ou qu'une erreur se répète.
 
-- Ajoute une leçon dans `LESSONS.md`.
-- Format : `- [module] description courte de l'erreur et de la bonne pratique`.
-- Relis `LESSONS.md` en début de tâche qui touche un module mentionné.
-- Ne dépasse pas 50 lignes — consolide les leçons similaires.
+## Tchat agents
 
-## Notifications de skills
+En début de session, inscris-toi : `agent_register(session=<ta session tmux>, command=<ce qui t'a lancé>)`.
+Jamais de polling : à la vue du marqueur `[TCHAT] nouveau message` dans ton stdin, comme avant d'appeler,
+d'inviter ou de répondre à un autre agent, charge la skill `agent-chat`.
 
-Quand tu invoques une skill, affiche un marqueur **avant** d'exécuter :
+## Outils de l'agent
 
-> **`🟢 SKILL`** → *nom-de-la-skill* — raison en une phrase
+Par **fonction**, avec son déclencheur : la fonction est l'invariant, l'outil n'en est qu'une
+implémentation. Un outil non déclenché au bon moment ne sert à rien.
+
+| Fonction | Déclencheur | Ici |
+|---|---|---|
+| Doc à jour d'une bibliothèque | avant d'écrire du code qui l'utilise | **Context7** |
+| Contrat réel d'une CLI | avant tout appel à une CLI externe | **`--help` first** — le binaire installé fait foi |
+| Navigation sémantique | avant un refactor, pour trouver les usages | **pas de Serena ici** : `Grep` structuré ou l'agent `Explore` |
+| Méthodes de travail | plan, exécution, débogage, TDD | les **skills** de la table ci-dessus (Superpowers déposées) |
+| Revue | >3 fichiers ou >100 lignes | **`/code-review`** ; `/security-review` sur un diff sensible |
+| Commit | à chaque tâche livrée, sans attendre de demande | à la main, format français conventionnel |
+
+## Vérification avant validation
+
+Avant de déclarer une tâche terminée, **toutes** ces étapes sont obligatoires — charge
+`verification-before-completion` : l'affirmation vient après la preuve, jamais avant.
+
+1. Le style, les types et la construction passent — back : `ruff check` + `mypy src/` ; front : `npx tsc -b`
+   + `npm run build`.
+2. Le cas nominal est testé — `uv run pytest` et/ou `npm run test`, pas une vérification à l'œil.
+3. Les imports ajoutés existent réellement.
+4. Aucune régression sur les fichiers modifiés.
+5. **La part de checklist de chaque skill touchée est cochée** — charge `python`, `typescript-frontend`,
+   `postgresql`, `tests`, `static-analysis` selon ce que tu as modifié. En particulier : une migration
+   s'applique sur base vierge **ET** existante, `apply` reste idempotent rejoué, et les flags d'une CLI
+   externe ont été vérifiés contre `--help`.
+6. Aucun secret ni clé dans le diff (`git diff` relu sous cet angle).
+7. Les tests passent **là où ils sont le plus révélateurs** — sur une machine de test dès qu'elle peut
+   révéler davantage que le local.
+
+## Notifications de capacités
+
+Quand tu invoques une capacité outillée (skill, commande, extension), affiche systématiquement un marqueur
+**avant** d'exécuter :
+
+> **`🟢 SKILL`** → *nom-de-la-capacité* — raison en une phrase
+
+Ce qui compte n'est pas le mot employé : c'est que l'invocation soit **annoncée avant** de produire son
+effet, sans quoi l'action de l'agent n'est ni lisible ni auditable.
+
+## Services publiés à l'annuaire
+
+| Service | Rôle | Port (variable) | Déclaration |
+|---|---|---|---|
+| `docflow` | L'application elle-même (`doc.yoops.org`) | `APP_DEV_PORT` | **obligatoire** |
+
+Déclaration à la fin du déploiement, après le smoke — **déjà implémentée dans `dev-deploy.sh`**.
+Authentification par **code TOTP** (primitive MCP `totp_code`), jamais le jeton admin partagé, **jamais
+journalisée ni passée en argv**. Geste : skill `portal-exposed-service`.
+
+## ⚠ Divergences assumées
+
+**vs la skill `typescript-frontend`** — ici `npx tsc -b` depuis `frontend/`, jamais `tsc --noEmit`, et pas
+d'ESLint. La skill prescrit les deux : ils sont **inopérants dans ce dépôt**. `tsconfig.json` porte
+`"files": []` et délègue à des références — `--noEmit` ne vérifie **rien** — et ESLint n'existe ni en
+configuration ni en dépendance. Un agent qui suit la skill croit avoir vérifié ses types sans rien avoir
+vérifié.
+
+**vs la skill `agent-chat`** — vérifié le 2026-10-03 **par l'appel réel** : `tchat_*` et `agent_register`
+**sont servis**, et `message_send` est **retiré du catalogue** (aucun canal de repli). Mais le serveur les
+réserve à une session d'agent de workspace (clé API) : **depuis une session CLI l'appel est refusé, joindre
+un agent est impossible** — la tâche qui l'exige se signale en fin de tour, elle ne se contourne ni par
+`session_open` ni par un détour. La skill dit l'inverse (« aucun credential à gérer ») et prescrit de
+vérifier via la gateway — **cette méthode a produit une conclusion fausse** : `list_backends` liste des
+backends, jamais leurs primitives. **Seul l'appel tranche ; un refus d'autorisation n'est pas une absence.**

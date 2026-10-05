@@ -29,8 +29,8 @@ WITH RECURSIVE subtree AS (
     UNION ALL
     SELECT ft.id, ft.slug, ft.label, s.depth + 1
     FROM functional_type ft JOIN subtree s ON ft.parent = s.id
-)
-SELECT id, slug, label, depth FROM subtree ORDER BY depth, slug
+) CYCLE id SET is_cycle USING path
+SELECT id, slug, label, depth FROM subtree WHERE NOT is_cycle ORDER BY depth, slug
 """
 
 _DEFS = """

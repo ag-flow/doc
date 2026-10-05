@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from docflow.db.helpers import require_workspace
-from docflow.references.parser import extract_references
 
 # ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -48,15 +47,18 @@ async def refresh_references(
     conn: asyncpg.Connection,
     doc_id: uuid.UUID,
     ws_key: uuid.UUID,
-    content: str | None,
+    refs: dict[str, str],
 ) -> None:
     """Remplace toutes les références du document.
 
     Doit être appelé dans la même transaction que le bump de version.
-    La table est reconstruite à partir du contenu courant ; un lien retiré
+    La table est reconstruite à partir des liens fournis ; un lien retiré
     disparaît donc de la table au save suivant.
+
+    ``refs`` ({uuid canonique: libellé}) est EXTRAIT PAR LE CODEC du type de
+    contenu (cf. ``documents.content_refs``) : cette fonction ne connaît plus la
+    grammaire du document, seulement la réconciliation.
     """
-    refs = extract_references(content or "")
     await conn.execute("DELETE FROM document_reference WHERE source_ref = $1", doc_id)
     if refs:
         await conn.executemany(
@@ -287,6 +289,89 @@ async def broken_links_detail(
             source_title=r["source_title"],
             target_ref=r["target_ref"],
             target_label=r["target_label"],
+        )
+        for r in rows
+    ]
+
+
+class GlobalSearchResult(BaseModel):
+    id: uuid.UUID
+    title: str
+    slug: str | None
+    version: int
+    url: str  # ressource API : /api/workspaces/{ws}/documents/{id}
+    app_url: str  # lien d'ouverture IHM : /ws/{ws}/blocs/{bloc}/documents/{id}
+    type: str | None
+    workspace_slug: str
+    workspace_label: str
+    block_slug: str | None
+
+
+async def search_documents_global(
+    pool: asyncpg.Pool,
+    q: str,
+    limit: int,
+    *,
+    allowed_ws: set[str] | None,
+) -> list[GlobalSearchResult]:
+    """Recherche PLEIN-TEXTE (titre + contenu) sur TOUS les workspaces
+    accessibles à l'appelant. Le contenu recherché est la version courante du
+    document (document_version au version_number = document.version).
+
+    ``allowed_ws=None`` = superadmin (aucun filtre) ; un ensemble vide renvoie
+    une liste vide sans toucher la base (fail closed). Les correspondances de
+    titre remontent avant celles trouvées seulement dans le contenu.
+    """
+    if allowed_ws is not None and not allowed_ws:
+        return []
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT d.doc_technical_key AS id,
+                   d.title,
+                   d.slug    AS slug,
+                   d.version AS version,
+                   ft.slug AS type,
+                   w.slug  AS workspace_slug,
+                   w.label AS workspace_label,
+                   b.slug  AS block_slug
+            FROM document d
+            JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
+            LEFT JOIN document_version dv
+                 ON dv.document_ref = d.doc_technical_key
+                AND dv.version_number = d.version
+            LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
+            LEFT JOIN data_block b ON b.id = d.data_block_ref
+            WHERE (d.title ILIKE '%' || $1 || '%'
+                   OR COALESCE(dv.plain_text, dv.content) ILIKE '%' || $1 || '%')
+              AND ($2::text[] IS NULL OR w.slug = ANY($2::text[]))
+            ORDER BY (d.title ILIKE '%' || $1 || '%') DESC,
+                     similarity(d.title, $1) DESC
+            LIMIT $3
+            """,
+            q,
+            sorted(allowed_ws) if allowed_ws is not None else None,
+            limit,
+        )
+    return [
+        GlobalSearchResult(
+            id=r["id"],
+            title=r["title"],
+            slug=r["slug"],
+            version=r["version"],
+            # URL de ressource API canonique du document (miroir d'artifact_url).
+            url=f"/api/workspaces/{r['workspace_slug']}/documents/{r['id']}",
+            # Lien d'ouverture dans l'IHM (route front). Repli sur la racine du
+            # workspace si le bloc est indéterminé (ne devrait pas arriver).
+            app_url=(
+                f"/ws/{r['workspace_slug']}/blocs/{r['block_slug']}/documents/{r['id']}"
+                if r["block_slug"]
+                else f"/ws/{r['workspace_slug']}"
+            ),
+            type=r["type"],
+            workspace_slug=r["workspace_slug"],
+            workspace_label=r["workspace_label"],
+            block_slug=r["block_slug"],
         )
         for r in rows
     ]

@@ -8,6 +8,7 @@ vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn(),
     post: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn(),
   },
   getToken: vi.fn(() => 'tok'),
@@ -71,6 +72,58 @@ describe('TypesAdmin', () => {
   })
 })
 
+describe('TypesAdmin — retour d\'import hors du modal', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /** Workspace en v3 d'un template dont la galerie sert la v6 : la bannière de
+   *  mise à jour s'affiche. */
+  function mockWorkspaceEnRetard() {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/templates') {
+        return Promise.resolve([
+          { template: 'agile-basic', label: 'Projet agile', version: 6, path: '', concrete_types: 0, type_slugs: [] },
+        ])
+      }
+      if (url.endsWith('/templates')) {
+        return Promise.resolve([{ template: 'agile-basic', version: 3 }])
+      }
+      return Promise.resolve([
+        { slug: 'epic', label: 'Epic', parent_slug: null, id: '1', source_template: 'agile-basic' },
+      ])
+    })
+  }
+
+  it('un refus du serveur est AFFICHÉ, pas avalé', async () => {
+    // Le défaut réparé : le message n'était rendu qu'à l'intérieur du modal
+    // d'import, que le bouton « Mettre à jour » de la bannière n'ouvre pas.
+    // L'écran ne bougeait pas — on concluait que le bouton ne faisait rien.
+    mockWorkspaceEnRetard()
+    vi.mocked(api.post).mockRejectedValue(
+      new Error("propriété 'feature.maquette_ecran' : target_type 'ecran' introuvable"),
+    )
+    renderWithProviders()
+
+    await waitFor(() => expect(screen.getByTestId('tpl-update-agile-basic')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('tpl-update-agile-basic'))
+
+    const feedback = await screen.findByTestId('import-feedback-error')
+    expect(feedback).toHaveTextContent("target_type 'ecran' introuvable")
+  })
+
+  it('un succès est affiché de la même façon', async () => {
+    mockWorkspaceEnRetard()
+    vi.mocked(api.post).mockResolvedValue({
+      applied: true, no_op: false, adds: 3, soft_updates: 1,
+    })
+    renderWithProviders()
+
+    await waitFor(() => expect(screen.getByTestId('tpl-update-agile-basic')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('tpl-update-agile-basic'))
+
+    expect(await screen.findByTestId('import-feedback-success')).toBeInTheDocument()
+  })
+})
+
 describe('flattenTypeTree', () => {
   const mk = (slug: string, label: string, parent: string | null) =>
     ({
@@ -83,6 +136,7 @@ describe('flattenTypeTree', () => {
       source_template: null,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [],
     }) as FunctionalTypeRich
 
@@ -121,6 +175,7 @@ describe('groupTypeTree', () => {
       source_template: tpl,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [],
     }) as FunctionalTypeRich
 
@@ -143,5 +198,175 @@ describe('groupTypeTree', () => {
     ])
     expect(groups).toHaveLength(1)
     expect(groups[0].nodes.map((n) => n.type.slug)).toEqual(['epic', 'custom'])
+  })
+})
+
+// ── Écran Types Broadsheet : édition en place, DoD ──────────────────────────
+
+const RICH_TYPE = {
+  id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws',
+  content_template: null, source_template: null, created_at: '', updated_at: '',
+  documents_count: 5,
+  properties: [
+    {
+      slug: 'statut', label: 'Statut', type: 'restricted_list', required: false,
+      behavior: null, default_value: null,
+      allowed_values: [{ slug: 'fait', label: 'Fait', color: null, position: 0 }],
+    },
+    {
+      slug: 'url-confluence', label: 'url confluence', type: 'url', required: false,
+      behavior: null, default_value: null, allowed_values: [],
+    },
+  ],
+}
+
+describe('TypesAdmin — édition en place (Broadsheet)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.get).mockResolvedValue([RICH_TYPE])
+  })
+
+  it('la ligne porte le résumé des propriétés et le nombre de documents', async () => {
+    renderWithProviders()
+    expect(await screen.findByTestId('props-summary-epic')).toHaveTextContent('Statut')
+    expect(screen.getByTestId('docs-count-epic')).toHaveTextContent('5 docs')
+  })
+
+  it('le panneau liste AUSSI les propriétés scalaires (url, text…) et permet leur suppression', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    // La propriété scalaire est visible : libellé, slug, type.
+    const row = await screen.findByTestId('prop-row-url-confluence')
+    expect(row).toHaveTextContent('url confluence')
+    expect(row).toHaveTextContent('url')
+    // Suppression : dialogue de confirmation puis DELETE confirm=true.
+    vi.mocked(api.delete).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('delete-prop-url-confluence'))
+    expect(await screen.findByTestId('delete-prop-dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('delete-prop-dialog-confirm'))
+    await waitFor(() =>
+      expect(api.delete).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence?confirm=true',
+      ),
+    )
+  })
+
+  it('édition d’une propriété : slug figé, libellé + type envoyés en PATCH', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    // Le slug est affiché mais IMMUABLE.
+    expect(screen.getByTestId('edit-prop-slug')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('edit-prop-label'), { target: { value: 'URL Confluence' } })
+    fireEvent.change(screen.getByTestId('edit-prop-type'), { target: { value: 'text' } })
+    vi.mocked(api.patch).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence',
+        { label: 'URL Confluence', type: 'text', required: false },
+      ),
+    )
+  })
+
+  it('édition : bascule « obligatoire » envoyée en PATCH', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    // La propriété n'est pas obligatoire au départ.
+    expect(screen.getByTestId('edit-prop-required')).not.toBeChecked()
+    fireEvent.click(screen.getByTestId('edit-prop-required'))
+    vi.mocked(api.patch).mockResolvedValue(undefined as never)
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(
+        '/workspaces/my-ws/types/epic/properties/url-confluence',
+        { label: 'url confluence', type: 'url', required: true },
+      ),
+    )
+  })
+
+  it('transition de type refusée (données existantes) : le 422 du backend s’affiche', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('edit-prop-url-confluence'))
+    vi.mocked(api.patch).mockRejectedValue(
+      new Error("type non modifiable : 3 valeur(s) existante(s) — transitions permises depuis 'url' : restricted_list, text"),
+    )
+    fireEvent.change(screen.getByTestId('edit-prop-type'), { target: { value: 'int' } })
+    fireEvent.click(screen.getByTestId('edit-prop-save'))
+    expect(await screen.findByTestId('edit-prop-error')).toHaveTextContent('transitions permises')
+  })
+
+  it('clic sur la ligne → panneau sous la ligne ; reclic, Échap et bouton ferment', async () => {
+    renderWithProviders()
+    const row = await screen.findByTestId('type-row-epic')
+    fireEvent.click(row)
+    expect(await screen.findByTestId('close-panel-epic')).toBeInTheDocument()
+    // Reclic de la ligne → fermé.
+    fireEvent.click(row)
+    expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument()
+    // Échap → fermé.
+    fireEvent.click(row)
+    expect(await screen.findByTestId('close-panel-epic')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument(),
+    )
+    // Bouton fermer → fermé.
+    fireEvent.click(row)
+    fireEvent.click(await screen.findByTestId('close-panel-epic'))
+    expect(screen.queryByTestId('close-panel-epic')).not.toBeInTheDocument()
+  })
+
+  it('supprimer une valeur utilisée : confirmation puis 409 avec le décompte', async () => {
+    vi.mocked(api.delete).mockRejectedValue(new Error('valeur utilisée par 3 document(s) existant(s)'))
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('delete-val-statut-fait'))
+    // Confirmation d'abord (verbe explicite), pas de suppression muette.
+    const dialog = await screen.findByTestId('delete-val-dialog')
+    expect(dialog).toHaveTextContent('Fait')
+    fireEvent.click(screen.getByTestId('delete-val-dialog-confirm'))
+    // Le refus de l'API (valeur utilisée) est affiché AVEC le nombre concerné.
+    await waitFor(() =>
+      expect(screen.getByTestId('delete-val-dialog-error')).toHaveTextContent('3 document(s)'),
+    )
+  })
+
+  it('ajouter une propriété obligatoire signale les documents qui deviennent incomplets', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-prop-epic'))
+    // Sans « obligatoire » : aucun avertissement.
+    expect(screen.queryByTestId('required-warn-epic')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('prop-required-epic'))
+    expect(await screen.findByTestId('required-warn-epic'))
+      .toHaveTextContent('5 documents de ce type deviendront incomplets')
+  })
+
+  it('l’ajout de propriété envoie libellé, type scalaire et obligatoire', async () => {
+    vi.mocked(api.post).mockResolvedValue({})
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-prop-epic'))
+    fireEvent.change(screen.getByLabelText('Libellé'), { target: { value: 'Deadline' } })
+    fireEvent.change(screen.getByTestId('prop-type-select-epic'), { target: { value: 'date' } })
+    fireEvent.click(screen.getByTestId('prop-required-epic'))
+    fireEvent.click(screen.getByTestId('confirm-add-prop-epic'))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/workspaces/my-ws/types/epic/properties', {
+        slug: 'deadline', label: 'Deadline', type: 'date', required: true,
+      }),
+    )
+  })
+
+  it('le nuancier de couleurs est celui du système (pas de pipette libre)', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByTestId('type-row-epic'))
+    fireEvent.click(await screen.findByTestId('add-val-statut'))
+    const swatches = screen.getByTestId('new-val-color')
+    expect(swatches.querySelectorAll('[role="radio"]')).toHaveLength(5)
+    expect(document.querySelector('input[type="color"]')).toBeNull()
   })
 })

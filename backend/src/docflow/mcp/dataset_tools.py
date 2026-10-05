@@ -19,6 +19,8 @@ from mcp.types import TextContent, Tool
 
 from docflow.datasets import csv_io, service
 from docflow.datasets.query import query_dataset
+from docflow.mcp import errors
+from docflow.mcp.coerce import as_bool
 from docflow.mcp.session import acting_identity
 
 _WS = {"type": "string", "description": "Slug du workspace"}
@@ -85,7 +87,10 @@ DATASET_TOOLS: list[Tool] = [
                     "enum": ["text", "int", "float", "date", "bool", "url"],
                 },
                 "position": {"type": "integer", "description": "Ordre (optionnel)"},
-                "required": {"type": "boolean", "description": "Obligatoire (optionnel)"},
+                "required": {
+                    "type": ["boolean", "string"],
+                    "description": "Obligatoire (optionnel)",
+                },
             },
             "required": ["workspace_slug", "dataset_id", "slug", "label", "type"],
         },
@@ -110,7 +115,7 @@ DATASET_TOOLS: list[Tool] = [
                     "enum": ["text", "int", "float", "date", "bool", "url"],
                 },
                 "position": {"type": "integer"},
-                "required": {"type": "boolean"},
+                "required": {"type": ["boolean", "string"]},
             },
             "required": ["workspace_slug", "dataset_id", "column_slug"],
         },
@@ -253,7 +258,7 @@ DATASET_TOOLS: list[Tool] = [
                 "label": {"type": "string", "description": "Label du dataset à créer"},
                 "csv": {"type": "string", "description": "Contenu CSV (délimiteur ,)"},
                 "has_header": {
-                    "type": "boolean",
+                    "type": ["boolean", "string"],
                     "description": "1ʳᵉ ligne = en-têtes (défaut true)",
                 },
                 "mode": {
@@ -325,9 +330,9 @@ async def handle(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> list
     try:
         return await _dispatch(name, pool, args)
     except HTTPException as e:
-        return _text({"error": e.detail})
+        return _text(errors.from_http(e.status_code, e.detail))
     except (ValueError, KeyError) as e:
-        return _text({"error": f"argument invalide : {e}"})
+        return _text(errors.err(errors.INVALID, f"argument invalide : {e}"))
 
 
 async def _dispatch(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> list[TextContent]:
@@ -355,7 +360,7 @@ async def _dispatch(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> l
                 str(args.get("label", "")),
                 str(args.get("type", "")),
                 _opt_int(args, "position"),
-                bool(args.get("required", False)),
+                as_bool(args.get("required"), default=False),
             )
         )
     if name == "update_dataset_column":
@@ -418,7 +423,7 @@ async def _dispatch(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> l
                 slug=_opt_str(args, "slug"),
                 label=_opt_str(args, "label"),
                 csv_text=str(args.get("csv", "")),
-                has_header=bool(args.get("has_header", True)),
+                has_header=as_bool(args.get("has_header"), default=True),
                 mode=_csv_mode(args),
                 created_by=acting_identity().id,
             )
@@ -426,7 +431,7 @@ async def _dispatch(name: str, pool: asyncpg.Pool, args: dict[str, object]) -> l
     if name == "export_dataset_csv":
         text = await csv_io.export_csv(pool, ws, _dataset_id(args), header=_csv_header(args))
         return _text({"csv": text})
-    return _text({"error": f"outil dataset inconnu : {name}"})
+    return _text(errors.err(errors.UNKNOWN_TOOL, f"outil dataset inconnu : {name}"))
 
 
 def _csv_mode(args: dict[str, object]) -> Literal["replace", "append"]:

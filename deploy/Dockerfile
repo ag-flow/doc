@@ -24,6 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         git \
         openssh-client \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libharfbuzz0b \
+        libharfbuzz-subset0 \
+        fonts-dejavu-core \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
         https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -51,6 +56,13 @@ RUN uv sync --no-dev --frozen
 
 # Assets frontend
 COPY --from=frontend-builder /build/dist ./static
+
+# Police Source Serif 4 pour l'export PDF (même typographie que l'écran).
+# Pango est installé plus haut (libpango*) — WeasyPrint la charge en @font-face.
+COPY --from=frontend-builder \
+    /build/node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2 \
+    /build/node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2 \
+    ./fonts/
 
 ENV PATH="/app/.venv/bin:$PATH"
 

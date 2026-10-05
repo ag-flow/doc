@@ -20,8 +20,8 @@ export function OidcCallback() {
     startedRef.current = true
     const params = new URLSearchParams(window.location.search)
     completeOidcCallback(params)
-      .then((token) => {
-        setToken(token)
+      .then((user) => {
+        setToken(user.is_admin)
         navigate('/', { replace: true })
       })
       .catch((err: unknown) => {

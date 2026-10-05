@@ -14,6 +14,7 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from docflow.auth.deps import get_current_user
+from docflow.mcp.oauth import resolve_idp_bearer, www_authenticate
 from docflow.mcp.obo import resolve_actor_user
 from docflow.mcp.server import _get_pool, mcp_server
 from docflow.mcp.session import McpSession, reset_current_session, set_current_session
@@ -54,23 +55,54 @@ class _AsgiEndpoint:
         await self._handler(scope, receive, send)
 
 
-async def _authenticate(request: Request) -> tuple[AuthUser, str | None] | None:
-    """Même dépendance d'auth que l'API REST (JWT ou clé API), en contexte ASGI.
+async def _respond_error(request: Request, status: int, detail: object) -> None:
+    """Envoie une erreur ASGI. Sur 401, joint l'en-tête WWW-Authenticate désignant
+    les métadonnées de ressource protégée (RFC 9728) : c'est ce qui permet à un
+    client MCP standard de découvrir le serveur d'autorisation. Pas de challenge
+    sur 403 (l'identité est prouvée, c'est l'autorisation qui manque)."""
+    headers = {}
+    if status == 401:
+        settings = getattr(request.app.state, "settings", None)
+        headers["WWW-Authenticate"] = www_authenticate(settings)
+    response = JSONResponse({"detail": detail}, status_code=status, headers=headers)
+    await response(request.scope, request.receive, request._send)  # noqa: SLF001
 
-    Retourne ``(user, raw_api_key)`` où ``raw_api_key`` est la clé API en clair
-    présentée (None pour une session JWT), ou None si une réponse d'erreur a déjà
-    été renvoyée. La clé brute sert de secret HMAC pour l'OBO first-party.
+
+async def _authenticate(request: Request) -> tuple[AuthUser, str | None] | None:
+    """Authentifie la surface MCP (serveur de ressources OAuth 2.1), en ASGI.
+
+    Trois voies explicitement distinctes :
+    - **Bearer en forme de JWT** = jeton d'accès émis par l'IdP : vérifié contre le
+      JWKS (iss + audience = ressource docflow), résolu en app_user par (issuer,
+      sub). C'est la voie « client MCP standard » (découverte via WWW-Authenticate).
+    - **Bearer opaque** = clé API (scopes de profil).
+    - **absence** = 401 porteur du WWW-Authenticate.
+
+    Retourne ``(user, raw_api_key)`` (raw_api_key non-None seulement pour une clé
+    API, secret HMAC de l'OBO first-party) ou None si une erreur a été renvoyée.
     """
+    authz = request.headers.get("authorization", "")
+    token = authz[7:].strip() if authz.lower().startswith("bearer ") else None
+
+    # Voie jeton d'accès IdP (Bearer en forme de JWT : header.payload.signature).
+    if token is not None and token.count(".") == 2:
+        try:
+            idp_user = await resolve_idp_bearer(_get_pool(), request.app.state.settings, token)
+        except HTTPException as exc:
+            await _respond_error(request, exc.status_code, exc.detail)
+            return None
+        if idp_user is None:
+            await _respond_error(request, 401, "jeton d'accès invalide ou audience incorrecte")
+            return None
+        return idp_user, None  # accès complet (comme une session humaine)
+
+    # Voie clé API (Bearer opaque) ou absence → dépendance REST partagée.
     try:
         credentials = await _bearer(request)
         user = await get_current_user(request, credentials)
     except HTTPException as exc:
-        response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-        await response(request.scope, request.receive, request._send)  # noqa: SLF001
+        await _respond_error(request, exc.status_code, exc.detail)
         return None
-    # Une session clé API est identifiée par la présence de scopes dans state
-    # (get_current_user les y dépose). Un JWT n'a pas de clé API en clair et
-    # identifie déjà l'humain : l'OBO ne s'y applique pas.
     raw_api_key: str | None = None
     if credentials is not None and getattr(request.state, "api_key_scopes", None) is not None:
         raw_api_key = credentials.credentials
@@ -102,7 +134,7 @@ async def _build_session(request: Request, user: AuthUser, raw_api_key: str | No
 
 
 async def _mcp_sse(scope: Scope, receive: Receive, send: Send) -> None:
-    """Point d'entrée SSE du serveur MCP (JWT de session OU clé API en Bearer).
+    """Point d'entrée SSE du serveur MCP (jeton d'accès IdP OU clé API en Bearer).
 
     L'identité authentifiée est liée au contexte de la session : la boucle de
     dispatch des messages (et donc les outils d'écriture) hérite de cette

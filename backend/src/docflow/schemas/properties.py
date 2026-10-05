@@ -43,6 +43,10 @@ class PropertiesDefUpdate(BaseModel):
     label: str | None = None
     default_value: str | None = None
     required: bool | None = None
+    # Changement de type : libre sans donnée existante ; avec des valeurs en
+    # base, seules les transitions cohérentes sont permises (service). Le slug,
+    # lui, est IMMUABLE — il n'existe pas dans ce schéma.
+    type: PropType | None = None
     # None explicite = retirer le comportement (distingué de « absent »).
     behavior: Literal["auto_now", "auto_now_create"] | None = None
 

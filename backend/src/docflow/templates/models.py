@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from docflow.db.helpers import validate_slug
 
 
 class ConstraintDef(BaseModel):
@@ -20,6 +22,11 @@ class AllowedValueDef(BaseModel):
     label: str
     position: int = 0
     color: str | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
 
 
 class PropDef(BaseModel):
@@ -39,6 +46,11 @@ class PropDef(BaseModel):
     target_type: str | None = None
     max_occurrences: int | None = None
 
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
+
     @model_validator(mode="after")
     def _behavior_date_only(self) -> PropDef:
         if self.behavior is not None and self.type != "date":
@@ -57,6 +69,11 @@ class TypeDef(BaseModel):
     properties: list[PropDef] = Field(default_factory=list)
     content_template: str | None = None  # spec MEXP
 
+    @field_validator("slug")
+    @classmethod
+    def _slug_valid(cls, v: str) -> str:
+        return validate_slug(v, "slug")
+
 
 class Template(BaseModel):
     model_config = {"extra": "forbid"}
@@ -64,7 +81,17 @@ class Template(BaseModel):
     version: int
     template: str
     label: str
+    # Templates dont celui-ci a besoin pour s'importer : leurs types sont cibles
+    # de propriétés `reference` déclarées ici. La dépendance ne s'installe PAS
+    # toute seule — elle se déclare pour que le refus nomme ce qui manque, au
+    # lieu de rendre un slug de type que personne ne sait rattacher.
+    requires: list[str] = Field(default_factory=list)
     functional_types: list[TypeDef]
+
+    @field_validator("requires")
+    @classmethod
+    def _requires_valid(cls, v: list[str]) -> list[str]:
+        return [validate_slug(s, "requires") for s in v]
 
 
 # ── Resolved (post-inheritance, concrete only) ─────────────────────────────
@@ -77,3 +104,4 @@ class ResolvedType(BaseModel):
     label: str
     parent: str | None
     properties: list[PropDef]
+    content_template: str | None = None

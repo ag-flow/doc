@@ -37,3 +37,9 @@ class WorkspaceOut(BaseModel):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Compteurs et dernière activité : renseignés par le listing (index), 0/None
+    # sur une lecture unitaire ou un retour de création — le coût du COUNT ne se
+    # paie que là où l'information est affichée.
+    blocks_count: int = 0
+    documents_count: int = 0
+    last_activity_at: datetime | None = None

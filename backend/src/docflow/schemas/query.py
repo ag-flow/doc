@@ -67,7 +67,7 @@ class FilterClause(BaseModel):
 class SortKey(BaseModel):
     model_config = {"extra": "forbid"}
 
-    # key = slug de propriété | 'title' | 'created_at'
+    # key = slug de propriété | 'title' | 'created_at' | 'updated_at'
     key: str
     dir: Literal["asc", "desc"] = "asc"
 
@@ -78,9 +78,18 @@ class QuerySpec(BaseModel):
     workspace_slug: str
     block_slug: str
     type_slugs: list[str] | None = None
+    # Type de CONTENU (`md`, `table-schema`…) — la grammaire du corps. Distinct de
+    # `type_slugs`, qui porte le type FONCTIONNEL : les deux se combinent et ne se
+    # remplacent jamais.
+    content_types: list[str] | None = None
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    # Remonte aussi les ANCÊTRES des résultats, pour reconstruire un arbre élagué.
+    # Opt-in délibéré : sans ce drapeau la réponse est inchangée. Enrichir en
+    # silence fausserait la logique d'un appelant qui compte sur « exactement ce
+    # que j'ai demandé » — la surface MCP, notamment.
+    include_ancestors: bool = False
     page: int = 1
     page_size: int = 50
 
@@ -99,8 +108,10 @@ class BlockQueryBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     type_slugs: list[str] | None = None
+    content_types: list[str] | None = None
     filters: list[FilterClause] = []
     sort: list[SortKey] = []
     projection: list[str] | None = None
+    include_ancestors: bool = False
     page: int = 1
     page_size: int = 50

@@ -26,7 +26,7 @@ from docflow.workspaces.access import accessible_workspace_slugs, user_can_acces
 
 
 def _json(result: list) -> object:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 async def _make_user(pool: asyncpg.Pool, email: str, *, is_admin: bool = False) -> AuthUser:

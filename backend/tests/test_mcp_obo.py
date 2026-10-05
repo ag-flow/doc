@@ -6,7 +6,7 @@ import uuid
 import asyncpg
 
 from docflow.mcp.obo import resolve_actor_user, verify_actor
-from docflow.mcp.server import _create_workspace, configure
+from docflow.mcp.server import _call_tool, _create_workspace, configure
 from docflow.mcp.session import McpSession, reset_current_session, set_current_session
 from docflow.schemas.auth import AuthUser
 
@@ -194,3 +194,258 @@ async def test_create_workspace_owner_est_la_cle_sans_obo(db_pool: asyncpg.Pool)
     finally:
         await db_pool.execute("DELETE FROM workspace WHERE slug = $1", slug)
         await db_pool.execute("DELETE FROM app_user WHERE email = $1", key_email)
+
+
+# ── Droits = porteur de la clé ; attribution = acteur OBO ──────────────────────
+#
+# Décision « attribution seule » : l'acteur OBO (forgeable par le porteur de la
+# clé, cf. verify_actor dont le secret HMAC est la clé elle-même) ne doit JAMAIS
+# gouverner les droits d'accès — uniquement l'estampillage de propriété.
+
+
+async def _insert_ws(pool: asyncpg.Pool, slug: str, owner_id: uuid.UUID | None) -> uuid.UUID:
+    wk: uuid.UUID = await pool.fetchval(
+        "INSERT INTO workspace (slug, label, owner_id) VALUES ($1, $1, $2) "
+        "RETURNING workspace_technical_key",
+        slug,
+        owner_id,
+    )
+    return wk
+
+
+async def _cleanup(pool: asyncpg.Pool, *, slugs: list[str], emails: list[str]) -> None:
+    await pool.execute("DELETE FROM workspace WHERE slug = ANY($1::text[])", slugs)
+    await pool.execute("DELETE FROM app_user WHERE email = ANY($1::text[])", emails)
+
+
+async def test_acces_refuse_si_porteur_sans_acces_meme_avec_acteur_obo(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Un acteur OBO ayant accès au workspace n'accorde RIEN si le porteur de la
+    clé n'y a pas accès — sinon forger l'en-tête acteur serait une élévation."""
+    configure(db_pool)
+    key_email = "obo-rights-key@test.local"
+    human_email = "obo-rights-human@test.local"
+    slug = "obo-rights-ws"
+    try:
+        key_id = await _insert_user(db_pool, subject="rights-key", email=key_email)
+        human_id = await _insert_user(db_pool, subject="rights-human", email=human_email)
+        await _insert_ws(db_pool, slug, owner_id=human_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=_auth_user(human_id, human_email),
+        )
+        token = set_current_session(session)
+        try:
+            result = await _call_tool("list_documents", {"workspace_slug": slug})
+            assert getattr(result, "isError", False) is True
+            payload = json.loads(result.content[0].text)
+            assert "accès refusé" in payload["error"]
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[slug], emails=[key_email, human_email])
+
+
+async def test_acces_accorde_si_porteur_a_acces_avec_acteur_obo(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Non-régression : l'OBO ne restreint pas non plus — porteur owner → OK."""
+    configure(db_pool)
+    key_email = "obo-rights-key2@test.local"
+    human_email = "obo-rights-human2@test.local"
+    slug = "obo-rights-ws2"
+    try:
+        key_id = await _insert_user(db_pool, subject="rights-key2", email=key_email)
+        human_id = await _insert_user(db_pool, subject="rights-human2", email=human_email)
+        await _insert_ws(db_pool, slug, owner_id=key_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=_auth_user(human_id, human_email),
+        )
+        token = set_current_session(session)
+        try:
+            result = await _call_tool("list_documents", {"workspace_slug": slug})
+            assert not getattr(result, "isError", False)
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[slug], emails=[key_email, human_email])
+
+
+async def test_list_workspaces_visibilite_sur_le_porteur_pas_lacteur(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """La visibilité de list_workspaces suit le porteur de la clé, pas l'acteur."""
+    configure(db_pool)
+    key_email = "obo-vis-key@test.local"
+    human_email = "obo-vis-human@test.local"
+    ws_key_slug = "obo-vis-ws-porteur"
+    ws_human_slug = "obo-vis-ws-acteur"
+    try:
+        key_id = await _insert_user(db_pool, subject="vis-key", email=key_email)
+        human_id = await _insert_user(db_pool, subject="vis-human", email=human_email)
+        await _insert_ws(db_pool, ws_key_slug, owner_id=key_id)
+        await _insert_ws(db_pool, ws_human_slug, owner_id=human_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=_auth_user(human_id, human_email),
+        )
+        token = set_current_session(session)
+        try:
+            result = await _call_tool("list_workspaces", {})
+            slugs = {w["slug"] for w in json.loads(result[0].text)}
+            assert ws_key_slug in slugs
+            assert ws_human_slug not in slugs
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[ws_key_slug, ws_human_slug], emails=[key_email, human_email])
+
+
+# ── Attribution cohérente artefact / dataset / workspace ───────────────────────
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"obo-fake-png"
+
+
+def _artifact_settings() -> object:
+    from docflow.config.settings import Settings
+
+    return Settings(
+        database_url="postgresql://unused/unused",
+        jwt_secret="test-mcp-secret",  # type: ignore[arg-type]
+        artifact_link_ttl_seconds=60,
+    )
+
+
+async def test_create_artifact_created_by_est_lhumain_obo(db_pool: asyncpg.Pool) -> None:
+    import base64
+
+    from docflow.mcp import artifact_tools
+
+    configure(db_pool)
+    key_email = "obo-art-key@test.local"
+    human_email = "obo-art-human@test.local"
+    slug = "obo-art-ws"
+    try:
+        key_id = await _insert_user(db_pool, subject="art-key", email=key_email)
+        human_id = await _insert_user(db_pool, subject="art-human", email=human_email)
+        await _insert_ws(db_pool, slug, owner_id=key_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=_auth_user(human_id, human_email),
+        )
+        token = set_current_session(session)
+        try:
+            result = json.loads(
+                (
+                    await artifact_tools.handle_create_artifact(
+                        db_pool,
+                        _artifact_settings(),  # type: ignore[arg-type]
+                        {
+                            "workspace_slug": slug,
+                            "filename": "obo.png",
+                            "data_base64": base64.b64encode(_PNG).decode(),
+                        },
+                    )
+                )[0].text
+            )
+            assert "error" not in result
+            created_by = await db_pool.fetchval(
+                "SELECT created_by FROM artifact WHERE id = $1", uuid.UUID(result["id"])
+            )
+            assert created_by == human_id
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[slug], emails=[key_email, human_email])
+
+
+async def test_create_artifact_created_by_est_la_cle_sans_obo(db_pool: asyncpg.Pool) -> None:
+    import base64
+
+    from docflow.mcp import artifact_tools
+
+    configure(db_pool)
+    key_email = "obo-art-key2@test.local"
+    slug = "obo-art-ws2"
+    try:
+        key_id = await _insert_user(db_pool, subject="art-key2", email=key_email)
+        await _insert_ws(db_pool, slug, owner_id=key_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=None,
+        )
+        token = set_current_session(session)
+        try:
+            result = json.loads(
+                (
+                    await artifact_tools.handle_create_artifact(
+                        db_pool,
+                        _artifact_settings(),  # type: ignore[arg-type]
+                        {
+                            "workspace_slug": slug,
+                            "filename": "obo2.png",
+                            "data_base64": base64.b64encode(_PNG + b"2").decode(),
+                        },
+                    )
+                )[0].text
+            )
+            assert "error" not in result
+            created_by = await db_pool.fetchval(
+                "SELECT created_by FROM artifact WHERE id = $1", uuid.UUID(result["id"])
+            )
+            assert created_by == key_id
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[slug], emails=[key_email])
+
+
+async def test_create_dataset_created_by_est_lhumain_obo(db_pool: asyncpg.Pool) -> None:
+    from docflow.mcp import dataset_tools
+
+    configure(db_pool)
+    key_email = "obo-ds-key@test.local"
+    human_email = "obo-ds-human@test.local"
+    slug = "obo-ds-ws"
+    try:
+        key_id = await _insert_user(db_pool, subject="ds-key", email=key_email)
+        human_id = await _insert_user(db_pool, subject="ds-human", email=human_email)
+        await _insert_ws(db_pool, slug, owner_id=key_id)
+        session = McpSession(
+            user=_auth_user(key_id, key_email),
+            api_key_scopes=[],
+            api_key_admin=True,
+            actor_user=_auth_user(human_id, human_email),
+        )
+        token = set_current_session(session)
+        try:
+            result = json.loads(
+                (
+                    await dataset_tools.handle(
+                        "create_dataset",
+                        db_pool,
+                        {"workspace_slug": slug, "slug": "obo-ds", "label": "OBO DS"},
+                    )
+                )[0].text
+            )
+            assert "error" not in result
+            created_by = await db_pool.fetchval(
+                "SELECT created_by FROM dataset WHERE id = $1", uuid.UUID(result["id"])
+            )
+            assert created_by == human_id
+        finally:
+            reset_current_session(token)
+    finally:
+        await _cleanup(db_pool, slugs=[slug], emails=[key_email, human_email])

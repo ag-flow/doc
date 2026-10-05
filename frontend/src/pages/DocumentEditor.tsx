@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, Eye, EyeOff, Link2, Loader2, Maximize2, Minimize2, Save } from 'lucide-react'
-import { ApiError, docsApi, reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
+import {
+  ArrowsIn, ArrowsLeftRight, ArrowsOut, Check, Eye, EyeSlash,
+  FloppyDisk, LinkSimple, Trash,
+} from '@phosphor-icons/react'
+import { ApiError, docsApi, type DocumentOut } from '../lib/api'
 
 const _SLUG_RE = /^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$/
 import { Button } from '../components/ui/button'
@@ -11,14 +14,18 @@ import { ReparentDialog } from '../components/ReparentDialog'
 import { Input } from '../components/ui/input'
 import { PropertiesPanel } from '../components/PropertiesPanel'
 import { ConflictResolver } from './ConflictResolver'
-import { DocumentChildrenPanel } from '../components/DocumentChildrenPanel'
-import { MarkdownEditor, type MarkdownEditorHandle } from '../components/MarkdownEditor'
-import { ReactionBar } from '../components/ReactionBar'
-import { CommentsPanel } from '../components/CommentsPanel'
+import { surfaceFor, type ContentEditorHandle } from '../lib/contentSurfaces'
 import { BacklinksPanel } from '../components/BacklinksPanel'
 import { DocumentReader } from '../components/DocumentReader'
+import { DocumentFooter } from '../components/DocumentFooter'
+import { DocumentShell } from '../components/DocumentShell'
+import { DocumentHistoryAction } from '../components/DocumentHistoryAction'
+import { relativeDate } from '../lib/relativeDate'
+import { watchDocument } from '../lib/docWatch'
+import { threeWayMerge } from '../lib/merge3'
+import { useToast } from '../components/Toast'
 
-type SaveStatus = 'idle' | 'dirty' | 'saving' | 'error'
+type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
 interface ConflictData {
   baseVersion: number
@@ -29,12 +36,15 @@ interface ConflictData {
 
 export function DocumentEditor() {
   const { t } = useTranslation()
+  const { toast } = useToast()
   const { wsSlug: ws, blocSlug, docId } = useParams<{ wsSlug: string; blocSlug: string; docId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const editorRef = useRef<MarkdownEditorHandle>(null)
+  const editorRef = useRef<ContentEditorHandle>(null)
   const expectedVersion = useRef<number>(0)
+  // Garde de réentrance de `doSave` (bug double Cmd+S) — cf. commentaire sur `doSave`.
+  const savingRef = useRef(false)
   const ancestorRef = useRef<{ title: string; content: string }>({ title: '', content: '' })
   // Identifiant du document actuellement chargé dans l'état local (titre / version).
   // Sert à distinguer un changement de document (resync obligatoire) d'un simple
@@ -67,25 +77,49 @@ export function DocumentEditor() {
   })
 
   const [showReparent, setShowReparent] = useState(false)
-  const { data: reactions } = useQuery<ReactionOut>({
-    queryKey: ['doc-reactions', ws, docId],
-    queryFn: () => reactionsApi.getDocReactions(ws!, docId!),
-    enabled: Boolean(ws && docId),
-    staleTime: 30_000,
-  })
-
-  const reactDocMutation = useMutation({
-    mutationFn: (nature: 1 | -1) => reactionsApi.toggleDocReaction(ws!, docId!, nature),
-    onSuccess: (updated: ReactionOut) => {
-      queryClient.setQueryData(['doc-reactions', ws, docId], updated)
-    },
-  })
 
   const { data: doc, isLoading } = useQuery<DocumentOut>({
     queryKey: ['document', ws, docId],
     queryFn: () => docsApi.getDocument(ws!, docId!),
     enabled: Boolean(ws && docId),
   })
+
+  // ── Live-reload (phase A) : suivi SSE du document ouvert. En lecture, un
+  // changement backend re-fetch et re-rend ; en édition, on ne touche à rien —
+  // toast discret, la conciliation passe par le verrou optimiste (409 →
+  // ConflictResolver) à l'enregistrement. Refs miroirs : le flux vit plus
+  // longtemps qu'un rendu.
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const lastNotifiedVersionRef = useRef(0)
+  useEffect(() => {
+    if (!ws || !docId) return
+    lastNotifiedVersionRef.current = 0
+    const stop = watchDocument(ws, docId, {
+      onChange: (e) => {
+        if (e.version <= expectedVersion.current) return
+        if (modeRef.current === 'read') {
+          void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+          void queryClient.invalidateQueries({ queryKey: ['doc-values', ws, docId] })
+        } else if (e.version > lastNotifiedVersionRef.current) {
+          // Un toast par version distante (le poll serveur ~2 s coalesce déjà
+          // les rafales) — jamais de rechargement pendant la saisie.
+          lastNotifiedVersionRef.current = e.version
+          toast(
+            t('editor.remoteChanged', { who: e.updated_by ?? t('editor.remoteAgent') }),
+            'info',
+          )
+        }
+      },
+      onGone: () => {
+        if (modeRef.current === 'read') {
+          void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
+        }
+        toast(t('editor.remoteDeleted'), 'error')
+      },
+    })
+    return stop
+  }, [ws, docId, queryClient, toast, t])
 
   const slugMutation = useMutation({
     mutationFn: (s: string | null) =>
@@ -103,12 +137,15 @@ export function DocumentEditor() {
   useEffect(() => {
     if (!doc) return
     const isNewDoc = loadedDocIdRef.current !== docId
-    // FE-03 : ne pas resynchroniser titre / expectedVersion lors d'un refetch
-    // d'arrière-plan (retour d'onglet, staleTime) pendant que l'utilisateur édite.
-    // Réaligner expectedVersion sur la version serveur ici contournerait le verrou
-    // optimiste et écraserait des modifications concurrentes sans dialogue de conflit ;
-    // un titre en cours d'édition serait par ailleurs réinitialisé.
-    if (!isNewDoc && status !== 'idle') return
+    // FE-03 : en mode édition, un refetch d'arrière-plan (poll du change feed,
+    // retour d'onglet) ne réaligne JAMAIS titre / expectedVersion / ancestor —
+    // même à l'état idle, car l'éditeur ne relit son contenu qu'au montage :
+    // réaligner ici ferait pointer le verrou optimiste sur une version que
+    // l'utilisateur ne voit pas, et sa prochaine sauvegarde écraserait la
+    // version distante sans 409 ni fusion three-way. En gelant, le vrai 409
+    // arrive et la machinerie de fusion arbitre. Le resync ne reste légitime
+    // que sur un vrai changement de document ou hors édition (lecture).
+    if (!isNewDoc && mode === 'edit') return
     loadedDocIdRef.current = docId ?? null
     setTitle(doc.title)
     setSlugValue(doc.slug ?? '')
@@ -116,7 +153,7 @@ export function DocumentEditor() {
     ancestorRef.current = { title: doc.title, content: doc.content ?? '' }
     // Changement de document : repartir d'un état propre (l'éditeur est remonté via key).
     if (isNewDoc) setStatus('idle')
-  }, [doc, docId, status])
+  }, [doc, docId, mode])
 
   const markDirty = useCallback(() => {
     setStatus((s) => (s === 'saving' ? s : 'dirty'))
@@ -125,7 +162,12 @@ export function DocumentEditor() {
   const doSave = useCallback(async (): Promise<boolean> => {
     if (!ws || !docId || !editorRef.current) return false
     if (status !== 'dirty' && status !== 'error') return true
-    const content = await editorRef.current.getMarkdown()
+    // Garde de réentrance sur ref (et non sur `status`, qui n'est pas encore
+    // re-rendu entre deux appels rapprochés — double Cmd+S) : sérialise les
+    // appels concurrents à `doSave` sans dépendre d'un re-rendu React.
+    if (savingRef.current) return false
+    savingRef.current = true
+    const content = await editorRef.current.getContent()
     setStatus('saving')
     setErrorMsg(null)
     try {
@@ -136,17 +178,63 @@ export function DocumentEditor() {
       })
       expectedVersion.current = updated.version
       ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
-      setStatus('idle')
+      // Accusé discret (et non un toast bloquant) : « Enregistré » s'affiche à
+      // la place de « non enregistré », puis s'efface de lui-même.
+      setStatus('saved')
       void queryClient.invalidateQueries({ queryKey: ['document', ws, docId] })
       return true
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const serverDoc = (err.detail ?? {}) as Partial<DocumentOut>
+        const serverContent = serverDoc.content ?? ''
+        const serverVersion = serverDoc.version ?? expectedVersion.current + 1
+        // Phase B : fusion three-way AVANT tout dialogue — base commune (début
+        // d'édition) / ours (brouillon) / theirs (serveur). Zones disjointes →
+        // enregistrement direct du fusionné ; conflits réels → resolver avec un
+        // brouillon PRÉ-FUSIONNÉ (ours retenu en zone de conflit) : il ne reste
+        // à arbitrer que les vraies zones.
+        const { merged, conflicts } = threeWayMerge(
+          ancestorRef.current.content, content, serverContent,
+        )
+        if (conflicts === 0) {
+          try {
+            const updated = await docsApi.patchDocument(ws, docId, {
+              title,
+              content: merged,
+              expected_version: serverVersion,
+            })
+            expectedVersion.current = updated.version
+            ancestorRef.current = { title: updated.title, content: updated.content ?? '' }
+            // FE-02 : publier le fusionné dans le cache puis remonter l'éditeur,
+            // sinon la sauvegarde suivante repartirait du brouillon pré-fusion.
+            queryClient.setQueryData(['document', ws, docId], updated)
+            setEditorEpoch((e) => e + 1)
+            setStatus('saved')
+            toast(t('editor.autoMerged', { version: updated.version }), 'success')
+            return true
+          } catch (retryErr) {
+            if (retryErr instanceof ApiError && retryErr.status === 409) {
+              // Nouvelle écriture entre-temps : on arbitre sur l'état frais.
+              const s2 = (retryErr.detail ?? {}) as Partial<DocumentOut>
+              setConflict({
+                baseVersion: expectedVersion.current,
+                server: s2.content ?? '',
+                serverVersion: s2.version ?? serverVersion + 1,
+                draft: merged,
+              })
+              setStatus('idle')
+              return false
+            }
+            setStatus('error')
+            setErrorMsg(retryErr instanceof ApiError ? retryErr.message : t('error.generic'))
+            return false
+          }
+        }
         setConflict({
           baseVersion: expectedVersion.current,
-          server: serverDoc.content ?? '',
-          serverVersion: serverDoc.version ?? expectedVersion.current + 1,
-          draft: content,
+          server: serverContent,
+          serverVersion,
+          draft: merged,
         })
         setStatus('idle')
       } else if (err instanceof ApiError && err.status === 422) {
@@ -157,8 +245,17 @@ export function DocumentEditor() {
         setErrorMsg(err instanceof ApiError ? err.message : t('error.generic'))
       }
       return false
+    } finally {
+      savingRef.current = false
     }
   }, [ws, docId, title, status, queryClient, t])
+
+  // L'accusé de sauvegarde retombe seul ; un nouveau `markDirty` le remplace.
+  useEffect(() => {
+    if (status !== 'saved') return
+    const timer = setTimeout(() => setStatus((s) => (s === 'saved' ? 'idle' : s)), 2000)
+    return () => clearTimeout(timer)
+  }, [status])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -229,6 +326,11 @@ export function DocumentEditor() {
     setDeleting(true)
     try {
       await docsApi.deleteDocument(ws, docId)
+      // Mêmes clés que `handleCreated` de BlockDocumentList — la liste (mode
+      // browse ET mode requête) doit perdre le document supprimé aussitôt.
+      void queryClient.invalidateQueries({ queryKey: ['block-type-slugs', ws, blocSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['block-tree', ws, blocSlug] })
+      void queryClient.invalidateQueries({ queryKey: ['block-query', ws, blocSlug] })
       void queryClient.invalidateQueries({ queryKey: ['block-documents', ws, blocSlug] })
       void navigate(`/ws/${ws}/blocs/${blocSlug}/documents`)
     } catch (err) {
@@ -241,6 +343,15 @@ export function DocumentEditor() {
   if (isLoading) return <div className="p-8">{t('common.loading')}</div>
   if (!doc || !ws || !docId || !blocSlug) return <div className="p-8">{t('error.notFound')}</div>
 
+  // Bascule vers l'édition : re-fetch d'abord (un agent a pu écrire pendant la
+  // lecture), puis remontage de l'éditeur pour charger cette base fraîche —
+  // sinon expectedVersion avancerait sur un contenu affiché périmé.
+  const enterEdit = async () => {
+    await queryClient.refetchQueries({ queryKey: ['document', ws, docId] })
+    setEditorEpoch((e) => e + 1)
+    setMode('edit')
+  }
+
   if (mode === 'read') {
     return (
       <DocumentReader
@@ -248,7 +359,7 @@ export function DocumentEditor() {
         blocSlug={blocSlug}
         docId={docId}
         doc={doc}
-        onEdit={() => setMode('edit')}
+        onEdit={() => void enterEdit()}
       />
     )
   }
@@ -263,214 +374,225 @@ export function DocumentEditor() {
     setMode('read')
   }
 
+  const statusNote =
+    status === 'dirty' ? (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-accent-2-700"
+        data-testid="document-dirty">
+        <span className="h-1.5 w-1.5 rounded-full bg-accent-2" />
+        {t('editor.dirty')}
+      </span>
+    ) : status === 'saved' ? (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-accent-700"
+        data-testid="document-saved">
+        <Check size={12} weight="bold" />
+        {t('editor.savedAck')}
+      </span>
+    ) : status === 'error' ? (
+      <span className="text-[12px] text-accent-2-700" data-testid="document-error">
+        {errorMsg ?? t('error.generic')}
+      </span>
+    ) : null
+
+  const actions = (
+    <>
+      {statusNote}
+      <Button
+        variant="icon"
+        size="sm"
+        title={doc.exposed ? t('blocs.makePrivate') : t('blocs.makePublic')}
+        onClick={() => exposeMutation.mutate(!doc.exposed)}
+        disabled={exposeMutation.isPending}
+        data-testid="document-expose-btn"
+      >
+        {doc.exposed
+          ? <Eye size={14} weight="duotone" />
+          : <EyeSlash size={14} weight="duotone" />}
+      </Button>
+      {doc.exposed && (
+        <Button
+          variant="icon"
+          size="sm"
+          title={t('editor.copyPublicLink')}
+          onClick={() => {
+            void navigator.clipboard.writeText(`${window.location.origin}/pub/${docId}`)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+        >
+          {copied ? <Check size={14} weight="bold" /> : <LinkSimple size={14} weight="duotone" />}
+        </Button>
+      )}
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => void switchToRead()}
+        title={t('editor.read')}
+        data-testid="document-read-btn"
+      >
+        <Eye size={14} weight="duotone" />
+      </Button>
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => setFocusMode((f) => !f)}
+        title={focusMode ? t('editor.focusExit') : t('editor.focusEnter')}
+        data-testid="document-focus-btn"
+      >
+        {focusMode ? <ArrowsIn size={14} weight="duotone" /> : <ArrowsOut size={14} weight="duotone" />}
+      </Button>
+      <DocumentHistoryAction ws={ws!} docId={docId!} currentVersion={doc.version} />
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => setShowReparent(true)}
+        title={t('editor.move')}
+        data-testid="document-move-btn"
+      >
+        <ArrowsLeftRight size={14} weight="duotone" />
+      </Button>
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => setDeleteConfirm(true)}
+        title={t('common.delete')}
+        className="text-accent-2-700"
+        data-testid="document-delete-btn"
+      >
+        <Trash size={14} weight="duotone" />
+      </Button>
+      <Button
+        onClick={() => void doSave()}
+        disabled={status === 'idle' || status === 'saved' || status === 'saving'}
+        title={t('editor.save')}
+        data-testid="document-save-btn"
+      >
+        <FloppyDisk size={15} weight="duotone" />
+        {status === 'saving' ? t('editor.saving') : t('editor.save')}
+      </Button>
+    </>
+  )
+
+  // La surface d'édition est choisie par le TYPE DE CONTENU du document, pas
+  // câblée en dur : un type inconnu retombe sur le repli texte brut. Toute la
+  // coquille ci-dessous (titre, propriétés, commentaires, save) est identique
+  // quelle que soit la surface.
+  const { Editor, fullWidth } = surfaceFor(doc.type)
+
+  const editorSheet = (
+    <Editor
+      key={`${docId}:${editorEpoch}`}
+      ref={editorRef}
+      initialContent={doc.content ?? ''}
+      onDirty={markDirty}
+      wsSlug={ws}
+      docId={docId}
+    />
+  )
+
+  // Barre du mode focus — son CONTENU est propre à l'édition ; sa mise en page
+  // appartient à la coquille, comme celle des deux autres modes.
+  const focusBar = (
+    <>
+      <span className="truncate text-[13px] text-ink/[0.5]">{title}</span>
+      {statusNote}
+      <span className="flex-1" />
+      <Button onClick={() => void doSave()} disabled={status !== 'dirty' && status !== 'error'}>
+        <FloppyDisk size={15} weight="duotone" /> {t('editor.save')}
+      </Button>
+      <Button
+        variant="icon"
+        size="sm"
+        onClick={() => setFocusMode(false)}
+        title={t('editor.focusExit')}
+      >
+        <ArrowsIn size={14} weight="duotone" />
+      </Button>
+    </>
+  )
+
   return (
-    <div className="p-6" data-testid="document-editor">
-      <div className="mb-1 flex items-center gap-4">
-        <Input
-          value={title}
-          onChange={(e) => { setTitle(e.target.value); markDirty() }}
-          className="max-w-xl text-lg font-semibold"
-          data-testid="document-title-input"
-        />
-        <div className="ml-auto flex items-center gap-3">
-          {status === 'dirty' && (
-            <span className="text-sm text-amber-600">{t('editor.dirty')}</span>
-          )}
-          {status === 'error' && (
-            <span className="text-sm text-red-600" data-testid="document-error">
-              {errorMsg ?? t('error.generic')}
-            </span>
-          )}
-
-          {/* Bouton exposé / privé */}
-          <button
-            type="button"
-            title={doc.exposed ? 'Rendre privé' : 'Exposer publiquement'}
-            onClick={() => exposeMutation.mutate(!doc.exposed)}
-            disabled={exposeMutation.isPending}
-            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
-              transition-colors ${doc.exposed
-                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-            data-testid="document-expose-btn"
-          >
-            {doc.exposed ? <Eye size={13} /> : <EyeOff size={13} />}
-            {doc.exposed ? 'Public' : 'Privé'}
-          </button>
-
-          {/* Copier l'URL publique quand exposé */}
-          {doc.exposed && (
-            <button
-              type="button"
-              title="Copier le lien public"
-              onClick={() => {
-                void navigator.clipboard.writeText(
-                  `${window.location.origin}/pub/${docId}`
-                )
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
-              }}
-              className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-gray-400
-                         hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => void switchToRead()}
-            title={t('editor.read')}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
-              text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            data-testid="document-read-btn"
-          >
-            <Eye size={13} />
-            {t('editor.read')}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFocusMode((f) => !f)}
-            title={focusMode ? 'Quitter le mode rédaction (Échap)' : 'Mode rédaction plein écran'}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium
-              text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          >
-            {focusMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowReparent(true)}
-            data-testid="document-move-btn"
-          >
-            Déplacer
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setDeleteConfirm(true)}
-            data-testid="document-delete-btn"
-          >
-            {t('common.delete')}
-          </Button>
-          <Button
-            onClick={() => void doSave()}
-            disabled={status === 'idle' || status === 'saving'}
-            title={t('editor.save')}
-            data-testid="document-save-btn"
-          >
-            {status === 'saving'
-              ? <Loader2 size={15} className="animate-spin" />
-              : <Save size={15} />}
-          </Button>
-        </div>
-      </div>
-
-      <div className="mb-4 flex items-center gap-3 flex-wrap">
-        {doc.functional_type_slug && (
-          <span className="text-sm text-gray-400" data-testid="document-type-badge">
-            {doc.functional_type_slug}
-          </span>
-        )}
-        {/* Slug inline edit */}
-        {slugEdit ? (
-          <form
-            className="flex items-center gap-1"
-            onSubmit={(e) => {
-              e.preventDefault()
-              const v = slugValue.trim()
-              if (v && !_SLUG_RE.test(v)) {
-                setSlugError('Minuscules, chiffres, tirets — 2-80 chars')
-                return
-              }
-              slugMutation.mutate(v || null)
-            }}
-          >
-            <Input
-              value={slugValue}
-              onChange={(e) => { setSlugValue(e.target.value); setSlugError(null) }}
-              className="h-7 w-52 text-xs font-mono"
-              placeholder="mon-slug"
-              autoFocus
-            />
-            <button type="submit" className="text-xs text-indigo-600 hover:underline px-1">OK</button>
-            <button type="button" className="text-xs text-gray-400 hover:underline px-1" onClick={() => { setSlugEdit(false); setSlugValue(doc.slug ?? ''); setSlugError(null) }}>Annuler</button>
-            {slugError && <span className="text-xs text-red-500 ml-1">{slugError}</span>}
-          </form>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setSlugEdit(true)}
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 group"
-            title="Définir le slug pour la synchro git"
-          >
-            <Link2 size={12} className="shrink-0" />
-            {doc.slug
-              ? <span className="font-mono">{doc.slug}</span>
-              : <span className="italic text-gray-300">ajouter un slug</span>}
-          </button>
-        )}
-      </div>
-
-      <div className="flex gap-6">
-        <div className={focusMode
-          ? 'fixed inset-0 z-40 bg-white flex flex-col p-6 overflow-y-auto'
-          : 'w-2/3'
-        }>
-          {focusMode && (
-            <div className="mb-3 flex items-center gap-3 shrink-0">
-              <span className="text-base font-semibold text-gray-700 truncate max-w-xl">{title}</span>
-              <div className="ml-auto flex items-center gap-2">
-                {status === 'dirty' && (
-                  <span className="text-xs text-amber-600">{t('editor.dirty')}</span>
-                )}
+    <div data-testid="document-editor">
+      <DocumentShell
+        focus={focusMode}
+        focusBar={focusBar}
+        wide={fullWidth}
+        kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
+        title={
+          <Input
+            value={title}
+            onChange={(e) => { setTitle(e.target.value); markDirty() }}
+            className="w-full border-0 bg-transparent px-0 text-[42px] leading-[1.1]
+              tracking-[-0.03em] [font-family:var(--font-heading)] [font-weight:var(--font-heading-weight)]"
+            data-testid="document-title-input"
+          />
+        }
+        meta={
+          <>
+            {slugEdit ? (
+              <form
+                className="flex items-center gap-1"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const v = slugValue.trim()
+                  if (v && !_SLUG_RE.test(v)) {
+                    setSlugError(t('editor.slugInvalid'))
+                    return
+                  }
+                  slugMutation.mutate(v || null)
+                }}
+              >
+                <Input
+                  value={slugValue}
+                  onChange={(e) => { setSlugValue(e.target.value); setSlugError(null) }}
+                  className="w-52 [font-family:var(--font-mono)] text-[12px]"
+                  placeholder="mon-slug"
+                  autoFocus
+                />
+                <Button type="submit" variant="ghost" size="sm">OK</Button>
                 <Button
-                  size="sm"
-                  onClick={() => void doSave()}
-                  disabled={status === 'idle' || status === 'saving'}
-                  title={t('editor.save')}
-                >
-                  {status === 'saving'
-                    ? <Loader2 size={14} className="animate-spin" />
-                    : <Save size={14} />}
-                </Button>
-                <button
                   type="button"
-                  onClick={() => setFocusMode(false)}
-                  title="Quitter le mode rédaction (Échap)"
-                  className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-gray-400
-                    hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setSlugEdit(false); setSlugValue(doc.slug ?? ''); setSlugError(null) }}
                 >
-                  <Minimize2 size={14} />
-                </button>
-              </div>
-            </div>
-          )}
-          <MarkdownEditor key={`${docId}:${editorEpoch}`} ref={editorRef} initialContent={doc.content ?? ''} onDirty={markDirty} wsSlug={ws} />
-          <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
-        </div>
-        {!focusMode && (
-          <div className="w-1/3 border-l border-gray-200 pl-6">
+                  {t('common.cancel')}
+                </Button>
+                {slugError && <span className="field-error">{slugError}</span>}
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSlugEdit(true)}
+                className="inline-flex items-center gap-1 border-0 bg-transparent p-0 text-inherit hover:text-accent-700"
+                title={t('editor.slugSet')}
+              >
+                <LinkSimple size={13} weight="duotone" />
+                {doc.slug
+                  ? <span className="[font-family:var(--font-mono)]">{doc.slug}</span>
+                  : <span className="italic">{t('editor.slugAdd')}</span>}
+              </button>
+            )}
+            <span>v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}{doc.updated_by ? ` par ${doc.updated_by}` : ''}</span>
+            <span className="flex-1" />
+            {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
+          </>
+        }
+        actions={actions}
+        aside={
+          <>
             <PropertiesPanel ws={ws} docId={docId} functionalTypeSlug={doc.functional_type_slug} />
             <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
-          </div>
-        )}
-      </div>
+          </>
+        }
+        footer={
+          <>
+            <DocumentFooter ws={ws} blocSlug={blocSlug} docId={docId} />
+          </>
+        }
+      >
+        {editorSheet}
+      </DocumentShell>
 
-      <div className="mt-6 border-t border-gray-100 pt-6">
-        {reactions && (
-          <div className="mb-4">
-            <ReactionBar
-              reactions={reactions}
-              onReact={(n) => reactDocMutation.mutate(n)}
-              disabled={reactDocMutation.isPending}
-            />
-          </div>
-        )}
-        <CommentsPanel ws={ws} docId={docId} />
-      </div>
 
       {showReparent && doc && (
         <ReparentDialog
@@ -488,11 +610,11 @@ export function DocumentEditor() {
       )}
 
       {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-red-600">{t('documents.deleteConfirmTitle')}</h2>
-            <p className="text-sm text-gray-600">{t('documents.deleteConfirmMsg')}</p>
-            <div className="flex justify-end gap-2">
+        <div className="dialog-backdrop z-50">
+          <div className="dialog">
+            <h4 className="dialog-title">{t('documents.deleteConfirmTitle')}</h4>
+            <p className="dialog-body">{t('documents.deleteConfirmMsg')}</p>
+            <div className="dialog-actions">
               <Button variant="secondary" onClick={() => setDeleteConfirm(false)} disabled={deleting}>
                 {t('common.cancel')}
               </Button>
@@ -510,13 +632,11 @@ export function DocumentEditor() {
       )}
 
       {blocker.state === 'blocked' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-bold">{t('editor.leaveConfirm.title')}</h2>
-            <p className="text-sm text-gray-600">{t('editor.leaveConfirm.message')}</p>
-            {status === 'error' && errorMsg && (
-              <p className="text-sm text-red-600">{errorMsg}</p>
-            )}
+        <div className="dialog-backdrop z-50">
+          <div className="dialog">
+            <h4 className="dialog-title">{t('editor.leaveConfirm.title')}</h4>
+            <p className="dialog-body">{t('editor.leaveConfirm.message')}</p>
+            {status === 'error' && errorMsg && <p className="field-error">{errorMsg}</p>}
             <div className="flex flex-col gap-2">
               <Button
                 data-testid="leave-save-btn"

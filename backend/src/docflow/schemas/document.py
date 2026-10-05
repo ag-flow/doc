@@ -18,6 +18,12 @@ class DocumentCreate(BaseModel):
     content: str | None = None
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
+    # Type de CONTENU (grammaire du corps : md, table-schema…), à ne pas
+    # confondre avec `functional_type_slug` (ce que le document représente
+    # métier). Omis = défaut historique `md`, donc rétro-compatible.
+    # Il n'est positionnable qu'À LA CRÉATION : changer la grammaire d'un
+    # document existant est une opération à part, pas un effet de bord d'écriture.
+    content_type: str | None = None
     # Valeurs initiales de propriétés (slug → valeur ; restricted_list = slug
     # de la valeur autorisée). Les propriétés required sans default ni behavior
     # DOIVENT y figurer : la création est refusée (422) sinon.
@@ -41,6 +47,8 @@ class DocumentCreateInBlock(BaseModel):
     slug: str
     parent_id: uuid.UUID | None = None
     functional_type_slug: str | None = None
+    # Type de CONTENU — même contrat que DocumentCreate.
+    content_type: str | None = None
     # Valeurs initiales de propriétés — même contrat que DocumentCreate.
     properties: dict[str, str] | None = None
 
@@ -96,3 +104,23 @@ class DocumentOut(BaseModel):
     exposed: bool
     created_at: datetime
     updated_at: datetime
+    # Auteur de la dernière écriture (libellé affichable) ; null = inconnu.
+    updated_by: str | None = None
+
+
+class DocumentVersionInfo(BaseModel):
+    """Entrée de l'historique des versions (sans le contenu, volumineux)."""
+
+    version_number: int
+    title: str
+    content_length: int
+    created_at: datetime
+
+
+class DocumentVersionOut(BaseModel):
+    """Une version précise, avec son contenu (lecture seule)."""
+
+    version_number: int
+    title: str
+    content: str | None
+    created_at: datetime

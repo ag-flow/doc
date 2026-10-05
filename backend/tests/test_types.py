@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import uuid
-
 import asyncpg
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from docflow.app import app
-from docflow.auth.jwt import create_token
 from docflow.errors import DependentsConflictError
-from docflow.schemas.auth import AuthUser
 from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
 from docflow.types import service as type_svc
 
@@ -21,13 +17,6 @@ _BASE_ENV = {
     "JWT_SECRET": _JWT_SECRET,
 }
 _WS = "test-ws"
-
-
-def _admin_token(user_id: uuid.UUID) -> str:
-    user = AuthUser(
-        id=user_id, email="a@b.com", label="L", is_admin=True, validated=True, disabled=False
-    )
-    return create_token(user, _JWT_SECRET)
 
 
 def _client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient:
@@ -167,10 +156,10 @@ async def test_types_crud_via_http(
         assert setup.status_code == 201
 
         login = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
-        token = login.json()["access_token"]
-        hdrs = {"Authorization": f"Bearer {token}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
 
         r = client.post(
             f"/api/workspaces/{_WS}/types",
@@ -206,9 +195,10 @@ async def test_delete_type_confirm_guard_via_http(
         )
         assert setup.status_code == 201
         login = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
-        hdrs = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        assert login.status_code == 200, login.text
+        hdrs = {}  # jar TestClient : cookie de session
 
         base = f"/api/workspaces/{_WS}/types"
         assert (
@@ -234,3 +224,67 @@ async def test_delete_type_confirm_guard_via_http(
         r = client.delete(f"{base}/g-epic?confirm=true", headers=hdrs)
         assert r.status_code == 204
         assert client.get(f"{base}/g-feature", headers=hdrs).status_code == 404
+
+
+# ── Héritage à la création (copie matérialisée des propriétés) ───────────────
+
+
+async def test_create_type_with_inherit_copies_properties(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    from docflow.properties import service as prop_svc
+    from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
+
+    await type_svc.create_type(db_pool, _WS, FunctionalTypeCreate(slug="base", label="Base"))
+    await prop_svc.create_def(
+        db_pool, _WS, "base",
+        PropertiesDefCreate(slug="statut", label="Statut", type="restricted_list", required=True),
+    )
+    await prop_svc.create_allowed_value(
+        db_pool, _WS, "base", "statut",
+        AllowedValueCreate(slug="todo", label="À faire", position=1, color="#0088b0"),
+    )
+    await prop_svc.create_def(
+        db_pool, _WS, "base", PropertiesDefCreate(slug="budget", label="Budget", type="int"),
+    )
+
+    out = await type_svc.create_type(
+        db_pool, _WS,
+        FunctionalTypeCreate(slug="enfant", label="Enfant", inherit_slug="base"),
+    )
+    assert out.slug == "enfant"
+
+    # Les propriétés sont copiées (defs + valeurs autorisées, couleur comprise).
+    rows = await db_pool.fetch(
+        "SELECT slug, required FROM properties_defs WHERE functional_type_ref = $1 ORDER BY slug",
+        out.id,
+    )
+    assert [(r["slug"], r["required"]) for r in rows] == [("budget", False), ("statut", True)]
+    av = await db_pool.fetchrow(
+        "SELECT av.slug, av.label, av.color FROM properties_allowed_values av "
+        "JOIN properties_defs pd ON pd.id = av.property_def_ref "
+        "WHERE pd.functional_type_ref = $1",
+        out.id,
+    )
+    assert av is not None and (av["slug"], av["color"]) == ("todo", "#0088b0")
+
+    # Copie matérialisée, pas de lien : une propriété ajoutée à la base ensuite
+    # ne se propage pas.
+    await prop_svc.create_def(
+        db_pool, _WS, "base", PropertiesDefCreate(slug="apres", label="Après", type="text"),
+    )
+    count = await db_pool.fetchval(
+        "SELECT count(*) FROM properties_defs WHERE functional_type_ref = $1", out.id
+    )
+    assert count == 2
+
+
+async def test_create_type_inherit_unknown_source_422(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    with pytest.raises(HTTPException) as exc:
+        await type_svc.create_type(
+            db_pool, _WS,
+            FunctionalTypeCreate(slug="orphelin", label="Orphelin", inherit_slug="fantome"),
+        )
+    assert exc.value.status_code == 422

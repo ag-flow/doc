@@ -1,0 +1,191 @@
+/* Broadsheet — chrome applicatif : rail, en-tête, fil d'Ariane.
+   Présent sur tous les écrans ; aucune valeur en dur (voir tokens.css). */
+
+/* ── Rail ───────────────────────────────────────────────────────────────── */
+.rail {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 40;
+  width: var(--rail-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2) 0;
+  background: var(--color-rail-bg);
+}
+
+/* Cible de clic 40×40 pour une icône de 20 : la surface tient sans que le
+   dessin grossisse. */
+.rail-btn {
+  position: relative;
+  width: var(--rail-target);
+  height: var(--rail-target);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  color: var(--color-rail-idle);
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.rail-btn:hover {
+  color: var(--color-paper);
+  background: color-mix(in srgb, var(--color-paper) 8%, transparent);
+}
+/* L'actif porte la pastille cyan — `aria-current` est l'état, pas une classe :
+   il reste juste sur navigation directe par URL. */
+.rail-btn[aria-current='page'] {
+  color: var(--color-rail-active);
+  background: var(--color-rail-active-bg);
+}
+.rail-btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rail-brand { color: var(--color-rail-active); }
+.rail-rule { width: 20px; height: 1px; flex: none; background: var(--color-rail-rule); }
+.rail-group { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+/* Infobulle au survol : le rail ne porte aucun libellé permanent. */
+.rail-tip {
+  position: absolute;
+  left: 100%;
+  margin-left: var(--space-2);
+  z-index: 50;
+  display: none;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-900);
+  color: var(--color-paper);
+  font-size: 12px;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.rail-btn:hover .rail-tip { display: block; }
+
+/* ── En-tête ────────────────────────────────────────────────────────────── */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  flex: none;
+  background: var(--color-paper);
+}
+/* Tête de journal : un filet gras, un filet fin. Rien d'autre ne cadre. */
+.header-rule-thick { height: 2px; background: var(--color-ink); }
+.header-rule-thin { height: 1px; background: var(--color-divider); }
+.header-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-6);
+  position: relative;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.header-brand {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.header-icon {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 17px;
+  line-height: 1;
+  align-self: center;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+}
+.header-icon:hover { color: var(--color-accent-700); }
+
+/* ── Fil d'Ariane ───────────────────────────────────────────────────────── */
+.crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  /* Jamais de retour à la ligne : un titre long est tronqué en son milieu. */
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.crumb-sep { color: var(--color-neutral-400); font-size: 13px; flex: none; }
+.crumb {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  white-space: nowrap;
+  text-decoration: none;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+}
+a.crumb { cursor: pointer; }
+a.crumb:hover { color: var(--color-accent-700); }
+/* Le dernier segment est la page courante : encre pleine, non cliquable. */
+.crumb-current { color: var(--color-ink); }
+
+/* Panneau « Aller à un bloc » ouvert depuis l'icône maison. */
+.nav-panel {
+  position: absolute;
+  top: 100%;
+  left: var(--space-4);
+  z-index: 50;
+  margin-top: 6px;
+  width: 330px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+}
+.nav-panel-kicker {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink) 50%, transparent);
+  margin-bottom: var(--space-2);
+}
+.nav-panel-ws,
+.nav-panel-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-ink);
+  border-radius: var(--radius-sm);
+}
+.nav-panel-ws {
+  padding: 6px;
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 15px;
+}
+.nav-panel-block {
+  padding: 5px 6px 5px 28px;
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+.nav-panel-ws:hover,
+.nav-panel-block:hover { background: color-mix(in srgb, var(--color-ink) 7%, transparent); }
+.nav-panel-tree { color: var(--color-neutral-400); flex: none; }
+.nav-panel-icon { color: var(--color-accent-700); flex: none; }

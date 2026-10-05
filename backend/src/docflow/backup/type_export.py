@@ -33,8 +33,9 @@ async def _fetch_type_subtree(
                 UNION ALL
                 SELECT t.id, t.slug, t.label, t.parent, s.depth + 1
                 FROM functional_type t JOIN subtree s ON t.parent = s.id
-            )
-            SELECT id, slug, label, parent, depth FROM subtree ORDER BY depth, slug
+            ) CYCLE id SET is_cycle USING path
+            SELECT id, slug, label, parent, depth FROM subtree
+            WHERE NOT is_cycle ORDER BY depth, slug
             """,
             root_type_id,
         )

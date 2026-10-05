@@ -2,6 +2,7 @@
 name = "docflow"
 version = "0.1.0"
 requires-python = ">=3.12"
+license = { text = "FSL-1.1-ALv2" }
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -16,11 +17,18 @@ dependencies = [
     "mcp>=1.0.0",
     "python-multipart>=0.0.12",
     "pyyaml>=6.0.3",
+    # YAML 1.2 + contrôle fin de la sérialisation (ordre de clés, indentation,
+    # politique de quotage) : requis par la canonicalisation du codec
+    # `table-schema`, hors de portée de PyYAML (YAML 1.1).
+    "ruamel.yaml>=0.18.6",
     "cryptography>=42.0.0",
     "harpocrate>=0.6.0",
     "gitpython>=3.1.50",
     "paramiko>=5.0.0",
     "croniter>=2.0.0",
+    "weasyprint>=69.0",
+    "markdown>=3.10.2",
+    "opentelemetry-api>=1.27.0",
 ]
 
 [dependency-groups]
@@ -30,6 +38,7 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "types-pyyaml>=6.0.12.20260518",
+    "types-markdown>=3.10.2.20260712",
 ]
 
 [tool.uv.sources]

@@ -25,8 +25,9 @@ def _auth(client: TestClient) -> dict[str, str]:
         "/api/setup/init-admin",
         json={"username": "me", "email": _EMAIL, "password": _PW},
     )
-    login = client.post("/api/auth/login", json={"email": _EMAIL, "password": _PW})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    login = client.post("/api/auth/login", json={"username": "me", "password": _PW})
+    assert login.status_code == 200, login.text
+    return {}  # TestClient garde le cookie de session dans son jar
 
 
 def test_profile_requires_auth(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> None:

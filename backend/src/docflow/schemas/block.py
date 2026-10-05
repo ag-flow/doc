@@ -15,6 +15,9 @@ class DataBlockCreate(BaseModel):
     label: str
     functional_type_slug: str
     parent_slug: str | None = None
+    # Import automatique d'un template global AVANT la création du bloc, dans la
+    # même transaction (parité avec la surface MCP). None = aucun import.
+    template_slug: str | None = None
 
     @field_validator("slug")
     @classmethod
@@ -39,3 +42,6 @@ class DataBlockOut(BaseModel):
     exposed: bool
     created_at: datetime
     updated_at: datetime
+    # Volumétrie : renseignée par le listing, 0/None sur une lecture unitaire.
+    documents_count: int = 0
+    last_write_at: datetime | None = None

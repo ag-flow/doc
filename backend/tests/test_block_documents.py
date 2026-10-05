@@ -13,7 +13,7 @@ from docflow.documents.block_ops import list_block_documents
 from docflow.properties import service as prop_svc
 from docflow.schemas.document import DocumentCreateInBlock
 from docflow.schemas.properties import AllowedValueCreate, PropertiesDefCreate
-from docflow.schemas.types import FunctionalTypeCreate
+from docflow.schemas.types import FunctionalTypeCreate, FunctionalTypeUpdate
 from docflow.types import service as type_svc
 
 _WS = "test-ws"
@@ -56,6 +56,62 @@ async def _setup_agile_block(
         "story": story.id,
         "atdd": atdd.id,
     }
+
+
+async def test_list_present_type_slugs(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Types présents dans le bloc (léger — dérive les colonnes sans charger les docs)."""
+    from docflow.blocks import service as block_svc
+
+    await _setup_agile_block(db_pool)
+    # Bloc vide → aucun type présent.
+    assert await block_svc.list_present_type_slugs(db_pool, _WS, "agile-board") == []
+
+    epic = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board", DocumentCreateInBlock(title="E", slug="doc-e")
+    )
+    await doc_svc.create_document_in_block(
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(
+            title="F",
+            slug="doc-f",
+            parent_id=epic.doc_technical_key,
+            functional_type_slug="feature",
+        ),
+    )
+    slugs = await block_svc.list_present_type_slugs(db_pool, _WS, "agile-board")
+    assert slugs == ["epic", "feature"]  # distinct + trié, pas story/atdd (absents)
+
+
+async def test_list_present_content_types(db_pool: asyncpg.Pool, test_workspace: dict) -> None:
+    """Types de CONTENU présents — pendant de `list_present_type_slugs` pour l'autre
+    axe. Ne propose au filtre que ce qui rendra quelque chose."""
+    from docflow.blocks import service as block_svc
+
+    await _setup_agile_block(db_pool)
+    assert await block_svc.list_present_content_types(db_pool, _WS, "agile-board") == []
+
+    epic = await doc_svc.create_document_in_block(
+        db_pool, _WS, "agile-board", DocumentCreateInBlock(title="E", slug="doc-e")
+    )
+    await doc_svc.create_document_in_block(
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(
+            title="M",
+            slug="doc-m",
+            parent_id=epic.doc_technical_key,
+            functional_type_slug="feature",
+            content_type="model-layout",
+        ),
+    )
+    # Distinct + trié. Le premier document n'a pas déclaré de type : il est 'md'.
+    assert await block_svc.list_present_content_types(db_pool, _WS, "agile-board") == [
+        "md",
+        "model-layout",
+    ]
 
 
 # ── DoD 2 : bloc 'epic', Add racine → crée un epic (implicite) ────────────────
@@ -612,3 +668,41 @@ async def test_dod5_filter_no_match_returns_empty(
         allowed_value_slug="inexistant",
     )
     assert filtered == []
+
+
+# ── Bug : create_document_in_block n'indexait pas les [[doc]] du contenu initial ──
+
+
+async def test_create_document_in_block_indexes_content_references(
+    db_pool: asyncpg.Pool, test_workspace: dict
+) -> None:
+    """Un content_template portant un lien docflow://doc/{uuid} doit être indexé
+    dans document_reference dès la création — pas seulement au prochain save."""
+    from docflow.references.service import find_referencing_documents
+
+    block_id, _ = await _setup_agile_block(db_pool)
+
+    target = await doc_svc.create_document_in_block(
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(title="Epic cible", slug="epic-cible"),
+    )
+
+    await type_svc.update_type(
+        db_pool,
+        _WS,
+        "epic",
+        FunctionalTypeUpdate(content_template=f"[cible](docflow://doc/{target.doc_technical_key})"),
+    )
+
+    citing = await doc_svc.create_document_in_block(
+        db_pool,
+        _WS,
+        "agile-board",
+        DocumentCreateInBlock(title="Epic citant", slug="epic-citant"),
+    )
+
+    backlinks = await find_referencing_documents(db_pool, _WS, target.doc_technical_key)
+    source_ids = {b["source_id"] for b in backlinks}
+    assert str(citing.doc_technical_key) in source_ids

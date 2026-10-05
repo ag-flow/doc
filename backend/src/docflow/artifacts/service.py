@@ -7,21 +7,9 @@ import zlib
 import asyncpg
 from fastapi import HTTPException
 
-from docflow.artifacts.parser import extract_artifact_ids
+from docflow.artifacts.media_types import load_allowed_map
 from docflow.db.helpers import require_workspace
 from docflow.schemas.artifact import ArtifactCreatedOut, ArtifactMetaOut
-
-# Whitelist images pour démarrer : la table est générique, on élargira
-# quand un besoin réel se présentera. SVG servi avec nosniff et affiché
-# via <img> (pas d'exécution de script dans ce contexte).
-ALLOWED_MEDIA_TYPES: dict[str, str] = {
-    "png": "image/png",
-    "jpg": "image/jpeg",
-    "jpeg": "image/jpeg",
-    "gif": "image/gif",
-    "webp": "image/webp",
-    "svg": "image/svg+xml",
-}
 
 
 def artifact_url(ws_slug: str, artifact_id: uuid.UUID) -> str:
@@ -29,11 +17,11 @@ def artifact_url(ws_slug: str, artifact_id: uuid.UUID) -> str:
     return f"/api/workspaces/{ws_slug}/artifacts/{artifact_id}"
 
 
-def _validate_filename(filename: str) -> tuple[str, str, str]:
+def _validate_filename(filename: str, allowed: dict[str, str]) -> tuple[str, str, str]:
     """Nettoie le nom de fichier et retourne (nom, extension, media_type).
 
     Le nom est réduit à son basename (aucun composant de chemin) ; extension
-    obligatoire et dans la whitelist.
+    obligatoire et présente dans le registre `allowed` (extension → media_type).
     """
     name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
     if not name or len(name) > 255:
@@ -41,17 +29,46 @@ def _validate_filename(filename: str) -> tuple[str, str, str]:
     if "." not in name:
         raise HTTPException(status_code=422, detail="extension de fichier requise")
     ext = name.rsplit(".", 1)[1].lower()
-    media_type = ALLOWED_MEDIA_TYPES.get(ext)
+    media_type = allowed.get(ext)
     if media_type is None:
-        allowed = ", ".join(sorted(ALLOWED_MEDIA_TYPES))
+        allowed_list = ", ".join(sorted(allowed))
         raise HTTPException(
             status_code=422,
-            detail=f"extension '{ext}' non autorisée (autorisées : {allowed})",
+            detail=f"extension '{ext}' non autorisée (autorisées : {allowed_list})",
         )
     return name, ext, media_type
 
 
-# ── Création (dédupliquée par sha256) ────────────────────────────────────────
+def _basename(filename: str) -> str:
+    """Réduit un nom au basename nettoyé (aucun composant de chemin)."""
+    name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
+    if not name or len(name) > 255:
+        raise HTTPException(status_code=422, detail="nom de fichier invalide")
+    return name
+
+
+def _resolve_media(
+    filename: str, allowed: dict[str, str], *, mutable: bool, override: str | None
+) -> tuple[str, str, str]:
+    """Retourne (nom, extension, media_type) pour un artefact à créer.
+
+    Canal `.html` DÉDIÉ : `text/html` n'est jamais au registre (denylist
+    anti-XSS, cf. media_types.py). Un artefact **mutable** dont le nom finit en
+    `.html` est la seule voie qui le produit — et son contenu n'est jamais servi
+    inline depuis l'origine docflow (garde dans le routeur + serveur de preview).
+    """
+    if mutable and _basename(filename).lower().endswith(".html"):
+        return _basename(filename), "html", "text/html"
+    name, ext, media_type = _validate_filename(filename, allowed)
+    if override is not None:
+        # L'override reste borné à la whitelist : jamais un type arbitraire.
+        if override not in set(allowed.values()):
+            raise HTTPException(status_code=422, detail=f"media_type non autorisé : {override}")
+        media_type = override
+    return name, ext, media_type
+
+
+# ── Création (dédupliquée par sha256, sauf artefacts mutables) ────────────────
 
 
 async def create_artifact(
@@ -62,12 +79,45 @@ async def create_artifact(
     data: bytes,
     created_by: uuid.UUID | None,
     max_bytes: int,
+    media_type_override: str | None = None,
+    mutable: bool = False,
 ) -> ArtifactCreatedOut:
     """Enregistre un binaire dans le workspace, dédupliqué par sha256.
 
     Si un artefact de même empreinte existe déjà dans le workspace, il est
     retourné tel quel (deduplicated=True) — le binaire n'est jamais stocké
     deux fois dans un même workspace.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            return await insert_artifact(
+                conn,
+                ws_slug,
+                filename=filename,
+                data=data,
+                created_by=created_by,
+                max_bytes=max_bytes,
+                media_type_override=media_type_override,
+                mutable=mutable,
+            )
+
+
+async def insert_artifact(
+    conn: asyncpg.Connection,
+    ws_slug: str,
+    *,
+    filename: str,
+    data: bytes,
+    created_by: uuid.UUID | None,
+    max_bytes: int,
+    media_type_override: str | None = None,
+    mutable: bool = False,
+) -> ArtifactCreatedOut:
+    """Cœur de la création, sur une connexion (et une transaction) fournies.
+
+    Permet à la consommation d'un ticket d'upload (`uploads.consume_upload`)
+    de créer l'artefact ET de marquer le ticket consommé dans une seule
+    transaction atomique. Suppose ``conn`` déjà dans une transaction.
     """
     if not data:
         raise HTTPException(status_code=422, detail="fichier vide")
@@ -76,62 +126,111 @@ async def create_artifact(
             status_code=413,
             detail=f"fichier trop volumineux ({len(data)} octets, max {max_bytes})",
         )
-    name, ext, media_type = _validate_filename(filename)
     sha256 = hashlib.sha256(data).hexdigest()
     crc32 = zlib.crc32(data)
 
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            wk = await require_workspace(conn, ws_slug, allow_archived=False)
-            inserted = await conn.fetchrow(
-                """
-                INSERT INTO artifact
-                    (workspace_technical_key, sha256, crc32, filename, extension,
-                     media_type, size_bytes, data, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (workspace_technical_key, sha256) DO NOTHING
-                RETURNING id
-                """,
-                wk,
-                sha256,
-                crc32,
-                name,
-                ext,
-                media_type,
-                len(data),
-                data,
-                created_by,
-            )
-            if inserted is not None:
-                return ArtifactCreatedOut(
-                    id=inserted["id"],
-                    url=artifact_url(ws_slug, inserted["id"]),
-                    deduplicated=False,
-                    filename=name,
-                    extension=ext,
-                    media_type=media_type,
-                    size_bytes=len(data),
-                    sha256=sha256,
-                    crc32=crc32,
-                )
-            existing = await conn.fetchrow(
-                "SELECT id, filename, extension, media_type, size_bytes, crc32 "
-                "FROM artifact WHERE workspace_technical_key = $1 AND sha256 = $2",
-                wk,
-                sha256,
-            )
-            assert existing is not None  # UNIQUE garantit sa présence après le conflit
-            return ArtifactCreatedOut(
-                id=existing["id"],
-                url=artifact_url(ws_slug, existing["id"]),
-                deduplicated=True,
-                filename=existing["filename"],
-                extension=existing["extension"],
-                media_type=existing["media_type"],
-                size_bytes=existing["size_bytes"],
-                sha256=sha256,
-                crc32=existing["crc32"],
-            )
+    # Whitelist chargée depuis le registre (table artifact_media_type),
+    # source de vérité administrable. Le canal `.html` mutable la contourne.
+    allowed = await load_allowed_map(conn)
+    name, ext, media_type = _resolve_media(
+        filename, allowed, mutable=mutable, override=media_type_override
+    )
+    wk = await require_workspace(conn, ws_slug, allow_archived=False)
+
+    if mutable:
+        # Aucune déduplication : deux mutables de contenu identique restent
+        # deux artefacts distincts (patcher l'un ne doit jamais toucher l'autre).
+        # La révision 1 est aussi consignée dans l'historique.
+        row = await conn.fetchrow(
+            """
+            INSERT INTO artifact
+                (workspace_technical_key, sha256, crc32, filename, extension,
+                 media_type, size_bytes, data, created_by, mutable, revision)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1)
+            RETURNING id
+            """,
+            wk,
+            sha256,
+            crc32,
+            name,
+            ext,
+            media_type,
+            len(data),
+            data,
+            created_by,
+        )
+        assert row is not None
+        await conn.execute(
+            "INSERT INTO artifact_revision "
+            "(artifact_ref, revision, sha256, size_bytes, data, created_by) "
+            "VALUES ($1, 1, $2, $3, $4, $5)",
+            row["id"],
+            sha256,
+            len(data),
+            data,
+            created_by,
+        )
+        return ArtifactCreatedOut(
+            id=row["id"],
+            url=artifact_url(ws_slug, row["id"]),
+            deduplicated=False,
+            filename=name,
+            extension=ext,
+            media_type=media_type,
+            size_bytes=len(data),
+            sha256=sha256,
+            crc32=crc32,
+        )
+
+    inserted = await conn.fetchrow(
+        """
+        INSERT INTO artifact
+            (workspace_technical_key, sha256, crc32, filename, extension,
+             media_type, size_bytes, data, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (workspace_technical_key, sha256) WHERE NOT mutable DO NOTHING
+        RETURNING id
+        """,
+        wk,
+        sha256,
+        crc32,
+        name,
+        ext,
+        media_type,
+        len(data),
+        data,
+        created_by,
+    )
+    if inserted is not None:
+        return ArtifactCreatedOut(
+            id=inserted["id"],
+            url=artifact_url(ws_slug, inserted["id"]),
+            deduplicated=False,
+            filename=name,
+            extension=ext,
+            media_type=media_type,
+            size_bytes=len(data),
+            sha256=sha256,
+            crc32=crc32,
+        )
+    existing = await conn.fetchrow(
+        "SELECT id, filename, extension, media_type, size_bytes, crc32 "
+        "FROM artifact WHERE workspace_technical_key = $1 AND sha256 = $2",
+        wk,
+        sha256,
+    )
+    assert existing is not None  # UNIQUE garantit sa présence après le conflit
+    return ArtifactCreatedOut(
+        id=existing["id"],
+        url=artifact_url(ws_slug, existing["id"]),
+        deduplicated=True,
+        filename=existing["filename"],
+        extension=existing["extension"],
+        media_type=existing["media_type"],
+        size_bytes=existing["size_bytes"],
+        sha256=sha256,
+        crc32=existing["crc32"],
+    )
 
 
 # ── Lecture ──────────────────────────────────────────────────────────────────
@@ -145,7 +244,7 @@ async def get_artifact_meta(
         row = await conn.fetchrow(
             """
             SELECT a.id, a.filename, a.extension, a.media_type, a.size_bytes,
-                   a.sha256, a.crc32, a.created_at,
+                   a.sha256, a.crc32, a.created_at, a.mutable, a.revision,
                    (SELECT count(*) FROM artifact_reference r
                     WHERE r.artifact_ref = a.id)::int AS refcount
             FROM artifact a
@@ -157,6 +256,67 @@ async def get_artifact_meta(
     if row is None:
         raise HTTPException(status_code=404, detail=f"artefact {artifact_id} introuvable")
     return ArtifactMetaOut(**dict(row))
+
+
+async def list_artifacts(
+    pool: asyncpg.Pool,
+    ws_slug: str,
+    *,
+    limit: int,
+    offset: int,
+    filename: str | None = None,
+    sha256: str | None = None,
+    document_id: uuid.UUID | None = None,
+) -> tuple[list[dict[str, object]], int]:
+    """Liste paginée des artefacts d'un workspace, du plus récent au plus
+    ancien. Renvoie toutes les colonnes de la table SAUF le binaire (`data`) et
+    la clé technique interne (`workspace_technical_key`), plus le `refcount`
+    calculé. Retourne (items, total).
+
+    Filtres optionnels combinables : `filename` (correspondance partielle,
+    insensible à la casse), `sha256` (empreinte exacte), `document_id`
+    (artefacts référencés par ce document). Tous paramétrés ($n) — jamais
+    d'interpolation de valeur.
+    """
+    conditions = ["a.workspace_technical_key = $1"]
+    params: list[object] = [None]  # placeholder, remplacé par wk après résolution
+    if filename:
+        params.append(f"%{filename}%")
+        conditions.append(f"a.filename ILIKE ${len(params)}")
+    if sha256:
+        params.append(sha256.lower())
+        conditions.append(f"a.sha256 = ${len(params)}")
+    if document_id is not None:
+        params.append(document_id)
+        conditions.append(
+            "EXISTS (SELECT 1 FROM artifact_reference r "
+            f"WHERE r.artifact_ref = a.id AND r.document_ref = ${len(params)})"
+        )
+    where = " AND ".join(conditions)
+
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        params[0] = wk
+        total = await conn.fetchval(
+            f"SELECT count(*)::int FROM artifact a WHERE {where}",  # noqa: S608 (placeholders $n)
+            *params,
+        )
+        rows = await conn.fetch(
+            f"""
+            SELECT a.id, a.filename, a.extension, a.media_type, a.size_bytes,
+                   a.sha256, a.crc32, a.created_by, a.created_at,
+                   (SELECT count(*) FROM artifact_reference r
+                    WHERE r.artifact_ref = a.id)::int AS refcount
+            FROM artifact a
+            WHERE {where}
+            ORDER BY a.created_at DESC, a.id
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,  # noqa: S608 (placeholders $n uniquement, valeurs paramétrées)
+            *params,
+            limit,
+            offset,
+        )
+    return [dict(r) for r in rows], int(total or 0)
 
 
 async def fetch_artifact_content(
@@ -211,17 +371,20 @@ async def refresh_artifact_references(
     conn: asyncpg.Connection,
     doc_id: uuid.UUID,
     ws_key: uuid.UUID,
-    content: str | None,
+    parsed: set[str],
 ) -> None:
-    """Reconstruit les références artefacts du document depuis son contenu.
+    """Reconstruit les références artefacts du document.
 
     Doit être appelé dans la même transaction que le save (miroir de
     references.refresh_references). Un artefact dont la dernière référence
     disparaît est supprimé immédiatement ; un artefact référencé ailleurs
     est conservé. Les références vers des artefacts inexistants ou d'un
     autre workspace sont ignorées (le save n'échoue jamais pour un lien mort).
+
+    ``parsed`` (uuid canoniques) est EXTRAIT PAR LE CODEC du type de contenu
+    (cf. ``documents.content_refs``) : cette fonction ne connaît plus la
+    grammaire du document, seulement la réconciliation.
     """
-    parsed = extract_artifact_ids(content or "")
     old_rows = await conn.fetch(
         "SELECT artifact_ref FROM artifact_reference WHERE document_ref = $1", doc_id
     )
@@ -262,7 +425,7 @@ async def collect_subtree_artifacts(conn: asyncpg.Connection, doc_id: uuid.UUID)
             SELECT d.doc_technical_key
             FROM document d
             JOIN descendants p ON d.parent = p.doc_technical_key
-        )
+        ) CYCLE doc_technical_key SET is_cycle USING path
         SELECT DISTINCT ar.artifact_ref
         FROM artifact_reference ar
         JOIN descendants ds ON ar.document_ref = ds.doc_technical_key

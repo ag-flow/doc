@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from docflow.auth.deps import (
     check_api_key_scope,
     filter_blocks_by_scope,
+    require_api_key_admin_write,
     require_authenticated,
 )
 from docflow.blocks import introspection, service
@@ -42,6 +44,10 @@ async def create_block(
     ws_slug: str, body: DataBlockCreate, request: Request, _: AuthUser = _Auth
 ) -> DataBlockOut:
     check_api_key_scope(request, ws_slug, write=True)
+    # template_slug déclenche un import structurel : on exige alors le même niveau
+    # qu'import_template (clé API admin write), au-delà du simple write de scope.
+    if body.template_slug:
+        require_api_key_admin_write(request)
     return await service.create_block(request.app.state.pool, ws_slug, body)
 
 
@@ -100,11 +106,15 @@ async def list_block_tree(
     _: AuthUser = _Auth,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
+    sort: Literal["title", "updated_at"] = Query(default="title"),
+    dir: Literal["asc", "desc"] = Query(default="asc"),
 ) -> BlockTreePage:
-    """Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs."""
+    """Mode browse : racines paginées (≤100/page) + sous-arbres + valeurs.
+
+    `sort`/`dir` ordonnent côté serveur (tri correct à travers la pagination)."""
     check_api_key_scope(request, ws_slug, block_slug)
     return await block_tree.list_block_tree(
-        request.app.state.pool, ws_slug, block_slug, page, page_size
+        request.app.state.pool, ws_slug, block_slug, page, page_size, sort, dir
     )
 
 
@@ -166,6 +176,24 @@ async def get_allowed_types(
 ) -> list[dict[str, str]]:
     check_api_key_scope(request, ws_slug, block_slug)
     return await doc_svc.allowed_types(request.app.state.pool, ws_slug, block_slug, parent_id)
+
+
+@router.get(_BLOCK + "/type-slugs", response_model=list[str])
+async def list_present_type_slugs(
+    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+) -> list[str]:
+    """Types fonctionnels présents dans le bloc (léger — pour les colonnes)."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await service.list_present_type_slugs(request.app.state.pool, ws_slug, block_slug)
+
+
+@router.get(_BLOCK + "/content-types", response_model=list[str])
+async def list_present_content_types(
+    ws_slug: str, block_slug: str, request: Request, _: AuthUser = _Auth
+) -> list[str]:
+    """Types de CONTENU présents dans le bloc (léger — pour le filtre de colonne)."""
+    check_api_key_scope(request, ws_slug, block_slug)
+    return await service.list_present_content_types(request.app.state.pool, ws_slug, block_slug)
 
 
 @router.post(_BLOCK + "/documents", response_model=DocumentOut, status_code=201)

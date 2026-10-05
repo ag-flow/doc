@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from docflow.auth.deps import require_authenticated
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.webhook import WebhookCreate, WebhookOut, WebhookTestOut, WebhookUpdate
+from docflow.vault import service as vault_svc
 from docflow.webhooks import service
 from docflow.workspaces.access import require_ws_access
 
@@ -22,6 +23,20 @@ def _key(request: Request) -> str | None:
     return key.reveal() if key is not None else None
 
 
+async def _assert_header_secrets_owned(
+    request: Request, headers: dict[str, str] | None, owner_id: uuid.UUID
+) -> None:
+    """Isolation des secrets (STANDARD Gestion des secrets §1/§6) : une valeur de
+    header ${secret://}/${hmac://} doit appartenir à l'agissant. Validé au
+    routeur (l'identité y est présente). None = pas de headers dans le body."""
+    if headers is None:
+        return
+    refs = list(headers.values())
+    await vault_svc.assert_refs_owned(request.app.state.pool, refs, owner_id)
+    # Résolubilité à la configuration (STANDARD Harpocrate §6).
+    await vault_svc.assert_refs_resolvable(request.app.state.pool, refs)
+
+
 @router.get(_WS + "/webhooks", response_model=list[WebhookOut])
 async def list_webhooks(ws_slug: str, request: Request, _: AuthUser = _Auth) -> list[WebhookOut]:
     return await service.list_webhooks(
@@ -31,8 +46,9 @@ async def list_webhooks(ws_slug: str, request: Request, _: AuthUser = _Auth) -> 
 
 @router.post(_WS + "/webhooks", response_model=WebhookOut, status_code=201)
 async def create_webhook(
-    ws_slug: str, body: WebhookCreate, request: Request, _: AuthUser = _Auth
+    ws_slug: str, body: WebhookCreate, request: Request, user: AuthUser = _Auth
 ) -> WebhookOut:
+    await _assert_header_secrets_owned(request, body.headers, user.id)
     return await service.create_webhook(
         request.app.state.pool, ws_slug, body, encryption_key=_key(request)
     )
@@ -53,8 +69,9 @@ async def update_webhook(
     webhook_id: uuid.UUID,
     body: WebhookUpdate,
     request: Request,
-    _: AuthUser = _Auth,
+    user: AuthUser = _Auth,
 ) -> WebhookOut:
+    await _assert_header_secrets_owned(request, body.headers, user.id)
     return await service.update_webhook(
         request.app.state.pool, ws_slug, webhook_id, body, encryption_key=_key(request)
     )
@@ -71,7 +88,7 @@ async def delete_webhook(
 async def test_webhook(
     ws_slug: str, webhook_id: uuid.UUID, request: Request, _: AuthUser = _Auth
 ) -> WebhookTestOut:
-    status_code, error = await service.test_webhook(
+    status_code, error, duration_ms = await service.test_webhook(
         request.app.state.pool, ws_slug, webhook_id, encryption_key=_key(request)
     )
-    return WebhookTestOut(status_code=status_code, error=error)
+    return WebhookTestOut(status_code=status_code, error=error, duration_ms=duration_ms)

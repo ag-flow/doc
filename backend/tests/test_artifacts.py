@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from docflow.artifacts.links import build_download_query, verify_download_sig
 from docflow.artifacts.parser import extract_artifact_ids
+from docflow.documents.content_refs import refresh_content_references
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"fake-png-payload"
 
@@ -29,6 +30,22 @@ def test_extract_multiple_and_dedup() -> None:
         f"![a](/api/workspaces/ws/artifacts/{a1}) "
         f"![b](/api/workspaces/ws/artifacts/{a2}) "
         f"encore [lien](/api/workspaces/ws/artifacts/{a1})"
+    )
+    assert extract_artifact_ids(md) == {a1, a2}
+
+
+def test_extract_artifact_scheme_chip() -> None:
+    aid = "550e8400-e29b-41d4-a716-446655440000"
+    md = f"[Rapport.pdf](artifact://{aid})"
+    assert extract_artifact_ids(md) == {aid}
+
+
+def test_extract_mixed_url_and_scheme_forms() -> None:
+    a1 = "00000000-0000-0000-0000-000000000001"
+    a2 = "00000000-0000-0000-0000-000000000002"
+    md = (
+        f"![img](/api/workspaces/ws/artifacts/{a1})\n\n"
+        f"[fichier](artifact://{a2})"
     )
     assert extract_artifact_ids(md) == {a1, a2}
 
@@ -189,6 +206,54 @@ async def test_create_artifact_rejects_empty(
     assert exc.value.status_code == 422
 
 
+async def test_create_artifact_accepts_non_image_types(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """La whitelist couvre désormais les binaires du cycle artefacts (pdf,
+    audio, archives…), pas seulement les images."""
+    from docflow.artifacts import service
+
+    pdf = await service.create_artifact(
+        db_pool, "test-ws", filename="rapport.pdf", data=b"%PDF-1.7 fake",
+        created_by=None, max_bytes=1024,
+    )
+    assert pdf.media_type == "application/pdf"
+    assert pdf.extension == "pdf"
+
+    audio = await service.create_artifact(
+        db_pool, "test-ws", filename="voix.mp3", data=b"ID3 fake-audio",
+        created_by=None, max_bytes=1024,
+    )
+    assert audio.media_type == "audio/mpeg"
+
+
+async def test_create_artifact_media_type_override_within_whitelist(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """L'override force un media_type — mais seulement une valeur de la whitelist."""
+    from docflow.artifacts import service
+
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="data.txt", data=b"colonnes;valeurs",
+        created_by=None, max_bytes=1024, media_type_override="text/csv",
+    )
+    assert created.media_type == "text/csv"
+
+
+async def test_create_artifact_media_type_override_rejects_active_type(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Un media_type hors whitelist (ex. text/html = XSS servi) est refusé."""
+    from docflow.artifacts import service
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_artifact(
+            db_pool, "test-ws", filename="page.txt", data=b"<script>alert(1)</script>",
+            created_by=None, max_bytes=1024, media_type_override="text/html",
+        )
+    assert exc.value.status_code == 422
+
+
 async def test_same_content_different_workspaces_not_deduped(
     db_pool: asyncpg.Pool, test_workspace: dict[str, object]
 ) -> None:
@@ -227,11 +292,31 @@ async def test_get_artifact_meta_and_refcount(
     assert meta.refcount == 0
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc réf")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn,
             doc_id,
             test_workspace["workspace_technical_key"],  # type: ignore[arg-type]
             f"![m](/api/workspaces/test-ws/artifacts/{created.id})",
+        )
+    meta = await service.get_artifact_meta(db_pool, "test-ws", created.id)
+    assert meta.refcount == 1
+
+
+async def test_refcount_counts_chip_scheme_reference(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Une puce [](artifact://id) compte pour le refcount — sinon l'artefact
+    d'un fichier attaché en puce serait purgé comme orphelin."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    created = await service.create_artifact(
+        db_pool, "test-ws", filename="joint.pdf", data=_PNG, created_by=None, max_bytes=1024
+    )
+    doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc puce")
+    async with db_pool.acquire() as conn:
+        await refresh_content_references(
+            conn, doc_id, wk, f"[Le joint](artifact://{created.id})"
         )
     meta = await service.get_artifact_meta(db_pool, "test-ws", created.id)
     assert meta.refcount == 1
@@ -273,9 +358,9 @@ async def test_refresh_removes_ref_and_purges_at_zero(
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc purge")
     url = f"/api/workspaces/test-ws/artifacts/{created.id}"
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_id, wk, f"![p]({url})")
+        await refresh_content_references(conn, doc_id, wk, f"![p]({url})")
         # Le contenu ne référence plus l'artefact → refcount 0 → purge immédiate
-        await service.refresh_artifact_references(conn, doc_id, wk, "plus d'image")
+        await refresh_content_references(conn, doc_id, wk, "plus d'image")
     gone = await db_pool.fetchval("SELECT 1 FROM artifact WHERE id = $1", created.id)
     assert gone is None
 
@@ -293,10 +378,10 @@ async def test_refresh_keeps_artifact_referenced_elsewhere(
     doc_a = await _create_doc(db_pool, test_workspace, test_block, "Doc A")
     doc_b = await _create_doc(db_pool, test_workspace, test_block, "Doc B")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_a, wk, f"![s]({url})")
-        await service.refresh_artifact_references(conn, doc_b, wk, f"![s]({url})")
+        await refresh_content_references(conn, doc_a, wk, f"![s]({url})")
+        await refresh_content_references(conn, doc_b, wk, f"![s]({url})")
         # A retire sa référence : l'artefact reste (utilisé par B)
-        await service.refresh_artifact_references(conn, doc_a, wk, "rien")
+        await refresh_content_references(conn, doc_a, wk, "rien")
     still = await db_pool.fetchval("SELECT 1 FROM artifact WHERE id = $1", created.id)
     assert still == 1
 
@@ -324,7 +409,7 @@ async def test_refresh_ignores_unknown_and_foreign_artifacts(
             f"![foreign](/api/workspaces/test-ws/artifacts/{foreign.id})"
         )
         async with db_pool.acquire() as conn:
-            await service.refresh_artifact_references(conn, doc_id, wk, content)
+            await refresh_content_references(conn, doc_id, wk, content)
         count = await db_pool.fetchval(
             "SELECT count(*) FROM artifact_reference WHERE document_ref = $1", doc_id
         )
@@ -354,8 +439,8 @@ async def test_delete_document_purges_orphan_artifact(
     doc_a = await _create_doc(db_pool, test_workspace, test_block, "Doc suppr")
     doc_b = await _create_doc(db_pool, test_workspace, test_block, "Doc garde")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_a, wk, f"![d]({url}) ![k]({kept_url})")
-        await service.refresh_artifact_references(conn, doc_b, wk, f"![k]({kept_url})")
+        await refresh_content_references(conn, doc_a, wk, f"![d]({url}) ![k]({kept_url})")
+        await refresh_content_references(conn, doc_b, wk, f"![k]({kept_url})")
 
     await doc_svc.delete_document(db_pool, "test-ws", doc_a)
 
@@ -385,7 +470,7 @@ async def test_purge_stale_only_old_unreferenced(
     )
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc stale")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"![r](/api/workspaces/test-ws/artifacts/{referenced.id})"
         )
     # Vieillir artificiellement stale + referenced
@@ -415,7 +500,7 @@ async def test_public_fetch_requires_exposed_reference(
     )
     doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc public")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(
+        await refresh_content_references(
             conn, doc_id, wk, f"![p](/api/workspaces/test-ws/artifacts/{created.id})"
         )
 
@@ -468,8 +553,8 @@ async def test_public_fetch_one_exposed_reference_suffices(
     doc_pub = await _create_doc(db_pool, test_workspace, test_block, "Doc exposé")
     doc_priv = await _create_doc(db_pool, test_workspace, test_block, "Doc privé")
     async with db_pool.acquire() as conn:
-        await service.refresh_artifact_references(conn, doc_pub, wk, f"![m]({url})")
-        await service.refresh_artifact_references(conn, doc_priv, wk, f"![m]({url})")
+        await refresh_content_references(conn, doc_pub, wk, f"![m]({url})")
+        await refresh_content_references(conn, doc_priv, wk, f"![m]({url})")
     await db_pool.execute(
         "UPDATE document SET exposed = true WHERE doc_technical_key = $1", doc_pub
     )
@@ -713,6 +798,208 @@ async def test_mcp_get_artifact_and_link(
     assert verify_download_sig(
         "test-ws", created.id, int(m.group(1)), m.group(2), secret="test-mcp-secret"
     )
+
+
+async def test_mcp_get_artifact_data_text_and_binary(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Texte → contenu UTF-8 en clair ; binaire → base64 (agent sans réseau)."""
+    import base64
+    import json
+
+    from docflow.artifacts import service
+    from docflow.mcp import artifact_tools
+
+    txt = await service.create_artifact(
+        db_pool, "test-ws", filename="note.txt", data="Bonjour agent éàê".encode(),
+        created_by=None, max_bytes=1024,
+    )
+    png = await service.create_artifact(
+        db_pool, "test-ws", filename="img.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+    settings = _fake_settings()
+
+    text_res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, settings, {"workspace_slug": "test-ws", "artifact_id": str(txt.id)}
+            )  # type: ignore[arg-type]
+        )[0].text
+    )
+    assert text_res["encoding"] == "utf-8"
+    assert text_res["content"] == "Bonjour agent éàê"
+    assert text_res["media_type"] == "text/plain"
+
+    bin_res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, settings, {"workspace_slug": "test-ws", "artifact_id": str(png.id)}
+            )  # type: ignore[arg-type]
+        )[0].text
+    )
+    assert bin_res["encoding"] == "base64"
+    assert base64.b64decode(bin_res["content"]) == _PNG
+
+
+async def test_mcp_get_artifact_data_too_large_redirects(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    """Au-delà de la limite inline : {too_large} au lieu du contenu."""
+    import json
+
+    from docflow.artifacts import service
+    from docflow.config.settings import Settings
+    from docflow.mcp import artifact_tools
+
+    big = await service.create_artifact(
+        db_pool, "test-ws", filename="gros.txt", data=b"x" * 500, created_by=None, max_bytes=4096
+    )
+    tiny_settings = Settings(
+        database_url="postgresql://unused/unused",
+        jwt_secret="s",  # type: ignore[arg-type]
+        artifact_inline_max_bytes=100,
+    )
+    res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool, tiny_settings, {"workspace_slug": "test-ws", "artifact_id": str(big.id)}
+            )
+        )[0].text
+    )
+    assert res["too_large"] is True
+    assert res["size_bytes"] == 500
+    assert res["max_inline_bytes"] == 100
+    assert "content" not in res
+
+
+async def test_mcp_get_artifact_data_unknown_404(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+    import uuid as _uuid
+
+    from docflow.mcp import artifact_tools
+
+    res = json.loads(
+        (
+            await artifact_tools.handle_get_artifact_data(
+                db_pool,
+                _fake_settings(),  # type: ignore[arg-type]
+                {"workspace_slug": "test-ws", "artifact_id": str(_uuid.uuid4())},
+            )
+        )[0].text
+    )
+    assert "error" in res
+
+
+async def test_mcp_list_artifacts_paginated(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+
+    from docflow.artifacts import service
+    from docflow.mcp import artifact_tools
+
+    # Trois artefacts distincts.
+    for i in range(3):
+        await service.create_artifact(
+            db_pool,
+            "test-ws",
+            filename=f"f{i}.png",
+            data=_PNG + bytes([i]),
+            created_by=None,
+            max_bytes=1024,
+        )
+
+    page = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "test-ws", "limit": 2, "offset": 0}
+            )
+        )[0].text
+    )
+    assert page["total"] == 3
+    assert page["limit"] == 2
+    assert len(page["items"]) == 2
+    first = page["items"][0]
+    # La liste renvoie toutes les colonnes de la table (sauf le binaire) + refcount.
+    expected_keys = {
+        "id", "filename", "extension", "media_type", "size_bytes",
+        "sha256", "crc32", "created_by", "created_at", "refcount",
+    }
+    assert expected_keys <= set(first)
+    # Jamais le binaire ni la clé technique interne.
+    assert "data" not in first
+    assert "workspace_technical_key" not in first
+
+    page2 = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "test-ws", "limit": 2, "offset": 2}
+            )
+        )[0].text
+    )
+    assert len(page2["items"]) == 1
+    # Aucun recouvrement entre les pages.
+    ids1 = {it["id"] for it in page["items"]}
+    ids2 = {it["id"] for it in page2["items"]}
+    assert ids1.isdisjoint(ids2)
+
+
+async def test_list_artifacts_filters(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object], test_block: dict[str, object]
+) -> None:
+    """Filtres combinables : filename partiel, sha256 exact, document_id."""
+    from docflow.artifacts import service
+
+    wk: uuid.UUID = test_workspace["workspace_technical_key"]  # type: ignore[assignment]
+    rapport = await service.create_artifact(
+        db_pool, "test-ws", filename="Rapport-Q3.pdf", data=b"%PDF q3", created_by=None,
+        max_bytes=1024,
+    )
+    await service.create_artifact(
+        db_pool, "test-ws", filename="photo.png", data=_PNG, created_by=None, max_bytes=1024
+    )
+
+    # filename partiel, insensible à la casse.
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, filename="rapport"
+    )
+    assert total == 1 and items[0]["filename"] == "Rapport-Q3.pdf"
+
+    # sha256 exact.
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, sha256=rapport.sha256
+    )
+    assert total == 1 and items[0]["id"] == rapport.id
+
+    # document_id : artefacts référencés par un document donné.
+    doc_id = await _create_doc(db_pool, test_workspace, test_block, "Doc réf")
+    async with db_pool.acquire() as conn:
+        await refresh_content_references(
+            conn, doc_id, wk, f"[r](artifact://{rapport.id})"
+        )
+    items, total = await service.list_artifacts(
+        db_pool, "test-ws", limit=50, offset=0, document_id=doc_id
+    )
+    assert total == 1 and items[0]["id"] == rapport.id
+
+
+async def test_mcp_list_artifacts_unknown_workspace(
+    db_pool: asyncpg.Pool, test_workspace: dict[str, object]
+) -> None:
+    import json
+
+    from docflow.mcp import artifact_tools
+
+    result = json.loads(
+        (
+            await artifact_tools.handle_list_artifacts(
+                db_pool, {"workspace_slug": "ws-fantome"}
+            )
+        )[0].text
+    )
+    assert "error" in result
 
 
 async def test_mcp_get_artifact_link_unknown_404(

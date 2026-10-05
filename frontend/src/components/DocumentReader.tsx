@@ -1,13 +1,33 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Eye, Pencil } from 'lucide-react'
-import { reactionsApi, type DocumentOut, type ReactionOut } from '../lib/api'
-import { MarkdownViewer } from './MarkdownViewer'
-import { DocumentChildrenPanel } from './DocumentChildrenPanel'
+import {
+  BookOpen,
+  Check,
+  Copy,
+  FilePdf,
+  Images,
+  LinkSimple,
+  ListBullets,
+  Minus,
+  PencilSimple,
+  Plus,
+  Sidebar,
+  SpinnerGap,
+  TextAa,
+} from '@phosphor-icons/react'
+import { useReadingPrefs } from '../hooks/useReadingPrefs'
+import { type DocumentOut } from '../lib/api'
+import { relativeDate } from '../lib/relativeDate'
+import { stripTitleHeading } from '../lib/markdownTitle'
+import { surfaceFor, type ContentViewerHandle } from '../lib/contentSurfaces'
 import { BacklinksPanel } from './BacklinksPanel'
-import { ReactionBar } from './ReactionBar'
-import { CommentsPanel } from './CommentsPanel'
+import { PropertiesPanel } from './PropertiesPanel'
+import { DocumentFooter } from './DocumentFooter'
+import { DocumentHistoryAction } from './DocumentHistoryAction'
+import { DocumentShell } from './DocumentShell'
+import { DocumentToc, DocumentPrevNext } from './DocumentTocNav'
+import { ExportPdfDialog } from './ExportPdfDialog'
+import { Button } from './ui/button'
 
 interface DocumentReaderProps {
   ws: string
@@ -18,96 +38,307 @@ interface DocumentReaderProps {
 }
 
 /**
- * Vue lecture « wiki » d'un document : colonne centrée aérée, sans panneau
- * propriétés. Mode par défaut à l'ouverture ; l'édition se déclenche via `onEdit`.
+ * Vue lecture d'un document. Elle partage l'ossature `DocumentShell` avec
+ * l'édition : même feuille, mêmes marges, même mesure.
  */
 export function DocumentReader({ ws, blocSlug, docId, doc, onEdit }: DocumentReaderProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
+  const [copiedDoc, setCopiedDoc] = useState(false)
+  const [richState, setRichState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  const [exportOpen, setExportOpen] = useState(false)
+  const viewerRef = useRef<ContentViewerHandle>(null)
+  const readerRef = useRef<HTMLDivElement>(null)
 
-  const { data: reactions } = useQuery<ReactionOut>({
-    queryKey: ['doc-reactions', ws, docId],
-    queryFn: () => reactionsApi.getDocReactions(ws, docId),
-    staleTime: 30_000,
-  })
+  // Copie riche (texte + composants en images) : la rasterisation prend un
+  // court instant, on montre un état d'attente puis un accusé.
+  async function copyRich() {
+    setRichState('busy')
+    try {
+      // Optionnel au contrat : une surface opaque (texte brut) n'a pas de
+      // représentation riche. Le bouton n'est d'ailleurs pas proposé dans ce cas.
+      await viewerRef.current?.copyRich?.()
+      setRichState('done')
+      setTimeout(() => setRichState('idle'), 1500)
+    } catch {
+      setRichState('error')
+      setTimeout(() => setRichState('idle'), 2500)
+    }
+  }
+  // Préférences de lecture (sommaire, propriétés, échelle) : mémorisées par
+  // compte via un magasin unique, retrouvées d'un document à l'autre.
+  const {
+    tocOpen,
+    propsOpen,
+    scale,
+    readingMode,
+    toggleToc,
+    toggleProps,
+    setReadingMode,
+    incScale,
+    decScale,
+    resetScale,
+    canInc,
+    canDec,
+  } = useReadingPrefs()
 
-  const reactDocMutation = useMutation({
-    mutationFn: (nature: 1 | -1) => reactionsApi.toggleDocReaction(ws, docId, nature),
-    onSuccess: (updated: ReactionOut) => {
-      queryClient.setQueryData(['doc-reactions', ws, docId], updated)
-    },
-  })
+  // Raccourci « mode lecture » : replie/redéploie sommaire ET propriétés d'un
+  // geste (⌘/Ctrl + \\, convention de bascule de panneaux latéraux). Ignoré
+  // quand la frappe vise un champ de saisie (ex. panneau commentaires).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== '\\') return
+      const el = e.target as HTMLElement | null
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      e.preventDefault()
+      setReadingMode(!readingMode)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [readingMode, setReadingMode])
 
-  const hasContent = Boolean(doc.content && doc.content.trim())
+  // Zoom à la molette sur PC : Ctrl/⌘ + molette règle l'échelle cran par cran au
+  // survol du document (geste de zoom standard, aussi émis par le pinch trackpad).
+  // La molette SEULE continue de défiler — on ne capte que le geste modifié. On
+  // remplace ainsi le zoom natif du navigateur sur cette zone. Écouteur natif
+  // non-passif : preventDefault n'est pas permis via onWheel React (passif).
+  useEffect(() => {
+    const el = readerRef.current
+    if (!el) return
+    // Accumulateur normalisé en pixels (deltaMode ligne/page → pixels) : un cran
+    // de molette classique ≈ un palier, un pinch progresse en douceur.
+    let acc = 0
+    const STEP = 100
+    function onWheel(e: WheelEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault()
+      const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY
+      acc += px
+      while (acc <= -STEP) {
+        acc += STEP
+        incScale() // molette vers le haut = agrandir
+      }
+      while (acc >= STEP) {
+        acc -= STEP
+        decScale()
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [incScale, decScale])
+
+
+  // Beaucoup de documents commencent par « # <titre> » (modèles de contenu) :
+  // le shell affiche déjà ce titre, on retire le doublon EN LECTURE seulement
+  // (le contenu en base n'est jamais modifié ; l'édition montre tout).
+  // Surface de lecture choisie par le type de contenu (repli texte brut si inconnu).
+  const { Viewer, supportsRichCopy, fullWidth } = surfaceFor(doc.type)
+  const displayContent = stripTitleHeading(doc.content ?? '', doc.title)
+  const hasContent = Boolean(displayContent.trim())
 
   return (
-    <div className="p-6" data-testid="document-reader">
-      <div className="mx-auto max-w-[1200px]">
-        <div className="mb-6 flex items-center gap-4">
-          <h1 className="text-3xl font-bold leading-tight text-gray-900">{doc.title}</h1>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {doc.exposed && (
+    <div data-testid="document-reader" ref={readerRef}>
+      <DocumentShell
+        wide={fullWidth}
+        kicker={[doc.functional_type_slug, blocSlug].filter(Boolean).join(' · ')}
+        title={
+          <h1 className="m-0 text-[42px] leading-[1.08] tracking-[-0.03em]">{doc.title}</h1>
+        }
+        nav={tocOpen ? <DocumentToc ws={ws} bloc={blocSlug} docId={docId} /> : undefined}
+        meta={
+          <>
+            <button
+              type="button"
+              onClick={toggleToc}
+              title={t(tocOpen ? 'docnav.hideToc' : 'docnav.showToc')}
+              aria-pressed={tocOpen}
+              data-testid="toc-toggle"
+              className={`inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 ${
+                tocOpen ? 'text-accent-700' : 'text-ink/[0.5]'
+              } hover:text-accent-700`}
+            >
+              <ListBullets size={14} weight="duotone" />
+              {t('docnav.toc')}
+            </button>
+            <button
+              type="button"
+              onClick={toggleProps}
+              title={t(propsOpen ? 'docnav.hideProps' : 'docnav.showProps')}
+              aria-pressed={propsOpen}
+              data-testid="props-toggle"
+              className={`inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 ${
+                propsOpen ? 'text-accent-700' : 'text-ink/[0.5]'
+              } hover:text-accent-700`}
+            >
+              <Sidebar size={14} weight="duotone" />
+              {t('docnav.props')}
+            </button>
+            {doc.slug && (
+              <span className="inline-flex items-center gap-1">
+                <LinkSimple size={13} weight="duotone" />
+                <span className="[font-family:var(--font-mono)]">{doc.slug}</span>
+              </span>
+            )}
+            <span>
+              v{doc.version} · {t('editor.modifiedAt', { when: relativeDate(doc.updated_at) })}{doc.updated_by ? ` par ${doc.updated_by}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(doc.content ?? '')
+                setCopiedDoc(true)
+                setTimeout(() => setCopiedDoc(false), 1500)
+              }}
+              title={t('editor.copyDocument')}
+              data-testid="copy-document-btn"
+              className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700"
+            >
+              {copiedDoc ? <Check size={14} weight="bold" /> : <Copy size={14} weight="duotone" />}
+              {copiedDoc ? t('editor.copyDocumentDone') : t('editor.copyLabel')}
+            </button>
+            {supportsRichCopy && (
               <button
                 type="button"
-                title="Copier le lien public"
+                onClick={() => void copyRich()}
+                disabled={richState === 'busy'}
+                title={t('editor.copyRichHint')}
+                data-testid="copy-rich-btn"
+                className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-ink/[0.5] hover:text-accent-700 disabled:cursor-wait"
+              >
+                {richState === 'busy' ? (
+                  <SpinnerGap size={14} weight="bold" className="animate-spin" />
+                ) : richState === 'done' ? (
+                  <Check size={14} weight="bold" />
+                ) : (
+                  <Images size={14} weight="duotone" />
+                )}
+                {richState === 'done'
+                  ? t('editor.copyRichDone')
+                  : richState === 'error'
+                    ? t('editor.copyRichError')
+                    : t('editor.copyRich')}
+              </button>
+            )}
+            <span className="flex-1" />
+            {doc.exposed && <span className="tag tag-accent">{t('documents.public')}</span>}
+          </>
+        }
+        actions={
+          <>
+            <div className="flex items-center" data-testid="reading-scale" role="group" aria-label={t('reading.scale')}>
+              <Button
+                variant="icon"
+                size="sm"
+                title={t('reading.scaleDown')}
+                aria-label={t('reading.scaleDown')}
+                disabled={!canDec}
+                onClick={decScale}
+                data-testid="scale-down"
+              >
+                <Minus size={14} weight="bold" />
+              </Button>
+              <button
+                type="button"
+                onClick={resetScale}
+                title={t('reading.scaleReset')}
+                aria-label={t('reading.scaleValue', { pct: Math.round(scale * 100) })}
+                data-testid="scale-reset"
+                className="inline-flex min-w-[4.5ch] cursor-pointer items-center justify-center gap-1 border-0 bg-transparent px-0.5 text-[11px] tabular-nums text-ink/[0.6] hover:text-accent-700"
+              >
+                <TextAa size={13} weight="duotone" />
+                {Math.round(scale * 100)}%
+              </button>
+              <Button
+                variant="icon"
+                size="sm"
+                title={t('reading.scaleUp')}
+                aria-label={t('reading.scaleUp')}
+                disabled={!canInc}
+                onClick={incScale}
+                data-testid="scale-up"
+              >
+                <Plus size={14} weight="bold" />
+              </Button>
+            </div>
+            <Button
+              variant="icon"
+              size="sm"
+              title={t('reading.readingModeHint')}
+              aria-label={t('reading.readingMode')}
+              aria-pressed={readingMode}
+              onClick={() => setReadingMode(!readingMode)}
+              data-testid="reading-mode-toggle"
+              className={readingMode ? 'text-accent-700' : undefined}
+            >
+              <BookOpen size={14} weight={readingMode ? 'fill' : 'duotone'} />
+            </Button>
+            {doc.exposed && (
+              <Button
+                variant="icon"
+                size="sm"
+                title={t('editor.copyPublicLink')}
                 onClick={() => {
                   void navigator.clipboard.writeText(`${window.location.origin}/pub/${docId}`)
                   setCopied(true)
                   setTimeout(() => setCopied(false), 1500)
                 }}
-                className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-emerald-600
-                  hover:bg-emerald-50 transition-colors"
               >
-                {copied ? <Check size={13} /> : <Eye size={13} />}
-              </button>
+                {copied ? <Check size={14} weight="bold" /> : <LinkSimple size={14} weight="duotone" />}
+              </Button>
             )}
-            <button
-              type="button"
-              onClick={onEdit}
-              className="flex items-center gap-1.5 rounded-md bg-gray-100 px-3 py-1.5 text-xs
-                font-medium text-gray-600 hover:bg-gray-200 transition-colors"
-              data-testid="document-edit-btn"
+            <Button
+              variant="icon"
+              size="sm"
+              title={t('exportPdf.title')}
+              onClick={() => setExportOpen(true)}
+              data-testid="export-pdf-btn"
             >
-              <Pencil size={13} />
+              <FilePdf size={14} weight="duotone" />
+            </Button>
+            {/* Historique : lecture seule sur le document, donc offert dans les
+                deux modes. Il n'existait qu'en édition par oubli, pas par choix. */}
+            <DocumentHistoryAction ws={ws} docId={docId} currentVersion={doc.version} />
+            <Button onClick={onEdit} data-testid="document-edit-btn">
+              <PencilSimple size={14} weight="duotone" />
               {t('editor.edit')}
-            </button>
-          </div>
-        </div>
-
-        {doc.functional_type_slug && (
-          <div className="mb-6 text-sm text-gray-400" data-testid="document-type-badge">
-            {doc.functional_type_slug}
-          </div>
-        )}
-
-        {hasContent ? (
-          <MarkdownViewer content={doc.content ?? ''} bare />
-        ) : (
-          <p className="italic text-gray-400">{t('editor.readEmpty')}</p>
-        )}
-
-        <div className="mt-8">
-          <DocumentChildrenPanel ws={ws} blocSlug={blocSlug} docId={docId} />
-        </div>
-
-        <div className="mt-8 border-t border-gray-100 pt-6">
-          <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
-        </div>
-
-        <div className="mt-6 border-t border-gray-100 pt-6">
-          {reactions && (
-            <div className="mb-4">
-              <ReactionBar
-                reactions={reactions}
-                onReact={(n) => reactDocMutation.mutate(n)}
-                disabled={reactDocMutation.isPending}
+            </Button>
+          </>
+        }
+        aside={
+          propsOpen ? (
+            <>
+              <PropertiesPanel
+                ws={ws}
+                docId={docId}
+                functionalTypeSlug={doc.functional_type_slug}
+                readOnly
               />
-            </div>
-          )}
-          <CommentsPanel ws={ws} docId={docId} />
-        </div>
-      </div>
+              <BacklinksPanel ws={ws} docId={docId} blocSlug={blocSlug} />
+            </>
+          ) : undefined
+        }
+        footer={
+          <>
+            <DocumentPrevNext ws={ws} bloc={blocSlug} docId={docId} />
+            <DocumentFooter ws={ws} blocSlug={blocSlug} docId={docId} />
+          </>
+        }
+      >
+        {hasContent ? (
+          <Viewer ref={viewerRef} content={displayContent} bare docId={docId} />
+        ) : (
+          <p className="text-muted italic">{t('editor.readEmpty')}</p>
+        )}
+      </DocumentShell>
+
+      {exportOpen && (
+        <ExportPdfDialog
+          ws={ws}
+          blocSlug={blocSlug}
+          docId={docId}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </div>
   )
 }

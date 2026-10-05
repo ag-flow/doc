@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from docflow.automations.substitution import render_and_validate, render_body
+from docflow.automations.substitution import (
+    render_and_validate,
+    render_body,
+    unresolved_variables,
+)
 
 
 def test_simple_substitution() -> None:
@@ -85,3 +89,35 @@ def test_various_special_chars(content: str) -> None:
     rendered = render_and_validate(tpl, {"content": content})
     assert rendered is not None, f"Doit être valide pour : {content!r}"
     assert json.loads(rendered)["content"] == content
+
+
+# ── Détection des variables non résolues (fail-loud, cf. bug indexation) ──────
+
+
+def test_unresolved_variables_detecte_placeholder_manquant() -> None:
+    tpl = '{"bloc": "{event.blockSlug}", "type": "{event.functionalTypeSlug}"}'
+    missing = unresolved_variables(tpl, {"event.code": "updated.v1"})
+    assert missing == ["event.blockSlug", "event.functionalTypeSlug"]
+
+
+def test_unresolved_variables_vide_quand_tout_est_fourni() -> None:
+    tpl = '{"bloc": "{event.blockSlug}", "doc": "{id_document}"}'
+    assert unresolved_variables(tpl, {"event.blockSlug": "epics", "id_document": "x"}) == []
+
+
+def test_unresolved_variables_ignore_les_accolades_json_de_structure() -> None:
+    """Les accolades de structure JSON ne sont pas des placeholders."""
+    tpl = '{"payload": {"nested": "{id_document}"}, "empty": {}}'
+    assert unresolved_variables(tpl, {"id_document": "x"}) == []
+
+
+def test_unresolved_variables_ne_scanne_pas_les_valeurs_substituees() -> None:
+    """Un contenu qui contient des accolades ne doit pas être pris pour un
+    placeholder : la détection porte sur le GABARIT, pas sur le rendu."""
+    tpl = '{"content": "{content}"}'
+    variables = {"content": "exemple de gabarit littéral : {event.blockSlug}"}
+    # `content` est fourni → aucun placeholder non résolu dans le gabarit.
+    assert unresolved_variables(tpl, variables) == []
+    rendered = render_and_validate(tpl, variables)
+    assert rendered is not None
+    assert json.loads(rendered)["content"] == "exemple de gabarit littéral : {event.blockSlug}"

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '../lib/i18n'
@@ -11,6 +11,8 @@ vi.mock('../lib/api', async () => {
     docsApi: {
       ...actual.docsApi,
       getBlockDocuments: vi.fn(),
+      getPresentTypeSlugs: vi.fn(),
+      getPresentContentTypes: vi.fn(),
       getTypesRich: vi.fn(),
       getBlockTree: vi.fn(),
       getAllowedTypes: vi.fn(),
@@ -19,11 +21,15 @@ vi.mock('../lib/api', async () => {
       getDocumentValues: vi.fn(),
       putDocumentValue: vi.fn(),
     },
+    viewsApi: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
+    prefsApi: { get: vi.fn(), set: vi.fn() },
   }
 })
 
 import {
   docsApi,
+  prefsApi,
+  viewsApi,
   type BlockTreeNode,
   type BlockTreePage,
   type DocumentOut,
@@ -36,7 +42,7 @@ function makeDoc(over: Partial<DocumentOut>): DocumentOut {
   return {
     doc_technical_key: 'd1',
     title: 'Doc',
-    type: 'page',
+    type: 'md',
     slug: null,
     content: null,
     version: 1,
@@ -47,6 +53,7 @@ function makeDoc(over: Partial<DocumentOut>): DocumentOut {
     exposed: false,
     created_at: '',
     updated_at: '',
+    updated_by: null,
     ...over,
   }
 }
@@ -67,7 +74,10 @@ function makeTreePage(
     id: doc.doc_technical_key,
     title: doc.title,
     functional_type_slug: doc.functional_type_slug,
+    type: doc.type ?? 'md',
     parent_id: doc.parent_id,
+    updated_at: null,
+    updated_by: null,
     properties: propsByDoc[doc.doc_technical_key] ?? [],
     children: (byParent.get(doc.doc_technical_key) ?? []).map(toNode),
   })
@@ -79,26 +89,29 @@ const emptyTypesRich: FunctionalTypeRich[] = []
 const emptyTreePage: BlockTreePage = {
   block_slug: 'b1',
   page: 1,
-  page_size: 100,
+  page_size: 25,
   total: 0,
   has_next: false,
   roots: [],
 }
 
-function renderList() {
+function renderList(url = '/ws/ws/blocs/b1/documents') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/ws/ws/blocs/b1/documents']}>
-        <Routes>
-          <Route
-            path="/ws/:wsSlug/blocs/:blocSlug/documents"
-            element={<BlockDocumentList />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[url]}>
+          <Routes>
+            <Route
+              path="/ws/:wsSlug/blocs/:blocSlug/documents"
+              element={<BlockDocumentList />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  }
 }
 
 describe('BlockDocumentList', () => {
@@ -106,13 +119,30 @@ describe('BlockDocumentList', () => {
     vi.clearAllMocks()
     vi.mocked(docsApi.getTypesRich).mockResolvedValue(emptyTypesRich)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(emptyTreePage)
+    // Les colonnes de propriétés dérivent des types PRÉSENTS : on les dérive des
+    // documents encore mockés via getBlockDocuments (source d'intention des tests).
+    vi.mocked(docsApi.getPresentTypeSlugs).mockImplementation(async () => {
+      const docs = await vi.mocked(docsApi.getBlockDocuments)('ws', 'b1').catch(() => [])
+      return [...new Set(docs.map((d) => d.functional_type_slug).filter(Boolean) as string[])]
+    })
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([])
+    // Types de CONTENU présents : dérivés des mêmes documents, comme le serveur.
+    vi.mocked(docsApi.getPresentContentTypes).mockImplementation(async () => {
+      const docs = await vi.mocked(docsApi.getBlockDocuments)('ws', 'b1').catch(() => [])
+      return [...new Set(docs.map((d) => d.type ?? 'md'))].sort()
+    })
+    vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
   })
 
-  // DoD 26.1 — état vide
+  // DoD 26.1 — état vide : une phrase et l'action de création, pas une table blanche.
   it('shows empty state', async () => {
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue([])
     renderList()
-    await waitFor(() => expect(screen.getByText('Aucun document')).toBeInTheDocument())
+    const empty = await screen.findByTestId('documents-empty')
+    expect(empty).toHaveTextContent('aucun document')
+    expect(empty.querySelector('button')).not.toBeNull()
   })
 
   // DoD 26.2 — arbre indenté + toggle
@@ -127,6 +157,21 @@ describe('BlockDocumentList', () => {
     await waitFor(() => expect(screen.getByTestId('documents-table')).toBeInTheDocument())
     expect(screen.getByText('Parent')).toBeInTheDocument()
     expect(screen.getByTestId('add-root-btn')).toBeInTheDocument()
+  })
+
+  it('la taille de page est configurable et mémorisée en préférence', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    renderList()
+    // Chargement initial avec la taille par défaut (25).
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25, 'title', 'asc'))
+    const select = await screen.findByTestId('page-size-select')
+
+    fireEvent.change(select, { target: { value: '50' } })
+    // Persistée en préférence + re-fetch avec la nouvelle taille.
+    await waitFor(() => expect(prefsApi.set).toHaveBeenCalledWith('doc-page-size', 50))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 50, 'title', 'asc'))
   })
 
   // DoD 26.3 — colonnes dynamiques : budget_jours présent sur epic, absent sur feature
@@ -152,6 +197,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'budget_jours',
@@ -174,6 +220,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [],
       },
     ])
@@ -212,6 +259,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'budget_jours',
@@ -242,9 +290,9 @@ describe('BlockDocumentList', () => {
     // types-rich doit exposer feature comme enfant d'epic pour que le bouton apparaisse
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([
       { id: 't1', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws', content_template: null,
-        source_template: null, created_at: '', updated_at: '', properties: [] },
+        source_template: null, created_at: '', updated_at: '', documents_count: 0, properties: [] },
       { id: 't2', slug: 'feature', label: 'Feature', parent_slug: 'epic', workspace_slug: 'ws', content_template: null,
-        source_template: null, created_at: '', updated_at: '', properties: [] },
+        source_template: null, created_at: '', updated_at: '', documents_count: 0, properties: [] },
     ])
     vi.mocked(docsApi.getAllowedTypes).mockResolvedValue([
       { slug: 'feature', label: 'Feature' },
@@ -281,6 +329,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -300,14 +349,19 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'atdd1',
           title: 'ATDD done',
           functional_type_slug: 'atdd',
+          type: 'md',
+          updated_at: null,
+          updated_by: null,
           properties: [
             { prop_slug: 'statut', type: 'restricted_list', value: null, allowed_value_slug: 'done', allowed_value_label: 'Terminé' },
           ],
@@ -322,11 +376,14 @@ describe('BlockDocumentList', () => {
 
     await waitFor(() => {
       expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       })
     })
     await waitFor(() => expect(screen.getByText('ATDD done')).toBeInTheDocument())
@@ -334,10 +391,11 @@ describe('BlockDocumentList', () => {
     expect(screen.queryByText('Feature 1')).not.toBeInTheDocument()
     expect(screen.queryByText('Epic 1')).not.toBeInTheDocument()
     expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
-    // Le mode requête masque le bouton arbre/liste (flat forcé) et affiche la pagination.
+    // Le mode requête masque le bouton arbre/liste (flat forcé) et affiche la
+    // barre (avec le bouton d'effacement de requête).
     expect(screen.queryByTestId('toggle-view-btn')).not.toBeInTheDocument()
-    expect(screen.getByTestId('query-pagination')).toBeInTheDocument()
-    expect(screen.queryByTestId('browse-pagination')).not.toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.getByTestId('query-clear-btn')).toBeInTheDocument()
 
     // Effacer la requête revient en mode browse (arbre paginé, sans appel serveur
     // supplémentaire). Les statuts n'étant pas renseignés ici, l'arbre démarre
@@ -345,8 +403,333 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('query-clear-btn'))
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
     expect(screen.queryByText('Story in-progress')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
-    expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
+  })
+
+  // ── Filtrer sans perdre l'arborescence ────────────────────────────────────
+
+  it('un filtre conserve l\'ARBORESCENCE : les ancêtres viennent en contexte', async () => {
+    // Le défaut rapporté : « quand on commence à filtrer, l'arborescence
+    // disparaît ». Le serveur remonte désormais les ancêtres des résultats
+    // (`include_ancestors`), et le front rebâtit l'arbre élagué.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: 'epic',
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    // Le serveur rend le résultat (Feature 1) ET son ancêtre, marqué contexte.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['feature'])
+
+    // L'ancêtre est affiché — sans lui on ne sait plus OÙ est le résultat.
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    expect(screen.getByText('Feature 1')).toBeInTheDocument()
+    // Et il est distingué du résultat.
+    expect(screen.getByText('Epic 1')).toHaveAttribute('data-context', 'true')
+    expect(screen.getByText('Feature 1')).not.toHaveAttribute('data-context')
+  })
+
+  it('le compte annoncé ne compte QUE les résultats', async () => {
+    // « 1 document » veut dire un résultat, pas un résultat plus le chemin qui
+    // y mène — sinon le compte contredirait ce que l'écran montre.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: null,
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['feature'])
+
+    await waitFor(() => expect(screen.getByTestId('docs-toolbar')).toHaveTextContent('1'))
+    expect(screen.getByTestId('docs-toolbar')).not.toHaveTextContent('2 document')
+  })
+
+  it('un document vu en RÉSULTAT puis en contexte reste un résultat', async () => {
+    // La pagination porte sur les résultats, et chaque page remonte SES propres
+    // ancêtres : un même document peut donc revenir page 2 comme ancêtre alors
+    // qu'il était résultat page 1. Sans arbitrage, le dernier écrasait le
+    // premier — un vrai résultat s'affichait en gris tout en étant compté, et le
+    // nombre annoncé contredisait l'écran.
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+    ])
+    // Une seule page qui contient e1 DEUX fois : résultat, puis ancêtre de f1.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 2, has_next: false,
+      objects: [
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'f1', title: 'Feature 1', functional_type_slug: 'feature', type: 'md',
+          parent_id: 'e1', matched: true, updated_at: null, updated_by: null, properties: [],
+        },
+        {
+          id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md',
+          parent_id: null, matched: false, updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    await applyRestrictedFilter('type', ['epic'])
+
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    // Le statut de RÉSULTAT l'emporte sur celui de contexte.
+    expect(screen.getByText('Epic 1')).not.toHaveAttribute('data-context')
+  })
+
+  // ── Colonne « type technique » ────────────────────────────────────────────
+
+  it('affiche le type technique via la table de mapping, pas la clef brute', async () => {
+    // Le parent d'un MCD porte la mise en page, ses enfants les entités : deux
+    // types de contenu distincts, deux étiquettes distinctes.
+    const docs = [
+      makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout', parent_id: null }),
+      makeDoc({ doc_technical_key: 'e1', title: 'Client', type: 'table-schema', parent_id: 'm1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList('/ws/ws/blocs/b1/documents?vue=liste')
+
+    await waitFor(() => expect(screen.getByText('Boutique')).toBeInTheDocument())
+    expect(screen.getByText('MCD')).toBeInTheDocument()
+    expect(screen.getByText('MCD entité')).toBeInTheDocument()
+    // La clef brute ne s'affiche jamais quand le type est enregistré.
+    expect(screen.queryByText('model-layout')).not.toBeInTheDocument()
+    expect(screen.queryByText('table-schema')).not.toBeInTheDocument()
+  })
+
+  it('affiche TEL QUEL un type de contenu non enregistré', async () => {
+    // Le masquer derrière une étiquette générique ferait passer un type qu'on ne
+    // sait pas servir pour un type ordinaire : il doit se voir.
+    const docs = [makeDoc({ doc_technical_key: 'x1', title: 'Inconnu', type: 'widget-maison' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList()
+
+    await waitFor(() => expect(screen.getByText('Inconnu')).toBeInTheDocument())
+    expect(screen.getByText('widget-maison')).toBeInTheDocument()
+  })
+
+  // Le TYPE n'est pas une propriété : il se filtre par `type_slugs`, sur la
+  // colonne du document, sans passer par les valeurs de propriétés.
+  it('filtre sur le type d\'objet et bascule en mode requête', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'epic1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'feat1', title: 'Feature 1', functional_type_slug: 'feature', parent_id: 'epic1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-feature', slug: 'feature', label: 'Feature', parent_slug: 'epic',
+        workspace_slug: 'ws', content_template: null, source_template: null, created_at: '',
+        updated_at: '', documents_count: 0, properties: [],
+      },
+    ])
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          parent_id: null,
+          matched: true,
+          id: 'epic1', title: 'Epic 1', functional_type_slug: 'epic',
+          type: 'md',
+          updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+
+    await applyRestrictedFilter('type', ['epic'])
+
+    await waitFor(() => {
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: ['epic'],
+        content_types: null,
+        include_ancestors: true,
+        filters: [],
+        sort: [],
+        projection: null,
+        page: 1,
+        page_size: 25,
+      })
+    })
+    // La chip porte le LIBELLÉ du type, pas son slug.
+    expect(screen.getByTestId('filter-chip-type')).toHaveTextContent('Épic')
+
+    // Retirer la chip repasse en navigation, sans requête qui ne filtre rien.
+    fireEvent.click(screen.getByTestId('filter-chip-remove-type'))
+    await waitFor(() => expect(screen.queryByTestId('filter-chip-type')).not.toBeInTheDocument())
+  })
+
+  it('filtre sur le type de CONTENU et le combine avec le type fonctionnel', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout', functional_type_slug: 'epic' }),
+      makeDoc({ doc_technical_key: 'e1', title: 'Doc', type: 'md', functional_type_slug: 'epic' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      block_slug: 'b1', page: 1, page_size: 25, total: 1, has_next: false,
+      objects: [
+        {
+          parent_id: null,
+          matched: true,
+          id: 'm1', title: 'Boutique', functional_type_slug: 'epic', type: 'model-layout',
+          updated_at: null, updated_by: null, properties: [],
+        },
+      ],
+    })
+
+    renderList()
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-btn-content-type')).toBeInTheDocument(),
+    )
+
+    await applyRestrictedFilter('content-type', ['model-layout'])
+
+    await waitFor(() => {
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: ['model-layout'],
+        include_ancestors: true,
+        filters: [],
+        sort: [],
+        projection: null,
+        page: 1,
+        page_size: 25,
+      })
+    })
+    // La chip porte l'étiquette du REGISTRE, pas la clef brute.
+    expect(screen.getByTestId('filter-chip-content-type')).toHaveTextContent('MCD')
+    expect(screen.getByTestId('filter-chip-content-type')).not.toHaveTextContent('model-layout')
+
+    fireEvent.click(screen.getByTestId('filter-chip-remove-content-type'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-chip-content-type')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('ne propose au filtre de contenu que les types PRÉSENTS dans le bloc', async () => {
+    const docs = [makeDoc({ doc_technical_key: 'm1', title: 'Boutique', type: 'model-layout' })]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+
+    renderList()
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-btn-content-type')).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByTestId('filter-btn-content-type'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('filter-opt-content-type-model-layout')).toBeInTheDocument(),
+    )
+    // `table-schema` est un type connu du registre, mais absent de CE bloc.
+    expect(screen.queryByTestId('filter-opt-content-type-table-schema')).toBeNull()
+  })
+
+  it('ne propose au filtre de type que les types PRÉSENTS dans le bloc', async () => {
+    // Offrir un type sans document, c'est offrir un filtre dont on sait déjà
+    // qu'il ne rendra rien.
+    const docs = [
+      makeDoc({ doc_technical_key: 'epic1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([
+      {
+        id: 'tid-epic', slug: 'epic', label: 'Épic', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+      {
+        id: 'tid-carte', slug: 'carte', label: 'Carte', parent_slug: null, workspace_slug: 'ws',
+        content_template: null, source_template: null, created_at: '', updated_at: '',
+        documents_count: 0, properties: [],
+      },
+    ])
+
+    renderList()
+    await waitFor(() => expect(screen.getByTestId('filter-btn-type')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('filter-btn-type'))
+
+    await waitFor(() => expect(screen.getByTestId('filter-opt-type-epic')).toBeInTheDocument())
+    expect(screen.queryByTestId('filter-opt-type-carte')).not.toBeInTheDocument()
   })
 
   it('in query mode, clicking the title header cycles server sort (asc → desc)', async () => {
@@ -357,10 +740,10 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
@@ -373,11 +756,14 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText('Titre'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'asc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
@@ -385,16 +771,19 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'title', dir: 'desc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
 
-  it('paginates in query mode via the top prev/next controls', async () => {
+  it('charge la page suivante en mode requête via « Charger plus »', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
@@ -402,35 +791,36 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 250,
       has_next: true,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [] }],
     })
 
     renderList()
     // Entrer en mode requête via un filtre.
     await waitFor(() => expect(screen.getByTestId('filter-btn-statut')).toBeInTheDocument())
     await applyRestrictedFilter('statut', ['done'])
-    // Attendre la résolution (has_next=true → bouton suivant actif) avant de paginer.
-    await waitFor(() => expect(screen.getByTestId('query-page-next')).not.toBeDisabled())
-    expect(screen.getByTestId('query-page-prev')).toBeDisabled()
+    // has_next=true → bouton « Charger plus » présent.
+    await waitFor(() => expect(screen.getByTestId('load-more-btn')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByTestId('query-page-next'))
+    fireEvent.click(screen.getByTestId('load-more-btn'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [],
         projection: null,
         page: 2,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
 
   // US Tri hiérarchique sur la page courante (parents puis enfants).
-  it('sorts the tree hierarchically on header click, staying in browse mode', async () => {
-    // Ordre serveur volontairement non trié : racines [ea, eb], enfants de ea [fz, fx].
+  it('sorts the tree server-side on header click, staying in browse mode', async () => {
     const docs = [
       makeDoc({ doc_technical_key: 'ea', title: 'Epic A', functional_type_slug: 'epic', parent_id: null }),
       makeDoc({ doc_technical_key: 'eb', title: 'Epic B', functional_type_slug: 'epic', parent_id: null }),
@@ -438,9 +828,15 @@ describe('BlockDocumentList', () => {
       makeDoc({ doc_technical_key: 'fx', title: 'Feat X', functional_type_slug: 'feature', parent_id: 'ea' }),
     ]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
-    // ea a des enfants au statut divergent → déplié d'emblée (enfants visibles).
-    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
-      makeTreePage(docs, { fz: [statut('done')], fx: [statut('en_cours')] }),
+    // Le tri est CÔTÉ SERVEUR : le mock ordonne racines + enfants selon (sort, dir).
+    vi.mocked(docsApi.getBlockTree).mockImplementation(
+      async (_ws, _b, _page, _size, _sort = 'title', dir = 'asc') => {
+        const ordered = [...docs].sort((a, b) => {
+          const r = a.title.localeCompare(b.title)
+          return dir === 'desc' ? -r : r
+        })
+        return makeTreePage(ordered, { fz: [statut('done')], fx: [statut('en_cours')] })
+      },
     )
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
 
@@ -449,31 +845,49 @@ describe('BlockDocumentList', () => {
 
     renderList()
     await waitFor(() => expect(screen.getByText('Feat X')).toBeInTheDocument())
-    // Ordre serveur par défaut (insertion, non trié).
-    expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb'])
+    // Défaut serveur = title asc : racines A avant B ; sous A, X avant Z.
+    expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb'])
 
+    // 1er clic : asc (déjà le défaut) — reste en mode browse, pas de bascule requête.
     fireEvent.click(screen.getByText('Titre'))
-    // Reste en mode browse : aucun appel serveur, pagination browse conservée.
     expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
-    expect(screen.getByTestId('browse-pagination')).toBeInTheDocument()
-    expect(screen.queryByTestId('query-pagination')).not.toBeInTheDocument()
+    expect(screen.getByTestId('docs-toolbar')).toBeInTheDocument()
+    expect(screen.queryByTestId('query-clear-btn')).not.toBeInTheDocument()
 
-    // Tri asc hiérarchique : racines A avant B ; sous A, X avant Z ; enfants sous leur parent.
-    await waitFor(() =>
-      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb']),
-    )
-
-    // Deuxième clic : desc → B avant A ; sous A, Z avant X.
+    // 2e clic : desc → refetch serveur avec dir=desc ; B avant A, Z avant X.
     fireEvent.click(screen.getByText(/Titre/))
+    await waitFor(() =>
+      expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 1, 25, 'title', 'desc'),
+    )
     await waitFor(() =>
       expect(rowOrder()).toEqual(['doc-row-eb', 'doc-row-ea', 'doc-row-fz', 'doc-row-fx']),
     )
 
-    // Troisième clic : retour à l'ordre serveur (tri annulé).
+    // 3e clic : tri annulé → retour au défaut serveur (title asc).
     fireEvent.click(screen.getByText(/Titre/))
     await waitFor(() =>
-      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fz', 'doc-row-fx', 'doc-row-eb']),
+      expect(rowOrder()).toEqual(['doc-row-ea', 'doc-row-fx', 'doc-row-fz', 'doc-row-eb']),
     )
+  })
+
+  it('sorts browse by the "Modifié" column server-side (updated_at)', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'ea', title: 'Epic A', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'eb', title: 'Epic B', functional_type_slug: 'epic', parent_id: null }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic A')).toBeInTheDocument())
+
+    // Clic sur l'entête « Modifié » → tri serveur par updated_at (reste en browse).
+    fireEvent.click(screen.getByTestId('sort-header-updated_at'))
+    await waitFor(() =>
+      expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 1, 25, 'updated_at', 'asc'),
+    )
+    expect(docsApi.queryBlockDocuments).not.toHaveBeenCalled()
   })
 
   // US Tri par clic d'entête branché au moteur serveur (+ multi-clé Maj-clic).
@@ -485,13 +899,18 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
       objects: [
         {
+          parent_id: null,
+          matched: true,
           id: 'e1',
+          type: 'md',
           title: 'Epic 1',
+          updated_at: null,
+          updated_by: null,
           functional_type_slug: 'epic',
           properties: [statut('done')],
         },
@@ -508,11 +927,14 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('sort-header-statut'))
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [{ key: 'statut', dir: 'asc' }],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
     await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
@@ -521,6 +943,9 @@ describe('BlockDocumentList', () => {
     fireEvent.click(screen.getByTestId('sort-header-title'), { shiftKey: true })
     await waitFor(() =>
       expect(docsApi.queryBlockDocuments).toHaveBeenLastCalledWith('ws', 'b1', {
+        type_slugs: null,
+        content_types: null,
+        include_ancestors: true,
         filters: [{ prop: 'statut', op: 'in', values: ['done'] }],
         sort: [
           { key: 'statut', dir: 'asc' },
@@ -528,7 +953,7 @@ describe('BlockDocumentList', () => {
         ],
         projection: null,
         page: 1,
-        page_size: 100,
+        page_size: 25,
       }),
     )
   })
@@ -549,6 +974,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -574,10 +1000,10 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 1,
       has_next: false,
-      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', properties: [statut('done')] }],
+      objects: [{ id: 'e1', title: 'Epic 1', functional_type_slug: 'epic', type: 'md', parent_id: null, matched: true, updated_at: null, updated_by: null, properties: [statut('done')] }],
     })
 
     renderList()
@@ -622,6 +1048,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
         created_at: '',
         updated_at: '',
+        documents_count: 0,
         properties: [
           {
             slug: 'statut',
@@ -685,19 +1112,22 @@ describe('BlockDocumentList', () => {
     )
   })
 
-  // US Barre de pagination en haut (≤100 par page) — mode browse (racines).
-  it('paginates in browse mode via the top prev/next controls, calling list_block_tree', async () => {
+  // « Charger plus » en mode browse : la page suivante de racines s'ajoute.
+  it('charge la page suivante en mode browse via « Charger plus » (list_block_tree)', async () => {
     const docs = [makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic' })]
     vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
     vi.mocked(docsApi.getBlockTree).mockResolvedValue({
       block_slug: 'b1',
       page: 1,
-      page_size: 100,
+      page_size: 25,
       total: 250,
       has_next: true,
       roots: docs.map((d) => ({
         id: d.doc_technical_key,
         title: d.title,
+        type: 'md',
+        updated_at: null,
+        updated_by: null,
         functional_type_slug: d.functional_type_slug,
         parent_id: d.parent_id,
         properties: [],
@@ -707,13 +1137,12 @@ describe('BlockDocumentList', () => {
     vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
 
     renderList()
-    await waitFor(() => expect(screen.getByTestId('browse-pagination')).toBeInTheDocument())
-    expect(screen.getByTestId('browse-page-prev')).toBeDisabled()
-    expect(screen.getByTestId('browse-page-next')).not.toBeDisabled()
+    // Première page chargée avec la taille par défaut (25), has_next → « Charger plus ».
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenCalledWith('ws', 'b1', 1, 25, 'title', 'asc'))
+    await waitFor(() => expect(screen.getByTestId('load-more-btn')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByTestId('browse-page-next'))
-    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 100))
-    expect(screen.getByTestId('browse-page-prev')).not.toBeDisabled()
+    fireEvent.click(screen.getByTestId('load-more-btn'))
+    await waitFor(() => expect(docsApi.getBlockTree).toHaveBeenLastCalledWith('ws', 'b1', 2, 25, 'title', 'asc'))
   })
 
   // Applique un filtre restricted_list via le popover d'entête (op `in`).
@@ -750,6 +1179,7 @@ describe('BlockDocumentList', () => {
         source_template: null,
       created_at: '',
       updated_at: '',
+      documents_count: 0,
       properties: [
         {
           slug: 'statut',
@@ -838,5 +1268,270 @@ describe('BlockDocumentList', () => {
     // severite diverge mais statut est homogène → parent replié.
     expect(screen.queryByText('Bug A')).not.toBeInTheDocument()
     expect(screen.queryByText('Bug B')).not.toBeInTheDocument()
+  })
+
+  // Régression : l'heuristique de collapse s'appliquait à CHAQUE nouvelle identité de
+  // `browseRoots`, donc à chaque refetch — y compris celui déclenché par l'édition
+  // inline de l'utilisateur. Les plis/déplis manuels étaient perdus sous la souris.
+  it('préserve l’état d’expansion manuel à travers un refetch', async () => {
+    const docs = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    // Enfants homogènes → par défaut replié ; l'utilisateur déplie à la main.
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(docs, { f1: [statut('done')], f2: [statut('done')] }),
+    )
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+
+    const { qc } = renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('expand-e1'))
+    await waitFor(() => expect(screen.getByText('Feature A')).toBeInTheDocument())
+
+    // Refetch avec des données réellement différentes (édition concurrente) :
+    // l'arbre se recompose, mais le dépli manuel doit survivre.
+    const renamed = docs.map((d) => (d.doc_technical_key === 'f1' ? { ...d, title: 'Feature A2' } : d))
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(
+      makeTreePage(renamed, { f1: [statut('done')], f2: [statut('done')] }),
+    )
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ['block-tree', 'ws', 'b1'] })
+    })
+
+    await waitFor(() => expect(screen.getByText('Feature A2')).toBeInTheDocument())
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
+  })
+
+  // « Charger plus » : les nœuds nouvellement chargés reçoivent l'état par défaut,
+  // sans réinitialiser ceux que l'utilisateur a pliés/dépliés à la main.
+  it('« Charger plus » applique le défaut aux nouveaux nœuds seulement', async () => {
+    const page1 = [
+      makeDoc({ doc_technical_key: 'e1', title: 'Epic 1', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'f1', title: 'Feature A', functional_type_slug: 'feature', parent_id: 'e1' }),
+      makeDoc({ doc_technical_key: 'f2', title: 'Feature B', functional_type_slug: 'feature', parent_id: 'e1' }),
+    ]
+    const page2 = [
+      makeDoc({ doc_technical_key: 'e2', title: 'Epic 2', functional_type_slug: 'epic', parent_id: null }),
+      makeDoc({ doc_technical_key: 'g1', title: 'Feature C', functional_type_slug: 'feature', parent_id: 'e2' }),
+      makeDoc({ doc_technical_key: 'g2', title: 'Feature D', functional_type_slug: 'feature', parent_id: 'e2' }),
+    ]
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(page1)
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue([])
+    vi.mocked(docsApi.getBlockTree).mockImplementation(async (_ws, _b, page) => {
+      // Page 1 : enfants homogènes (replié par défaut). Page 2 : statuts divergents
+      // (déplié par défaut).
+      if (page === 1) {
+        const p = makeTreePage(page1, { f1: [statut('done')], f2: [statut('done')] })
+        return { ...p, page: 1, total: 2, has_next: true }
+      }
+      const p = makeTreePage(page2, { g1: [statut('done')], g2: [statut('en_cours')] })
+      return { ...p, page: 2, total: 2, has_next: false }
+    })
+
+    renderList()
+    await waitFor(() => expect(screen.getByText('Epic 1')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('expand-e1'))
+    await waitFor(() => expect(screen.getByText('Feature A')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('load-more-btn'))
+    await waitFor(() => expect(screen.getByText('Epic 2')).toBeInTheDocument())
+
+    // Nouveaux nœuds : état par défaut (divergents → dépliés).
+    expect(screen.getByText('Feature C')).toBeInTheDocument()
+    expect(screen.getByText('Feature D')).toBeInTheDocument()
+    // Nœud déjà chargé : le dépli manuel tient.
+    expect(screen.getByText('Feature A')).toBeInTheDocument()
+    expect(screen.getByText('Feature B')).toBeInTheDocument()
+  })
+})
+
+// ── Écran Documents Broadsheet : tri/filtres dans l'URL, chips, popover ──────
+
+const TYPES_WITH_STATUS: FunctionalTypeRich[] = [
+  {
+    id: 't-epic', slug: 'epic', label: 'Epic', parent_slug: null, workspace_slug: 'ws',
+    source_template: null, content_template: null, created_at: '', updated_at: '',
+    documents_count: 0,
+    properties: [
+      {
+        slug: 'statut', label: 'Statut', type: 'restricted_list', required: false,
+        behavior: null, default_value: null,
+        allowed_values: [
+          { slug: 'en_cours', label: 'En cours', color: null, position: 0 },
+          { slug: 'fait', label: 'Fait', color: null, position: 1 },
+        ],
+      },
+    ],
+  },
+]
+
+describe('BlockDocumentList — tri, filtres et URL', () => {
+  const docs = [makeDoc({ doc_technical_key: 'd1', title: 'Alpha' })]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue(TYPES_WITH_STATUS)
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      objects: [], block_slug: 'b1', page: 1, page_size: 100, total: 0, has_next: false,
+    })
+  })
+
+  it('hydrate le tri et les filtres depuis l’URL (partageable, survit au reload)', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait&sort=statut:desc')
+    // Filtre présent → mode requête, la requête serveur reçoit la clause de l'URL.
+    await waitFor(() =>
+      expect(docsApi.queryBlockDocuments).toHaveBeenCalledWith('ws', 'b1', expect.objectContaining({
+        filters: [{ prop: 'statut', op: 'in', values: ['fait'] }],
+        sort: [{ key: 'statut', dir: 'desc' }],
+      })),
+    )
+    // Et la chip du filtre actif est affichée avec le libellé de la valeur.
+    expect(await screen.findByTestId('filter-chip-statut')).toHaveTextContent('Fait')
+  })
+
+  it('un filtre sans résultat affiche l’état vide et propose de l’effacer', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    const empty = await screen.findByTestId('documents-empty')
+    expect(empty).toHaveTextContent('Aucun document ne correspond')
+    expect(screen.getByTestId('empty-clear-filters')).toBeInTheDocument()
+  })
+
+  it('retirer la chip d’un filtre revient en navigation', async () => {
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    fireEvent.click(await screen.findByTestId('filter-chip-remove-statut'))
+    await waitFor(() => expect(screen.queryByTestId('filter-chip-statut')).not.toBeInTheDocument())
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+  })
+
+  it('le popover de filtre se ferme par Échap et rend le focus au déclencheur', async () => {
+    renderList()
+    const trigger = await screen.findByTestId('filter-btn-statut')
+    fireEvent.click(trigger)
+    expect(await screen.findByTestId('filter-popover-statut')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-popover-statut')).not.toBeInTheDocument(),
+    )
+    expect(trigger).toHaveFocus()
+  })
+
+  it('le popover se ferme au clic extérieur', async () => {
+    renderList()
+    fireEvent.click(await screen.findByTestId('filter-btn-statut'))
+    expect(await screen.findByTestId('filter-popover-statut')).toBeInTheDocument()
+    fireEvent.mouseDown(document.body)
+    await waitFor(() =>
+      expect(screen.queryByTestId('filter-popover-statut')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('la colonne triée porte une flèche cyan et aria-sort', async () => {
+    // Il faut au moins une ligne : sans résultat, c'est l'état vide qui s'affiche.
+    vi.mocked(docsApi.queryBlockDocuments).mockResolvedValue({
+      objects: [{
+        parent_id: null,
+        matched: true,
+        id: 'd1', title: 'Alpha', functional_type_slug: 'epic',
+        type: 'md',
+        updated_at: null, updated_by: null,
+        properties: [{
+          prop_slug: 'statut', type: 'restricted_list', value: null,
+          allowed_value_slug: 'fait', allowed_value_label: 'Fait',
+        }],
+      }],
+      block_slug: 'b1', page: 1, page_size: 100, total: 1, has_next: false,
+    })
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait&sort=statut:asc')
+    const arrow = await screen.findByTestId('sort-arrow-statut')
+    expect(arrow).toHaveClass('text-accent')
+    expect(arrow.closest('th')).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('enregistre la sélection courante comme vue', async () => {
+    vi.mocked(viewsApi.create).mockResolvedValue({
+      id: 'v1', slug: 'ma-vue', label: 'Ma vue', layout: 'table', filter: [], sort: [],
+      group_by: null, columns: [], bloc_ref: null, owner_ref: null, created_at: '', updated_at: '',
+    })
+    renderList('/ws/ws/blocs/b1/documents?f=statut:in:fait')
+    fireEvent.click(await screen.findByTestId('save-view-btn'))
+    const input = await screen.findByLabelText('Nom de la vue')
+    fireEvent.change(input, { target: { value: 'Ma vue' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() =>
+      expect(viewsApi.create).toHaveBeenCalledWith('ws', expect.objectContaining({
+        slug: 'ma-vue',
+        label: 'Ma vue',
+        filter: [{ prop: 'statut', op: 'in', values: ['fait'] }],
+      })),
+    )
+  })
+})
+
+describe('BlockDocumentList — colonnes mémorisées par utilisateur et par bloc', () => {
+  const docs = [makeDoc({ doc_technical_key: 'd1', title: 'Alpha' })]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(docsApi.getTypesRich).mockResolvedValue(TYPES_WITH_STATUS)
+    vi.mocked(docsApi.getBlockDocuments).mockResolvedValue(docs)
+    vi.mocked(docsApi.getBlockTree).mockResolvedValue(makeTreePage(docs))
+    vi.mocked(viewsApi.list).mockResolvedValue([])
+    vi.mocked(prefsApi.get).mockResolvedValue({ key: 'k', value: null })
+    vi.mocked(prefsApi.set).mockResolvedValue({ key: 'k', value: null })
+  })
+
+  it('masquer une colonne enregistre la préférence, clé user × bloc', async () => {
+    renderList()
+    fireEvent.click(await screen.findByTestId('columns-btn'))
+    fireEvent.click(await screen.findByTestId('col-toggle-prop_statut'))
+    await waitFor(() =>
+      expect(prefsApi.set).toHaveBeenCalledWith('doc-columns:ws:b1',
+        expect.objectContaining({ prop_statut: false })),
+    )
+  })
+
+  it('la préférence enregistrée est appliquée à l’ouverture du bloc', async () => {
+    vi.mocked(prefsApi.get).mockResolvedValue({
+      key: 'doc-columns:ws:b1', value: { prop_statut: false },
+    })
+    renderList()
+    await screen.findByText('Alpha')
+    await waitFor(() =>
+      expect(prefsApi.get).toHaveBeenCalledWith('doc-columns:ws:b1'),
+    )
+    // La colonne Statut est masquée dans la table…
+    expect(screen.queryByRole('columnheader', { name: /Statut/ })).not.toBeInTheDocument()
+    // …et son entrée du menu est décochée.
+    fireEvent.click(screen.getByTestId('columns-btn'))
+    expect(await screen.findByTestId('col-toggle-prop_statut')).not.toBeChecked()
+  })
+
+  it('tout réafficher efface la préférence (retour au défaut, pas un objet fantôme)', async () => {
+    vi.mocked(prefsApi.get).mockResolvedValue({
+      key: 'doc-columns:ws:b1', value: { prop_statut: false },
+    })
+    renderList()
+    fireEvent.click(await screen.findByTestId('columns-btn'))
+    fireEvent.click(await screen.findByTestId('col-toggle-prop_statut'))
+    await waitFor(() =>
+      expect(prefsApi.set).toHaveBeenCalledWith('doc-columns:ws:b1', null),
+    )
+  })
+
+  it('l’état initial vide n’écrase JAMAIS la préférence avant hydratation', async () => {
+    let resolveGet: (v: { key: string; value: null }) => void
+    vi.mocked(prefsApi.get).mockReturnValue(new Promise((r) => { resolveGet = r }))
+    renderList()
+    await screen.findByText('Alpha')
+    expect(prefsApi.set).not.toHaveBeenCalled()
+    resolveGet!({ key: 'k', value: null })
   })
 })

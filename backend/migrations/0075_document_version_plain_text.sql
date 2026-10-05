@@ -1,0 +1,19 @@
+-- Projection texte d'une révision, pour la recherche (épic MLD — F3b).
+--
+-- La recherche plein-texte est faite en SQL (references.search_documents_global) :
+-- elle ne peut pas appeler le codec du type de contenu au moment de la requête.
+-- La projection est donc CALCULÉE AU SAVE par le codec du document
+-- (documents.version_writes.insert_document_version) et stockée ici.
+--
+-- Colonne NULLABLE volontairement :
+--   * réconciliation additive — ADD COLUMN nullable reste instantané, aucune
+--     réécriture de table sur une base vivante ;
+--   * aucun backfill n'est possible en SQL : to_plain_text retire la syntaxe
+--     markdown (liens -> libellé, titres, emphases, clôtures de blocs), ce que
+--     SQL ne sait pas faire fidèlement. Un « plain_text = content » serait faux
+--     et donnerait une illusion de justesse.
+--
+-- En attendant la reprise (python -m docflow.db.backfill_plain_text), la
+-- recherche retombe sur COALESCE(plain_text, content) : une révision non
+-- reprise se comporte EXACTEMENT comme avant cette migration.
+alter table document_version add column if not exists plain_text text;

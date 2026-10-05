@@ -8,7 +8,9 @@ from pydantic import BaseModel
 class LoginRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
-    email: str
+    # Identifiant de CONNEXION, pas l'adresse : l'email ne doit jamais authentifier
+    # (STANDARD « Gestion des utilisateurs », U7).
+    username: str
     password: str
 
 

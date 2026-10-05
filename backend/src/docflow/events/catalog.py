@@ -43,6 +43,11 @@ class EventDef:
     data_schema: dict[str, Any]
     latest_version: int = 1
     deprecated: bool = False
+    # Sur quoi porte l'event : un DOCUMENT, ou un CONTENANT (workspace, bloc).
+    # Publié dans la découverte parce qu'il commande un comportement visible :
+    # les filtres documentaires d'un automate ne s'appliquent pas à un contenant.
+    # Sans ce champ, l'écran devrait deviner — ou coder des eventCodes en dur.
+    scope: str = "document"
 
 
 # Ordre = ordre de déclaration (préservé par dict Python 3.7+).
@@ -149,6 +154,45 @@ CATALOG: dict[str, EventDef] = {
             ["documentId", "workspaceSlug", "version", "title"],
         ),
     ),
+    # ── Cycle de vie des CONTENANTS ────────────────────────────────────────
+    # Ces events ne portent pas de document : ils annoncent l'apparition d'un
+    # espace à préparer ailleurs (créer le corpus RAG, ouvrir un canal…). Les
+    # filtres de bloc/type d'un automate ne s'y appliquent donc pas — cf.
+    # events_query, où l'absence de `document_ref` les exempte explicitement.
+    "docflow.workspace.created.v1": EventDef(
+        title="Workspace créé",
+        description=(
+            "Un workspace a été créé. Sert à préparer les ressources associées "
+            "hors de docflow (corpus d'indexation, espace distant…)."
+        ),
+        data_schema=_schema(
+            {
+                "workspaceSlug": _STR,
+                "workspaceLabel": _STR,
+            },
+            ["workspaceSlug", "workspaceLabel"],
+        ),
+        scope="container",
+    ),
+    "docflow.block.created.v1": EventDef(
+        title="Bloc créé",
+        description=(
+            "Un bloc de données a été créé dans un workspace. Porte son type "
+            "racine et le template dont ce type provient, pour que l'appelant "
+            "distingue les blocs qu'il doit traiter de ceux qu'il ignore."
+        ),
+        data_schema=_schema(
+            {
+                "workspaceSlug": _STR,
+                "blockSlug": _STR,
+                "blockLabel": _STR,
+                "functionalTypeSlug": _STR,
+                "sourceTemplate": _STR_OR_NULL,
+            },
+            ["workspaceSlug", "blockSlug", "blockLabel", "functionalTypeSlug"],
+        ),
+        scope="container",
+    ),
 }
 
 
@@ -169,6 +213,7 @@ def catalog_revision() -> str:
             "description": d.description,
             "latestVersion": d.latest_version,
             "deprecated": d.deprecated,
+            "scope": d.scope,
             "dataSchema": d.data_schema,
         }
         for code, d in CATALOG.items()
@@ -185,6 +230,7 @@ def catalog_summary() -> list[dict[str, Any]]:
             "title": d.title,
             "description": d.description,
             "deprecated": d.deprecated,
+            "scope": d.scope,
         }
         for code, d in CATALOG.items()
     ]

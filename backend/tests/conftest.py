@@ -88,6 +88,17 @@ def apply_migrations(test_schema_url: str) -> None:
         loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_vault_cache() -> Iterator[None]:
+    """Le cache de résolution vault est process-global : on le vide autour de
+    chaque test pour garantir l'isolation (valeurs ET clients SDK mockés)."""
+    from docflow.secrets.vault_fetch import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()
+
+
 @pytest.fixture()
 async def db_pool(test_schema_url: str, apply_migrations: None) -> AsyncIterator[asyncpg.Pool]:
     """Function-scoped pool wired to the test schema.
@@ -123,6 +134,14 @@ def clean_admin_users(test_schema_url: str, apply_migrations: None) -> Iterator[
     finally:
         loop.close()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _session_cookie_insecure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le TestClient parle en http:// : un cookie Secure ne serait jamais renvoyé
+    et l'auth par session échouerait. On force donc secure=false en test (comme
+    dev-deploy.sh le fait pour la machine de test http)."""
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
 
 
 @pytest.fixture()

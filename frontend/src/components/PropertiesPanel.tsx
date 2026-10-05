@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   docsApi,
@@ -14,6 +14,8 @@ interface PropertiesPanelProps {
   ws: string
   docId: string
   functionalTypeSlug: string | null
+  /** Lecture seule : valeurs affichées en texte, aucun champ de saisie. */
+  readOnly?: boolean
 }
 
 /**
@@ -41,8 +43,105 @@ function buildAllowedIndex(
   return index
 }
 
-export function PropertiesPanel({ ws, docId, functionalTypeSlug }: PropertiesPanelProps) {
+/** Valeur texte longue plafonnée à `lines` lignes, dépliable si elle déborde.
+ *  Le débordement est mesuré après rendu (scrollHeight vs clientHeight). */
+function ClampText({ text, lines = 5 }: { text: string; lines?: number }) {
   const { t } = useTranslation()
+  const ref = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setOverflows(el.scrollHeight - el.clientHeight > 1)
+  }, [text])
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        className={expanded ? undefined : 'doc-prop-clamp'}
+        style={expanded ? undefined : ({ '--clamp-lines': lines } as React.CSSProperties)}
+        data-testid="clamp-text"
+      >
+        {text}
+      </div>
+      {(overflows || expanded) && (
+        <button
+          type="button"
+          className="doc-prop-more"
+          onClick={() => setExpanded((v) => !v)}
+          data-testid="clamp-toggle"
+        >
+          {expanded ? t('properties.seeLess', 'voir moins') : t('properties.seeMore', 'voir plus')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Une valeur en texte : la lecture n'expose aucun contrôle de saisie. */
+function PropertyReadRow({
+  prop,
+  allowedValues,
+}: {
+  prop: PropertyValueOut
+  allowedValues: AllowedValueOut[]
+}) {
+  const { t } = useTranslation()
+  const color = prop.allowed_value_slug
+    ? allowedValues.find((a) => a.slug === prop.allowed_value_slug)?.color
+    : undefined
+  let display: React.ReactNode = '—'
+  if (prop.type === 'restricted_list') {
+    display = prop.allowed_value_label ?? prop.allowed_value_slug ?? '—'
+  } else if (prop.type === 'bool') {
+    display = prop.value == null ? '—' : prop.value === 'true' ? t('common.yes', 'Oui') : t('common.no', 'Non')
+  } else if (prop.type === 'url' && prop.value) {
+    display = (
+      <a href={prop.value} target="_blank" rel="noopener noreferrer">
+        {prop.value}
+      </a>
+    )
+  } else if (prop.value != null && prop.value !== '') {
+    // Texte libre potentiellement long : plafonné à 5 lignes, dépliable.
+    display = <ClampText text={prop.value} />
+  }
+  return (
+    <div className="mb-3.5" data-testid={`property-read-${prop.prop_slug}`}>
+      <div className="doc-prop-label">{prop.prop_label}</div>
+      <div className="flex items-start gap-2 text-[14px] text-ink/[0.85]">
+        <div className="min-w-0 flex-1 break-words">{display}</div>
+        {color && (
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: color }}
+            title={prop.allowed_value_label ?? undefined}
+            data-testid={`property-color-${prop.prop_slug}`}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function PropertiesPanel({ ws, docId, functionalTypeSlug, readOnly = false }: PropertiesPanelProps) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  // Après enregistrement d'une valeur, la liste du bloc (colonnes de propriétés,
+  // arbre, vues filtrées) est périmée : sans invalidation elle affichait
+  // l'ancienne valeur au retour jusqu'à un F5. On invalide par préfixe.
+  // Note : on n'invalide PAS doc-values (le panneau reflète déjà la valeur
+  // enregistrée via l'état local du champ, et un ré-entrée dans le document la
+  // recharge) — cela éviterait un refetch qui écraserait un autre champ en
+  // cours d'édition.
+  const onSaved = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['block-query', ws] })
+    void qc.invalidateQueries({ queryKey: ['block-documents', ws] })
+    void qc.invalidateQueries({ queryKey: ['block-tree', ws] })
+  }, [qc, ws])
 
   const { data: values = [], isLoading } = useQuery<PropertyValueOut[]>({
     queryKey: ['doc-values', ws, docId],
@@ -61,7 +160,7 @@ export function PropertiesPanel({ ws, docId, functionalTypeSlug }: PropertiesPan
 
   return (
     <aside className="w-full" data-testid="properties-panel">
-      <h2 className="mb-4 text-sm font-semibold tracking-wide text-gray-500 uppercase">
+      <h2 className="doc-aside-kicker">
         {t('properties.title')}
       </h2>
       {isLoading ? (
@@ -69,15 +168,27 @@ export function PropertiesPanel({ ws, docId, functionalTypeSlug }: PropertiesPan
       ) : values.length === 0 ? (
         <p className="text-sm text-gray-400">{t('properties.empty')}</p>
       ) : (
-        values.map((prop) => (
-          <PropertyField
-            key={prop.prop_slug}
-            ws={ws}
-            docId={docId}
-            prop={prop}
-            allowedValues={allowedIndex.get(prop.prop_slug) ?? []}
-          />
-        ))
+        /* La clé inclut le docId : d'un document à l'autre (même route, panneau non
+           remonté) les slugs sont identiques, et React réutiliserait l'instance du
+           champ — qui conserverait la valeur ET la version du document précédent. */
+        values.map((prop) =>
+          readOnly ? (
+            <PropertyReadRow
+              key={`${docId}:${prop.prop_slug}`}
+              prop={prop}
+              allowedValues={allowedIndex.get(prop.prop_slug) ?? []}
+            />
+          ) : (
+            <PropertyField
+              key={`${docId}:${prop.prop_slug}`}
+              ws={ws}
+              docId={docId}
+              prop={prop}
+              allowedValues={allowedIndex.get(prop.prop_slug) ?? []}
+              onSaved={onSaved}
+            />
+          ),
+        )
       )}
     </aside>
   )

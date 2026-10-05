@@ -1,26 +1,22 @@
 from __future__ import annotations
 
-import time
-import uuid
+import asyncio
 
 import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
 from docflow.app import app
-from docflow.auth.jwt import create_token, decode_token
 from docflow.auth.password import hash_password, verify_password
-from docflow.schemas.auth import AuthUser
 
 # ── Fixtures communes ─────────────────────────────────────────────────────────
 
 _BOOTSTRAP_EMAIL = "bootstrap@example.com"
 _BOOTSTRAP_PW = "bootstrap_pw_123"
 _JWT_SECRET = "test_jwt_secret_for_m2"
+_SESSION_COOKIE = "docflow_session"
 
-_BASE_ENV = {
-    "JWT_SECRET": _JWT_SECRET,
-}
+_BASE_ENV = {"JWT_SECRET": _JWT_SECRET}
 
 
 def _make_client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestClient:
@@ -30,37 +26,30 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, test_schema_url: str) -> TestC
     return TestClient(app)
 
 
-def _admin_token(user_id: uuid.UUID, email: str = "x@x.com") -> str:
-    user = AuthUser(
-        id=user_id, email=email, label="L", is_admin=True, validated=True, disabled=False
-    )
-    return create_token(user, _JWT_SECRET)
+def _login_cookies(client: TestClient, email: str, pw: str) -> dict[str, str]:
+    """Loggue et rend un dict cookies {docflow_session: token}, jar client vidé —
+    auth explicite par requête (multi-identité sûre).
+
+    L'email n'authentifie plus (STANDARD utilisateurs, U7) : on se connecte par
+    l'identifiant. Le compte du wizard porte « bootstrap » ; ceux créés par
+    `/admin/users` ont un identifiant dérivé de la partie locale de leur email.
+    """
+    ident = "bootstrap" if email == _BOOTSTRAP_EMAIL else email.split("@")[0]
+    r = client.post("/api/auth/login", json={"username": ident, "password": pw})
+    assert r.status_code == 200, r.text
+    token = client.cookies.get(_SESSION_COOKIE)
+    client.cookies.clear()
+    return {_SESSION_COOKIE: token}
 
 
-def _regular_token(user_id: uuid.UUID, email: str = "x@x.com") -> str:
-    user = AuthUser(
-        id=user_id, email=email, label="L", is_admin=False, validated=True, disabled=False
-    )
-    return create_token(user, _JWT_SECRET)
-
-
-def _setup_admin(client: TestClient) -> str:
-    """Crée l'admin via le wizard setup et retourne le token."""
+def _setup_admin(client: TestClient) -> dict[str, str]:
+    """Crée l'admin via le wizard setup et retourne ses cookies de session."""
     r = client.post(
         "/api/setup/init-admin",
-        json={
-            "username": "bootstrap",
-            "email": _BOOTSTRAP_EMAIL,
-            "password": _BOOTSTRAP_PW,
-        },
+        json={"username": "bootstrap", "email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
     )
     assert r.status_code == 201
-    login = client.post(
-        "/api/auth/login",
-        json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
-    )
-    assert login.status_code == 200
-    return login.json()["access_token"]  # type: ignore[no-any-return]
+    return _login_cookies(client, _BOOTSTRAP_EMAIL, _BOOTSTRAP_PW)
 
 
 # ── Password ──────────────────────────────────────────────────────────────────
@@ -72,56 +61,10 @@ def test_hash_and_verify() -> None:
     assert not verify_password("wrong", hashed)
 
 
-# ── JWT ───────────────────────────────────────────────────────────────────────
-
-
-_LONG_SECRET = "test-secret-key-for-unit-tests-hs256"
-
-
-def test_jwt_roundtrip() -> None:
-    user = AuthUser(
-        id=uuid.uuid4(), email="a@b.com", label="L", is_admin=True, validated=True, disabled=False
-    )
-    token = create_token(user, _LONG_SECRET)
-    claims = decode_token(token, _LONG_SECRET)
-    assert claims["email"] == "a@b.com"
-    assert claims["is_admin"] is True
-
-
-def test_jwt_wrong_secret_rejected() -> None:
-    user = AuthUser(
-        id=uuid.uuid4(), email="a@b.com", label="L", is_admin=False, validated=True, disabled=False
-    )
-    token = create_token(user, _LONG_SECRET)
-    with pytest.raises(ValueError):
-        decode_token(token, "another-test-secret-key-wrong-one")
-
-
-def test_jwt_expired_rejected() -> None:
-    from joserfc import jwt as joserfc_jwt
-    from joserfc.jwk import OctKey as _OctKey
-
-    header = {"alg": "HS256"}
-    payload = {
-        "sub": str(uuid.uuid4()),
-        "email": "a@b.com",
-        "is_admin": False,
-        "iat": int(time.time()) - 3600,
-        "exp": int(time.time()) - 1,
-    }
-    key = _OctKey.import_key(_LONG_SECRET)
-    token = joserfc_jwt.encode(header, payload, key)
-    with pytest.raises(ValueError, match="token invalide"):
-        decode_token(token, _LONG_SECRET)
-
-
 # ── Setup wizard → premier admin ──────────────────────────────────────────────
 
 
-async def test_setup_creates_admin(
-    db_pool: asyncpg.Pool,
-    clean_admin_users: None,
-) -> None:
+async def test_setup_creates_admin(db_pool: asyncpg.Pool, clean_admin_users: None) -> None:
     count_before: int = await db_pool.fetchval("SELECT COUNT(*) FROM app_user")
     assert count_before == 0
 
@@ -145,81 +88,60 @@ async def test_setup_creates_admin(
     assert row["disabled"] is False
 
 
-# ── Login / me (via TestClient) ───────────────────────────────────────────────
+# ── Login / me / logout (session serveur + cookie) ────────────────────────────
 
 
-def test_login_valid_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+def test_login_pose_un_cookie_de_session(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        assert token
+        client.post(
+            "/api/setup/init-admin",
+            json={"username": "bootstrap", "email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
+        )
+        r = client.post(
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
+        )
+        assert r.status_code == 200
+        # Le corps porte le profil (plus de jeton) ; l'auth est dans le cookie.
+        assert r.json()["email"] == _BOOTSTRAP_EMAIL
+        assert "access_token" not in r.json()
+        assert client.cookies.get(_SESSION_COOKIE)
 
 
 def test_login_wrong_password(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
-        resp = client.post("/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": "wrong"})
+        resp = client.post("/api/auth/login", json={"username": "bootstrap", "password": "wrong"})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "identifiants invalides"
 
 
 def test_login_unknown_email(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
         resp = client.post(
-            "/api/auth/login", json={"email": "nobody@example.com", "password": "pw"}
+            "/api/auth/login", json={"username": "bootstrap", "password": "pw"}
         )
     assert resp.status_code == 401
 
 
-def test_login_pending_validation(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
-) -> None:
-    """Un utilisateur non validé reçoit 403 PendingValidation."""
-    with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        client.post(
-            "/api/admin/users",
-            json={"email": "pending@test.com", "label": "Pending", "password": "pw12345678"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        # Créer directement un user non validé (OIDC simulé)
-        resp = client.post(
-            "/api/auth/login",
-            json={"email": "pending@test.com", "password": "pw12345678"},
-        )
-    assert resp.status_code == 200  # créé validé via API admin — test PendingValidation via DB
-
-
 def test_get_me_authenticated(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        admin = _setup_admin(client)
+        resp = client.get("/api/auth/me", cookies=admin)
     assert resp.status_code == 200
     assert resp.json()["email"] == _BOOTSTRAP_EMAIL
 
 
-def test_get_me_no_token(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+def test_get_me_no_cookie(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
@@ -227,45 +149,41 @@ def test_get_me_no_token(
     assert resp.status_code == 401
 
 
-def test_bearer_sans_points_route_vers_cle_api(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+def test_logout_revoque_la_session_cote_serveur(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
-    """Un bearer sans '.' (clé API, quel que soit son préfixe) ne part pas en décodage JWT.
+    """Le cœur de la fiche : après logout, un cookie COPIÉ avant cesse de valoir —
+    la session est révoquée en base, pas seulement le cookie retiré du navigateur."""
+    with _make_client(monkeypatch, test_schema_url) as client:
+        admin = _setup_admin(client)  # copie du cookie, jar vidé
+        # Le cookie fonctionne.
+        assert client.get("/api/auth/me", cookies=admin).status_code == 200
+        # Déconnexion (le serveur révoque la session portée par ce cookie).
+        assert client.post("/api/auth/logout", cookies=admin).status_code == 204
+        # Le même cookie copié est désormais refusé.
+        assert client.get("/api/auth/me", cookies=admin).status_code == 401
 
-    Une clé inconnue doit produire « clé API invalide ou révoquée », pas le
-    « token invalide ou expiré » trompeur de la voie JWT (bug portail mcpk_).
-    """
+
+def test_bearer_est_traite_comme_cle_api(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """docflow n'émet plus de jeton porteur : tout Authorization: Bearer est une
+    clé API. Un ex-JWT (ou tout bearer inconnu) est donc refusé « clé API invalide »
+    — un jeton destiné à un autre module de la stack ne franchit pas docflow."""
     with _make_client(monkeypatch, test_schema_url) as client:
         _setup_admin(client)
-        for raw in ("mcpk_inconnu", "dfk_inconnu", "nimportequoi"):
+        for raw in ("mcpk_inconnu", "dfk_inconnu", "a.b.c", "nimportequoi"):
             resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {raw}"})
             assert resp.status_code == 401, raw
             assert resp.json()["detail"] == "clé API invalide ou révoquée", raw
 
 
-def test_bearer_jwt_malforme_reste_voie_jwt(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
-) -> None:
-    with _make_client(monkeypatch, test_schema_url) as client:
-        _setup_admin(client)
-        resp = client.get("/api/auth/me", headers={"Authorization": "Bearer a.b.c"})
-    assert resp.status_code == 401
-    assert resp.json()["detail"] == "token invalide ou expiré"
-
-
 def test_require_superadmin_rejects_non_admin(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     """Un utilisateur non-admin ne doit pas accéder aux routes /admin/users."""
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-
+        admin = _setup_admin(client)
         r = client.post(
             "/api/admin/users",
             json={
@@ -274,119 +192,140 @@ def test_require_superadmin_rejects_non_admin(
                 "password": "pw12345678",
                 "is_admin": False,
             },
-            headers={"Authorization": f"Bearer {token}"},
+            cookies=admin,
         )
         assert r.status_code == 201
-        regular_id = uuid.UUID(r.json()["id"])
-
-        regular_token = _regular_token(regular_id, email="regular@test.com")
-        resp = client.get("/api/admin/users", headers={"Authorization": f"Bearer {regular_token}"})
+        regular = _login_cookies(client, "regular@test.com", "pw12345678")
+        resp = client.get("/api/admin/users", cookies=regular)
     assert resp.status_code == 403
+
+
+def test_admin_revoque_les_sessions_d_un_utilisateur(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Révocation par un admin (compromission) : toutes les sessions de la cible
+    cessent immédiatement de valoir, sans redémarrage."""
+    with _make_client(monkeypatch, test_schema_url) as client:
+        admin = _setup_admin(client)
+        created = client.post(
+            "/api/admin/users",
+            json={"email": "victim@test.com", "label": "V", "password": "pw12345678"},
+            cookies=admin,
+        )
+        assert created.status_code == 201
+        victim_id = created.json()["id"]
+        victim = _login_cookies(client, "victim@test.com", "pw12345678")
+        assert client.get("/api/auth/me", cookies=victim).status_code == 200
+
+        revoke = client.post(f"/api/admin/users/{victim_id}/sessions/revoke", cookies=admin)
+        assert revoke.status_code == 200
+        assert revoke.json()["revoked"] >= 1
+        # La session de la victime est coupée immédiatement.
+        assert client.get("/api/auth/me", cookies=victim).status_code == 401
 
 
 # ── Anti-lock-out ─────────────────────────────────────────────────────────────
 
 
 def test_cannot_disable_last_local_admin(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        admins = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"}).json()
+        admin = _setup_admin(client)
+        admins = client.get("/api/admin/users", cookies=admin).json()
         last_id = admins[0]["id"]
         resp = client.patch(
-            f"/api/admin/users/{last_id}",
-            json={"disabled": True},
-            headers={"Authorization": f"Bearer {token}"},
+            f"/api/admin/users/{last_id}", json={"disabled": True}, cookies=admin
         )
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "last_local_admin"
 
 
 def test_cannot_delete_last_local_admin(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        admins = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"}).json()
+        admin = _setup_admin(client)
+        admins = client.get("/api/admin/users", cookies=admin).json()
         last_id = admins[0]["id"]
-        resp = client.delete(
-            f"/api/admin/users/{last_id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        resp = client.delete(f"/api/admin/users/{last_id}", cookies=admin)
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "last_local_admin"
 
 
 def test_can_disable_admin_when_another_local_exists(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
+        admin = _setup_admin(client)
         second = client.post(
             "/api/admin/users",
             json={"email": "second@test.com", "label": "Second", "password": "pw2345678"},
-            headers={"Authorization": f"Bearer {token}"},
+            cookies=admin,
         )
         assert second.status_code == 201
         second_id = second.json()["id"]
         resp = client.patch(
-            f"/api/admin/users/{second_id}",
-            json={"disabled": True},
-            headers={"Authorization": f"Bearer {token}"},
+            f"/api/admin/users/{second_id}", json={"disabled": True}, cookies=admin
         )
     assert resp.status_code == 200
     assert resp.json()["disabled"] is True
 
 
 def test_local_login_disabled_flag(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     """LOCAL_LOGIN_ENABLED=false : mire sans connexion locale, /auth/login en 403.
     Ignoré tant qu'aucun utilisateur n'existe (le wizard doit rester possible)."""
     monkeypatch.setenv("LOCAL_LOGIN_ENABLED", "false")
     with _make_client(monkeypatch, test_schema_url) as client:
-        # Aucun utilisateur : le flag est ignoré (setup wizard prioritaire)
         m = client.get("/api/auth/methods").json()
         assert m["local"] is True
         assert m["needs_setup"] is True
 
-        # Créer l'admin via le wizard (sans login : il sera refusé ensuite)
         r = client.post(
             "/api/setup/init-admin",
             json={"username": "bootstrap", "email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
         )
         assert r.status_code in (200, 201)
 
-        # Un utilisateur existe : le mode OIDC-only s'applique
         m = client.get("/api/auth/methods").json()
         assert m["local"] is False
         r = client.post(
-            "/api/auth/login",
-            json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW},
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert r.status_code == 403
         assert "désactivée" in r.json()["detail"]
 
 
+def _pin_admin_oidc(schema_url: str) -> None:
+    """Simule un login OIDC admin réussi (épinglage), pré-requis du garde-fou
+    anti-lockout avant de pouvoir couper la connexion locale."""
+
+    async def _do() -> None:
+        conn = await asyncpg.connect(schema_url)
+        try:
+            await conn.execute(
+                "UPDATE app_user SET oidc_issuer = 'https://issuer.example.com', "
+                "oidc_subject = 'admin-oidc-sub' WHERE email = $1",
+                _BOOTSTRAP_EMAIL,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_do())
+
+
 def test_oidc_only_via_config_and_reactivation(
-    monkeypatch: pytest.MonkeyPatch,
-    test_schema_url: str,
-    clean_admin_users: None,
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
 ) -> None:
     """Le flag de la page OIDC ne désactive le local QUE si l'OIDC est activé ;
     désactiver l'OIDC réactive automatiquement la connexion locale."""
     with _make_client(monkeypatch, test_schema_url) as client:
-        token = _setup_admin(client)
-        headers = {"Authorization": f"Bearer {token}"}
+        admin = _setup_admin(client)
+        # Garde-fou anti-lockout : couper le local exige un admin déjà connecté en
+        # OIDC. On simule cet épinglage réussi.
+        _pin_admin_oidc(test_schema_url)
         body = {
             "issuer": "https://issuer.example.com",
             "client_id": "docflow",
@@ -394,36 +333,31 @@ def test_oidc_only_via_config_and_reactivation(
             "enabled": False,
             "disable_local_login": True,
         }
-        # OIDC inactif : le flag est sans effet → local reste proposé
-        assert client.put("/api/admin/oidc", json=body, headers=headers).status_code == 200
+        assert client.put("/api/admin/oidc", json=body, cookies=admin).status_code == 200
         assert client.get("/api/auth/methods").json()["local"] is True
 
-        # OIDC activé + flag → mode OIDC-only effectif
         body["enabled"] = True
-        client.put("/api/admin/oidc", json=body, headers=headers)
+        client.put("/api/admin/oidc", json=body, cookies=admin)
         assert client.get("/api/auth/methods").json()["local"] is False
         r = client.post(
-            "/api/auth/login", json={"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PW}
+            "/api/auth/login", json={"username": "bootstrap", "password": _BOOTSTRAP_PW}
         )
         assert r.status_code == 403
 
-        # Désactivation de l'OIDC → le local revient tout seul
         body["enabled"] = False
-        client.put("/api/admin/oidc", json=body, headers=headers)
+        client.put("/api/admin/oidc", json=body, cookies=admin)
         assert client.get("/api/auth/methods").json()["local"] is True
 
-        # Surcharge break-glass : env true force le local malgré le mode OIDC-only
         body["enabled"] = True
-        client.put("/api/admin/oidc", json=body, headers=headers)
+        client.put("/api/admin/oidc", json=body, cookies=admin)
 
     try:
         monkeypatch.setenv("LOCAL_LOGIN_ENABLED", "true")
         with _make_client(monkeypatch, test_schema_url) as client:
             assert client.get("/api/auth/methods").json()["local"] is True
     finally:
-        # Ne pas laisser la base en mode OIDC-only pour les tests suivants
         monkeypatch.delenv("LOCAL_LOGIN_ENABLED", raising=False)
         with _make_client(monkeypatch, test_schema_url) as client:
             body["enabled"] = False
             body["disable_local_login"] = False
-            client.put("/api/admin/oidc", json=body, headers=headers)
+            client.put("/api/admin/oidc", json=body, cookies=admin)

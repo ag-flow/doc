@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from docflow.db.helpers import require_workspace
 from docflow.documents.changelog import log_structure_change
 from docflow.errors import DependentsConflictError
+from docflow.events import outbox
 from docflow.schemas.block import DataBlockCreate, DataBlockOut, DataBlockUpdate
 
 _SELECT_BLOCK = """
@@ -22,11 +23,15 @@ LEFT JOIN data_block p ON p.id = b.parent
 WHERE b.workspace_technical_key = $1 AND b.slug = $2
 """
 
+# Listing : volumétrie et dernière écriture par bloc, en sous-requêtes scalaires.
+# Une lecture unitaire ne les paie pas — l'information n'a de sens qu'en liste.
 _SELECT_ALL = """
 SELECT b.id, b.slug, b.label, b.created_at, b.updated_at, b.exposed,
        ft.slug  AS functional_type_slug,
        p.slug   AS parent_slug,
-       w.slug   AS workspace_slug
+       w.slug   AS workspace_slug,
+       (SELECT count(*) FROM document d WHERE d.data_block_ref = b.id) AS documents_count,
+       (SELECT max(d.updated_at) FROM document d WHERE d.data_block_ref = b.id) AS last_write_at
 FROM data_block b
 JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
 JOIN functional_type ft ON ft.id = b.functional_type_ref
@@ -47,6 +52,8 @@ def _row(row: asyncpg.Record) -> DataBlockOut:
         exposed=row["exposed"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        documents_count=row["documents_count"] if "documents_count" in row.keys() else 0,
+        last_write_at=row["last_write_at"] if "last_write_at" in row.keys() else None,
     )
 
 
@@ -113,10 +120,102 @@ async def get_block(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> DataBl
     return _row(row)
 
 
+async def list_present_content_types(
+    pool: asyncpg.Pool, ws_slug: str, block_slug: str
+) -> list[str]:
+    """Types de CONTENU réellement présents parmi les documents d'un bloc.
+
+    Pendant de `list_present_type_slugs` pour l'autre axe. Sert à ne proposer au
+    filtre que des valeurs qui rendent quelque chose : offrir un type absent du
+    bloc, c'est offrir un filtre dont on sait déjà qu'il ne rendra rien.
+
+    La colonne est portée par le document lui-même — aucune jointure.
+    """
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT d.type AS type
+            FROM document d
+            JOIN data_block b ON b.id = d.data_block_ref
+            WHERE b.workspace_technical_key = $1 AND b.slug = $2
+            ORDER BY d.type
+            """,
+            wk,
+            block_slug,
+        )
+        return [r["type"] for r in rows]
+
+
+async def list_present_type_slugs(pool: asyncpg.Pool, ws_slug: str, block_slug: str) -> list[str]:
+    """Slugs distincts des types fonctionnels réellement présents parmi les
+    documents d'un bloc — pour dériver les colonnes de propriétés SANS charger
+    tous les documents. Requête légère (DISTINCT indexé par bloc)."""
+    async with pool.acquire() as conn:
+        wk = await require_workspace(conn, ws_slug)
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ft.slug AS slug
+            FROM document d
+            JOIN data_block b ON b.id = d.data_block_ref
+            JOIN functional_type ft ON ft.id = d.functional_type_ref
+            WHERE b.workspace_technical_key = $1 AND b.slug = $2
+            ORDER BY ft.slug
+            """,
+            wk,
+            block_slug,
+        )
+    return [r["slug"] for r in rows]
+
+
+async def _auto_import_template(
+    conn: asyncpg.Connection, wk: uuid.UUID, ws_slug: str, template_slug: str
+) -> None:
+    """Importe un template global DANS la transaction de création du bloc.
+
+    Partagé par REST et MCP (la logique vivait avant dans la couche transport MCP,
+    d'où une divergence de traitement d'erreurs). Comportement de référence du
+    chemin MCP conservé : import idempotent, `VersionConflictError` non bloquante
+    (version antérieure ou égale déjà installée), conflits remontés AVANT toute
+    création de bloc. Import et INSERT partagent la transaction : si la création du
+    bloc échoue ensuite (slug déjà pris), l'import est annulé — jamais d'état partiel.
+    """
+    from docflow.templates import catalog
+    from docflow.templates.importer import (
+        ConcurrentImportError,
+        ImportConflictError,
+        VersionConflictError,
+        _run_import_tx,
+    )
+    from docflow.templates.inheritance import resolve
+
+    try:
+        template = catalog.find_template(template_slug)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    resolved = resolve(template)
+    try:
+        await _run_import_tx(conn, str(wk), ws_slug, template, resolved, dry_run=False)
+    except VersionConflictError:
+        pass  # version antérieure/égale déjà installée — on continue (idempotent)
+    except ConcurrentImportError as exc:
+        raise HTTPException(status_code=409, detail=f"import template : {exc}") from exc
+    except ImportConflictError as exc:
+        raise HTTPException(status_code=409, detail=f"import template : {exc}") from exc
+    except ValueError as exc:
+        # p. ex. UnresolvedTargetTypeError : template mal formé.
+        raise HTTPException(status_code=422, detail=f"import template : {exc}") from exc
+
+
 async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) -> DataBlockOut:
     async with pool.acquire() as conn:
         async with conn.transaction():
             wk = await require_workspace(conn, ws_slug, allow_archived=False)
+            # Auto-import éventuel AVANT résolution du type : le template fournit
+            # le type fonctionnel du bloc sur un workspace vierge.
+            if data.template_slug:
+                await _auto_import_template(conn, wk, ws_slug, data.template_slug)
             type_id, type_parent_id = await _resolve_type(conn, wk, data.functional_type_slug)
 
             parent_id: uuid.UUID | None = None
@@ -159,6 +258,26 @@ async def create_block(pool: asyncpg.Pool, ws_slug: str, data: DataBlockCreate) 
                 ) from exc
             assert row is not None
             await log_structure_change(conn, wk, "block", "C", row["id"])
+            # Provenance du type RACINE : c'est elle qui permet à l'appelant de
+            # trier les blocs qu'il traite sans énumérer leurs slugs.
+            source_template = await conn.fetchval(
+                "SELECT source_template FROM functional_type WHERE id = $1", type_id
+            )
+            # Dans la MÊME transaction que la création : jamais un bloc sans son
+            # event, jamais un event pour un bloc qui n'existe pas.
+            await outbox.enqueue(
+                conn,
+                event_code="docflow.block.created.v1",
+                workspace_wk=wk,
+                business={
+                    "workspaceSlug": ws_slug,
+                    "blockSlug": data.slug,
+                    "blockLabel": data.label,
+                    "functionalTypeSlug": data.functional_type_slug,
+                    "sourceTemplate": source_template,
+                },
+                dedup_key=str(row["id"]),
+            )
     return DataBlockOut(
         id=row["id"],
         slug=row["slug"],
@@ -213,6 +332,19 @@ async def update_block(
                         new_parent_slug,
                     )
                 else:
+                    # Détachement à la racine : même contrainte miroir qu'à la
+                    # création (I-5) — le type du bloc doit être racine.
+                    type_parent_id = await conn.fetchval(
+                        "SELECT parent FROM functional_type WHERE id = $1", block_type_id
+                    )
+                    if type_parent_id is not None:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "contrainte miroir (I-5) : un bloc racine (sans parent) "
+                                "doit avoir un type racine"
+                            ),
+                        )
                     db_updates["parent"] = None
 
             if not db_updates:
@@ -264,8 +396,8 @@ WITH RECURSIVE subtree AS (
     SELECT id FROM data_block WHERE id = $1
     UNION ALL
     SELECT b.id FROM data_block b JOIN subtree s ON b.parent = s.id
-)
-SELECT (SELECT count(*) FROM subtree) - 1 AS child_blocks,
+) CYCLE id SET is_cycle USING path
+SELECT (SELECT count(*) FROM subtree WHERE NOT is_cycle) - 1 AS child_blocks,
        (SELECT count(*) FROM document d
         WHERE d.data_block_ref IN (SELECT id FROM subtree)) AS documents
 """

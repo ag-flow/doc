@@ -1,0 +1,245 @@
+/**
+ * Canvas de diagramme générique (épic MLD — F6).
+ *
+ * **Frontière d'abstraction** : React Flow est confiné à ce fichier et à ses
+ * deux composants frères. L'API publique ne parle que de `CanvasDoc` — un
+ * appelant (l'adaptateur MLD de F7) n'importe jamais React Flow.
+ *
+ * Le composant est CONTRÔLÉ : il reçoit un document et remonte le document
+ * modifié. Il ne décide ni de la persistance ni du moment de sauvegarde ; c'est
+ * la coquille de page qui s'en charge, comme pour toute autre surface (F4).
+ */
+
+import { useCallback, useMemo } from 'react'
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  applyNodeChanges,
+  useOnViewportChange,
+  type Edge,
+  type Node,
+  type NodeChange,
+  type Viewport as RfViewport,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+import type { CanvasDoc, CanvasEdge, CanvasNode, Point, Side } from '../../lib/canvas/model'
+import { nodeById, nodeSize } from '../../lib/canvas/model'
+import { sidesFor } from '../../lib/canvas/anchor'
+import { contentBounds } from '../../lib/canvas/bounds'
+import { detailFor, portsVisibleAt, type DetailLevel } from '../../lib/canvas/detail'
+import { CanvasNodeView, type CanvasNodeData } from './CanvasNodeView'
+import { OrthogonalEdge, type OrthogonalEdgeData } from './OrthogonalEdge'
+import { BOX_PORT, PORT_SIDES, handleId } from './handles'
+
+const NODE_TYPES = { canvasNode: CanvasNodeView }
+const EDGE_TYPES = { orthogonal: OrthogonalEdge }
+
+export interface CanvasProps {
+  doc: CanvasDoc
+  /** Document modifié (déplacement d'un nœud, coude posé, viewport). */
+  onChange?: (doc: CanvasDoc) => void
+  /** Étiquette d'un nœud — c'est l'adaptateur qui sait la produire. */
+  labelOf?: (node: CanvasNode) => string
+  /** Clic sur un nœud : ouvrir ce qu'il représente.
+   *
+   *  Le canvas ne sait pas ce qu'« ouvrir » veut dire — il rend l'identifiant du
+   *  nœud, l'appelant navigue. À ne brancher que là où le clic n'a pas déjà un
+   *  sens : en édition, il sert à sélectionner et à déplacer. */
+  onNodeActivate?: (nodeId: string) => void
+  readOnly?: boolean
+  /** Rendu pour l'IMPRESSION : le canvas s'étend à la taille de son contenu au
+   *  lieu de l'offrir dans une fenêtre de visualisation.
+   *
+   *  Une fenêtre n'a pas de sens sur le papier : ce qu'elle ne montre pas
+   *  n'existe pas. Tout ce qui suppose un lecteur — défilement, zoom, contrôles,
+   *  carte — disparaît, et le contenu se cale en haut à gauche. */
+  forPrint?: boolean
+  className?: string
+}
+
+/** Modèle → moteur de rendu. Confiné ici : rien ne fuit vers l'appelant. */
+function toRenderNodes(
+  doc: CanvasDoc,
+  detail: DetailLevel,
+  labelOf: (n: CanvasNode) => string,
+  activatable: boolean,
+): Node[] {
+  return doc.nodes.map((n) => ({
+    id: n.id,
+    type: 'canvasNode',
+    position: n.position,
+    data: { node: n, detail, label: labelOf(n), activatable } satisfies CanvasNodeData,
+    ...nodeSize(n),
+  }))
+}
+
+/** Exportée pour le test : le choix du côté d'accroche n'est pas observable au
+ *  rendu (jsdom ne mesure rien), et c'est précisément ce qui s'était perdu —
+ *  `sidesFor` existait, testée, mais n'était appelée par personne. Elle ne sort
+ *  PAS de `lib/canvas/index.ts` : la frontière d'abstraction reste intacte. */
+export function toRenderEdges(
+  doc: CanvasDoc,
+  portsVisible: boolean,
+  onWaypointsChange?: (id: string, w: Point[]) => void,
+): Edge[] {
+  /** Poignée d'une extrémité : le CÔTÉ vient de la position relative des deux
+   *  boîtes (`sidesFor`), le port du lien lui-même.
+   *
+   *  Sans ce choix de côté, une extrémité s'accrochait toujours au même flanc :
+   *  un lien dont la cible était à gauche ressortait à droite, repassait sous sa
+   *  propre boîte, et ses marques de cardinalité se retrouvaient posées à
+   *  l'opposé du trait visible — on lisait alors la multiplicité à l'envers.
+   *
+   *  En haut/bas, la hauteur d'un port n'a pas de sens : on retombe sur la
+   *  poignée de boîte, exactement comme `anchorPoint` dégrade. */
+  const handleFor = (port: string | undefined, side: Side): string =>
+    portsVisible && port && PORT_SIDES.includes(side)
+      ? handleId(port, side)
+      : handleId(BOX_PORT, side)
+
+  return doc.edges.map((e) => {
+    const source = nodeById(doc, e.source.node)
+    const target = nodeById(doc, e.target.node)
+    // Un nœud manquant (lien orphelin) : React Flow ne dessinera pas l'arête,
+    // on garde le cas nominal plutôt que de lever.
+    const [sourceSide, targetSide] =
+      source && target ? sidesFor(source, target) : (['right', 'left'] as [Side, Side])
+
+    return {
+      id: e.id,
+      type: 'orthogonal',
+      source: e.source.node,
+      target: e.target.node,
+      sourceHandle: handleFor(e.source.port, sourceSide),
+      targetHandle: handleFor(e.target.port, targetSide),
+      data: {
+        waypoints: e.waypoints,
+        onWaypointsChange,
+        label: e.label,
+        kind: e.kind,
+      } satisfies OrthogonalEdgeData,
+    }
+  })
+}
+
+function CanvasInner({
+  doc, onChange, labelOf, onNodeActivate, readOnly, forPrint, className,
+}: CanvasProps) {
+  const zoom = doc.viewport?.zoom ?? 1
+  const detail = detailFor(zoom)
+  const portsVisible = portsVisibleAt(zoom)
+  const label = labelOf ?? ((n: CanvasNode) => (n.data?.label as string) ?? n.id)
+
+  const setWaypoints = useCallback(
+    (edgeId: string, waypoints: Point[]) => {
+      if (!onChange || readOnly) return
+      onChange({
+        ...doc,
+        edges: doc.edges.map((e) =>
+          e.id === edgeId
+            ? ({ ...e, waypoints: waypoints.length ? waypoints : undefined } as CanvasEdge)
+            : e,
+        ),
+      })
+    },
+    [doc, onChange, readOnly],
+  )
+
+  const nodes = useMemo(
+    () => toRenderNodes(doc, detail, label, Boolean(onNodeActivate)),
+    [doc, detail, label, onNodeActivate],
+  )
+
+  // Étendue du contenu : sert à dimensionner la zone d'impression ET à caler le
+  // coin haut-gauche du diagramme sur celui de la zone (l'enveloppe peut
+  // commencer en coordonnées négatives).
+  const bounds = useMemo(() => contentBounds(doc), [doc])
+  const edges = useMemo(
+    () => toRenderEdges(doc, portsVisible, readOnly ? undefined : setWaypoints),
+    [doc, portsVisible, readOnly, setWaypoints],
+  )
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      if (!onChange || readOnly) return
+      const moved = applyNodeChanges(changes, nodes)
+      const byId = new Map(moved.map((n) => [n.id, n.position]))
+      onChange({
+        ...doc,
+        nodes: doc.nodes.map((n) => ({ ...n, position: byId.get(n.id) ?? n.position })),
+      })
+    },
+    [doc, nodes, onChange, readOnly],
+  )
+
+  // Le viewport fait partie du document : rouvrir un diagramme doit le retrouver
+  // là où on l'avait laissé.
+  useOnViewportChange({
+    onEnd: (v: RfViewport) => {
+      if (!onChange || readOnly) return
+      onChange({ ...doc, viewport: { x: v.x, y: v.y, zoom: v.zoom } })
+    },
+  })
+
+  // À l'impression : la boîte prend la taille du contenu, et le viewport le
+  // translate pour que son coin haut-gauche tombe en (0,0) — pas de zoom, pas de
+  // restauration du cadrage enregistré, qui n'aurait aucun sens sur le papier.
+  const printStyle = forPrint
+    ? { width: `${Math.round(bounds.width)}px`, height: `${Math.round(bounds.height)}px` }
+    : undefined
+  const viewport = forPrint
+    ? { x: -bounds.x, y: -bounds.y, zoom: 1 }
+    : (doc.viewport ?? { x: 0, y: 0, zoom: 1 })
+
+  return (
+    <div
+      className={className ?? (forPrint ? 'w-full' : 'h-[70vh] w-full')}
+      style={printStyle}
+      data-testid="canvas"
+      data-detail={detail}
+      data-print={forPrint ? 'true' : undefined}
+      data-content-width={forPrint ? Math.round(bounds.width) : undefined}
+      data-content-height={forPrint ? Math.round(bounds.height) : undefined}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
+        onNodesChange={onNodesChange}
+        onNodeClick={onNodeActivate ? (_, n) => onNodeActivate(n.id) : undefined}
+        defaultViewport={viewport}
+        nodesDraggable={!readOnly && !forPrint}
+        nodesConnectable={!readOnly && !forPrint}
+        elementsSelectable={!forPrint}
+        panOnDrag={!forPrint}
+        zoomOnScroll={!forPrint}
+        zoomOnPinch={!forPrint}
+        zoomOnDoubleClick={!forPrint}
+        preventScrolling={!forPrint}
+        proOptions={{ hideAttribution: true }}
+        minZoom={0.1}
+        maxZoom={2}
+      >
+        <Background />
+        {/* Contrôles et carte supposent un lecteur qui navigue : sur le papier,
+            ils ne sont que de l'encre perdue. */}
+        {!forPrint && <Controls showInteractive={!readOnly} />}
+        {!forPrint && <MiniMap pannable zoomable />}
+      </ReactFlow>
+    </div>
+  )
+}
+
+export function Canvas(props: CanvasProps) {
+  // Le provider est requis par les hooks de viewport ; on l'encapsule pour que
+  // l'appelant n'ait pas à connaître le moteur de rendu.
+  return (
+    <ReactFlowProvider>
+      <CanvasInner {...props} />
+    </ReactFlowProvider>
+  )
+}

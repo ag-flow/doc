@@ -90,10 +90,10 @@ async def test_oidc_callback_rejected_when_disabled(db_pool: asyncpg.Pool) -> No
         ),
     )
     with pytest.raises(HTTPException) as exc:
-        await oidc_svc.issue_token_for_verified_claims(
-            db_pool,
-            "jwt-secret",
+        await oidc_svc.provision_user_for_verified_claims(
+        db_pool,
             {"email": "user@example.com", "sub": "keycloak-sub-1"},
+            issuer="https://issuer.example.com",
         )
     assert exc.value.status_code == 403
 
@@ -112,10 +112,10 @@ async def test_oidc_provisioning_new_user(db_pool: asyncpg.Pool, clean_admin_use
         ),
     )
     with pytest.raises(HTTPException) as exc:
-        await oidc_svc.issue_token_for_verified_claims(
-            db_pool,
-            "test-secret-key-for-unit-tests-hs256",
+        await oidc_svc.provision_user_for_verified_claims(
+        db_pool,
             {"email": "oidc-user@example.com", "sub": "sub-new-user", "name": "OIDC User"},
+            issuer="https://issuer.example.com",
         )
     assert exc.value.status_code == 403
     assert exc.value.detail == "PendingValidation"
@@ -153,10 +153,10 @@ async def test_oidc_link_existing_user_preserves_password(
         ),
     )
     # email_verified=True requis pour lier un compte existant par email (AUTH-02)
-    await oidc_svc.issue_token_for_verified_claims(
+    await oidc_svc.provision_user_for_verified_claims(
         db_pool,
-        "test-secret-key-for-unit-tests-hs256",
         {"email": "existing@example.com", "sub": "keycloak-sub-existing", "email_verified": True},
+        issuer="https://issuer.example.com",
     )
     row = await db_pool.fetchrow(
         "SELECT password_hash, oidc_subject FROM app_user WHERE email = $1",
@@ -242,3 +242,166 @@ async def test_login_config_502_when_issuer_unreachable(
     with pytest.raises(HTTPException) as exc_info:
         await oidc_svc.get_login_config(db_pool)
     assert exc_info.value.status_code == 502
+
+
+# ── Ancrage sur le couple (issuer, sub) ─────────────────────────────────────
+
+_ISS_A = "https://issuer-a.example.com"
+_ISS_B = "https://issuer-b.example.com"
+
+
+async def _enable_oidc(db_pool: asyncpg.Pool) -> None:
+    await oidc_svc.set_oidc_config(
+        db_pool,
+        OidcConfigSet(
+            issuer=_ISS_A, client_id="c", client_secret_ref=_SECRET_REF, enabled=True
+        ),
+    )
+
+
+async def test_same_sub_two_issuers_are_two_accounts(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """AC : deux `sub` identiques provenant de deux émetteurs distincts restent
+    deux comptes distincts (l'ancrage est le COUPLE, pas le sub seul)."""
+    await _enable_oidc(db_pool)
+    for exc_email, issuer in (("a@example.com", _ISS_A), ("b@example.com", _ISS_B)):
+        with pytest.raises(HTTPException) as exc:  # PendingValidation (nouveau compte)
+            await oidc_svc.provision_user_for_verified_claims(
+                db_pool,
+                {"email": exc_email, "sub": "shared-sub", "email_verified": True},
+                issuer=issuer,
+            )
+        assert exc.value.detail == "PendingValidation"
+    rows = await db_pool.fetch(
+        "SELECT oidc_issuer FROM app_user WHERE oidc_subject = 'shared-sub' ORDER BY oidc_issuer"
+    )
+    assert [r["oidc_issuer"] for r in rows] == [_ISS_A, _ISS_B]
+
+
+async def _validated_pinned_account(db_pool: asyncpg.Pool, email: str) -> str:
+    """Compte validé, épinglé (issuer A, sub 'sub-a') via le pont email vérifié."""
+    await db_pool.execute(
+        "INSERT INTO app_user (email, label, validated, source) VALUES ($1, $2, true, 'local')",
+        email,
+        "U",
+    )
+    user = await oidc_svc.provision_user_for_verified_claims(
+        db_pool, {"email": email, "sub": "sub-a", "email_verified": True}, issuer=_ISS_A
+    )
+    return str(user.id)
+
+
+async def test_relink_issuer_change_retrouve_le_compte(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """AC : connu sous l'émetteur A, se connectant sous B avec le même email
+    vérifié, retrouve son compte — re-liaison ouverte. Historique tenu."""
+    await _enable_oidc(db_pool)
+    uid = await _validated_pinned_account(db_pool, "switch@example.com")
+    user = await oidc_svc.provision_user_for_verified_claims(
+        db_pool,
+        {"email": "switch@example.com", "sub": "sub-b", "email_verified": True},
+        issuer=_ISS_B,
+        relink_enabled=True,
+    )
+    assert str(user.id) == uid  # même compte
+    row = await db_pool.fetchrow(
+        "SELECT oidc_issuer, oidc_subject FROM app_user WHERE id = $1::uuid", uid
+    )
+    assert (row["oidc_issuer"], row["oidc_subject"]) == (_ISS_B, "sub-b")
+    # Historique : ancien couple fermé, nouveau ouvert.
+    hist = await db_pool.fetch(
+        "SELECT issuer, unlinked_at FROM user_oidc_identity_history "
+        "WHERE user_id = $1::uuid ORDER BY linked_at",
+        uid,
+    )
+    assert [(h["issuer"], h["unlinked_at"] is None) for h in hist] == [
+        (_ISS_A, False),
+        (_ISS_B, True),
+    ]
+
+
+async def test_relink_ferme_par_defaut_refuse(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Fail closed : sans re-liaison ouverte, un changement d'émetteur est refusé."""
+    await _enable_oidc(db_pool)
+    await _validated_pinned_account(db_pool, "closed@example.com")
+    with pytest.raises(HTTPException) as exc:
+        await oidc_svc.provision_user_for_verified_claims(
+            db_pool,
+            {"email": "closed@example.com", "sub": "sub-b", "email_verified": True},
+            issuer=_ISS_B,  # relink_enabled défaut False
+        )
+    assert exc.value.status_code == 401
+
+
+async def test_meme_emetteur_sub_different_refuse_meme_relink_ouvert(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """LE test à voir rouge si la garde est câblée sur le mode au lieu de
+    l'émetteur : même émetteur, sub différent → refusé, y compris re-liaison ouverte."""
+    await _enable_oidc(db_pool)
+    await _validated_pinned_account(db_pool, "same@example.com")
+    with pytest.raises(HTTPException) as exc:
+        await oidc_svc.provision_user_for_verified_claims(
+            db_pool,
+            {"email": "same@example.com", "sub": "sub-autre", "email_verified": True},
+            issuer=_ISS_A,  # MÊME émetteur, sub différent
+            relink_enabled=True,  # ouvert : ne doit RIEN changer au refus
+        )
+    assert exc.value.status_code == 401
+
+
+# ── Garde anti-lockout : couper le local exige un admin OIDC ─────────────────
+
+
+def _cfg(enabled: bool, disable_local: bool) -> OidcConfigSet:
+    return OidcConfigSet(
+        issuer=_ISS_A,
+        client_id="c",
+        client_secret_ref=_SECRET_REF,
+        enabled=enabled,
+        disable_local_login=disable_local,
+    )
+
+
+async def test_disable_local_login_refuse_sans_admin_oidc(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """§5 : activer OIDC-only est refusé tant qu'aucun admin ne s'est connecté en
+    OIDC (cas OIDC activé mais mal configuré → sinon instance verrouillée)."""
+    await db_pool.execute(
+        "INSERT INTO app_user (email, label, password_hash, is_admin, validated) "
+        "VALUES ('a@ex.com', 'A', 'x', true, true)"
+    )
+    with pytest.raises(HTTPException) as exc:
+        await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=True, disable_local=True))
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "no_oidc_admin"  # type: ignore[index]
+
+
+async def test_disable_local_login_autorise_avec_admin_oidc(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Après un login OIDC admin réussi (oidc_subject épinglé), la coupure passe."""
+    await db_pool.execute(
+        "INSERT INTO app_user (email, label, is_admin, validated, oidc_issuer, oidc_subject) "
+        "VALUES ('admin@ex.com', 'Adm', true, true, $1, 'adm-sub')",
+        _ISS_A,
+    )
+    out = await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=True, disable_local=True))
+    assert out.disable_local_login is True
+    assert await oidc_svc.local_login_disabled_by_oidc(db_pool) is True
+
+
+async def test_flag_sans_effet_si_oidc_desactive_non_regression(
+    db_pool: asyncpg.Pool, clean_admin_users: None
+) -> None:
+    """Non-régression §5 : le flag n'a d'effet que si l'OIDC est activé —
+    poser disable_local_login avec enabled=false est permis (garde non déclenchée)
+    et le local reste actif ; désactiver l'OIDC réactive le local."""
+    out = await oidc_svc.set_oidc_config(db_pool, _cfg(enabled=False, disable_local=True))
+    assert out.disable_local_login is True
+    assert await oidc_svc.local_login_disabled_by_oidc(db_pool) is False

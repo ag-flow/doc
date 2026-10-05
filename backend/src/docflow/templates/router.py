@@ -1,19 +1,34 @@
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import uuid as _uuid
+from datetime import datetime
 
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, HttpUrl, field_validator
 
 from docflow.auth.deps import require_api_key_admin_write, require_authenticated
-from docflow.templates.gallery import GalleryError, RemoteTemplateData, fetch_gallery, pull_template
-from docflow.templates.importer import ImportConflictError, VersionConflictError, run_import
-from docflow.templates.inheritance import resolve
+from docflow.templates.gallery import (
+    GalleryError,
+    RemoteTemplateData,
+    fetch_gallery,
+    fetch_template,
+    pull_template,
+)
+from docflow.templates.importer import (
+    ConcurrentImportError,
+    ImportConflictError,
+    MissingTemplateDependencyError,
+    UnresolvedTargetTypeError,
+    VersionConflictError,
+    run_import,
+)
+from docflow.templates.inheritance import InheritanceCycleError, resolve
 from docflow.templates.models import Template
 from docflow.workspaces.access import require_ws_access
 
@@ -36,6 +51,8 @@ class TemplateInfo(BaseModel):
     path: str
     concrete_types: int
     type_slugs: list[str]
+    # Blocs utilisateurs (tous workspaces) portés par les types de ce template.
+    blocks_count: int = 0
 
 
 class TemplateYamlBody(BaseModel):
@@ -50,11 +67,25 @@ class ImportTemplateIn(BaseModel):
     dry_run: bool = False
 
 
+class TemplateUploadIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    yaml_content: str
+
+
 class ImportResultOut(BaseModel):
     applied: bool
     no_op: bool
     adds: int
     soft_updates: int
+
+
+class WorkspaceTemplateOut(BaseModel):
+    """Template global dont un workspace est issu + la version importée."""
+
+    template: str
+    version: int
+    imported_at: datetime
 
 
 class RemoteTemplateInfo(BaseModel):
@@ -138,9 +169,28 @@ def _find_template_file(template_slug: str) -> pathlib.Path:
     raise HTTPException(status_code=404, detail=f"template '{template_slug}' introuvable")
 
 
+# Blocs (tous workspaces) portés par un type issu de chaque template — le
+# listing annonce l'usage réel, la suppression s'appuie sur la même requête.
+_BLOCKS_BY_TEMPLATE = """
+SELECT ft.source_template, w.slug AS ws_slug, b.label
+FROM data_block b
+JOIN functional_type ft ON ft.id = b.functional_type_ref
+JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key
+WHERE ft.source_template IS NOT NULL
+ORDER BY w.slug, b.label
+"""
+
+
 @router.get("/templates", response_model=list[TemplateInfo])
-async def list_templates() -> list[TemplateInfo]:
-    return load_templates(_TEMPLATES_DIR)
+async def list_templates(request: Request) -> list[TemplateInfo]:
+    templates = load_templates(_TEMPLATES_DIR)
+    rows = await request.app.state.pool.fetch(_BLOCKS_BY_TEMPLATE)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["source_template"]] = counts.get(r["source_template"], 0) + 1
+    for tpl in templates:
+        tpl.blocks_count = counts.get(tpl.template, 0)
+    return templates
 
 
 # ── Galerie distante ────────────────────────────────────────────────────────
@@ -249,6 +299,57 @@ async def list_gallery(
     return result
 
 
+class GalleryPullDiffOut(BaseModel):
+    template: str
+    installed_version: int | None
+    remote_version: int
+    new_types: list[str]
+    # Propriétés ajoutées aux types déjà installés : « type.prop ».
+    new_properties: list[str]
+
+
+@router.post("/templates/gallery/pull/diff", response_model=GalleryPullDiffOut)
+async def diff_gallery_pull(
+    body: GalleryPullIn,
+    _: None = _Auth,
+) -> GalleryPullDiffOut:
+    """Ce que la mise à jour changerait — AVANT de confirmer (aucune écriture)."""
+    try:
+        remote_tpl = await fetch_template(body.source_url, body.template_slug)
+    except GalleryError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Template invalide : {e}") from e
+
+    remote_types = {r.slug: r for r in resolve(remote_tpl)}
+    local = {t.template: t for t in load_templates(_TEMPLATES_DIR)}.get(body.template_slug)
+    local_types: dict[str, set[str]] = {}
+    installed_version: int | None = None
+    if local is not None:
+        installed_version = local.version
+        yaml_file = _find_template_file(body.template_slug)
+        with yaml_file.open() as f:
+            local_tpl = Template.model_validate(yaml.safe_load(f))
+        for r in resolve(local_tpl):
+            local_types[r.slug] = {p.slug for p in r.properties}
+
+    new_types = sorted(slug for slug in remote_types if slug not in local_types)
+    new_properties = sorted(
+        f"{slug}.{p.slug}"
+        for slug, r in remote_types.items()
+        if slug in local_types
+        for p in r.properties
+        if p.slug not in local_types[slug]
+    )
+    return GalleryPullDiffOut(
+        template=body.template_slug,
+        installed_version=installed_version,
+        remote_version=remote_tpl.version,
+        new_types=new_types,
+        new_properties=new_properties,
+    )
+
+
 @router.post("/templates/gallery/pull", response_model=TemplateInfo)
 async def pull_from_gallery(
     body: GalleryPullIn,
@@ -285,6 +386,106 @@ async def get_template_yaml(
     return yaml_file.read_text()
 
 
+@router.get("/templates/{template_slug}/export")
+async def export_template(template_slug: str, _: None = _Auth) -> Response:
+    """Export APLATI du template (héritage résolu), en JSON téléchargeable.
+
+    Snapshot fidèle de l'état une fois l'héritage résolu — tel qu'il vit après
+    import : chaque type concret (les `abstract` exclus) porte toutes ses
+    propriétés directement, et son `parent` (hiérarchie). Ce n'est pas un
+    aller-retour mécanique : reconstruire l'héritage à partir de l'export est un
+    travail d'interprétation (cf. fiche 45d5da21).
+    """
+    yaml_file = _find_template_file(template_slug)
+    try:
+        tpl = Template.model_validate(yaml.safe_load(yaml_file.read_text()))
+        resolved = resolve(tpl)
+    except HTTPException:
+        raise
+    except Exception as e:  # YAML illisible / héritage incohérent → 422 explicite
+        raise HTTPException(status_code=422, detail=f"template non résolvable : {e}") from e
+
+    payload = {
+        "template": tpl.template,
+        "label": tpl.label,
+        "version": tpl.version,
+        # Sans elle, l'export perd silencieusement la condition d'importabilité
+        # du template : celui qui le relit ne saurait pas ce qu'il lui manque.
+        "requires": tpl.requires,
+        "functional_types": [r.model_dump(mode="json") for r in resolved],
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{tpl.template}.json"'},
+    )
+
+
+@router.post("/templates", response_model=TemplateInfo, status_code=201)
+async def create_template_from_upload(
+    body: TemplateUploadIn,
+    _: None = _Auth,
+) -> TemplateInfo:
+    """Installe un nouveau template global depuis un payload YAML uploadé.
+
+    Le payload est le modèle NATIF (héritage non résolu, tel qu'il vit dans un
+    repo source). Il est validé, puis résolu pour vérifier la cohérence de
+    l'héritage, puis persisté dans le répertoire des templates globaux — il
+    devient dès lors importable comme les autres (list_templates, galerie,
+    import_template). Création seule : si un template porte déjà ce slug, le
+    mettre à jour via PUT /templates/{slug}/yaml (409 sinon).
+    """
+    try:
+        raw = yaml.safe_load(body.yaml_content)
+        tpl = Template.model_validate(raw)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"YAML invalide : {e}") from e
+    if not _SLUG_RE.match(tpl.template):
+        raise HTTPException(
+            status_code=422,
+            detail="slug de template invalide : minuscules, chiffres, tirets, 2-80 chars",
+        )
+    try:
+        resolved = resolve(tpl)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"héritage non résolvable : {e}") from e
+
+    # Création uniquement : ni un template de même slug (repéré par contenu), ni un
+    # fichier de même nom ne doivent être écrasés en douce par un upload.
+    for existing in _TEMPLATES_DIR.glob("*.yaml"):
+        try:
+            other = Template.model_validate(yaml.safe_load(existing.read_text()))
+        except Exception:
+            continue
+        if other.template == tpl.template:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"un template '{tpl.template}' est déjà installé ; "
+                    "utiliser PUT /templates/{slug}/yaml pour le mettre à jour"
+                ),
+            )
+
+    yaml_file = _TEMPLATES_DIR / f"{tpl.template}.yaml"
+    if yaml_file.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"un fichier de template '{yaml_file.name}' existe déjà",
+        )
+    _TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+    yaml_file.write_text(body.yaml_content)
+    log.info("template_installed_from_upload", template=tpl.template, version=tpl.version)
+    return TemplateInfo(
+        template=tpl.template,
+        label=tpl.label,
+        version=tpl.version,
+        path=yaml_file.name,
+        concrete_types=len(resolved),
+        type_slugs=[r.slug for r in resolved],
+    )
+
+
 @router.put("/templates/{template_slug}/yaml", response_model=TemplateInfo)
 async def update_template_yaml(
     template_slug: str,
@@ -305,9 +506,12 @@ async def update_template_yaml(
             ),
         )
     yaml_file = _find_template_file(template_slug)
+    try:
+        resolved = resolve(tpl)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"héritage non résolvable : {e}") from e
     yaml_file.write_text(body.yaml_content)
     log.info("template_updated", template=template_slug, version=tpl.version)
-    resolved = resolve(tpl)
     return TemplateInfo(
         template=tpl.template,
         label=tpl.label,
@@ -321,9 +525,28 @@ async def update_template_yaml(
 @router.delete("/templates/{template_slug}", status_code=204)
 async def delete_template(
     template_slug: str,
+    request: Request,
     _: None = _Auth,
 ) -> None:
     yaml_file = _find_template_file(template_slug)
+    # Refus motivé : des blocs (dans n'importe quel workspace) reposent sur les
+    # types de ce template — la liste est retournée, pas seulement un compte.
+    rows = await request.app.state.pool.fetch(
+        "SELECT w.slug AS ws_slug, b.label FROM data_block b "
+        "JOIN functional_type ft ON ft.id = b.functional_type_ref "
+        "JOIN workspace w ON w.workspace_technical_key = b.workspace_technical_key "
+        "WHERE ft.source_template = $1 ORDER BY w.slug, b.label",
+        template_slug,
+    )
+    if rows:
+        blocks = [f"{r['ws_slug']} / {r['label']}" for r in rows]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"template utilisé par {len(blocks)} bloc(s)",
+                "blocks": blocks,
+            },
+        )
     yaml_file.unlink()
     log.info("template_deleted", template=template_slug)
 
@@ -349,12 +572,22 @@ async def import_template(
         report = await run_import(pool, ws_slug, tpl, dry_run=body.dry_run)
     except VersionConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ConcurrentImportError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ImportConflictError as e:
         conflicts = [{"path": i.path, "detail": i.detail} for i in e.diff.conflicts]
         raise HTTPException(
             status_code=422,
             detail={"message": "conflits bloquants", "conflicts": conflicts},
         ) from e
+    except InheritanceCycleError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except MissingTemplateDependencyError as e:
+        # 422 et non 404 : le template demandé existe, c'est le workspace qui
+        # n'est pas prêt à le recevoir — et le message nomme ce qu'il faut faire.
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except UnresolvedTargetTypeError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return ImportResultOut(
@@ -363,3 +596,27 @@ async def import_template(
         adds=len(report.diff.adds),
         soft_updates=len(report.diff.soft_updates),
     )
+
+
+@router.get(
+    "/workspaces/{ws_slug}/templates",
+    dependencies=[Depends(require_ws_access)],
+    response_model=list[WorkspaceTemplateOut],
+)
+async def list_workspace_templates(
+    ws_slug: str, request: Request, _: None = _Auth
+) -> list[WorkspaceTemplateOut]:
+    """Templates globaux dont ce workspace est issu, avec la version importée.
+
+    Le front compare cette version à celle du template global courant
+    (`GET /templates`) : si le global est plus récent, il propose une mise à
+    jour (additive — cf. la réconciliation de `run_import`, jamais de suppression).
+    """
+    rows = await request.app.state.pool.fetch(
+        "SELECT wti.template, wti.version, wti.imported_at "
+        "FROM workspace_template_import wti "
+        "JOIN workspace w ON w.workspace_technical_key = wti.workspace_technical_key "
+        "WHERE w.slug = $1 ORDER BY wti.template",
+        ws_slug,
+    )
+    return [WorkspaceTemplateOut(**dict(r)) for r in rows]

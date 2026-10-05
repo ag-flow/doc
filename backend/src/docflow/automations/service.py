@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -56,9 +57,7 @@ async def _workspace_slugs(conn: asyncpg.Connection, automation_id: uuid.UUID) -
     return [r["slug"] for r in rows]
 
 
-async def _resolve_workspace_keys(
-    conn: asyncpg.Connection, slugs: list[str]
-) -> list[uuid.UUID]:
+async def _resolve_workspace_keys(conn: asyncpg.Connection, slugs: list[str]) -> list[uuid.UUID]:
     """Résout des slugs de workspaces en clés ; 422 si l'un est inconnu."""
     keys: list[uuid.UUID] = []
     for slug in slugs:
@@ -95,26 +94,41 @@ async def _set_workspaces(
             automation_id,
             key,
         )
+    # Colonne vestigiale (cf. migration 0078) : NULL quand aucun workspace n'est
+    # coché, plutôt qu'un workspace inventé qui mentirait sur la portée.
     await conn.execute(
         "UPDATE automation SET workspace_technical_key = $1 WHERE id = $2",
-        keys[0],
+        keys[0] if keys else None,
         automation_id,
     )
 
 
-# Clause de visibilité : l'automate est accessible depuis tout workspace coché.
+async def _maybe_workspace(conn: asyncpg.Connection, ws_slug: str | None) -> uuid.UUID | None:
+    """Clé du workspace si un scope est demandé ; None = vue globale (admin)."""
+    return await require_workspace(conn, ws_slug) if ws_slug is not None else None
+
+
+# Clause de visibilité : l'automate est accessible depuis tout workspace coché ;
+# $2 NULL = vue globale (routes admin /automations), aucun filtre.
+# Un automate sans rattachement ne filtre pas sur la portée : il s'applique à
+# TOUS les workspaces, donc il doit apparaître dans l'écran de chacun. Sans la
+# clause du milieu, il se déclencherait partout en n'étant visible nulle part —
+# invisible et actif est la pire combinaison.
 _VISIBLE = (
-    "EXISTS (SELECT 1 FROM automation_workspace aw "
-    "WHERE aw.automation_ref = a.id AND aw.workspace_technical_key = $2)"
+    "($2::uuid IS NULL"
+    " OR NOT EXISTS (SELECT 1 FROM automation_workspace aw WHERE aw.automation_ref = a.id)"
+    " OR EXISTS (SELECT 1 FROM automation_workspace aw "
+    "WHERE aw.automation_ref = a.id AND aw.workspace_technical_key = $2))"
 )
 
 
 async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
     """Nombre d'events déclencheurs matchés au-delà du curseur (filtres inclus),
     sur TOUS les workspaces couverts par l'automate."""
+    # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas, il
+    # laisse tout passer (cf. events_query). Le court-circuit portait l'ancienne
+    # sémantique « aucun code = ne se déclenche jamais ».
     codes = list(row["event_codes"] or [])
-    if not codes:
-        return 0
     cursor: int = (
         await conn.fetchval(
             "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", row["id"]
@@ -129,7 +143,75 @@ async def _pending_count(conn: asyncpg.Connection, row: asyncpg.Record) -> int:
         list(row["functional_type_slugs"] or []),
         row["id"],
         cursor,
+        list(row["block_templates"] or []),
     )
+
+
+async def _deferred_until(conn: asyncpg.Connection, row: asyncpg.Record) -> datetime | None:
+    """Instant où le PROCHAIN event en attente cessera d'être différé.
+
+    Le worker repousse un event tant que son document a reçu un event récent
+    (`_is_hot`, fenêtre `delay_minutes`). Un push de masse rend tous les
+    documents chauds au même instant : la file paraît alors figée, et RIEN ne
+    dit qu'elle attend — un automate différé et un automate en panne s'affichent
+    à l'identique.
+
+    On calcule sur le prochain event seulement : c'est celui que le worker
+    tentera, et donc celui qui débloque la file.
+
+    Rend `None` si l'automate n'a pas de debounce, s'il n'y a rien en attente,
+    ou si le document n'est plus chaud (l'event partira au prochain tick).
+    """
+    delay: int = row["delay_minutes"] or 0
+    codes = list(row["event_codes"] or [])
+    if delay <= 0 or not codes:
+        return None
+
+    cursor: int = (
+        await conn.fetchval(
+            "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", row["id"]
+        )
+        or 0
+    )
+    ev = await events_query.next_matching(
+        conn,
+        await _workspace_keys(conn, row["id"]),
+        codes,
+        list(row["block_slugs"] or []),
+        list(row["functional_type_slugs"] or []),
+        row["id"],
+        cursor,
+        list(row["block_templates"] or []),
+    )
+    if ev is None or ev["document_ref"] is None:
+        return None
+
+    return await conn.fetchval(  # type: ignore[no-any-return]
+        """
+        SELECT max(occurred_at) + ($2 || ' minutes')::interval
+        FROM document_event
+        WHERE document_ref = $1
+          AND occurred_at > now() - ($2 || ' minutes')::interval
+        """,
+        ev["document_ref"],
+        str(delay),
+    )
+
+
+#: Rang de tri des automates SANS rattachement au workspace demandé : ils sont
+#: évalués en dernier. C'est une sentinelle de TRI, jamais une donnée d'affichage.
+_LAST_RANK = 2147483647
+
+
+def _rank_or_none(position: int | None) -> int | None:
+    """Rang d'évaluation, ou None quand l'automate n'en a pas dans ce contexte.
+
+    Un automate sans filtre de portée n'a pas de position dans un workspace
+    donné : il s'évalue après tous les autres. Rendre la sentinelle telle quelle
+    afficherait « 2147483647 » dans la colonne de rang — une valeur interne qui
+    déborde et ne veut rien dire pour qui la lit.
+    """
+    return None if position is None or position >= _LAST_RANK else position
 
 
 def _row_to_out(
@@ -137,18 +219,22 @@ def _row_to_out(
     headers: list[AutomationHeaderOut],
     pending_count: int = 0,
     workspace_slugs: list[str] | None = None,
-    position: int = 0,
+    position: int | None = 0,
+    deferred_until: datetime | None = None,
 ) -> AutomationOut:
+    keys = row.keys()
     return AutomationOut(
         id=row["id"],
         workspace_technical_key=row["workspace_technical_key"],
         label=row["label"],
         active=row["active"],
         pending_count=pending_count,
+        deferred_until=deferred_until,
         position=position,
         workspace_slugs=workspace_slugs or [],
         event_codes=list(row["event_codes"] or []),
         block_slugs=list(row["block_slugs"] or []),
+        block_templates=list(row["block_templates"] or []),
         functional_type_slugs=list(row["functional_type_slugs"] or []),
         stop_chain=row["stop_chain"],
         on_create=row["on_create"],
@@ -162,6 +248,11 @@ def _row_to_out(
         headers=headers,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        last_run_at=row["last_run_at"] if "last_run_at" in keys else None,
+        last_run_status=row["last_run_status"] if "last_run_status" in keys else None,
+        last_run_http_status=(
+            row["last_run_http_status"] if "last_run_http_status" in keys else None
+        ),
     )
 
 
@@ -187,22 +278,57 @@ async def _upsert_headers(
 # ── CRUD Automations ──────────────────────────────────────────────────────────
 
 
-async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationOut]:
+_LIST_FIELDS = (
+    "a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
+    "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
+    "a.on_create, a.on_update, "
+    "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
+    "a.body_template, a.created_at, a.updated_at, "
+    # Dernière exécution : sous-requête sur le run le plus récent.
+    "(SELECT r.executed_at FROM automation_run r WHERE r.automation_ref = a.id "
+    " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_at, "
+    "(SELECT r.status FROM automation_run r WHERE r.automation_ref = a.id "
+    " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_status, "
+    "(SELECT r.http_status FROM automation_run r WHERE r.automation_ref = a.id "
+    " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_http_status "
+)
+
+
+async def list_automations(pool: asyncpg.Pool, ws_slug: str | None) -> list[AutomationOut]:
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
-        # Visible dans TOUS les workspaces cochés, trié par PRIORITÉ d'évaluation
-        # dans CE workspace (position de la table de liaison).
-        rows = await conn.fetch(
-            "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
-            "a.block_slugs, a.functional_type_slugs, a.stop_chain, a.on_create, a.on_update, "
-            "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-            "a.body_template, a.created_at, a.updated_at, aw.position "
-            "FROM automation a "
-            "JOIN automation_workspace aw ON aw.automation_ref = a.id "
-            "WHERE aw.workspace_technical_key = $1 "
-            "ORDER BY aw.position, a.label",
-            wk,
-        )
+        wk = await _maybe_workspace(conn, ws_slug)
+        if wk is None:
+            # Vue globale (admin) : TOUS les automates, ordonnés par leur
+            # meilleure priorité (min des positions par workspace — même règle
+            # d'ordre que le worker).
+            rows = await conn.fetch(
+                "SELECT " + _LIST_FIELDS + ", "
+                "(SELECT COALESCE(min(aw.position), 2147483647) "
+                " FROM automation_workspace aw WHERE aw.automation_ref = a.id) AS position "
+                "FROM automation a "
+                "ORDER BY position, a.label",
+            )
+        else:
+            # Visible dans TOUS les workspaces cochés, trié par PRIORITÉ
+            # d'évaluation dans CE workspace (position de la table de liaison).
+            #
+            # Et aussi les automates SANS aucun rattachement : ne pas filtrer sur
+            # la portée veut dire s'appliquer partout, donc figurer dans l'écran de
+            # chaque workspace. Un JOIN strict les rendait invisibles ici tout en
+            # les laissant se déclencher — invisible et actif est la pire
+            # combinaison. Ils n'ont pas de position : ils passent en dernier,
+            # ce qui est bien leur rang réel d'évaluation.
+            rows = await conn.fetch(
+                "SELECT " + _LIST_FIELDS + ", COALESCE(aw.position, 2147483647) AS position "
+                "FROM automation a "
+                "LEFT JOIN automation_workspace aw "
+                "  ON aw.automation_ref = a.id AND aw.workspace_technical_key = $1 "
+                "WHERE aw.automation_ref IS NOT NULL "
+                "   OR NOT EXISTS (SELECT 1 FROM automation_workspace x "
+                "                  WHERE x.automation_ref = a.id) "
+                "ORDER BY position, a.label",
+                wk,
+            )
         result = []
         for row in rows:
             headers = await _fetch_headers(conn, row["id"])
@@ -212,71 +338,91 @@ async def list_automations(pool: asyncpg.Pool, ws_slug: str) -> list[AutomationO
                     headers,
                     await _pending_count(conn, row),
                     await _workspace_slugs(conn, row["id"]),
-                    row["position"],
+                    _rank_or_none(row["position"]),
+                    await _deferred_until(conn, row),
                 )
             )
     return result
 
 
 async def reorder_automations(
-    pool: asyncpg.Pool, ws_slug: str, ids: list[uuid.UUID]
+    pool: asyncpg.Pool, ws_slug: str | None, ids: list[uuid.UUID]
 ) -> list[AutomationOut]:
     """Applique l'ordre `ids` (drag & drop) aux automates DU workspace.
 
     L'ordre est propre au workspace : le même automate peut occuper une
     position différente dans chacun de ses workspaces. `ids` doit couvrir
     exactement les automates du workspace (422 sinon).
+
+    Vue globale (ws_slug None) : `ids` couvre TOUS les automates ; l'ordre est
+    projeté sur chaque workspace (position identique partout) — les chaînes par
+    workspace deviennent des sous-suites de l'ordre global.
     """
     async with pool.acquire() as conn, conn.transaction():
-        wk = await require_workspace(conn, ws_slug)
-        current = {
-            r["automation_ref"]
-            for r in await conn.fetch(
-                "SELECT automation_ref FROM automation_workspace "
-                "WHERE workspace_technical_key = $1",
-                wk,
-            )
-        }
-        if set(ids) != current or len(ids) != len(current):
-            raise HTTPException(
-                422, "l'ordre doit couvrir exactement les automates du workspace"
-            )
-        for i, automation_id in enumerate(ids, start=1):
-            await conn.execute(
-                "UPDATE automation_workspace SET position = $1 "
-                "WHERE automation_ref = $2 AND workspace_technical_key = $3",
-                i,
-                automation_id,
-                wk,
-            )
+        wk = await _maybe_workspace(conn, ws_slug)
+        if wk is None:
+            current = {r["id"] for r in await conn.fetch("SELECT id FROM automation")}
+            if set(ids) != current or len(ids) != len(current):
+                raise HTTPException(422, "l'ordre doit couvrir exactement tous les automates")
+            for i, automation_id in enumerate(ids, start=1):
+                await conn.execute(
+                    "UPDATE automation_workspace SET position = $1 WHERE automation_ref = $2",
+                    i,
+                    automation_id,
+                )
+        else:
+            current = {
+                r["automation_ref"]
+                for r in await conn.fetch(
+                    "SELECT automation_ref FROM automation_workspace "
+                    "WHERE workspace_technical_key = $1",
+                    wk,
+                )
+            }
+            if set(ids) != current or len(ids) != len(current):
+                raise HTTPException(
+                    422, "l'ordre doit couvrir exactement les automates du workspace"
+                )
+            for i, automation_id in enumerate(ids, start=1):
+                await conn.execute(
+                    "UPDATE automation_workspace SET position = $1 "
+                    "WHERE automation_ref = $2 AND workspace_technical_key = $3",
+                    i,
+                    automation_id,
+                    wk,
+                )
     return await list_automations(pool, ws_slug)
 
 
 async def create_automation(
-    pool: asyncpg.Pool, ws_slug: str, body: AutomationCreate
+    pool: asyncpg.Pool, ws_slug: str | None, body: AutomationCreate
 ) -> AutomationOut:
     async with pool.acquire() as conn, conn.transaction():
-        wk = await require_workspace(conn, ws_slug)
-        # Portée : les workspaces cochés ; vide → [workspace courant]. Jamais aucun.
+        # Portée : les workspaces cochés. AUCUN coché = aucun filtre de portée,
+        # donc l'instance entière — la couverture obéit à la même règle que les
+        # autres sections de l'écran (« vide = tout passe »), elle n'est pas un
+        # cas particulier obligatoire.
         keys = (
             await _resolve_workspace_keys(conn, body.workspace_slugs)
             if body.workspace_slugs
-            else [wk]
+            else []
         )
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, "
             " delay_minutes, contract_ref, operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
-            keys[0],
+            keys[0] if keys else None,
             body.label,
             body.active,
             body.event_codes,
             body.block_slugs,
+            body.block_templates,
             body.functional_type_slugs,
             body.stop_chain,
             body.on_create,
@@ -297,13 +443,14 @@ async def create_automation(
 
 
 async def get_automation(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID
 ) -> AutomationOut:
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         row = await conn.fetchrow(
             "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
-            "a.block_slugs, a.functional_type_slugs, a.stop_chain, a.on_create, a.on_update, "
+            "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
+    "a.on_create, a.on_update, "
             "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
             "a.body_template, a.created_at, a.updated_at "
             "FROM automation a WHERE a.id = $1 AND " + _VISIBLE,
@@ -319,14 +466,14 @@ async def get_automation(
 
 
 async def update_automation(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, body: AutomationUpdate
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID, body: AutomationUpdate
 ) -> AutomationOut:
     raw = body.model_dump(exclude_unset=True)
     if not raw:
         return await get_automation(pool, ws_slug, automation_id)
 
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         exists = await conn.fetchval(
             "SELECT a.id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -335,13 +482,10 @@ async def update_automation(
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
 
-        # Portée workspaces : remplacement de l'ensemble — JAMAIS vide.
+        # Portée workspaces : remplacement de l'ensemble. Vide est LÉGITIME —
+        # c'est « aucun filtre de portée », pas une saisie incomplète.
         if "workspace_slugs" in raw:
             new_slugs = raw.pop("workspace_slugs") or []
-            if not new_slugs:
-                raise HTTPException(
-                    422, "un automate doit couvrir au moins un workspace"
-                )
             await _set_workspaces(
                 conn, automation_id, await _resolve_workspace_keys(conn, new_slugs)
             )
@@ -360,6 +504,7 @@ async def update_automation(
                 "active",
                 "event_codes",
                 "block_slugs",
+                "block_templates",
                 "functional_type_slugs",
                 "stop_chain",
                 "on_create",
@@ -386,6 +531,7 @@ async def update_automation(
 
         row = await conn.fetchrow(
             "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
             "created_at, updated_at "
@@ -399,9 +545,11 @@ async def update_automation(
     return _row_to_out(row, headers, pending, slugs)
 
 
-async def delete_automation(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> None:
+async def delete_automation(
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID
+) -> None:
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         result = await conn.execute(
             "DELETE FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -415,10 +563,10 @@ async def delete_automation(pool: asyncpg.Pool, ws_slug: str, automation_id: uui
 
 
 async def list_runs(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, limit: int = 50
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID, limit: int = 50
 ) -> list[AutomationRunOut]:
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         exists = await conn.fetchval(
             "SELECT id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -440,7 +588,7 @@ async def list_runs(
 
 async def replay_run(
     pool: asyncpg.Pool,
-    ws_slug: str,
+    ws_slug: str | None,
     automation_id: uuid.UUID,
     run_id: uuid.UUID,
     settings: object,
@@ -448,7 +596,7 @@ async def replay_run(
     from docflow.automations.worker import execute
 
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
 
         auto_row = await conn.fetchrow(
             "SELECT id, workspace_technical_key, url, http_method, body_template "
@@ -501,7 +649,7 @@ async def replay_run(
 
 
 async def run_next_pending(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, settings: object
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID, settings: object
 ) -> dict[str, object]:
     """Exécute l'automate sur le PROCHAIN event en attente, SANS avancer le
     curseur ni enregistrer de run — test/aperçu de l'event courant.
@@ -514,9 +662,10 @@ async def run_next_pending(
     from docflow.automations.worker import _prune_runs, execute
 
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "stop_chain, "
             "functional_type_slugs, url, http_method, body_template "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -524,9 +673,10 @@ async def run_next_pending(
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"status": "no_events"}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
@@ -541,6 +691,7 @@ async def run_next_pending(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -588,16 +739,17 @@ async def run_next_pending(
 
 
 async def advance_pending(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID, settings: object
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID, settings: object
 ) -> dict[str, object]:
     """Exécute l'automate sur le prochain event en attente, l'historise (run
     normal, avec event_seq) ET avance le curseur (pas manuel du worker)."""
     from docflow.automations.worker import _advance, _prune_runs, execute
 
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, event_codes, block_slugs, stop_chain, "
+            "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "stop_chain, "
             "functional_type_slugs, url, http_method, body_template "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -605,9 +757,10 @@ async def advance_pending(
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"status": "no_events"}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
@@ -622,6 +775,7 @@ async def advance_pending(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         if ev is None:
             return {"status": "no_pending"}
@@ -672,25 +826,27 @@ async def advance_pending(
 
 
 async def cursor_back(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID
 ) -> dict[str, object]:
     """Recule le curseur d'un event : l'event précédemment traité redevient
     « en attente » (courant). N'exécute aucun appel."""
     from docflow.automations.worker import _advance
 
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
-            "SELECT workspace_technical_key, event_codes, block_slugs, functional_type_slugs "
+            "SELECT workspace_technical_key, event_codes, block_slugs, block_templates, "
+            "functional_type_slugs "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
         )
         if auto is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
+        # Pas de court-circuit sur `codes` vide : un filtre vide ne filtre pas,
+        # il laisse tout passer (cf. events_query). Le court-circuit portait
+        # l'ancienne sémantique « aucun code = ne se déclenche jamais ».
         codes = list(auto["event_codes"] or [])
-        if not codes:
-            return {"cursor": 0}
         cursor: int = (
             await conn.fetchval(
                 "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", automation_id
@@ -705,13 +861,14 @@ async def cursor_back(
             list(auto["functional_type_slugs"] or []),
             automation_id,
             cursor,
+            list(auto["block_templates"] or []),
         )
         await _advance(conn, automation_id, new_cursor)
     return {"cursor": new_cursor}
 
 
 async def clone_automation(
-    pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID
+    pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID
 ) -> AutomationOut:
     """Clone un automate : configuration complète (events, filtres, portée
     workspaces, appel, headers) — créé DÉSACTIVÉ, libellé suffixé « (copie) ».
@@ -720,7 +877,7 @@ async def clone_automation(
     l'historique d'events. L'historique d'exécutions n'est pas copié.
     """
     async with pool.acquire() as conn, conn.transaction():
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         src = await conn.fetchrow(
             "SELECT a.* FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -731,18 +888,20 @@ async def clone_automation(
 
         row = await conn.fetchrow(
             "INSERT INTO automation "
-            "(workspace_technical_key, label, active, event_codes, block_slugs, "
+            "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, "
             " contract_ref, "
             " operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
+            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
+            "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
             "operation_id, url, http_method, body_template, created_at, updated_at",
             src["workspace_technical_key"],
             f"{src['label']} (copie)",
             src["event_codes"],
             src["block_slugs"],
+            src["block_templates"],
             src["functional_type_slugs"],
             src["stop_chain"],
             src["on_create"],
@@ -784,10 +943,10 @@ async def clone_automation(
     return _row_to_out(row, headers, 0, slugs)
 
 
-async def clear_runs(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID) -> int:
+async def clear_runs(pool: asyncpg.Pool, ws_slug: str | None, automation_id: uuid.UUID) -> int:
     """Vide l'historique d'exécutions de l'automate (le curseur est conservé)."""
     async with pool.acquire() as conn:
-        wk = await require_workspace(conn, ws_slug)
+        wk = await _maybe_workspace(conn, ws_slug)
         exists = await conn.fetchval(
             "SELECT a.id FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
@@ -803,7 +962,7 @@ async def clear_runs(pool: asyncpg.Pool, ws_slug: str, automation_id: uuid.UUID)
 
 async def push_update_events(
     pool: asyncpg.Pool, selections: list[dict[str, Any]]
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Émet un event `docflow.document.refreshed.v1` pour chaque document des
     workspaces/blocs sélectionnés.
 
@@ -816,6 +975,7 @@ async def push_update_events(
     la base vers le workflow externe. `block_slugs` vide = tous les blocs.
     """
     total = 0
+    details: list[dict[str, Any]] = []
     async with pool.acquire() as conn, conn.transaction():
         for sel in selections:
             ws_slug = str(sel.get("workspace_slug", ""))
@@ -824,14 +984,18 @@ async def push_update_events(
             result = await conn.execute(
                 """
                 INSERT INTO document_event
-                    (workspace_technical_key, document_ref, event_code, business)
+                    (workspace_technical_key, document_ref, event_code, business,
+                     correlation_id, correlation_kind, origin)
                 SELECT d.workspace_technical_key, d.doc_technical_key,
                        'docflow.document.refreshed.v1',
                        jsonb_build_object(
                            'documentId', d.doc_technical_key::text,
                            'workspaceSlug', w.slug,
                            'version', d.version,
-                           'title', d.title)
+                           'title', d.title),
+                       -- Fil né de la mutation, sans déclencheur amont :
+                       -- kind=document, id = clé technique OPAQUE du document.
+                       d.doc_technical_key::text, 'document', 'doc'
                 FROM document d
                 JOIN workspace w ON w.workspace_technical_key = d.workspace_technical_key
                 JOIN data_block b ON b.id = d.data_block_ref
@@ -841,6 +1005,10 @@ async def push_update_events(
                 ws_slug,
                 blocks,
             )
-            total += int(result.split()[-1])
-    log.info("automation_events_pushed", count=total)
-    return {"events": total}
+            emitted = int(result.split()[-1])
+            total += emitted
+            details.append({"workspace_slug": ws_slug, "block_slugs": blocks, "events": emitted})
+    # Le détail par sélection est journalisé ET retourné : un push qui émet 0
+    # sur une sélection doit se voir immédiatement (diagnostic).
+    log.info("automation_events_pushed", count=total, selections=details)
+    return {"events": total, "details": details}

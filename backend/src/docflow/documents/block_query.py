@@ -96,6 +96,7 @@ async def _assemble_page(
     page: int,
     page_size: int,
     projection: list[str] | None = None,
+    matched_ids: set[uuid.UUID] | None = None,
 ) -> BlockObjectsPage:
     doc_ids = [d["id"] for d in docs]
     values = await _load_values(conn, doc_ids, projection)
@@ -104,6 +105,15 @@ async def _assemble_page(
             id=str(d["id"]),
             title=d["title"],
             functional_type_slug=d["functional_type_slug"],
+            type=d["type"] if "type" in d.keys() else "md",
+            parent_id=(
+                str(d["parent_id"])
+                if "parent_id" in d.keys() and d["parent_id"] is not None
+                else None
+            ),
+            matched=matched_ids is None or d["id"] in matched_ids,
+            updated_at=d["updated_at"] if "updated_at" in d.keys() else None,
+            updated_by=d["updated_by"] if "updated_by" in d.keys() else None,
             properties=values.get(d["id"], []),
         )
         for d in docs
@@ -119,7 +129,8 @@ async def _assemble_page(
 
 
 _SELECT_DOCS = """
-SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug
+SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug,
+       d.type, d.parent AS parent_id, d.updated_at, d.updated_by
 FROM document d
 LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref
 WHERE d.data_block_ref = $1
@@ -172,7 +183,7 @@ WITH RECURSIVE subtree AS (
     WHERE b.workspace_technical_key = $1 AND b.slug = $2
     UNION ALL
     SELECT c.id FROM functional_type c JOIN subtree s ON c.parent = s.id
-)
+) CYCLE id SET is_cycle USING path
 SELECT DISTINCT pd.slug, pd.type
 FROM properties_defs pd JOIN subtree s ON s.id = pd.functional_type_ref
 WHERE pd.slug = ANY($3::text[])
@@ -289,6 +300,8 @@ def _order_sql(sort: list[SortKey], ptypes: dict[str, str], p: _Params) -> str:
             terms.append(f"d.title {direction}")
         elif s.key == "created_at":
             terms.append(f"d.created_at {direction}")
+        elif s.key == "updated_at":
+            terms.append(f"d.updated_at {direction} NULLS LAST")
         else:
             expr = _sort_expr(ptypes[s.key])
             key_ph = p.add(s.key)
@@ -305,6 +318,56 @@ def _order_sql(sort: list[SortKey], ptypes: dict[str, str], p: _Params) -> str:
     return "ORDER BY " + ", ".join(terms)
 
 
+_ANCESTORS_SQL = """
+WITH RECURSIVE up AS (
+    -- Amorce : les parents directs des résultats de la page.
+    SELECT p.doc_technical_key, p.title, p.type, p.parent, p.updated_at, p.updated_by,
+           p.functional_type_ref
+    FROM document p
+    WHERE p.doc_technical_key = ANY($1::uuid[]) AND p.data_block_ref = $2
+    UNION
+    -- Puis on remonte. `UNION` (et non `UNION ALL`) dédoublonne : un ancêtre
+    -- commun à deux résultats n'est remonté qu'une fois.
+    SELECT a.doc_technical_key, a.title, a.type, a.parent, a.updated_at, a.updated_by,
+           a.functional_type_ref
+    FROM document a
+    JOIN up ON up.parent = a.doc_technical_key
+    WHERE a.data_block_ref = $2
+) CYCLE doc_technical_key SET is_cycle USING path
+SELECT up.doc_technical_key AS id, up.title, up.type, up.parent AS parent_id,
+       up.updated_at, up.updated_by, ft.slug AS functional_type_slug
+FROM up
+LEFT JOIN functional_type ft ON ft.id = up.functional_type_ref
+WHERE NOT up.doc_technical_key = ANY($3::uuid[])
+"""
+
+
+async def _fetch_ancestors(
+    conn: asyncpg.Connection, doc_ids: list[uuid.UUID], block_id: uuid.UUID
+) -> list[asyncpg.Record]:
+    """Ancêtres des résultats, hors résultats eux-mêmes.
+
+    Ils portent le CHEMIN : sans eux, un arbre filtré n'a pas de sens. Ils ne
+    sont pas des résultats pour autant — d'où `matched=False` à l'assemblage, et
+    d'où leur exclusion du `total`.
+
+    Bornés au bloc (`data_block_ref`) : remonter hors périmètre ferait fuiter des
+    titres qu'on n'a pas demandés.
+    """
+    if not doc_ids:
+        return []
+    parents = await conn.fetch(
+        "SELECT DISTINCT parent FROM document "
+        "WHERE doc_technical_key = ANY($1::uuid[]) AND parent IS NOT NULL",
+        doc_ids,
+    )
+    seeds = [r["parent"] for r in parents]
+    if not seeds:
+        return []
+    rows: list[asyncpg.Record] = await conn.fetch(_ANCESTORS_SQL, seeds, block_id, doc_ids)
+    return rows
+
+
 async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> BlockObjectsPage:
     async with pool.acquire() as conn:
         wk = await require_workspace(conn, ws_slug)
@@ -312,7 +375,9 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
 
         # Résolution des types + validation op↔type.
         referenced = {f.prop for f in spec.filters}
-        referenced |= {s.key for s in spec.sort if s.key not in ("title", "created_at")}
+        referenced |= {
+            s.key for s in spec.sort if s.key not in ("title", "created_at", "updated_at")
+        }
         ptypes = await _resolve_prop_types(conn, wk, spec.block_slug, sorted(referenced))
         for f in spec.filters:
             allowed = OPS_BY_TYPE.get(ptypes[f.prop], frozenset())
@@ -335,6 +400,11 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
                 "d.functional_type_ref IN (SELECT id FROM functional_type "
                 f"WHERE workspace_technical_key = {wk_ph} AND slug = ANY({ts_ph}::text[]))"
             )
+        if spec.content_types:
+            # Filtre sur la GRAMMAIRE du corps, pas sur le type fonctionnel : la
+            # colonne est portée par le document lui-même, aucune jointure.
+            ct_ph = p.add(spec.content_types)
+            where.append(f"d.type = ANY({ct_ph}::text[])")
         for f in spec.filters:
             where.append(_filter_sql(f, ptypes[f.prop], p))
         where_sql = " AND ".join(where)
@@ -347,11 +417,26 @@ async def query_documents(pool: asyncpg.Pool, ws_slug: str, spec: QuerySpec) -> 
         limit_ph = p.add(spec.page_size)
         offset_ph = p.add((spec.page - 1) * spec.page_size)
         docs = await conn.fetch(
-            f"SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug "
+            f"SELECT d.doc_technical_key AS id, d.title, ft.slug AS functional_type_slug, "
+            f"d.type, d.parent AS parent_id, d.updated_at, d.updated_by "
             "FROM document d LEFT JOIN functional_type ft ON ft.id = d.functional_type_ref "
             f"WHERE {where_sql} {order_sql} LIMIT {limit_ph} OFFSET {offset_ph}",
             *p.values,
         )
+        rows = list(docs)
+        if spec.include_ancestors:
+            # Les ancêtres s'AJOUTENT aux lignes rendues mais PAS au `total` :
+            # « 12 documents » doit vouloir dire douze résultats, pas douze
+            # résultats plus le chemin qui y mène.
+            ancestors = await _fetch_ancestors(conn, [d["id"] for d in docs], block_id)
+            rows.extend(ancestors)
         return await _assemble_page(
-            conn, spec.block_slug, docs, total, spec.page, spec.page_size, spec.projection
+            conn,
+            spec.block_slug,
+            rows,
+            total,
+            spec.page,
+            spec.page_size,
+            spec.projection,
+            matched_ids={d["id"] for d in docs} if spec.include_ancestors else None,
         )

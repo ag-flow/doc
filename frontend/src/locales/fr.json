@@ -2,6 +2,7 @@
   "login": {
     "title": "Connexion",
     "email": "Email",
+    "username": "Identifiant",
     "password": "Mot de passe",
     "submit": "Se connecter",
     "error": "Identifiants invalides",
@@ -11,7 +12,28 @@
     "oidcError": "Échec de la connexion SSO",
     "pendingValidation": "Votre compte est en attente de validation par un administrateur.",
     "backToLogin": "Retour à la connexion",
-    "localDisabled": "La connexion locale est désactivée sur cette instance — utilisez le SSO."
+    "localDisabled": "Cette instance utilise le SSO — la connexion locale est désactivée.",
+    "kicker": "Gestion documentaire · self-hosted",
+    "hook": "La gestion documentaire dont <em>vous</em> définissez le schéma : pages markdown arborescentes et données typées, sur une structure de stockage entièrement dynamique, auto-hébergée et pilotable par vos agents.",
+    "formTitle": "Connexion",
+    "formHint": "Compte local ou fournisseur OIDC.",
+    "setupHint": "Premier démarrage ? Le wizard crée le compte administrateur.",
+    "pillars": {
+      "writeTitle": "Écrire",
+      "writeBody": "Des pages markdown organisées en arbre, éditeur riche, liens internes et backlinks automatiques.",
+      "structureTitle": "Structurer",
+      "structureBody": "Le modèle de stockage est dynamique : vous déclarez vos propres types fonctionnels — epic ⊃ feature ⊃ tâche — et leurs propriétés typées, sans migration ni ligne de code. Rien n'est câblé en dur, pas même les statuts.",
+      "operateTitle": "Exploiter",
+      "operateBody": "Tableaux triables, vues sauvegardées, export Markdown / Obsidian, automates HTTP et webhooks signés sur changement de propriété.",
+      "agentsTitle": "Piloter par agents",
+      "agentsBody": "Tout ce que fait l'interface, un agent le fait aussi : le serveur MCP et l'API exposent types, documents et propriétés. Vos agents créent le schéma, écrivent, requêtent et déclenchent les automates."
+    },
+    "suiteTitle": "Une suite de trois outils",
+    "suite": {
+      "workflowBody": "Le moteur d'orchestration. Il consomme le change feed de docflow et déclenche les traitements ; docflow lui expose ses documents et reçoit en retour statuts et résultats.",
+      "ragflowBody": "L'index sémantique. Il indexe les workspaces en continu et rend la base interrogeable en langage naturel, propriétés typées comprises."
+    },
+    "stack": "Postgres · FastAPI · React"
   },
   "nav": {
     "workspaces": "Workspaces",
@@ -36,10 +58,34 @@
     "deleteEmptyHint": "Ce bloc est vide.",
     "deleteWarnTitle": "Suppression en cascade",
     "deleteConfirmCascade": "Supprimer quand même",
-    "deleting": "Suppression…"
+    "deleting": "Suppression…",
+    "chapo": "Un bloc regroupe les documents d'un même type racine. Les types fonctionnels et leurs propriétés se gèrent dans <1>Types fonctionnels</1>.",
+    "colBloc": "Bloc",
+    "colSlug": "Slug",
+    "colType": "Type racine",
+    "colDocs": "Documents",
+    "colBroken": "Liens cassés",
+    "colExposed": "Exposé",
+    "colLastWrite": "Dernière écriture",
+    "parent": "Bloc parent",
+    "noParent": "— aucun (bloc racine) —",
+    "public": "Public",
+    "private": "Privé",
+    "makePublic": "Exposer publiquement",
+    "makePrivate": "Rendre privé",
+    "edit": "Modifier",
+    "editTitle": "Modifier le bloc",
+    "brokenDetail": "Voir les liens cassés",
+    "brokenTargetGone": "(cible supprimée)",
+    "noWrite": "jamais",
+    "deleteDocsCount_one": "Ce bloc contient {{count}} document, qui sera supprimé avec lui.",
+    "deleteDocsCount_other": "Ce bloc contient {{count}} documents, qui seront supprimés avec lui."
   },
   "tpl": {
     "title": "Templates",
+    "export": "Exporter (JSON aplati)",
+    "importFile": "Importer un fichier…",
+    "importingFile": "Import…",
     "tabLocal": "Bibliothèque locale",
     "tabGallery": "Galerie en ligne",
     "emptyTitle": "Aucun template disponible",
@@ -79,7 +125,23 @@
       "pullSuccess": "Template « {{template}} » installé (v{{version}}).",
       "deleteSourceConfirm": "Supprimer cette source ?",
       "builtin": "défaut env"
-    }
+    },
+    "kicker": "Administration",
+    "installedTitle": "Installés",
+    "colTemplate": "Template",
+    "colVersion": "Version",
+    "colTypes": "Types fournis",
+    "colBlocks": "Blocs utilisateurs",
+    "blocksCount_one": "{{count}} bloc",
+    "blocksCount_other": "{{count}} blocs",
+    "galleryTitle": "Galerie",
+    "deleteUsedTitle": "Template utilisé",
+    "updateTitle": "Mettre à jour « {{template}} »",
+    "updateVersion": "Version {{from}} → {{to}}.",
+    "updateNewTypes": "Types ajoutés :",
+    "updateNewProps": "Propriétés ajoutées :",
+    "updateNoChange": "Aucun changement de structure (contenu ou libellés seulement).",
+    "updateConfirm": "Mettre à jour le template"
   },
   "ws": {
     "title": "Workspaces",
@@ -99,7 +161,15 @@
     "deleteConfirmMsg": "Cette action est irréversible et détruira tout le contenu. Saisissez « {{slug}} » pour confirmer.",
     "deleteConfirm": "Supprimer définitivement",
     "notFound": "Le workspace « {{slug}} » est introuvable ou vous n'y avez pas accès.",
-    "archived": "Le workspace « {{slug}} » est archivé."
+    "archived": "Le workspace « {{slug}} » est archivé.",
+    "kicker": "Espaces de travail",
+    "chapo": "Chaque workspace porte ses propres types, ses blocs et ses droits. Rien n'est partagé entre eux sauf ce que vous exposez.",
+    "noActivity": "aucune activité",
+    "blocksCount_one": "{{count}} bloc",
+    "blocksCount_other": "{{count}} blocs",
+    "docsCount_one": "{{count}} doc",
+    "docsCount_other": "{{count}} docs",
+    "deleteImpact": "{{blocks}} bloc(s) et {{docs}} document(s) seront détruits."
   },
   "types": {
     "title": "Types fonctionnels",
@@ -107,8 +177,11 @@
     "slug": "Identifiant (slug)",
     "label": "Libellé",
     "parent": "Parent",
+    "inherit": "Hérite de",
+    "inheritHint": "Les propriétés du type choisi sont copiées à la création (pas de lien vivant).",
     "baseType": "Type de base",
     "templateGroup": "Template « {{template}} »",
+    "templateUpdate": "Mettre à jour",
     "manualGroup": "Créés à la main",
     "none": "— aucun —",
     "delete": "Supprimer",
@@ -121,7 +194,30 @@
     "valueLabel": "Libellé",
     "valueColor": "Couleur",
     "contentTemplate": "Modèle de contenu",
-    "contentTemplateHint": "Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide."
+    "contentTemplateHint": "Variables : {{title}}, {{date}} — appliqué à la création si le corps est vide.",
+    "kicker": "Structure du workspace",
+    "chapo": "Les types fonctionnels décrivent vos objets — epic ⊃ feature ⊃ tâche — et leurs propriétés typées. Rien n'est câblé en dur, pas même les statuts.",
+    "colProps": "Propriétés",
+    "colDocs": "Documents",
+    "noProps": "aucune",
+    "docsCount_one": "{{count}} doc",
+    "docsCount_other": "{{count}} docs",
+    "addProperty": "Ajouter une propriété",
+    "propLabel": "Libellé",
+    "propType": "Type",
+    "propRequired": "Obligatoire",
+    "requiredWarn_one": "{{count}} document de ce type deviendra incomplet (propriété obligatoire non renseignée).",
+    "requiredWarn_other": "{{count}} documents de ce type deviendront incomplets (propriété obligatoire non renseignée).",
+    "editPropTitle": "Modifier la propriété",
+    "slugImmutable": "Le slug est définitif — il ne se modifie pas après création.",
+    "typeChangeHint": "Libre si la propriété n'a aucune donnée ; sinon seules les transitions cohérentes sont acceptées (ex. text → url ou liste fermée).",
+    "deletePropTitle": "Supprimer la propriété",
+    "deletePropMsg": "Supprimer la propriété « {{label}} » ? Les valeurs saisies sur les documents seront supprimées avec elle.",
+    "deleteValueTitle": "Supprimer la valeur",
+    "deleteValueMsg": "Supprimer la valeur « {{label}} » de « {{prop}} » ?",
+    "deleteValue": "Supprimer la valeur",
+    "colorNone": "Neutre",
+    "close": "Fermer"
   },
   "documents": {
     "title": "Documents",
@@ -148,6 +244,10 @@
     "prev": "Précédent",
     "next": "Suivant",
     "pageIndicator": "Page {{page}} · {{total}} résultat(s)",
+    "perPage": "Par page",
+    "loadMore": "Charger plus",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
     "clearQuery": "Effacer la requête",
     "filter": {
       "title": "Filtrer",
@@ -169,7 +269,34 @@
         "after": "après",
         "in": "parmi"
       }
-    }
+    },
+    "clearAll": "Tout effacer",
+    "emptyFiltered": "Aucun document ne correspond aux filtres actifs.",
+    "emptyBloc": "Ce bloc ne contient encore aucun document.",
+    "public": "Public",
+    "private": "Privé",
+    "contentType": "Type technique"
+  },
+  "docnav": {
+    "toc": "Sommaire",
+    "props": "Propriétés",
+    "prev": "Précédent",
+    "next": "Suivant",
+    "showToc": "Afficher le sommaire",
+    "hideToc": "Masquer le sommaire",
+    "showProps": "Afficher les propriétés",
+    "hideProps": "Masquer les propriétés"
+  },
+  "reading": {
+    "scale": "Échelle de lecture",
+    "scaleDown": "Réduire le texte",
+    "scaleUp": "Agrandir le texte",
+    "scaleReset": "Rétablir l'échelle par défaut",
+    "scaleValue": "Échelle de lecture : {{pct}} %",
+    "readingMode": "Mode lecture",
+    "readingModeHint": "Mode lecture — replier le sommaire et les propriétés (⌘/Ctrl + \\)",
+    "fullscreen": "Plein écran",
+    "fullscreenClose": "Fermer le plein écran"
   },
   "editor": {
     "save": "Enregistrer",
@@ -193,13 +320,38 @@
       "mine": "Mon brouillon",
       "keepServer": "Garder le serveur",
       "keepMine": "Garder le mien"
-    }
+    },
+    "modifiedAt": "modifié {{when}}",
+    "remoteChanged": "Ce document a été modifié par {{who}} en arrière-plan — la conciliation se fera à l'enregistrement.",
+    "remoteAgent": "un agent",
+    "remoteDeleted": "Ce document a été supprimé côté serveur.",
+    "autoMerged": "Modifications distantes fusionnées automatiquement (v{{version}}).",
+    "copyPublicLink": "Copier le lien public",
+    "copyDocument": "Copier le document",
+    "copyDocumentDone": "Document copié",
+    "copyLabel": "Copier",
+    "copyRich": "Copier (mise en forme)",
+    "copyRichHint": "Copier le texte mis en forme, composants graphiques en images — pour coller dans Confluence ou un autre site",
+    "copyRichDone": "Copié",
+    "copyRichError": "Échec de la copie",
+    "savedAck": "Enregistré",
+    "focusEnter": "Mode rédaction plein écran",
+    "focusExit": "Quitter le mode rédaction (Échap)",
+    "move": "Déplacer",
+    "slugSet": "Définir le slug pour la synchro git",
+    "slugAdd": "ajouter un slug",
+    "slugInvalid": "Minuscules, chiffres, tirets — 2 à 80 caractères",
+    "properties": "Propriétés",
+    "unknownContentType": "Type de contenu non reconnu — affichage en texte brut.",
+    "plainTextBody": "Contenu du document (texte brut)"
   },
   "properties": {
     "title": "Propriétés",
     "save": "Enregistrer",
     "empty": "Aucune propriété",
     "none": "— aucune —",
+    "seeMore": "voir plus",
+    "seeLess": "voir moins",
     "conflict": {
       "title": "Conflit de valeur",
       "desc": "Valeur serveur : {{server}}. Choisissez la version à conserver.",
@@ -236,16 +388,37 @@
     "actions": "Actions",
     "close": "Fermer"
   },
+  "exportPdf": {
+    "title": "Exporter en PDF",
+    "scopeDoc": "Le document seul",
+    "scopeChildren": "Le document et ses enfants",
+    "childrenHint": "Cochez les enfants à inclure et ordonnez-les — l'ordre choisi est celui du PDF.",
+    "noChildren": "Ce document n'a pas d'enfants.",
+    "signed": "Document signé (cadre de signatures en fin de PDF)",
+    "moveUp": "Monter",
+    "moveDown": "Descendre",
+    "validate": "Valider",
+    "previewHint": "Un onglet s'ouvre avec le rendu complet (diagrammes compris) — imprimez-le en choisissant « Enregistrer en PDF »."
+  },
   "vault": {
     "title": "Gestionnaire de clés",
     "tabWallets": "Wallets Harpocrate",
     "tabSecrets": "Mes secrets",
-    "empty": "Aucun wallet enregistré.",
-    "walletName": "Nom du wallet",
-    "walletNameHint": "Identifiant utilisé dans ${vault://nom:/chemin}",
+    "empty": "Aucun endpoint enregistré.",
+    "walletName": "Identifiant (alias)",
+    "walletNameHint": "Identifiant utilisé dans ${vault://alias:/chemin}",
+    "walletUrl": "URL du coffre",
+    "walletDescription": "Description",
+    "walletDescriptionHint": "À quoi sert cet endpoint (optionnel).",
+    "apiKeySecret": "Clé d'API",
+    "apiKeySecretHint": "Un secret local de type HARPOCRATE_API_KEY (jamais le token en clair).",
+    "apiKeySelectPlaceholder": "— choisir une clé —",
+    "noKeys": "Aucun secret HARPOCRATE_API_KEY. Créez-en un dans « Mes secrets » (type HARPOCRATE_API_KEY).",
+    "colUrl": "URL",
+    "colKey": "Clé d'API",
     "apiKey": "Clé API Harpocrate",
     "add": "Ajouter",
-    "addWallet": "Ajouter un wallet",
+    "addWallet": "Ajouter un endpoint",
     "delete": "Supprimer",
     "deleteTitle": "Supprimer le wallet ?",
     "deleteConfirm": "Supprimer « {{name}} » ? Les références vault qui l'utilisent cesseront de fonctionner.",
@@ -254,19 +427,41 @@
       "label": "Libellé",
       "slug": "Slug (identifiant)",
       "slugHint": "Minuscules, chiffres, tirets, underscores.",
+      "type": "Type",
+      "typeHint": "MAJUSCULES, chiffres, underscore. Ex. GENERIC, HARPOCRATE_API_KEY.",
+      "storage": "Stockage",
+      "storageLocal": "Local",
+      "path": "Chemin dans le coffre",
+      "pathHint": "Chemin du secret dans le wallet Harpocrate (ex. /infra/db/postgres_password).",
       "value": "Valeur secrète",
       "addBtn": "Nouveau secret",
       "add": "Enregistrer",
       "deleteTitle": "Supprimer le secret ?",
       "deleteConfirm": "Supprimer « {{name}} » ? Cette action est irréversible.",
       "slugConflict": "Un secret avec ce slug existe déjà."
-    }
+    },
+    "colType": "Type",
+    "colStorage": "Stockage",
+    "kicker": "Administration",
+    "chapo": "Un wallet Harpocrate donne accès à un jeu de secrets ; automates et webhooks les référencent par ${vault://…} ou ${secret://…} — rien ne transite ni ne s'affiche en clair.",
+    "colWallet": "Wallet",
+    "colRef": "Référence",
+    "colSecrets": "Secrets",
+    "colUsedBy": "Utilisé par",
+    "usedByAutomations_one": "{{count}} automate",
+    "usedByAutomations_other": "{{count}} automates",
+    "unused": "—",
+    "copyRef": "Copier la référence",
+    "refCopied": "Référence copiée.",
+    "deleteSecretUsedTitle": "Secret utilisé",
+    "usedByWebhooks_one": "{{count}} webhook",
+    "usedByWebhooks_other": "{{count}} webhooks"
   },
   "oidc": {
     "title": "Configuration OIDC",
-    "subtitle": "Keycloak SSO — paramètres de connexion (superadmin uniquement).",
+    "subtitle": "SSO OIDC — paramètres de connexion (superadmin uniquement).",
     "issuer": "Issuer (realm URL)",
-    "issuerHint": "URL du realm Keycloak, ex. https://security.yoops.org/realms/yoops",
+    "issuerHint": "URL de l'émetteur OIDC (issuer), ex. https://security.yoops.org/realms/yoops",
     "clientId": "Client ID",
     "secretRef": "Référence vault du client secret",
     "secretRefHint": "Référence Harpocrate, ex. ${vault://docflow/oidc_client_secret}",
@@ -334,7 +529,12 @@
   },
   "blockFrame": {
     "copy": "Copier la source",
-    "download": "Télécharger"
+    "download": "Télécharger",
+    "edit": "Modifier la source",
+    "attrs": "Attributs",
+    "attrsHint": "title=\"…\" (valeurs entre guillemets doubles)",
+    "apply": "Appliquer",
+    "cancel": "Annuler"
   },
   "records": {
     "ignoredLines_one": "{{count}} ligne ignorée",
@@ -346,6 +546,64 @@
     "slashHint": "Étapes numérotées avec descriptions",
     "skeletonTitle": "Plan d'action",
     "defaultLabel": "Étape"
+  },
+  "diagram": {
+    "unknownType": "type de diagramme « {{type}} » inconnu",
+    "layersSlashTitle": "Couches (layers)",
+    "layersSlashHint": "Pile de couches pleine largeur, haut → bas",
+    "pyramidSlashTitle": "Pyramide / entonnoir",
+    "pyramidSlashHint": "Niveaux empilés, largeur décroissante ou proportionnelle",
+    "nestedSlashTitle": "Imbriqué (nested)",
+    "nestedSlashHint": "Hiérarchie par containment, indentation du corps",
+    "treeSlashTitle": "Arbre (tree)",
+    "treeSlashHint": "Parent → enfants, indentation du corps",
+    "graphSlashTitle": "Graphe / architecture",
+    "graphSlashHint": "Nœuds + connexions, layout en couches (A -> B)",
+    "swimlaneSlashTitle": "Swimlane / process",
+    "swimlaneSlashHint": "Rôles en couloirs, étapes séquentielles",
+    "orgSlashTitle": "Organigramme",
+    "orgSlashHint": "Hiérarchie d'ownership, indentation du corps",
+    "quadrantSlashTitle": "Quadrant (2 axes)",
+    "quadrantSlashHint": "Positionnement deux axes, cellules nommées (label | x | y)",
+    "radarSlashTitle": "Radar / spider",
+    "radarSlashHint": "Comparaison multi-axes (Axe | valeur)",
+    "vennSlashTitle": "Venn (ensembles)",
+    "vennSlashHint": "Recouvrement de 2-3 ensembles (A | Label, A&B | Label)",
+    "matrixSlashTitle": "Matrice (rôles × colonnes)",
+    "matrixSlashHint": "Grille de permissions ✓/✗ (en-tête + Ligne | v1 | v2)",
+    "scatterSlashTitle": "Nuage de points (scatter)",
+    "scatterSlashHint": "Distribution / corrélation (label | x | y)",
+    "ganttSlashTitle": "Gantt (planning)",
+    "ganttSlashHint": "Tâches sur une timeline (Tâche | début | fin)",
+    "sequenceSlashTitle": "Séquence",
+    "sequenceSlashHint": "Messages entre acteurs (A -> B | message)",
+    "stateSlashTitle": "Machine à états",
+    "stateSlashHint": "États + transitions, self-loops (A -> B | événement)",
+    "erSlashTitle": "Modèle de données (ER)",
+    "erSlashHint": "Entités + champs (indentés) + relations (A -> B)",
+    "loopSlashTitle": "Boucle / flywheel",
+    "loopSlashHint": "Stations en cycle autour d'un hub (hub=\"…\")"
+  },
+  "conversation": {
+    "slashTitle": "Conversation",
+    "slashHint": "Échange en bulles, un interlocuteur par ligne",
+    "skeletonTitle": "Échange"
+  },
+  "display": {
+    "slashTitle": "Composition (display)",
+    "slashHint": "Interface composée : cartes, badges, colonnes… (JSON A2UI)",
+    "unknownComponents_one": "{{count}} composant inconnu",
+    "unknownComponents_other": "{{count}} composants inconnus",
+    "invalidEntries_one": "{{count}} entrée invalide ignorée",
+    "invalidEntries_other": "{{count}} entrées invalides ignorées",
+    "duplicates_one": "{{count}} id en doublon",
+    "duplicates_other": "{{count}} ids en doublon",
+    "orphans_one": "{{count}} composant non rattaché",
+    "orphans_other": "{{count}} composants non rattachés",
+    "brokenRefs_one": "{{count}} référence morte",
+    "brokenRefs_other": "{{count}} références mortes",
+    "cut_one": "{{count}} composant coupé (garde)",
+    "cut_other": "{{count}} composants coupés (garde)"
   },
   "chart": {
     "slashTitle": "Graphique (chart)",
@@ -387,8 +645,98 @@
       "url": "URL"
     }
   },
+  "artifact": {
+    "slashTitle": "Fichier (artefact)",
+    "slashHint": "Téléverser un fichier et l'insérer en puce téléchargeable",
+    "uploadError": "Échec du téléversement du fichier.",
+    "pasteTab": "Coller",
+    "pasteHint": "Cliquez ici puis Ctrl+V pour coller un fichier ou une image",
+    "pasteEmpty": "Aucun fichier dans le presse-papier.",
+    "pasteError": "Impossible de coller depuis le presse-papier.",
+    "pasteName": "Nom du fichier",
+    "pasteType": "Type",
+    "pasteTypeAuto": "— d'après l'extension —",
+    "pasteInsert": "Insérer"
+  },
+  "maquette": {
+    "slashTitle": "Maquette d'écran",
+    "slashHint": "Insérer une maquette HTML (artefact mutable) rendue en iframe isolée"
+  },
   "error": {
     "generic": "Une erreur est survenue",
     "notFound": "Introuvable"
+  },
+  "views": {
+    "saveAs": "Enregistrer comme vue",
+    "saved": "Vues",
+    "namePrompt": "Nom de la vue",
+    "save": "Enregistrer",
+    "apply": "Appliquer la vue",
+    "delete": "Supprimer la vue",
+    "none": "Aucune vue enregistrée",
+    "saveTitle": "Enregistrer la vue courante",
+    "saveHint": "Le tri, les filtres et les colonnes affichées sont mémorisés."
+  },
+  "onboarding": {
+    "aria": "Guide de découverte de docflow",
+    "progression": "Étape {{index}} sur {{total}}",
+    "reouvrir": "Rouvrir le guide",
+    "desactiver": "Ne plus afficher",
+    "fermer": "Fermer",
+    "suivant": "Suivant",
+    "terminer": "Terminer",
+    "horsSequence": "Rendez-vous sur « {{page}} » pour reprendre le guide.",
+    "steps": {
+      "bienvenue": {
+        "title": "Bienvenue dans docflow",
+        "body": "Tout s'organise par espace de travail. À l'intérieur, des blocs regroupent des documents markdown arborescents, structurés par des types, des propriétés et des statuts que vous définissez."
+      },
+      "templates": {
+        "title": "Modèles",
+        "body": "Démarrez d'une structure toute faite : un modèle installe types, propriétés et statuts en un clic, réutilisable d'un espace à l'autre."
+      },
+      "automations": {
+        "title": "Automates",
+        "body": "Réagissez aux changements : un automate appelle un service externe quand un document est créé, modifié ou supprimé."
+      },
+      "contracts": {
+        "title": "Contrats OpenAPI",
+        "body": "Le contrat d'API de docflow, prêt à brancher dans un système tiers ou un automate."
+      },
+      "apiKeys": {
+        "title": "Clés API & MCP",
+        "body": "Générez des clés pour vos agents et automates, et récupérez l'adresse du serveur MCP et du schéma OpenAPI."
+      },
+      "profil": {
+        "title": "Votre profil",
+        "body": "Gérez votre compte et vos préférences. Vous pouvez rouvrir ou désactiver ce guide à tout moment."
+      }
+    }
+  },
+  "mld": {
+    "noEntities": "Ce modèle ne contient encore aucune entité. Ajoutez un document enfant de type « table-schema » pour la voir apparaître sur le diagramme.",
+    "fieldName": "Nom",
+    "fieldType": "Type",
+    "fieldTitle": "Libellé",
+    "addField": "Ajouter un champ",
+    "removeField": "Retirer ce champ",
+    "description": "Description",
+    "descriptionHint": "C'est par la description qu'on retrouve une entité dans la recherche.",
+    "relations": "Relations",
+    "relationName": "Nom de la relation",
+    "relationCardinality": "Cardinalité",
+    "relationFrom": "depuis",
+    "relationTarget": "entité cible",
+    "relationTargetField": "champ cible",
+    "addRelation": "Ajouter une relation",
+    "removeRelation": "Retirer cette relation",
+    "relationTargetThisModel": "Ce modèle",
+    "unknownValue": "(introuvable)"
+  },
+  "contentType": {
+    "markdown": "Markdown",
+    "modelLayout": "MCD",
+    "tableSchema": "MCD entité",
+    "plainText": "Texte"
   }
 }

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from docflow.auth.cookies import delete_session_cookie, set_session_cookie
 from docflow.auth.deps import require_authenticated
-from docflow.auth.jwt import create_token
 from docflow.auth.password import DUMMY_PASSWORD_HASH, verify_password
+from docflow.auth.sessions import revoke_session, session_cookie_name
 from docflow.oidc import service as oidc_service
-from docflow.schemas.auth import AuthUser, LoginRequest, TokenResponse
+from docflow.schemas.auth import AuthUser, LoginRequest
 from docflow.schemas.setup import AuthMethodsOut
 from docflow.setup import service as setup_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# L'email est un pivot d'identité, jamais un identifiant de connexion
+# (STANDARD « Gestion des utilisateurs », U7) : on authentifie sur `username`.
 _SELECT_FOR_LOGIN = """
 SELECT id, email, label, password_hash, is_admin, validated, disabled
-FROM app_user WHERE email = $1
+FROM app_user WHERE username = $1
 """
 
 
@@ -50,10 +53,10 @@ async def auth_methods(request: Request) -> AuthMethodsOut:
     )
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, request: Request) -> TokenResponse:
+@router.post("/login", response_model=AuthUser)
+async def login(body: LoginRequest, request: Request, response: Response) -> AuthUser:
     pool = request.app.state.pool
-    secret: str = request.app.state.settings.jwt_secret.reveal()
+    settings = request.app.state.settings
 
     async with pool.acquire() as conn:
         count = await setup_service.user_count(conn)
@@ -62,7 +65,7 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         if not await _local_login_enabled(request):
             # Mode OIDC-only (page de configuration OIDC, ou surcharge .env).
             raise HTTPException(status_code=403, detail="connexion locale désactivée")
-        row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.email)
+        row = await conn.fetchrow(_SELECT_FOR_LOGIN, body.username)
 
     _invalid = HTTPException(status_code=401, detail="identifiants invalides")
 
@@ -86,7 +89,31 @@ async def login(body: LoginRequest, request: Request) -> TokenResponse:
         validated=row["validated"],
         disabled=row["disabled"],
     )
-    return TokenResponse(access_token=create_token(user, secret))
+    # Session serveur opaque + cookie HttpOnly (remplace le JWT HS256). Rotation
+    # de l'identifiant à chaque login = protection anti-fixation de session.
+    async with pool.acquire() as conn:
+        await set_session_cookie(
+            response,
+            conn,
+            user.id,
+            secure=settings.session_cookie_secure,
+            max_age=settings.session_idle_ttl_seconds,
+        )
+    await pool.execute("UPDATE app_user SET last_login_at = now() WHERE id = $1", user.id)
+    return user
+
+
+@router.post("/logout", status_code=204)
+async def logout(request: Request, response: Response) -> None:
+    """Déconnexion : révoque la session EN BASE (pas seulement le cookie retiré),
+    puis efface le cookie. Idempotent — un cookie déjà invalide est simplement
+    effacé. C'est ce qui fait qu'un jeton copié avant cesse de valoir."""
+    token = request.cookies.get(session_cookie_name())
+    if token:
+        pool = request.app.state.pool
+        async with pool.acquire() as conn:
+            await revoke_session(conn, token)
+    delete_session_cookie(response, secure=request.app.state.settings.session_cookie_secure)
 
 
 @router.get("/me", response_model=AuthUser)

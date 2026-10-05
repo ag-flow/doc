@@ -16,6 +16,7 @@ from docflow.schemas.types import (
     FunctionalTypeUpdate,
     PropertyDefRich,
 )
+from docflow.types.inherit import copy_properties, resolve_inherit_source
 
 _SELECT_TYPE = """
 SELECT ft.id, ft.slug, ft.label, ft.content_template, ft.source_template,
@@ -75,14 +76,41 @@ async def _resolve_parent(conn: asyncpg.Connection, wk: uuid.UUID, parent_slug: 
     return parent_id
 
 
+# Clé arbitraire mais stable (distincte de _LOCKOUT_ADVISORY_KEY et de
+# _DOC_HIERARCHY_ADVISORY_KEY — un invariant, une clé), dédiée à l'invariant
+# « hiérarchie des types acyclique » : sans verrou, deux reparentages croisés
+# a→b / b→a valident chacun l'absence de cycle (READ COMMITTED masque l'écriture
+# non commitée de l'autre) puis commitent un cycle — check-then-act.
+_TYPE_HIERARCHY_ADVISORY_KEY = 4_027_311_003
+
+
 async def _check_no_cycle(
     conn: asyncpg.Connection, type_id: uuid.UUID, proposed_parent_id: uuid.UUID
 ) -> None:
-    """Vérifie l'absence de cycle si proposed_parent_id devient parent de type_id."""
+    """Vérifie l'absence de cycle si proposed_parent_id devient parent de type_id.
+
+    Must be called inside the same transaction as l'UPDATE du parent : le verrou
+    consultatif est transactionnel, il ne couvre l'écriture que si elle partage
+    la transaction du garde.
+    """
+    if not conn.is_in_transaction():
+        raise RuntimeError(
+            "_check_no_cycle doit s'exécuter dans la transaction de l'écriture "
+            "qu'il protège : hors transaction, son verrou est relâché immédiatement"
+        )
+    await conn.execute("SELECT pg_advisory_xact_lock($1)", _TYPE_HIERARCHY_ADVISORY_KEY)
     if proposed_parent_id == type_id:
         raise HTTPException(status_code=422, detail="un type ne peut pas être son propre parent")
+    seen: set[uuid.UUID] = set()
     ancestor = proposed_parent_id
     while ancestor is not None:
+        if ancestor in seen:
+            # Cycle préexistant dans la chaîne d'ancêtres (donnée corrompue) :
+            # refuser plutôt que de boucler indéfiniment.
+            raise HTTPException(
+                status_code=422, detail="cycle détecté dans la hiérarchie des types"
+            )
+        seen.add(ancestor)
         row = await conn.fetchrow("SELECT id, parent FROM functional_type WHERE id = $1", ancestor)
         if row is None:
             break
@@ -112,6 +140,9 @@ async def list_types_rich(pool: asyncpg.Pool, ws_slug: str) -> list[FunctionalTy
                 source_template=tr["source_template"],
                 created_at=tr["created_at"],
                 updated_at=tr["updated_at"],
+                documents_count=await conn.fetchval(
+                    "SELECT count(*) FROM document WHERE functional_type_ref = $1", tr["id"]
+                ),
             )
             defs = await conn.fetch(
                 "SELECT id, slug, label, type, default_value, required, behavior "
@@ -176,6 +207,9 @@ async def create_type(
             parent_id: uuid.UUID | None = None
             if data.parent_slug:
                 parent_id = await _resolve_parent(conn, wk, data.parent_slug)
+            inherit_id: uuid.UUID | None = None
+            if data.inherit_slug:
+                inherit_id = await resolve_inherit_source(conn, wk, data.inherit_slug)
             try:
                 row = await conn.fetchrow(
                     """
@@ -196,6 +230,8 @@ async def create_type(
                 ) from exc
             assert row is not None
             await log_structure_change(conn, wk, "type", "C", row["id"])
+            if inherit_id is not None:
+                await copy_properties(conn, inherit_id, row["id"], wk)
     return FunctionalTypeOut(
         id=row["id"],
         slug=row["slug"],
@@ -267,12 +303,12 @@ WITH RECURSIVE type_subtree AS (
     SELECT id FROM functional_type WHERE id = $1
     UNION ALL
     SELECT t.id FROM functional_type t JOIN type_subtree s ON t.parent = s.id
-),
+) CYCLE id SET is_cycle USING path,
 blocks AS (
     SELECT b.id FROM data_block b
     WHERE b.functional_type_ref IN (SELECT id FROM type_subtree)
 )
-SELECT (SELECT count(*) FROM type_subtree) - 1 AS child_types,
+SELECT (SELECT count(*) FROM type_subtree WHERE NOT is_cycle) - 1 AS child_types,
        (SELECT count(*) FROM blocks) AS blocks,
        (SELECT count(*) FROM document d
         WHERE d.data_block_ref IN (SELECT id FROM blocks)) AS documents

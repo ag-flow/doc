@@ -5,6 +5,7 @@ import {
   serializeMarkdownWithCodecs,
   type CodecEditorApi,
 } from '../lib/blockCodecs'
+import { maquetteCodec } from '../lib/blockCodecs/maquette'
 
 const UUID = '11111111-2222-3333-4444-555555555555'
 
@@ -39,6 +40,30 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
   dfChart: {
     attrs: ' type="donut" title="Répartition" format="percent"',
     body: 'Fait | 60\nEn cours | 30\nÀ faire | 10',
+  },
+  dfDiagram: {
+    attrs: ' type="layers"',
+    body: 'Présentation | UI\nMétier | logique',
+  },
+  dfConversation: {
+    attrs: ' title="Point CRM" me="Alice"',
+    body: 'Alice | On livre vendredi ?\nBob | Oui, si la recette passe jeudi.',
+  },
+  dfDisplay: {
+    fence: 'df-display',
+    attrs: ' title="Comparatif"',
+    body: '[{"id": "root", "component": "Text", "text": "Hello", "hint": "h2"}]',
+  },
+  artifactChip: { id: UUID, label: 'Rapport.pdf' },
+  dfMaquette: {
+    artifactId: UUID,
+    titre: 'Écran de connexion',
+    viewport: 'mobile',
+    hauteur: '640',
+    description: 'Formulaire email + mot de passe',
+    largeur: '',
+    mode: '',
+    device: '',
   },
 }
 
@@ -107,6 +132,50 @@ describe('parsing', () => {
   })
 })
 
+describe('frontière après le nom de fence df-* (pas de préfixe partiel)', () => {
+  it.each([
+    ['```df-diagramme\nRacine\n```\n', 'dfDiagram'],
+    ['```df-chart2\nA | 1\n```\n', 'dfChart'],
+    ['```df-timelinex\nA | b\n```\n', 'dfTimeline'],
+    ['```df-conversationnel\nA | b\n```\n', 'dfConversation'],
+  ])('une fence dont le nom continue après le codec (%s) reste un bloc de code intact', async (md, type) => {
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === type)).toBe(false)
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+})
+
+describe('alias ```display (A2UI)', () => {
+  const JSON_BODY = '[{"id": "root", "component": "Text", "text": "Hi"}]'
+
+  it('corps JSON valide → revendiqué, fence d’origine préservée au round-trip', async () => {
+    const md = '```display\n' + JSON_BODY + '\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const block = blocks.find((b) => (b as { type?: string }).type === 'dfDisplay') as {
+      props: { fence: string; body: string }
+    }
+    expect(block).toBeDefined()
+    expect(block.props.fence).toBe('display')
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+
+  it('corps non-JSON → écarté : reste un bloc de code ordinaire, intact', async () => {
+    const md = '```display\nconst x = 1;\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfDisplay')).toBe(false)
+    const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
+    expect(out).toBe(md)
+  })
+
+  it('```df-display revendique même un JSON cassé (intention explicite, dégradation au rendu)', async () => {
+    const md = '```df-display\n{oops\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfDisplay')).toBe(true)
+  })
+})
+
 describe('sérialisation — garde anti-perte', () => {
   it('un bloc de type inconnu fait échouer la sauvegarde (pas de perte silencieuse)', async () => {
     const editor = makeEditor([
@@ -124,6 +193,35 @@ describe('sérialisation — garde anti-perte', () => {
   })
 })
 
+describe('puce artefact [](artifact://id)', () => {
+  it('lien seul sur sa ligne → bloc artifactChip', async () => {
+    const md = `Intro\n\n[Rapport.pdf](artifact://${UUID})\n\nSuite`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const chip = blocks.find((b) => (b as { type?: string }).type === 'artifactChip') as {
+      props: { id: string; label: string }
+    }
+    expect(chip).toBeDefined()
+    expect(chip.props.id).toBe(UUID)
+    expect(chip.props.label).toBe('Rapport.pdf')
+  })
+
+  it('label vide accepté (retombe sur le nom de fichier au rendu)', async () => {
+    const md = `[](artifact://${UUID})`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    const chip = blocks.find((b) => (b as { type?: string }).type === 'artifactChip') as {
+      props: { label: string }
+    }
+    expect(chip).toBeDefined()
+    expect(chip.props.label).toBe('')
+  })
+
+  it('lien au fil du texte → PAS de puce (reste un lien inline)', async () => {
+    const md = `Voir [le fichier](artifact://${UUID}) pour la suite.`
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'artifactChip')).toBe(false)
+  })
+})
+
 describe('non-régression : document combiné mermaid + dataset', () => {
   it('load + save → markdown identique au caractère près', async () => {
     const md =
@@ -134,5 +232,67 @@ describe('non-régression : document combiné mermaid + dataset', () => {
     const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
     const out = await serializeMarkdownWithCodecs(makeEditor(blocks as CodecEditorApi['document']))
     expect(out).toBe(md)
+  })
+})
+
+describe('maquette', () => {
+  const UUID2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+  it('sérialise l’artifactId en artifact:// dans le corps (compté au refcount)', () => {
+    const md = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: 'X',
+      viewport: 'desktop',
+      hauteur: '',
+      description: 'desc',
+    } as unknown as Parameters<typeof maquetteCodec.toMarkdown>[0])
+    expect(md).toContain(`artifact://${UUID2}`)
+    expect(md).toContain('df-maquette')
+  })
+
+  it('une fence df-maquette sans artifact:// n’est PAS revendiquée', async () => {
+    const md = '```df-maquette viewport="desktop"\nrien ici\n```\n'
+    const blocks = await parseMarkdownWithCodecs(makeEditor(), md)
+    expect(blocks.some((b) => (b as { type?: string }).type === 'dfMaquette')).toBe(false)
+  })
+
+  it('parse les verrous de taille (largeur, mode, device)', () => {
+    const m = maquetteCodec.pattern.exec(
+      '```df-maquette viewport="mobile" largeur="360" mode="fixe" device="iphone-13"\n' +
+        `artifact://${UUID2}\n\`\`\``,
+    )
+    maquetteCodec.pattern.lastIndex = 0
+    const props = maquetteCodec.toBlock(m!)
+    expect(props).toMatchObject({ largeur: '360', mode: 'fixe', device: 'iphone-13' })
+  })
+
+  it('ne sérialise les verrous que s’ils sont posés', () => {
+    const withLocks = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: '',
+      viewport: 'mobile',
+      hauteur: '',
+      description: '',
+      largeur: '360',
+      mode: 'fixe',
+      device: '390x844',
+    })
+    expect(withLocks).toContain('largeur="360"')
+    expect(withLocks).toContain('mode="fixe"')
+    expect(withLocks).toContain('device="390x844"')
+
+    const bare = maquetteCodec.toMarkdown({
+      artifactId: UUID2,
+      titre: '',
+      viewport: 'mobile',
+      hauteur: '',
+      description: '',
+      largeur: '',
+      mode: '',
+      device: '',
+    })
+    expect(bare).not.toContain('largeur=')
+    expect(bare).not.toContain('mode=')
+    expect(bare).not.toContain('device=')
   })
 })

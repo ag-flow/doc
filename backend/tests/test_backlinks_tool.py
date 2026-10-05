@@ -29,7 +29,7 @@ from docflow.types import service as type_svc
 
 
 def _json(result: list) -> object:
-    return json.loads(result[0].text)
+    return json.loads((result.content if hasattr(result, "content") else result)[0].text)
 
 
 @pytest.fixture()
@@ -190,7 +190,8 @@ async def test_find_referencing_invalid_uuid_via_call_tool(
             {"workspace_slug": str(refs_ws["ws"]), "doc_id": "pas-un-uuid"},
         )
     )
-    assert data == {"error": "doc_id : UUID invalide"}
+    assert data["error_code"] == "invalid"  # type: ignore[index]
+    assert data["error"] == "doc_id : UUID invalide"  # type: ignore[index]
 
 
 @contextmanager

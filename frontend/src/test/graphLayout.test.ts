@@ -1,0 +1,139 @@
+import { describe, it, expect } from 'vitest'
+import { layeredGraph, type GraphNode, type GraphEdge } from '../lib/diagramLayout'
+import { parseGraph } from '../lib/blockCodecs/graphSpec'
+
+describe('layeredGraph — couches par profondeur', () => {
+  const nodes: GraphNode[] = [
+    { id: 'A', label: 'A' },
+    { id: 'B', label: 'B' },
+    { id: 'C', label: 'C' },
+  ]
+  const edges: GraphEdge[] = [
+    { from: 'A', to: 'B' },
+    { from: 'B', to: 'C' },
+  ]
+
+  it('chaîne A→B→C = 3 couches ordonnées', () => {
+    const g = layeredGraph(nodes, edges, { dir: 'LR' })
+    expect(g.layers.map((l) => l.length)).toEqual([1, 1, 1])
+    const ax = g.placed.get('A')!.x
+    const bx = g.placed.get('B')!.x
+    const cx = g.placed.get('C')!.x
+    expect(ax).toBeLessThan(bx)
+    expect(bx).toBeLessThan(cx)
+  })
+
+  it('LR et TB échangent les axes', () => {
+    const lr = layeredGraph(nodes, edges, { dir: 'LR' })
+    const tb = layeredGraph(nodes, edges, { dir: 'TB' })
+    // LR : progression en x ; TB : progression en y.
+    expect(tb.placed.get('C')!.y).toBeGreaterThan(tb.placed.get('A')!.y)
+    expect(lr.width).toBeGreaterThan(lr.height)
+    expect(tb.height).toBeGreaterThan(tb.width)
+  })
+})
+
+describe('layeredGraph — couches par groupe', () => {
+  it('un groupe = une couche (ordre de première apparition)', () => {
+    const nodes: GraphNode[] = [
+      { id: 'raw', label: 'Raw', group: 'Bronze' },
+      { id: 'clean', label: 'Clean', group: 'Silver' },
+      { id: 'agg', label: 'Agg', group: 'Silver' },
+    ]
+    const g = layeredGraph(nodes, edges2([['raw', 'clean']]), { dir: 'LR' })
+    expect(g.layers.length).toBe(2)
+    expect(g.layers[0]).toEqual(['raw'])
+    expect(g.layers[1].sort()).toEqual(['agg', 'clean'])
+  })
+})
+
+describe('layeredGraph — robustesse cycle', () => {
+  it('un cycle A↔B ne boucle pas', () => {
+    const nodes: GraphNode[] = [
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+    ]
+    const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'A']]), {})
+    expect(g.placed.size).toBe(2)
+  })
+
+  it('un self-loop B→B ne gonfle pas la couche de B', () => {
+    const nodes: GraphNode[] = [
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+    ]
+    const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'B']]), {})
+    // B reste en couche 1 (self-loop ignoré), pas propulsé plus loin.
+    expect(g.layers.length).toBe(2)
+    expect(g.layers[1]).toEqual(['B'])
+  })
+
+  it('un self-loop seul (idle→idle) tient sur une unique couche', () => {
+    const g = layeredGraph([{ id: 'idle', label: 'idle' }], edges2([['idle', 'idle']]), {})
+    expect(g.layers).toEqual([['idle']])
+  })
+
+  it('cycle long A→B→C→A : couches compactes dans l’ordre du parcours', () => {
+    const nodes: GraphNode[] = [
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+      { id: 'C', label: 'C' },
+    ]
+    const g = layeredGraph(nodes, edges2([['A', 'B'], ['B', 'C'], ['C', 'A']]), { dir: 'LR' })
+    expect(g.layers).toEqual([['A'], ['B'], ['C']])
+    expect(g.placed.get('A')!.x).toBeLessThan(g.placed.get('B')!.x)
+    expect(g.placed.get('B')!.x).toBeLessThan(g.placed.get('C')!.x)
+  })
+
+  it('squelette statemachine : 3 couches compactes, draft en tête', () => {
+    const { nodes, edges } = parseGraph(
+      'draft -> review | soumettre\nreview -> published | valider\nreview -> draft | rejeter\npublished -> published | mettre à jour',
+    )
+    const g = layeredGraph(nodes, edges, { dir: 'LR' })
+    expect(g.layers).toEqual([['draft'], ['review'], ['published']])
+    // Aucune colonne vide : la première couche colle au padding.
+    expect(g.placed.get('draft')!.x).toBe(10)
+    expect(g.placed.get('draft')!.x).toBeLessThan(g.placed.get('review')!.x)
+    expect(g.placed.get('review')!.x).toBeLessThan(g.placed.get('published')!.x)
+    expect(g.width).toBe(10 * 2 + 3 * 96 + 2 * 48)
+  })
+})
+
+function edges2(pairs: Array<[string, string]>): GraphEdge[] {
+  return pairs.map(([from, to]) => ({ from, to }))
+}
+
+describe('parseGraph', () => {
+  it('les arêtes créent les nœuds ; label d’arête via |', () => {
+    const g = parseGraph('A -> B | appelle')
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(['A', 'B'])
+    expect(g.edges).toEqual([{ from: 'A', to: 'B', label: 'appelle' }])
+  })
+
+  it('déclaration de nœud : id | label | groupe', () => {
+    const g = parseGraph('api | API Gateway | Coeur\napi -> db')
+    const api = g.nodes.find((n) => n.id === 'api')!
+    expect(api.label).toBe('API Gateway')
+    expect(api.group).toBe('Coeur')
+    // db créé à la volée, label = id.
+    expect(g.nodes.find((n) => n.id === 'db')!.label).toBe('db')
+  })
+
+  it('compte les lignes ignorées (arête sans cible)', () => {
+    const g = parseGraph('A ->\nB')
+    expect(g.ignored).toBe(1)
+    expect(g.nodes.map((n) => n.id)).toContain('B')
+  })
+
+  it('un `->` dans le label ne fait pas une arête', () => {
+    const g = parseGraph('mig | Legacy -> Cloud | Infra')
+    expect(g.edges).toEqual([])
+    expect(g.nodes).toEqual([{ id: 'mig', label: 'Legacy -> Cloud', group: 'Infra' }])
+    expect(g.ignored).toBe(0)
+  })
+
+  it('un `->` dans le libellé d’arête reste un libellé', () => {
+    const g = parseGraph('a -> b | passe de a -> b')
+    expect(g.edges).toEqual([{ from: 'a', to: 'b', label: 'passe de a -> b' }])
+  })
+})
