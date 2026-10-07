@@ -15,6 +15,22 @@
 | `test1` | **absent de `~/.ssh/config`** | ✗ `Name or service not known` | Cible de déploiement citée par `deploy/DEPLOY.md` et la skill `docflow-deployment` |
 | `test2` | déclaré, `HostName 100.74.119.10` | ✗ `No route to host` (échec sur le saut `100.74.13.151`) | Chromium sans interface (`browserless`) pour éprouver les IHM |
 
+> ⚠ **2026-10-06 — AUCUNE machine de test n'est attribuée à docflow.** Établi par
+> `node_list` / `compose_service_list` / `exposition_list`, et non par une sonde SSH
+> seule :
+>
+> - l'adresse de l'alias `test2` (`100.74.119.10`) **ne correspond à aucun nœud de
+>   l'inventaire** — c'est un alias recyclé qui a survécu à sa machine ;
+> - les seules machines de rôle `test` sont `host-test-34` (liée à *photoreader*) et
+>   `host-test-23` (liée à *devpod*) : **aucune n'est liée au workspace `doc`** ;
+> - le portail ne connaît **aucun déploiement compose docflow**, et `docflow` est
+>   **absent de l'annuaire des services exposés**.
+>
+> Les deux alias sont injoignables depuis le sandbox **ET** depuis le conteneur du
+> portail (`workspace_exec` sur `doc`) : ce n'est donc pas un défaut de route local.
+> Tant qu'une machine n'est pas attribuée, il n'y a rien à déployer : le demander
+> plutôt que de chercher un contournement.
+
 **Les deux machines nommées dans les instructions sont injoignables depuis
 l'environnement de travail courant.** Ce n'est pas la même chose qu'« elles
 n'existent pas » : `test2` a un alias et une adresse, la route manque. `test1`
