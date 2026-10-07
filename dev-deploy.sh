@@ -290,19 +290,53 @@ main() {
 # docflow reste déployable hors de tout contexte portail. docflow expose UNE
 # origine (UI + API + MCP sous /api/mcp), page d'entrée `/` → pas de --path.
 declarer_exposition_portail() {
-    [[ -x scripts/declarer-exposition.sh ]] || return 0
+    # Le saut est légitime hors contexte portail, mais il ne doit PAS être muet :
+    # un silence ne distingue pas « pas de portail ici » de « portail mal
+    # configuré ». C'est ce qui a fait croire docflow déclaré alors qu'il est
+    # absent de l'annuaire (bug 0b6b224e). On nomme donc toujours la raison.
+    echo ""
+    if [[ ! -x scripts/declarer-exposition.sh ]]; then
+        echo "==> Déclaration au portail SAUTÉE : scripts/declarer-exposition.sh"
+        echo "    absent ou non exécutable (git update-index --chmod=+x si le bit"
+        echo "    a été perdu). Le service ne sera PAS dans l'annuaire."
+        return 0
+    fi
+
+    # Jamais la valeur de PORTAL_TOKEN, seulement son absence.
+    local manquants=()
+    [[ -n "${PORTAL_URL:-}" ]]       || manquants+=("PORTAL_URL")
+    [[ -n "${PORTAL_TOKEN:-}" ]]     || manquants+=("PORTAL_TOKEN")
+    [[ -n "${EXPOSE_WORKSPACE:-}" ]] || manquants+=("EXPOSE_WORKSPACE")
+    if (( ${#manquants[@]} > 0 )); then
+        echo "==> Déclaration au portail SAUTÉE : ${manquants[*]} absent(s) de"
+        echo "    l'environnement. Attendu si cette machine est hors contexte"
+        echo "    portail ; sinon le service ne sera PAS dans l'annuaire et rien"
+        echo "    d'autre ne le signalera."
+        return 0
+    fi
+
     local ip
     ip="$(hostname -I | awk '{print $1}')"
-    echo ""
-    echo "==> Déclaration au portail (best-effort)..."
-    scripts/declarer-exposition.sh \
+    echo "==> Déclaration au portail (workspace ${EXPOSE_WORKSPACE}, service ${EXPOSE_SERVICE:-docflow})..."
+    if scripts/declarer-exposition.sh \
         --me \
-        --portal "${PORTAL_URL:-}" \
-        --workspace "${EXPOSE_WORKSPACE:-}" \
+        --portal "${PORTAL_URL}" \
+        --workspace "${EXPOSE_WORKSPACE}" \
         --service "${EXPOSE_SERVICE:-docflow}" \
         --target-host "$ip" \
         --target-port 8080 \
-        --scheme http || true
+        --scheme http
+    then
+        echo "    Déclaration acceptée. À contrôler sur l'artefact : le service doit"
+        echo "    apparaître dans l'annuaire, pas seulement dans cette sortie."
+    else
+        # Contexte portail COMPLET et déclaration en échec : anormal. On ne fait pas
+        # échouer le déploiement — ce serait un changement de comportement à arbitrer
+        # (bug 0b6b224e) — mais ça ne passe plus inaperçu.
+        echo "    ÉCHEC de la déclaration alors que le contexte portail est complet."
+        echo "    Le déploiement continue, mais le service N'EST PAS déclaré : à"
+        echo "    traiter, ce n'est pas un saut légitime."
+    fi
 }
 
 # ─── Smoke test /health, partagé entre le déploiement normal et --prune ──────

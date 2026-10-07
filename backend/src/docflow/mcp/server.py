@@ -521,7 +521,13 @@ _TOOLS: list[Tool] = [
                 "expected_version": {
                     "type": "integer",
                     "description": (
-                        "Version attendue pour concurrence optimiste (0 = désactivé, défaut)"
+                        "Version attendue de la VALEUR de propriété — TOUJOURS comparée, "
+                        "jamais désactivée. 0 (le défaut) signifie « aucune valeur ne doit "
+                        "encore exister » : c'est donc la plus stricte des valeurs, et "
+                        "écraser une valeur déjà renseignée EXIGE sa version courante. "
+                        "Cette version n'est pas celle du document et n'est rendue par "
+                        "aucun outil de lecture : en cas de refus, elle est dans "
+                        "error_detail.version"
                     ),
                     "default": 0,
                 },
