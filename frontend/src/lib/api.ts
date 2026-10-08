@@ -1321,9 +1321,30 @@ export interface AutomationOut {
   url: string
   http_method: string
   body_template: string | null
+  precheck: AutomationPrecheck | null
   headers: AutomationHeaderOut[]
   created_at: string
   updated_at: string
+}
+
+export type AutomationPrecheckOutcome = 'proceed' | 'skip' | 'defer'
+
+/** Une règle de pré-condition : tous les critères DÉCLARÉS doivent être
+ *  satisfaits (ET). Omettre un critère, c'est ne pas filtrer dessus. */
+export interface AutomationPrecheckRule {
+  status?: number[] | null
+  path?: string | null
+  equals?: string | null
+  then: AutomationPrecheckOutcome
+}
+
+/** Interroger la cible AVANT d'agir, et conditionner l'appel au résultat.
+ *  Première règle qui matche l'emporte ; aucune ne matche → `default`. */
+export interface AutomationPrecheck {
+  url: string
+  method: string
+  rules: AutomationPrecheckRule[]
+  default: AutomationPrecheckOutcome
 }
 
 export interface AutomationCreate {
@@ -1343,6 +1364,7 @@ export interface AutomationCreate {
   url: string
   http_method: string
   body_template?: string | null
+  precheck?: AutomationPrecheck | null
   headers?: AutomationHeaderIn[]
 }
 

@@ -86,7 +86,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
 
   it('préserve body_template quand on enregistre SANS visiter l’onglet Appel', async () => {
     const initial: AutomationOut = {
-      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0, precheck: null,
       event_codes: ['docflow.document.updated.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
@@ -108,7 +108,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
 
   it('ajoute le header d’auth à l’OUVERTURE d’un automate existant', async () => {
     const initial: AutomationOut = {
-      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0, precheck: null,
       event_codes: ['docflow.document.updated.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: 'c1', operation_id: 'index',
@@ -150,7 +150,7 @@ describe('AutomationDialog — couverture par template de bloc', () => {
 
   it('envoie block_templates et marque les blocs déjà couverts par provenance', async () => {
     const initial: AutomationOut = {
-      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+      id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0, precheck: null,
       event_codes: [], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
@@ -215,7 +215,7 @@ describe('AutomationDialog — events de contenant', () => {
   }
 
   const base: AutomationOut = {
-    id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0,
+    id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0, precheck: null,
     event_codes: ['docflow.block.created.v1'], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
     block_slugs: [], block_templates: [], functional_type_slugs: [],
     on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,

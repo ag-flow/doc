@@ -51,7 +51,7 @@ function makeAuto(over: Partial<AutomationOut>): AutomationOut {
     event_codes: ['docflow.document.updated.v1'], block_slugs: [], block_templates: [], functional_type_slugs: [],
     stop_chain: false, on_create: false, on_update: true, delay_minutes: 0,
     contract_ref: null, operation_id: null, url: 'https://rag.example/api',
-    http_method: 'POST', body_template: '{"doc": "{title}"}', headers: [],
+    http_method: 'POST', body_template: '{"doc": "{title}"}', precheck: null, headers: [],
     created_at: '', updated_at: '',
     last_run_at: '2026-07-27T08:00:00Z', last_run_status: 'ok', last_run_http_status: 200,
     ...over,

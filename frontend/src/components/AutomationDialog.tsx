@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { PrecheckFields, cleanPrecheck } from './automation/PrecheckFields'
 import { useQuery } from '@tanstack/react-query'
 import { CaretRight, Plus, Trash, X } from '@phosphor-icons/react'
 import { Button } from './ui/button'
@@ -173,6 +174,10 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   // Appel est démonté quand un autre onglet est actif, et un submit depuis un
   // autre onglet effacerait sinon le template en base (body_template: null).
   const [bodyTemplate, setBodyTemplate] = useState(initial?.body_template ?? '')
+  // Même précaution que `bodyTemplate` : la section vit dans l'onglet Appel,
+  // qui est démonté quand un autre onglet est actif. L'état est tenu ICI pour
+  // qu'enregistrer sans visiter l'onglet n'efface pas la pré-condition en base.
+  const [precheck, setPrecheck] = useState(initial?.precheck ?? null)
   const [headers, setHeaders] = useState<HeaderRow[]>(
     initial?.headers.map((h) => ({
       id: h.id,
@@ -302,6 +307,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       contract_ref: contractId || null,
       operation_id: operationId || null,
       url, http_method: method, body_template: body, headers: hdrs,
+      precheck: cleanPrecheck(precheck),
     })
   }
 
@@ -590,6 +596,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </div>
               ))}
             </div>
+          <PrecheckFields value={precheck} onChange={setPrecheck} />
           </div>
         )}
         </div>
