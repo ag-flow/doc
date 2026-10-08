@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import asyncpg
 import structlog
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from docflow.automations import events_query
 from docflow.db.helpers import require_workspace
@@ -14,6 +16,7 @@ from docflow.schemas.automations import (
     AutomationCreate,
     AutomationHeaderOut,
     AutomationOut,
+    AutomationPrecheck,
     AutomationRunOut,
     AutomationUpdate,
 )
@@ -214,6 +217,35 @@ def _rank_or_none(position: int | None) -> int | None:
     return None if position is None or position >= _LAST_RANK else position
 
 
+def _precheck_json(spec: AutomationPrecheck | None) -> str | None:
+    """Sérialise la pré-condition pour la colonne `jsonb` (None = aucune).
+
+    `exclude_none` : une règle n'écrit que les critères qu'elle DÉCLARE. Un
+    `status: null` stocké se relirait comme un critère posé, et ferait échouer
+    des réponses qui devraient passer.
+    """
+    if spec is None:
+        return None
+    return json.dumps(spec.model_dump(exclude_none=True))
+
+
+def _precheck_of(row: asyncpg.Record) -> AutomationPrecheck | None:
+    """Relit la colonne `jsonb`, quelle que soit la forme rendue par le pilote.
+
+    Une spécification devenue illisible rend None plutôt que de faire échouer
+    la lecture de l'automate : l'écran doit rester consultable pour qu'on PUISSE
+    la corriger.
+    """
+    raw = row["precheck"] if "precheck" in row.keys() else None
+    if not raw:
+        return None
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    try:
+        return AutomationPrecheck.model_validate(data)
+    except ValidationError:
+        return None
+
+
 def _row_to_out(
     row: asyncpg.Record,
     headers: list[AutomationHeaderOut],
@@ -245,6 +277,7 @@ def _row_to_out(
         url=row["url"],
         http_method=row["http_method"],
         body_template=row["body_template"],
+        precheck=_precheck_of(row),
         headers=headers,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -283,7 +316,7 @@ _LIST_FIELDS = (
     "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
     "a.on_create, a.on_update, "
     "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-    "a.body_template, a.created_at, a.updated_at, "
+    "a.body_template, a.precheck, a.created_at, a.updated_at, "
     # Dernière exécution : sous-requête sur le run le plus récent.
     "(SELECT r.executed_at FROM automation_run r WHERE r.automation_ref = a.id "
     " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_at, "
@@ -411,12 +444,13 @@ async def create_automation(
             "INSERT INTO automation "
             "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, "
-            " delay_minutes, contract_ref, operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) "
+            " delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
+            " precheck) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
-            "operation_id, url, http_method, body_template, created_at, updated_at",
+            "operation_id, url, http_method, body_template, precheck, created_at, updated_at",
             keys[0] if keys else None,
             body.label,
             body.active,
@@ -433,6 +467,7 @@ async def create_automation(
             body.url,
             body.http_method,
             body.body_template,
+            _precheck_json(body.precheck),
         )
         assert row is not None
         await _set_workspaces(conn, row["id"], keys)
@@ -450,9 +485,9 @@ async def get_automation(
         row = await conn.fetchrow(
             "SELECT a.id, a.workspace_technical_key, a.label, a.active, a.event_codes, "
             "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
-    "a.on_create, a.on_update, "
+            "a.on_create, a.on_update, "
             "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-            "a.body_template, a.created_at, a.updated_at "
+            "a.body_template, a.precheck, a.created_at, a.updated_at "
             "FROM automation a WHERE a.id = $1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -515,11 +550,24 @@ async def update_automation(
                 "url",
                 "http_method",
                 "body_template",
+                "precheck",
             }
             for k, v in raw.items():
-                if k in scalar_map:
-                    values.append(v)
-                    sets.append(f"{k} = ${len(values)}")
+                if k not in scalar_map:
+                    continue
+                if k == "precheck":
+                    # Le dump rend un dict ; la colonne est jsonb et asyncpg
+                    # attend du texte casté. `exclude_none` à la sérialisation :
+                    # un critère stocké à null se relirait comme un critère POSÉ.
+                    values.append(
+                        json.dumps({kk: vv for kk, vv in v.items() if vv is not None})
+                        if isinstance(v, dict)
+                        else None
+                    )
+                    sets.append(f"{k} = ${len(values)}::jsonb")
+                    continue
+                values.append(v)
+                sets.append(f"{k} = ${len(values)}")
             sets.append("updated_at = now()")
             await conn.execute(
                 f"UPDATE automation SET {', '.join(sets)} WHERE id = $1",
@@ -533,7 +581,7 @@ async def update_automation(
             "SELECT id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, "
-            "delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
+            "delay_minutes, contract_ref, operation_id, url, http_method, body_template, precheck, "
             "created_at, updated_at "
             "FROM automation WHERE id = $1",
             automation_id,
@@ -891,12 +939,12 @@ async def clone_automation(
             "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, "
             " contract_ref, "
-            " operation_id, url, http_method, body_template) "
-            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
+            " operation_id, url, http_method, body_template, precheck) "
+            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
-            "operation_id, url, http_method, body_template, created_at, updated_at",
+            "operation_id, url, http_method, body_template, precheck, created_at, updated_at",
             src["workspace_technical_key"],
             f"{src['label']} (copie)",
             src["event_codes"],
@@ -912,6 +960,7 @@ async def clone_automation(
             src["url"],
             src["http_method"],
             src["body_template"],
+            src["precheck"],
         )
         assert row is not None
         new_id: uuid.UUID = row["id"]

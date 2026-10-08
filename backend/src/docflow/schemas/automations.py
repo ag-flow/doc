@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, model_validator
 
@@ -34,6 +35,39 @@ class AutomationHeaderOut(BaseModel):
     enabled: bool
 
 
+class AutomationPrecheckRule(BaseModel):
+    """Une règle : tous les critères DÉCLARÉS doivent être satisfaits (ET)."""
+
+    model_config = {"extra": "forbid"}
+
+    # Codes HTTP acceptés. Omis = ce critère ne filtre pas.
+    status: list[int] | None = None
+    # Chemin pointé dans le corps JSON (`a.b`). Omis = ce critère ne filtre pas.
+    path: str | None = None
+    equals: str | None = None
+    then: Literal["proceed", "skip", "defer"]
+
+
+class AutomationPrecheck(BaseModel):
+    """Interroger la cible AVANT d'agir, et conditionner l'appel au résultat.
+
+    La condition est de la donnée, pas un langage : des règles ordonnées testant
+    le code HTTP et/ou une valeur du corps par égalité. Première règle qui
+    matche l'emporte ; aucune ne matche → `default`, qui est OBLIGATOIRE (un
+    `proceed` tacite enverrait l'appel qu'on voulait précisément conditionner).
+
+    `url` accepte les mêmes variables que `body_template` ; une variable non
+    résolue fait ÉCHOUER l'appel au lieu de partir telle quelle.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    url: str
+    method: str = "GET"
+    rules: list[AutomationPrecheckRule] = []
+    default: Literal["proceed", "skip", "defer"]
+
+
 class AutomationCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -64,6 +98,7 @@ class AutomationCreate(BaseModel):
     url: str
     http_method: str
     body_template: str | None = None
+    precheck: AutomationPrecheck | None = None
     headers: list[AutomationHeaderIn] = []
 
 
@@ -86,6 +121,7 @@ class AutomationUpdate(BaseModel):
     url: str | None = None
     http_method: str | None = None
     body_template: str | None = None
+    precheck: AutomationPrecheck | None = None
     headers: list[AutomationHeaderIn] | None = None
 
 
@@ -126,6 +162,7 @@ class AutomationOut(BaseModel):
     url: str
     http_method: str
     body_template: str | None
+    precheck: AutomationPrecheck | None = None
     headers: list[AutomationHeaderOut]
     created_at: datetime
     updated_at: datetime
@@ -146,10 +183,10 @@ class AutomationRunOut(BaseModel):
     # Détails de l'appel (historique enrichi).
     http_status: int | None = None
     url: str | None = None
-    request_body: str | None = None    # corps envoyé, variables résolues
-    response_body: str | None = None   # corps/message de réponse
+    request_body: str | None = None  # corps envoyé, variables résolues
+    response_body: str | None = None  # corps/message de réponse
     event_code: str | None = None
-    manual: bool = False               # déclenché via « jouer l'event » (test)
+    manual: bool = False  # déclenché via « jouer l'event » (test)
 
 
 class AutomationOrderIn(BaseModel):
