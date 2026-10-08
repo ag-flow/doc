@@ -1,0 +1,31 @@
+-- =====================================================================
+-- 0079 — Un run d'automate peut ne porter AUCUN document.
+--
+-- Les events de CONTENANT (`docflow.workspace.created.v1`,
+-- `docflow.block.created.v1`, livrés le 2026-09-24) n'ont pas de document.
+-- `_record_run` insérait donc `document_ref = NULL` et violait la contrainte
+-- posée par 0020, à une époque où tout event d'automate portait forcément un
+-- document.
+--
+-- Ce que ça coûtait en production (bug 0b58769c, reproduit le 2026-10-08) :
+-- l'appel HTTP partait, l'INSERT d'historique échouait, et `_advance` — placé
+-- APRÈS — n'était jamais atteint. Le même event était réémis à chaque tick de
+-- 60 secondes, sans borne. Non borné, et pas seulement « en échec » : les
+-- TROIS garde-fous contre le ré-envoi vivent dans cette table — déduplication
+-- par `event_seq`, avance du curseur, et compteur de tentatives du
+-- dead-letter. La contrainte les désactivait ensemble.
+--
+-- 0050 avait déjà fait exactement ce geste sur la colonne voisine
+-- (« document_version devient facultatif : tous les events ne bumpent pas la
+-- version ») ; elle ne pouvait pas anticiper les events de contenant, qui
+-- n'existaient pas encore. `document_ref` est la dernière colonne à l'être.
+--
+-- La déduplication ne repose plus sur `document_ref` depuis 0050 : elle est
+-- portée par l'index partiel `uq_automation_run_event (automation_ref,
+-- event_seq) where event_seq is not null`, qui fonctionne tel quel pour un run
+-- sans document. Rien d'autre n'est à changer.
+--
+-- Rejouable : `drop not null` sur une colonne déjà nullable est sans effet.
+-- =====================================================================
+
+alter table automation_run alter column document_ref drop not null;
