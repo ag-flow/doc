@@ -11,7 +11,7 @@ import asyncpg
 import httpx
 import structlog
 
-from docflow.automations import events_query
+from docflow.automations import events_query, precheck
 from docflow.automations.substitution import render_and_validate, unresolved_variables
 from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
@@ -510,6 +510,72 @@ async def _record_run(
     )
 
 
+def _precheck_spec(automation: asyncpg.Record) -> dict[str, Any] | None:
+    """Spécification de pré-condition, ou None si l'automate n'en a pas.
+
+    Tolère les deux formes rendues par asyncpg selon le pilote (`jsonb` décodé
+    ou texte) : une différence de décodage ne doit pas faire disparaître une
+    pré-condition en silence — elle enverrait l'appel qu'elle devait retenir.
+    """
+    raw = automation["precheck"] if "precheck" in automation.keys() else None
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return raw if isinstance(raw, dict) else None
+
+
+async def _run_precheck(
+    automation: asyncpg.Record,
+    spec: dict[str, Any],
+    variables: dict[str, str],
+    event: dict[str, Any],
+) -> tuple[precheck.Outcome | None, ExecResult | None]:
+    """Interroge la cible et rend l'issue, ou un échec à historiser.
+
+    Un échec de la pré-condition elle-même (url invalide, variable non résolue,
+    cible injoignable) n'est PAS un « ne pas appeler » : c'est un run `failed`,
+    donc compté, réessayé et abandonné comme les autres. Le confondre avec un
+    `skip` ferait disparaître une panne dans un silence qui ressemble à du
+    travail normal.
+    """
+    try:
+        url, method = precheck.render_target(spec, variables)
+        await validate_public_url(url)
+    except (ValueError, SSRFError) as exc:
+        return None, ExecResult("failed", body=f"pré-condition : {exc}")
+
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.request(method, url)
+        outcome = precheck.evaluate(spec, status=resp.status_code, body=resp.text)
+    except ValueError as exc:  # spécification invalide (default/then)
+        return None, ExecResult("failed", body=f"pré-condition : {exc}")
+    except Exception as exc:
+        log.warning(
+            "automation_precheck_failed",
+            automation_id=str(automation["id"]),
+            error=str(exc),
+            exc_info=True,
+        )
+        return None, ExecResult("failed", body=f"pré-condition injoignable : {exc}")
+
+    # Un automate qui s'abstient DOIT le dire : sans cette ligne, « rien à
+    # faire » et « en panne » produisent exactement les mêmes journaux.
+    log.info(
+        "automation_precheck",
+        automation_id=str(automation["id"]),
+        event_code=event["event_code"],
+        http_status=resp.status_code,
+        outcome=outcome,
+    )
+    return outcome, None
+
+
 async def _process_event(
     pool: asyncpg.Pool,
     automation: asyncpg.Record,
@@ -549,6 +615,24 @@ async def _process_event(
             "traceparent": row["traceparent"],
         }
         prep = await _prepare(conn, automation, event, settings)
+
+    spec = _precheck_spec(automation)
+    if spec is not None:
+        outcome, failure = await _run_precheck(automation, spec, prep.variables, event)
+        if outcome == "defer":
+            # Gèle le curseur comme un document chaud : l'event revient au
+            # prochain tick, sans run et sans compter de tentative. C'est ce qui
+            # évite le dead-letter d'un document dont le corpus n'existe pas
+            # ENCORE — différer n'est pas échouer.
+            return True
+        if outcome == "skip" or failure is not None:
+            res = failure if failure is not None else ExecResult("skipped")
+            async with pool.acquire() as conn, conn.transaction():
+                await _record_run(conn, automation, row, res)
+                await _prune_runs(conn, automation["id"])
+                if not deferred:
+                    await _advance(conn, automation["id"], event_seq)
+            return deferred
 
     res = await _dispatch(automation, event, prep, pool, settings)
 
@@ -748,7 +832,7 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
         automations = await conn.fetch(
             "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
             "stop_chain, "
-            "functional_type_slugs, delay_minutes, url, http_method, body_template, "
+            "functional_type_slugs, delay_minutes, url, http_method, body_template, precheck, "
             "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
             " WHERE aw.automation_ref = automation.id) AS prio "
             "FROM automation WHERE active = true "

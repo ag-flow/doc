@@ -27,10 +27,39 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal
+from urllib.parse import quote
+
+from docflow.automations.substitution import unresolved_variables
 
 Outcome = Literal["proceed", "skip", "defer"]
 
 _OUTCOMES: frozenset[str] = frozenset({"proceed", "skip", "defer"})
+
+
+def render_target(spec: dict[str, Any], variables: dict[str, str]) -> tuple[str, str]:
+    """URL et méthode de la pré-vérification, variables substituées.
+
+    REFUSE si un placeholder reste non résolu, au lieu d'émettre l'URL telle
+    quelle. C'est la leçon du gabarit `{event.blockSlug}` parti littéralement à
+    l'indexation : une variable non substituée qui franchit la frontière produit
+    une ressource au nom absurde, et personne ne s'en aperçoit avant longtemps.
+
+    Les valeurs sont encodées pour un segment d'URL — pas en JSON comme pour un
+    corps : un `/` dans un slug ne doit pas inventer un niveau de chemin.
+    """
+    raw = str(spec.get("url") or "")
+    if not raw:
+        raise ValueError("pré-condition : 'url' obligatoire")
+    missing = unresolved_variables(raw, variables)
+    if missing:
+        raise ValueError(
+            "pré-condition : variables non résolues dans l'url : " + ", ".join(missing)
+        )
+    url = raw
+    for key, value in variables.items():
+        url = url.replace("{" + key + "}", quote(value, safe=""))
+    method = str(spec.get("method") or "GET").upper()
+    return url, method
 
 
 def _parsed_body(body: str | None) -> Any:

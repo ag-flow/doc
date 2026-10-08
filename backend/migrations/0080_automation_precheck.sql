@@ -1,0 +1,27 @@
+-- =====================================================================
+-- 0080 — Pré-condition d'automate : interroger la cible avant d'agir.
+--
+-- Un automate ne savait qu'appeler ; il ne pouvait ni vérifier, ni s'abstenir.
+-- Deux pannes réelles le 2026-10-08 (ticket 74730995) : un `409 Conflict` à
+-- chaque tentative de créer un workspace RAG déjà présent, et un `404` à
+-- l'indexation d'un document dont le corpus n'existait pas — ce dernier
+-- épuisant ses 8 tentatives jusqu'au dead-letter.
+--
+-- La condition est de la DONNÉE, pas un langage : une liste de règles
+-- ordonnées testant le code HTTP et/ou une valeur du corps par égalité, et une
+-- issue par défaut OBLIGATOIRE. D'où le `jsonb` plutôt qu'une colonne par
+-- critère : le jeu de critères s'élargira, et une colonne par critère
+-- obligerait une migration à chaque ajout. La forme est validée à la frontière
+-- par pydantic (`AutomationPrecheck`, `extra="forbid"`), pas par la base.
+--
+--   {"url": "…/workspaces/{event.workspaceSlug}-docs", "method": "GET",
+--    "rules": [{"status": [404], "then": "proceed"}],
+--    "default": "skip"}
+--
+-- NULL = aucune pré-condition : l'automate appelle directement, comme avant.
+-- C'est le comportement de tous les automates existants, et il est inchangé.
+--
+-- Rejouable : `add column if not exists` est sans effet si la colonne est là.
+-- =====================================================================
+
+alter table automation add column if not exists precheck jsonb;
