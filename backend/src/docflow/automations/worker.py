@@ -430,6 +430,15 @@ async def _read_batch(
         or 0
     )
     # Portée multi-workspaces : les events de TOUS les workspaces couverts.
+    #
+    # Une liste VIDE n'est pas un court-circuit : c'est « aucun filtre de portée »,
+    # donc l'instance entière — même règle que les codes d'event, les blocs et les
+    # types, et c'est ce que l'écran annonce (« aucun coché = tous les workspaces »).
+    # `events_query` l'applique déjà par `cardinality($1) = 0 OR …` ; un `return []`
+    # ici rétablissait l'ancienne sémantique « aucun workspace = ne se déclenche
+    # jamais » pour le seul worker. Le compteur, lui, appliquait la bonne règle :
+    # l'automate affichait une file qui montait sans que rien ne soit traité, sans
+    # erreur ni report — donc sans un seul log pour le dire.
     wks: list[uuid.UUID] = [
         r["workspace_technical_key"]
         for r in await conn.fetch(
@@ -437,8 +446,6 @@ async def _read_batch(
             automation["id"],
         )
     ]
-    if not wks:
-        return []
     return await events_query.matching_batch(
         conn,
         wks,
