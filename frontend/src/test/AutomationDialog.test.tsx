@@ -91,7 +91,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
       url: 'https://rag.example/api', http_method: 'POST', body_template: '{"doc": "{title}"}',
-      headers: [], created_at: '', updated_at: '',
+      force_obo: false, headers: [], created_at: '', updated_at: '',
     }
     const onSave = vi.fn()
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -113,7 +113,7 @@ describe('AutomationDialog — onglets & sécurité du contrat', () => {
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: 'c1', operation_id: 'index',
       url: 'https://rag.example/api', http_method: 'POST', body_template: '{}',
-      headers: [], created_at: '', updated_at: '',
+      force_obo: false, headers: [], created_at: '', updated_at: '',
     }
     renderDialog(initial)
     openCallTab()
@@ -155,7 +155,7 @@ describe('AutomationDialog — couverture par template de bloc', () => {
       block_slugs: [], block_templates: [], functional_type_slugs: [],
       on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
       url: 'https://rag.example/api', http_method: 'POST', body_template: null,
-      headers: [], created_at: '', updated_at: '',
+      force_obo: false, headers: [], created_at: '', updated_at: '',
     }
     const onSave = vi.fn()
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -220,7 +220,7 @@ describe('AutomationDialog — events de contenant', () => {
     block_slugs: [], block_templates: [], functional_type_slugs: [],
     on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
     url: 'https://rag.example/api', http_method: 'POST', body_template: null,
-    headers: [], created_at: '', updated_at: '',
+    force_obo: false, headers: [], created_at: '', updated_at: '',
   }
 
   it('avertit que les filtres ne s’appliquent pas quand un event de contenant est coché', async () => {
@@ -240,5 +240,85 @@ describe('AutomationDialog — events de contenant', () => {
     open({ ...base, event_codes: ['docflow.document.updated.v1'], block_slugs: ['kb'] })
     await waitFor(() => expect(screen.getByTestId('auto-tab-events')).toBeInTheDocument())
     expect(screen.queryByTestId('auto-container-scope-note')).not.toBeInTheDocument()
+  })
+})
+
+describe('AutomationDialog — force_obo (relais OBO sortant)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(contractsApi.list).mockResolvedValue([])
+    vi.mocked(eventsProducerApi.catalog).mockResolvedValue({ revision: 'r', specVersion: '1.0', events: [] })
+    vi.mocked(secretsApi.list).mockResolvedValue([])
+    vi.mocked(docsApi.getBlocks).mockResolvedValue([])
+    vi.mocked(api.get).mockResolvedValue([])
+  })
+
+  const baseInitial: AutomationOut = {
+    id: 'a1', workspace_technical_key: 'wk', label: 'Rag', active: false, pending_count: 0, precheck: null,
+    event_codes: [], workspace_slugs: ['ws1'], position: 1, stop_chain: false,
+    block_slugs: [], block_templates: [], functional_type_slugs: [],
+    on_create: false, on_update: false, delay_minutes: 0, contract_ref: null, operation_id: null,
+    url: 'https://rag.example/api', http_method: 'POST', body_template: null,
+    force_obo: false, headers: [], created_at: '', updated_at: '',
+  }
+
+  function renderWith(initial: AutomationOut, onSave = vi.fn()) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AutomationDialog ws="ws1" initial={initial} onSave={onSave} onClose={vi.fn()} saving={false} error={null} />
+      </QueryClientProvider>,
+    )
+    return onSave
+  }
+
+  it('la case est désactivée tant qu\'aucun header Authorization Bearer actif n\'est présent', async () => {
+    renderWith(baseInitial)
+    openCallTab()
+    await waitFor(() => expect(screen.getByTestId('auto-force-obo')).toBeInTheDocument())
+    expect((screen.getByTestId('auto-force-obo') as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('cochée avec un header Authorization Bearer actif → le payload porte force_obo: true', async () => {
+    const initial: AutomationOut = {
+      ...baseInitial,
+      headers: [
+        { id: 'h1', name: 'Authorization', value: null, secret_ref: '${secret://s1}', value_prefix: 'Bearer ', required: true, enabled: true },
+      ],
+    }
+    const onSave = renderWith(initial)
+    openCallTab()
+    const checkbox = await screen.findByTestId('auto-force-obo') as HTMLInputElement
+    expect(checkbox.disabled).toBe(false)
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][0].force_obo).toBe(true)
+  })
+
+  it('décochée (ou omise) → le payload porte force_obo: false', async () => {
+    const initial: AutomationOut = {
+      ...baseInitial,
+      headers: [
+        { id: 'h1', name: 'Authorization', value: null, secret_ref: '${secret://s1}', value_prefix: 'Bearer ', required: true, enabled: true },
+      ],
+    }
+    const onSave = renderWith(initial)
+    fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][0].force_obo).toBe(false)
+  })
+
+  it('un header Authorization désactivé ne compte pas comme actif', async () => {
+    const initial: AutomationOut = {
+      ...baseInitial,
+      headers: [
+        { id: 'h1', name: 'Authorization', value: null, secret_ref: '${secret://s1}', value_prefix: 'Bearer ', required: true, enabled: false },
+      ],
+    }
+    renderWith(initial)
+    openCallTab()
+    await waitFor(() => expect(screen.getByTestId('auto-force-obo')).toBeInTheDocument())
+    expect((screen.getByTestId('auto-force-obo') as HTMLInputElement).disabled).toBe(true)
   })
 })

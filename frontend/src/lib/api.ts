@@ -1322,6 +1322,10 @@ export interface AutomationOut {
   http_method: string
   body_template: string | null
   precheck: AutomationPrecheck | null
+  /** Relais OBO sortant : le worker pose l'identité de l'acteur sur l'appel.
+   *  Backend refuse `true` sans header `Authorization: Bearer` actif
+   *  (`obo_requires_bearer`) — l'écran reflète cette garde. */
+  force_obo: boolean
   headers: AutomationHeaderOut[]
   created_at: string
   updated_at: string
@@ -1365,6 +1369,7 @@ export interface AutomationCreate {
   http_method: string
   body_template?: string | null
   precheck?: AutomationPrecheck | null
+  force_obo?: boolean
   headers?: AutomationHeaderIn[]
 }
 

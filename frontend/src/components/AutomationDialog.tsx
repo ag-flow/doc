@@ -178,6 +178,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
   // qui est démonté quand un autre onglet est actif. L'état est tenu ICI pour
   // qu'enregistrer sans visiter l'onglet n'efface pas la pré-condition en base.
   const [precheck, setPrecheck] = useState(initial?.precheck ?? null)
+  const [forceObo, setForceObo] = useState(initial?.force_obo ?? false)
   const [headers, setHeaders] = useState<HeaderRow[]>(
     initial?.headers.map((h) => ({
       id: h.id,
@@ -190,6 +191,23 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       enabled: h.enabled,
     })) ?? []
   )
+
+  // Miroir UI de la garde backend `has_active_bearer_header` (schemas/automations.py) :
+  // un header Authorization ACTIF (enabled) dont la valeur ou son préfixe commence
+  // par « Bearer ». Même nom exact, même condition — sinon la case autoriserait un
+  // état que le backend refuse en 422 (obo_requires_bearer).
+  const hasActiveBearerHeader = headers.some(
+    (h) => h.enabled && h.name === 'Authorization'
+      && (h.value.startsWith('Bearer ') || h.valuePrefix.startsWith('Bearer ')),
+  )
+
+  // Si le header actif disparaît (désactivé, renommé, supprimé) après coup, la
+  // promesse `force_obo` devient intenable : on la retire plutôt que de laisser
+  // une case cochée mais grisée partir en 422 à l'enregistrement.
+  useEffect(() => {
+    if (!hasActiveBearerHeader) setForceObo(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveBearerHeader])
 
   const { data: contracts = [] } = useQuery({
     queryKey: ['contracts'], queryFn: () => contractsApi.list(), staleTime: 60_000,
@@ -308,6 +326,7 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
       operation_id: operationId || null,
       url, http_method: method, body_template: body, headers: hdrs,
       precheck: cleanPrecheck(precheck),
+      force_obo: forceObo,
     })
   }
 
@@ -596,6 +615,19 @@ export function AutomationDialog({ ws, initial, onSave, onClose, saving, error }
                 </div>
               ))}
             </div>
+
+            <label className="flex items-start gap-2 text-[14px]" data-testid="auto-force-obo-row">
+              <input type="checkbox" className="mt-0.5" checked={forceObo} disabled={!hasActiveBearerHeader}
+                onChange={(e) => setForceObo(e.target.checked)} data-testid="auto-force-obo" />
+              <span>
+                Forcer l'identité OBO
+                <span className="block text-[12px] text-ink/[0.55]">
+                  Relaie l'identité de l'utilisateur à l'origine de l'event sur cet appel.
+                  {!hasActiveBearerHeader && ' Nécessite un header « Authorization » actif avec un préfixe « Bearer ».'}
+                </span>
+              </span>
+            </label>
+
           <PrecheckFields value={precheck} onChange={setPrecheck} />
           </div>
         )}
