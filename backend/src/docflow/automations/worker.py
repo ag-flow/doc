@@ -12,6 +12,7 @@ import httpx
 import structlog
 
 from docflow.automations import events_query, precheck
+from docflow.automations.obo_sign import bearer_secret, obo_headers
 from docflow.automations.substitution import render_and_validate, unresolved_variables
 from docflow.config.base_url import effective_base_url
 from docflow.net.ssrf import SSRFError, validate_public_url
@@ -319,6 +320,30 @@ async def _dispatch(
         elif h["value"] is not None:
             headers[h["name"]] = prefix + h["value"]
 
+    # Relais OBO sortant (`force_obo`) : posé ICI, avant tout calcul de corps
+    # ou de cible, pour qu'un corps/URL invalide plus loin ne masque jamais un
+    # appel qui aurait dû être refusé. Fail-closed : `force_obo=True` promet
+    # explicitement de parler au nom de l'acteur de l'event — sans acteur
+    # journalisé (`ctx.actor_guid`) ET sans secret porteur (le header
+    # `Authorization: Bearer` déjà résolu ci-dessus), on NE PART PAS au nom de
+    # personne. `ctx` est calculé ici et réutilisé plus bas pour la
+    # propagation de trace (même contexte de corrélation, un seul calcul).
+    #
+    # `"force_obo" in automation.keys()` : les appelants manuels historiques
+    # (`service.replay_run`/`run_next_pending`/`advance_pending`) sélectionnent
+    # l'automate sans cette colonne — absence traitée comme False, même garde
+    # que `_precheck_spec` plus bas pour `precheck`. Régression nulle.
+    ctx = corr.from_event_row(event)
+    force_obo = bool(automation["force_obo"]) if "force_obo" in automation.keys() else False
+    if force_obo:
+        secret = bearer_secret(headers)
+        if ctx is not None and ctx.actor_guid and secret:
+            # Jamais logué : `secret` est la clé HMAC, la signature l'engage.
+            headers.update(obo_headers(ctx.actor_guid, secret))
+        else:
+            log.warning("obo.actor_missing", automation_id=str(automation["id"]))
+            return ExecResult("defer")
+
     body: str | None = None
     if automation["body_template"]:
         # Fail-loud : une variable non résolue ne part JAMAIS en silence (elle
@@ -364,7 +389,7 @@ async def _dispatch(
     # en bout (cas type : indexation ragflow sur document.created/updated/deleted).
     # Vers une cible EXTERNE (hors allowlist), on ne pose RIEN : la topologie
     # interne ne franchit pas la frontière de confiance. Asymétrie voulue.
-    ctx = corr.from_event_row(event)
+    # `ctx` déjà calculé plus haut (relais OBO) : même contexte, pas recalculé.
     if ctx is not None and _is_internal_target(automation["url"], settings):
         corr.inject_internal(headers, ctx)
 
@@ -636,6 +661,13 @@ async def _process_event(
 
     res = await _dispatch(automation, event, prep, pool, settings)
 
+    if res.status == "defer":
+        # OBO (`force_obo`) sans acteur ni secret porteur : même traitement que
+        # le `defer` de la pré-condition ci-dessus — aucun run, curseur GELÉ,
+        # l'event revient au prochain tick. Ni un échec (pas de tentative
+        # comptée, pas de dead-letter), ni un appel émis au nom de personne.
+        return True
+
     async with pool.acquire() as conn:
         # Chaîne de responsabilité : match + appel RÉUSSI d'un automate
         # stop_chain → l'event est consommé, les priorités inférieures
@@ -833,6 +865,7 @@ async def tick(pool: asyncpg.Pool, settings: object) -> None:
             "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
             "stop_chain, "
             "functional_type_slugs, delay_minutes, url, http_method, body_template, precheck, "
+            "force_obo, "
             "(SELECT COALESCE(min(position), 2147483647) FROM automation_workspace aw "
             " WHERE aw.automation_ref = automation.id) AS prio "
             "FROM automation WHERE active = true "
