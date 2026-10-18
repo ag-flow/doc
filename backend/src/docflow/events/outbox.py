@@ -172,8 +172,8 @@ async def _record_document_event(
     await conn.execute(
         "INSERT INTO document_event "
         "(workspace_technical_key, document_ref, event_code, business, "
-        " correlation_id, correlation_kind, origin, traceparent) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)",
+        " correlation_id, correlation_kind, origin, traceparent, actor_guid) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
         workspace_wk,
         _as_uuid(business.get("documentId")),
         event_code,
@@ -182,6 +182,7 @@ async def _record_document_event(
         correlation.correlation_kind,
         correlation.origin,
         correlation.traceparent,
+        correlation.actor_guid,
     )
 
 

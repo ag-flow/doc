@@ -216,4 +216,7 @@ def from_event_row(row: Mapping[str, object]) -> CorrelationContext | None:
         correlation_id=str(cid),
         correlation_kind=str(row.get("correlation_kind") or "document"),
         traceparent=_opt(row.get("traceparent")),
+        # Relais OBO sortant (Task 1) : l'acteur journalisé est celui que le
+        # worker doit propager vers l'appel sortant.
+        actor_guid=_opt(row.get("actor_guid")),
     )
