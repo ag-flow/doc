@@ -696,7 +696,12 @@ async def replay_run(
         wk = await _maybe_workspace(conn, ws_slug)
 
         auto_row = await conn.fetchrow(
-            "SELECT id, workspace_technical_key, url, http_method, body_template "
+            # `force_obo` : sans cette colonne, `_dispatch` l'évalue à False
+            # (accès défensif worker.py) et un automate `force_obo=True` rejoué
+            # à la main émettrait quand même, sous le Bearer de service, SANS
+            # en-têtes OBO — brèche d'isolation (fail-open). Symétrique au
+            # SELECT du worker (`tick`, worker.py:872).
+            "SELECT id, workspace_technical_key, url, http_method, body_template, force_obo "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -714,8 +719,15 @@ async def replay_run(
             raise HTTPException(404, f"Run {run_id} introuvable.")
 
         # L'event déclencheur (journal durable). Purgé → rejeu impossible.
+        # Contexte de corrélation + `actor_guid` : reportés comme
+        # `events_query.next_matching` le fait déjà pour les deux autres
+        # chemins manuels — nécessaires pour que `corr.from_event_row`
+        # reconstruise un contexte (il exige `correlation_id`) et que le
+        # relais OBO (`force_obo`) retrouve l'acteur à impersonner.
         ev = await conn.fetchrow(
-            "SELECT event_code, document_ref, business FROM document_event WHERE seq = $1",
+            "SELECT event_code, document_ref, business, "
+            "correlation_id, correlation_kind, origin, traceparent, actor_guid "
+            "FROM document_event WHERE seq = $1",
             run_row["event_seq"],
         )
         if ev is None:
@@ -725,6 +737,14 @@ async def replay_run(
             "event_code": ev["event_code"],
             "document_ref": ev["document_ref"],
             "business": ev["business"],
+            "correlation_id": ev["correlation_id"],
+            "correlation_kind": ev["correlation_kind"],
+            "origin": ev["origin"],
+            "traceparent": ev["traceparent"],
+            # Acteur à l'origine de l'event : alimente le relais OBO sortant
+            # (`force_obo`) via `from_event_row`, même patron que
+            # `worker._process_event` (worker.py:644).
+            "actor_guid": ev["actor_guid"],
         }
         res = await execute(conn, auto_row, event, pool, settings)
 
@@ -761,9 +781,12 @@ async def run_next_pending(
     async with pool.acquire() as conn:
         wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
+            # `force_obo` : symétrique au SELECT du worker (`tick`, voir
+            # worker.py:872) — sans elle, `_dispatch` l'évalue à False et le
+            # relais OBO ne s'active jamais (fail-open sur ce chemin manuel).
             "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
             "stop_chain, "
-            "functional_type_slugs, url, http_method, body_template "
+            "functional_type_slugs, url, http_method, body_template, force_obo "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -796,6 +819,15 @@ async def run_next_pending(
             "event_code": ev["event_code"],
             "document_ref": ev["document_ref"],
             "business": ev["business"],
+            # `ev` (events_query.next_matching) porte déjà ces colonnes :
+            # reportées dans le dict comme `worker._process_event` le fait
+            # (worker.py:644), pour que le relais OBO (`force_obo`) retrouve
+            # l'acteur et que `corr.from_event_row` reconstruise un contexte.
+            "correlation_id": ev["correlation_id"],
+            "correlation_kind": ev["correlation_kind"],
+            "origin": ev["origin"],
+            "traceparent": ev["traceparent"],
+            "actor_guid": ev["actor_guid"],
         }
         res = await execute(conn, auto, event, pool, settings)
 
@@ -845,9 +877,12 @@ async def advance_pending(
     async with pool.acquire() as conn:
         wk = await _maybe_workspace(conn, ws_slug)
         auto = await conn.fetchrow(
+            # `force_obo` : symétrique au SELECT du worker (`tick`, voir
+            # worker.py:872) — sans elle, `_dispatch` l'évalue à False et le
+            # relais OBO ne s'active jamais (fail-open sur ce chemin manuel).
             "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
             "stop_chain, "
-            "functional_type_slugs, url, http_method, body_template "
+            "functional_type_slugs, url, http_method, body_template, force_obo "
             "FROM automation a WHERE a.id=$1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -880,6 +915,15 @@ async def advance_pending(
             "event_code": ev["event_code"],
             "document_ref": ev["document_ref"],
             "business": ev["business"],
+            # `ev` (events_query.next_matching) porte déjà ces colonnes :
+            # reportées dans le dict comme `worker._process_event` le fait
+            # (worker.py:644), pour que le relais OBO (`force_obo`) retrouve
+            # l'acteur et que `corr.from_event_row` reconstruise un contexte.
+            "correlation_id": ev["correlation_id"],
+            "correlation_kind": ev["correlation_kind"],
+            "origin": ev["origin"],
+            "traceparent": ev["traceparent"],
+            "actor_guid": ev["actor_guid"],
         }
         res = await execute(conn, auto, event, pool, settings)
         # Chaîne de responsabilité : le pas manuel applique la même règle.
