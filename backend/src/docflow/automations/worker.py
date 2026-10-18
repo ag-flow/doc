@@ -780,7 +780,9 @@ async def _retry_failed(pool: asyncpg.Pool, automation: asyncpg.Record, settings
         attempts = int(r["attempts"]) + 1
         async with pool.acquire() as conn:
             ev = await conn.fetchrow(
-                "SELECT seq, event_code, document_ref, business FROM document_event WHERE seq = $1",
+                "SELECT de.seq, de.document_ref, de.event_code, de.business, "
+                "de.correlation_id, de.correlation_kind, de.origin, de.traceparent, de.actor_guid "
+                "FROM document_event de WHERE de.seq = $1",
                 seq,
             )
             if ev is None:
@@ -802,6 +804,18 @@ async def _retry_failed(pool: asyncpg.Pool, automation: asyncpg.Record, settings
                 "event_code": ev["event_code"],
                 "document_ref": ev["document_ref"],
                 "business": ev["business"],
+                # Contexte de corrélation journalisé avec l'event : le worker le
+                # relaie vers la cible interne (A4), sans le réécrire.
+                "correlation_id": ev["correlation_id"],
+                "correlation_kind": ev["correlation_kind"],
+                "origin": ev["origin"],
+                "traceparent": ev["traceparent"],
+                # Acteur à l'origine de l'event : alimente le relais OBO sortant
+                # (`force_obo`) via `from_event_row`. Sans ce report, `actor_guid`
+                # resterait None et un `force_obo=True` différerait à l'infini —
+                # et `_retry_failed` ne reprend que `status='failed'`, donc un run
+                # passé en `defer` n'y est plus jamais repris (abandon silencieux).
+                "actor_guid": ev["actor_guid"],
             }
             prep = await _prepare(conn, automation, event, settings)
 

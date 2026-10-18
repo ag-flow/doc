@@ -388,3 +388,105 @@ async def test_run_tick_force_obo_avec_actor_guid_journalise_emet_les_entetes(
         "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", auto_id
     )
     assert cursor == seq, "l'event est traité : le curseur avance"
+
+
+async def test_retry_failed_force_obo_relaie_obo_et_ne_tombe_pas_en_defer(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """`_retry_failed` ne reportait PAS `actor_guid`/`correlation_id` dans le
+    dict `event` qu'il reconstruit (contrairement à `_process_event`) :
+    `corr.from_event_row` rendait alors `None`, `_dispatch` différait un
+    `force_obo=True` par fail-closed — et comme `_retry_failed` ne
+    sélectionne que `status='failed'`, un run passé en `defer` n'y est plus
+    JAMAIS repris : abandon silencieux d'un event OBO sur simple panne
+    transitoire de la cible.
+
+    Ce test part du run `failed` déjà en base (comme le produit un appel OBO
+    HTTP non-2xx, curseur avancé) et prouve que le retry relaie les 3
+    en-têtes OBO au lieu d'y différer.
+    """
+    import json
+
+    actor = "99999999-8888-7777-6666-555555555555"
+    slug = f"obo-retry-{uuid.uuid4().hex[:8]}"
+    wk: uuid.UUID = await db_pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) RETURNING workspace_technical_key",
+        slug,
+        "OBO retry",
+    )
+    seq: int = await db_pool.fetchval(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business, "
+        " correlation_id, correlation_kind, origin, actor_guid) "
+        "VALUES ($1, NULL, $2, $3::jsonb, $4, 'document', 'doc', $5) RETURNING seq",
+        wk,
+        _CREATED,
+        json.dumps({}),
+        "corr-retry-1",
+        actor,
+    )
+    auto_id: uuid.UUID = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "url, http_method, force_obo) VALUES ($1, $2, true, $3, $4, $5, true) RETURNING id",
+        wk,
+        "Relais OBO retry",
+        [_CREATED],
+        _URL,
+        "POST",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_header (automation_ref, name, value, value_prefix, enabled) "
+        "VALUES ($1, 'Authorization', 's3cr3t', 'Bearer ', true)",
+        auto_id,
+    )
+    # Portée restreinte à SON workspace (cf. les autres tests ci-dessus) :
+    # sinon l'automate ramasserait aussi les events sans actor_guid d'autres
+    # tests, ce qui ne changerait rien ici (le batch normal, pas le retry)
+    # mais rendrait le test dépendant de l'ordre d'exécution.
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2)",
+        auto_id,
+        wk,
+    )
+    # Run déjà `failed` : point de départ exact de `_retry_failed` (un appel
+    # OBO précédemment en panne, curseur déjà avancé en production).
+    await db_pool.execute(
+        "INSERT INTO automation_run "
+        "(automation_ref, document_ref, document_version, change_log_seq, event_seq, "
+        " status, event_code) "
+        "VALUES ($1, NULL, NULL, $2, $2, 'failed', $3)",
+        auto_id,
+        seq,
+        _CREATED,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "stop_chain, functional_type_slugs, delay_minutes, url, http_method, body_template, "
+        "precheck, force_obo FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+    before = time.time()
+    await worker.run_tick(db_pool, automation, _Settings())
+    after = time.time()
+
+    emitted = [c for c in _CALLS if c["url"] == _URL]
+    assert len(emitted) == 1, "le retry doit relayer l'appel OBO, pas l'abandonner"
+    headers = emitted[0]["headers"]
+    assert headers["x-portal-actor"] == actor
+    ts = int(headers["x-portal-actor-timestamp"])
+    assert before - 1 <= ts <= after + 1
+    expected_sig = hmac.new(b"s3cr3t", f"{actor}\n{ts}".encode(), hashlib.sha256).hexdigest()
+    assert headers["x-portal-actor-signature"] == expected_sig
+    assert headers["Authorization"] == "Bearer s3cr3t"
+
+    run = await db_pool.fetchrow(
+        "SELECT status, dead_letter FROM automation_run WHERE automation_ref = $1 "
+        "AND event_seq = $2",
+        auto_id,
+        seq,
+    )
+    assert run is not None
+    assert run["status"] == "ok", "rattrapé, pas abandonné en defer"
+    assert run["dead_letter"] is False
