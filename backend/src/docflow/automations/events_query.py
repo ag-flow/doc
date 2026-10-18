@@ -92,7 +92,7 @@ async def matching_batch(
     """Events matchés au-delà du curseur (batch ordonné)."""
     rows: list[asyncpg.Record] = await conn.fetch(
         "SELECT de.seq, de.document_ref, de.event_code, de.business, "
-        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent "
+        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent, de.actor_guid "
         + _FROM_WHERE
         + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT $8",
         wks,
@@ -120,7 +120,7 @@ async def next_matching(
     """Prochain event matché au-delà du curseur (ou None)."""
     return await conn.fetchrow(
         "SELECT de.seq, de.document_ref, de.event_code, de.business, "
-        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent "
+        "de.correlation_id, de.correlation_kind, de.origin, de.traceparent, de.actor_guid "
         + _FROM_WHERE
         + " AND de.seq > $6 ORDER BY de.seq ASC LIMIT 1",
         wks,

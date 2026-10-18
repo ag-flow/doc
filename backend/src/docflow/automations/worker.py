@@ -638,6 +638,10 @@ async def _process_event(
             "correlation_kind": row["correlation_kind"],
             "origin": row["origin"],
             "traceparent": row["traceparent"],
+            # Acteur à l'origine de l'event : alimente le relais OBO sortant
+            # (`force_obo`) via `from_event_row`. Sans ce report, `actor_guid`
+            # resterait None et un `force_obo=True` différerait à l'infini.
+            "actor_guid": row["actor_guid"],
         }
         prep = await _prepare(conn, automation, event, settings)
 

@@ -267,6 +267,16 @@ async def test_run_tick_force_obo_sans_acteur_gele_le_curseur_sans_dead_letter(
         "VALUES ($1, 'Authorization', 's3cr3t', 'Bearer ', true)",
         auto_id,
     )
+    # Portée restreinte à SON workspace : sinon l'automate ramasserait aussi
+    # les events (avec actor_guid) d'autres tests, qui émettraient et
+    # fausseraient l'assertion `_CALLS == []`. Isolation, pas de dépendance à
+    # l'ordre.
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2)",
+        auto_id,
+        wk,
+    )
     automation = await db_pool.fetchrow(
         "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
         "stop_chain, functional_type_slugs, delay_minutes, url, http_method, body_template, "
@@ -276,7 +286,7 @@ async def test_run_tick_force_obo_sans_acteur_gele_le_curseur_sans_dead_letter(
 
     await worker.run_tick(db_pool, automation, _Settings())
 
-    assert _CALLS == [], "l'event journalisé n'a pas (encore) d'actor_guid plumbé : defer"
+    assert _CALLS == [], "l'event journalisé (sans actor_guid) : defer, aucun appel"
     run = await db_pool.fetchrow(
         "SELECT status FROM automation_run WHERE automation_ref=$1 AND event_seq=$2",
         auto_id,
@@ -287,3 +297,94 @@ async def test_run_tick_force_obo_sans_acteur_gele_le_curseur_sans_dead_letter(
         "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", auto_id
     )
     assert cursor is None, "le curseur reste gelé : l'event sera retenté, pas de dead-letter"
+
+
+async def test_run_tick_force_obo_avec_actor_guid_journalise_emet_les_entetes(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Bout en bout, PONT FERMÉ : un `document_event` écrit AVEC `actor_guid`
+    est relu par `matching_batch`, traverse `from_event_row`, et le dispatch
+    pose réellement les 3 en-têtes OBO — PAS de defer.
+
+    C'est la preuve que la chaîne SQL → dict event → `ctx.actor_guid` est
+    complète : le test NULL ci-dessus prouve le fail-closed, celui-ci prouve
+    l'émission. Sans le report de `de.actor_guid` dans les deux SELECT de
+    `events_query` ET dans le dict event de `_process_event`, il différerait.
+    """
+    import json
+
+    actor = "11111111-2222-3333-4444-555555555555"
+    slug = f"obo-emit-{uuid.uuid4().hex[:8]}"
+    wk: uuid.UUID = await db_pool.fetchval(
+        "INSERT INTO workspace (slug, label) VALUES ($1, $2) RETURNING workspace_technical_key",
+        slug,
+        "OBO emit",
+    )
+    # correlation_id non nul : `from_event_row` ne reconstruit un contexte (et
+    # donc ne porte `actor_guid`) que si l'event est corrélé.
+    seq: int = await db_pool.fetchval(
+        "INSERT INTO document_event "
+        "(workspace_technical_key, document_ref, event_code, business, "
+        " correlation_id, correlation_kind, origin, actor_guid) "
+        "VALUES ($1, NULL, $2, $3::jsonb, $4, 'document', 'doc', $5) RETURNING seq",
+        wk,
+        _CREATED,
+        json.dumps({}),
+        "corr-emit-1",
+        actor,
+    )
+    auto_id: uuid.UUID = await db_pool.fetchval(
+        "INSERT INTO automation (workspace_technical_key, label, active, event_codes, "
+        "url, http_method, force_obo) VALUES ($1, $2, true, $3, $4, $5, true) RETURNING id",
+        wk,
+        "Relais OBO emit",
+        [_CREATED],
+        _URL,
+        "POST",
+    )
+    await db_pool.execute(
+        "INSERT INTO automation_header (automation_ref, name, value, value_prefix, enabled) "
+        "VALUES ($1, 'Authorization', 's3cr3t', 'Bearer ', true)",
+        auto_id,
+    )
+    # Portée restreinte à SON workspace : sans scope, l'automate ramasserait
+    # aussi les events (sans actor_guid) laissés par les autres tests de la
+    # session, dont le defer gèlerait le curseur — le test deviendrait
+    # dépendant de l'ordre d'exécution.
+    await db_pool.execute(
+        "INSERT INTO automation_workspace (automation_ref, workspace_technical_key) "
+        "VALUES ($1, $2)",
+        auto_id,
+        wk,
+    )
+    automation = await db_pool.fetchrow(
+        "SELECT id, workspace_technical_key, event_codes, block_slugs, block_templates, "
+        "stop_chain, functional_type_slugs, delay_minutes, url, http_method, body_template, "
+        "precheck, force_obo FROM automation WHERE id = $1",
+        auto_id,
+    )
+
+    before = time.time()
+    await worker.run_tick(db_pool, automation, _Settings())
+    after = time.time()
+
+    emitted = [c for c in _CALLS if c["url"] == _URL]
+    assert len(emitted) == 1, "l'appel principal doit partir : plus de defer"
+    headers = emitted[0]["headers"]
+    assert headers["x-portal-actor"] == actor
+    ts = int(headers["x-portal-actor-timestamp"])
+    assert before - 1 <= ts <= after + 1
+    expected_sig = hmac.new(b"s3cr3t", f"{actor}\n{ts}".encode(), hashlib.sha256).hexdigest()
+    assert headers["x-portal-actor-signature"] == expected_sig
+    assert headers["Authorization"] == "Bearer s3cr3t"
+
+    run = await db_pool.fetchrow(
+        "SELECT status FROM automation_run WHERE automation_ref=$1 AND event_seq=$2",
+        auto_id,
+        seq,
+    )
+    assert run is not None and run["status"] == "ok", "l'appel a eu lieu : run enregistré"
+    cursor = await db_pool.fetchval(
+        "SELECT last_seq FROM automation_cursor WHERE automation_ref = $1", auto_id
+    )
+    assert cursor == seq, "l'event est traité : le curseur avance"
