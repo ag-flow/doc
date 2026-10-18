@@ -94,6 +94,23 @@ def reset(token: Token[CorrelationContext | None]) -> None:
     structlog.contextvars.unbind_contextvars("correlation_id", "correlation_kind", "origin")
 
 
+def bind_actor(actor_guid: str) -> Token[CorrelationContext | None]:
+    """Lie l'acteur OBO au contexte ambiant (ingress MCP OBO, Task 2).
+
+    Greffe l'acteur sur le fil courant s'il en existe un (ex. middleware HTTP
+    entrant) pour ne PAS lui faire perdre son `correlation_id` ; à défaut,
+    amorce un fil `document` dédié — l'ingress MCP OBO n'a pas de fil entrant
+    W3C puisqu'il n'est jamais derrière `CorrelationMiddleware`. `reset(token)`
+    restaure l'état antérieur : point de sortie obligatoire (`finally` côté
+    appelant) pour qu'un acteur ne fuite jamais sur une requête voisine.
+    """
+    existing = current()
+    ctx = replace(existing, actor_guid=actor_guid) if existing is not None else new_context(
+        "document", actor_guid=actor_guid
+    )
+    return bind(ctx)
+
+
 # ── Naissance d'un fil ────────────────────────────────────────────────────────
 
 

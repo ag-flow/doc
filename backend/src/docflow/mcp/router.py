@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextvars import Token
 from uuid import UUID
 
 import structlog
@@ -18,6 +19,7 @@ from docflow.mcp.oauth import resolve_idp_bearer, www_authenticate
 from docflow.mcp.obo import resolve_actor_user
 from docflow.mcp.server import _get_pool, mcp_server
 from docflow.mcp.session import McpSession, reset_current_session, set_current_session
+from docflow.observability import correlation as corr
 from docflow.schemas.auth import AuthUser
 
 log = structlog.get_logger(__name__)
@@ -133,6 +135,29 @@ async def _build_session(request: Request, user: AuthUser, raw_api_key: str | No
     )
 
 
+def _bind_actor_from_request(
+    session: McpSession, request: Request
+) -> Token[corr.CorrelationContext | None] | None:
+    """Capte le GUID acteur OBO pour le contexte de corrélation (Task 2).
+
+    `session.actor_user` n'est non-None que si `resolve_actor_user` a déjà
+    vérifié la signature HMAC de l'en-tête (frontière de confiance OBO) : on
+    relit `x-portal-actor` tel quel, on ne revalide rien ici. Lié pour toute la
+    durée de la session SSE — chaque event `document_event` écrit pendant son
+    cours (potentiellement plusieurs appels d'outils) hérite de `actor_guid`
+    via le contexte ambiant (`outbox._resolve_correlation`), sinon le relais
+    OBO sortant (Task 1) n'aurait personne à propager. None si aucun acteur
+    n'a été résolu : ne lie rien, l'event restera sans acteur (comportement
+    inchangé pour un appel clé API seule).
+    """
+    if session.actor_user is None:
+        return None
+    actor_guid = request.headers.get("x-portal-actor")
+    if actor_guid is None:
+        return None
+    return corr.bind_actor(actor_guid)
+
+
 async def _mcp_sse(scope: Scope, receive: Receive, send: Send) -> None:
     """Point d'entrée SSE du serveur MCP (jeton d'accès IdP OU clé API en Bearer).
 
@@ -146,7 +171,12 @@ async def _mcp_sse(scope: Scope, receive: Receive, send: Send) -> None:
     if authed is None:
         return
     user, raw_api_key = authed
-    token = set_current_session(await _build_session(request, user, raw_api_key))
+    session = await _build_session(request, user, raw_api_key)
+    token = set_current_session(session)
+    # Lié pour toute la durée du canal SSE, AVANT que tool execution ne démarre
+    # (les appels d'outils arrivent par /mcp/messages et sont dispatchés dans
+    # cette même tâche asyncio, donc voient le contextvar posé ici).
+    corr_token = _bind_actor_from_request(session, request)
     try:
         async with _transport.connect_sse(scope, receive, send) as (read_stream, write_stream):
             await mcp_server.run(
@@ -155,6 +185,8 @@ async def _mcp_sse(scope: Scope, receive: Receive, send: Send) -> None:
                 mcp_server.create_initialization_options(),
             )
     finally:
+        if corr_token is not None:
+            corr.reset(corr_token)
         reset_current_session(token)
         # Balayage des verrous orphelins (sessions fermées sans POST ultérieur).
         live = _transport._read_stream_writers.keys()  # noqa: SLF001
