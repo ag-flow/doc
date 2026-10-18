@@ -14,11 +14,13 @@ from docflow.automations import events_query
 from docflow.db.helpers import require_workspace
 from docflow.schemas.automations import (
     AutomationCreate,
+    AutomationHeaderIn,
     AutomationHeaderOut,
     AutomationOut,
     AutomationPrecheck,
     AutomationRunOut,
     AutomationUpdate,
+    has_active_bearer_header,
 )
 
 log = structlog.get_logger(__name__)
@@ -36,6 +38,30 @@ async def _fetch_headers(
         automation_id,
     )
     return [AutomationHeaderOut(**dict(r)) for r in rows]
+
+
+def _assert_force_obo_requires_bearer(
+    force_obo: bool, headers: list[AutomationHeaderIn] | list[AutomationHeaderOut]
+) -> None:
+    """Refuse `force_obo=True` sans header `Authorization: Bearer` actif.
+
+    Le refus a lieu AVANT toute écriture (appelé avant l'INSERT/UPDATE) :
+    sans cette garde, un automate pourrait promettre un relais OBO qu'il ne
+    peut pas tenir — la pose de l'en-tête de relais, dans le worker, n'a alors
+    rien à relayer. `obo_requires_bearer` est le code STABLE sur lequel
+    l'appelant branche ; le message est pour un humain, pas pour un `if`.
+    """
+    if force_obo and not has_active_bearer_header(headers):
+        raise HTTPException(
+            422,
+            detail={
+                "code": "obo_requires_bearer",
+                "message": (
+                    "force_obo exige un en-tête « Authorization » actif dont "
+                    "la valeur commence par « Bearer »."
+                ),
+            },
+        )
 
 
 # ── Portée multi-workspaces (table automation_workspace) ─────────────────────
@@ -278,6 +304,7 @@ def _row_to_out(
         http_method=row["http_method"],
         body_template=row["body_template"],
         precheck=_precheck_of(row),
+        force_obo=row["force_obo"],
         headers=headers,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -316,7 +343,7 @@ _LIST_FIELDS = (
     "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
     "a.on_create, a.on_update, "
     "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-    "a.body_template, a.precheck, a.created_at, a.updated_at, "
+    "a.body_template, a.precheck, a.force_obo, a.created_at, a.updated_at, "
     # Dernière exécution : sous-requête sur le run le plus récent.
     "(SELECT r.executed_at FROM automation_run r WHERE r.automation_ref = a.id "
     " ORDER BY r.executed_at DESC NULLS LAST LIMIT 1) AS last_run_at, "
@@ -430,6 +457,7 @@ async def reorder_automations(
 async def create_automation(
     pool: asyncpg.Pool, ws_slug: str | None, body: AutomationCreate
 ) -> AutomationOut:
+    _assert_force_obo_requires_bearer(body.force_obo, body.headers)
     async with pool.acquire() as conn, conn.transaction():
         # Portée : les workspaces cochés. AUCUN coché = aucun filtre de portée,
         # donc l'instance entière — la couverture obéit à la même règle que les
@@ -445,12 +473,13 @@ async def create_automation(
             "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, "
             " delay_minutes, contract_ref, operation_id, url, http_method, body_template, "
-            " precheck) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb) "
+            " precheck, force_obo) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
-            "operation_id, url, http_method, body_template, precheck, created_at, updated_at",
+            "operation_id, url, http_method, body_template, precheck, force_obo, "
+            "created_at, updated_at",
             keys[0] if keys else None,
             body.label,
             body.active,
@@ -468,6 +497,7 @@ async def create_automation(
             body.http_method,
             body.body_template,
             _precheck_json(body.precheck),
+            body.force_obo,
         )
         assert row is not None
         await _set_workspaces(conn, row["id"], keys)
@@ -487,7 +517,7 @@ async def get_automation(
             "a.block_slugs, a.block_templates, a.functional_type_slugs, a.stop_chain, "
             "a.on_create, a.on_update, "
             "a.delay_minutes, a.contract_ref, a.operation_id, a.url, a.http_method, "
-            "a.body_template, a.precheck, a.created_at, a.updated_at "
+            "a.body_template, a.precheck, a.force_obo, a.created_at, a.updated_at "
             "FROM automation a WHERE a.id = $1 AND " + _VISIBLE,
             automation_id,
             wk,
@@ -517,6 +547,28 @@ async def update_automation(
         if exists is None:
             raise HTTPException(404, f"Automate {automation_id} introuvable.")
 
+        # Présence de "headers" dans le body : on réécrit depuis les objets
+        # pydantic (body.headers), pas depuis le dump (dicts) — _upsert_headers
+        # attend des objets (h.name, …).
+        headers_present = "headers" in raw
+
+        # Garde `force_obo`, AVANT toute écriture. Seul un PATCH qui touche
+        # `force_obo` OU `headers` peut casser l'invariant (un PATCH qui ne
+        # touche ni l'un ni l'autre laisse l'état déjà valide inchangé) : on ne
+        # va chercher l'état courant en base que dans ce cas.
+        if "force_obo" in raw or headers_present:
+            effective_force_obo = raw.get("force_obo")
+            if effective_force_obo is None:
+                effective_force_obo = await conn.fetchval(
+                    "SELECT force_obo FROM automation WHERE id = $1", automation_id
+                )
+            effective_headers = (
+                (body.headers or [])
+                if headers_present
+                else await _fetch_headers(conn, automation_id)
+            )
+            _assert_force_obo_requires_bearer(effective_force_obo, effective_headers)
+
         # Portée workspaces : remplacement de l'ensemble. Vide est LÉGITIME —
         # c'est « aucun filtre de portée », pas une saisie incomplète.
         if "workspace_slugs" in raw:
@@ -525,10 +577,6 @@ async def update_automation(
                 conn, automation_id, await _resolve_workspace_keys(conn, new_slugs)
             )
 
-        # Présence de "headers" dans le body : on réécrit depuis les objets
-        # pydantic (body.headers), pas depuis le dump (dicts) — _upsert_headers
-        # attend des objets (h.name, …).
-        headers_present = "headers" in raw
         raw.pop("headers", None)
 
         if raw:
@@ -551,6 +599,7 @@ async def update_automation(
                 "http_method",
                 "body_template",
                 "precheck",
+                "force_obo",
             }
             for k, v in raw.items():
                 if k not in scalar_map:
@@ -582,7 +631,7 @@ async def update_automation(
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, "
             "delay_minutes, contract_ref, operation_id, url, http_method, body_template, precheck, "
-            "created_at, updated_at "
+            "force_obo, created_at, updated_at "
             "FROM automation WHERE id = $1",
             automation_id,
         )
@@ -939,12 +988,13 @@ async def clone_automation(
             "(workspace_technical_key, label, active, event_codes, block_slugs, block_templates, "
             " functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, "
             " contract_ref, "
-            " operation_id, url, http_method, body_template, precheck) "
-            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb) "
+            " operation_id, url, http_method, body_template, precheck, force_obo) "
+            "VALUES ($1,$2,false,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17) "
             "RETURNING id, workspace_technical_key, label, active, event_codes, block_slugs, "
             "block_templates, "
             "functional_type_slugs, stop_chain, on_create, on_update, delay_minutes, contract_ref, "
-            "operation_id, url, http_method, body_template, precheck, created_at, updated_at",
+            "operation_id, url, http_method, body_template, precheck, force_obo, "
+            "created_at, updated_at",
             src["workspace_technical_key"],
             f"{src['label']} (copie)",
             src["event_codes"],
@@ -961,6 +1011,7 @@ async def clone_automation(
             src["http_method"],
             src["body_template"],
             src["precheck"],
+            src["force_obo"],
         )
         assert row is not None
         new_id: uuid.UUID = row["id"]

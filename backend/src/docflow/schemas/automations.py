@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, model_validator
 
@@ -33,6 +34,34 @@ class AutomationHeaderOut(BaseModel):
     value_prefix: str | None
     required: bool
     enabled: bool
+
+
+class _HeaderLike(Protocol):
+    """Ce dont `has_active_bearer_header` a besoin — satisfait à la fois par
+    `AutomationHeaderIn` (corps entrant) et `AutomationHeaderOut` (ligne relue),
+    pour que la garde `force_obo` s'applique identiquement aux deux."""
+
+    name: str
+    value: str | None
+    value_prefix: str | None
+    enabled: bool
+
+
+def has_active_bearer_header(headers: Sequence[_HeaderLike]) -> bool:
+    """Un header `Authorization` ACTIF dont la valeur ou son préfixe commence
+    par « Bearer » — le seul signal, à ce stade, qu'un automate PEUT porter un
+    jeton OBO. La pose effective de l'en-tête de relais est une autre tâche
+    (le worker) ; cette fonction ne fait que dire si la promesse `force_obo`
+    est tenable avec la configuration actuelle des headers.
+
+    Un header désactivé ne compte pas : il ne part jamais avec l'appel.
+    """
+    return any(
+        h.enabled
+        and h.name == "Authorization"
+        and ((h.value or "").startswith("Bearer ") or (h.value_prefix or "").startswith("Bearer "))
+        for h in headers
+    )
 
 
 class AutomationPrecheckRule(BaseModel):
@@ -99,6 +128,11 @@ class AutomationCreate(BaseModel):
     http_method: str
     body_template: str | None = None
     precheck: AutomationPrecheck | None = None
+    # Relaie l'identité de l'acteur plutôt que les credentials propres de
+    # l'automate (chantier OBO sortant). La pose de l'en-tête de relais est une
+    # autre tâche (worker) ; ici, exige seulement qu'un header Bearer actif
+    # existe déjà — sinon la promesse n'est pas tenable (garde en service).
+    force_obo: bool = False
     headers: list[AutomationHeaderIn] = []
 
 
@@ -122,6 +156,7 @@ class AutomationUpdate(BaseModel):
     http_method: str | None = None
     body_template: str | None = None
     precheck: AutomationPrecheck | None = None
+    force_obo: bool | None = None
     headers: list[AutomationHeaderIn] | None = None
 
 
@@ -163,6 +198,7 @@ class AutomationOut(BaseModel):
     http_method: str
     body_template: str | None
     precheck: AutomationPrecheck | None = None
+    force_obo: bool = False
     headers: list[AutomationHeaderOut]
     created_at: datetime
     updated_at: datetime

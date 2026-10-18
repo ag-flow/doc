@@ -1,0 +1,21 @@
+-- =====================================================================
+-- 0082 — Toggle `force_obo` par automate (chantier OBO sortant des automates).
+--
+-- Un automate appelle aujourd'hui avec ses propres credentials (headers
+-- configurés). `force_obo` signale qu'il doit à la place RELAYER l'identité
+-- de l'acteur à l'origine de l'event déclencheur — la pose effective de
+-- l'en-tête de relais (signature, valeur) est une AUTRE tâche (le worker,
+-- Task 4 du chantier). Cette colonne ne porte que le signal.
+--
+-- DEFAULT false : tous les automates existants gardent leur comportement
+-- actuel (appel avec leurs propres credentials), sans aucun geste.
+--
+-- La garde « force_obo=True exige un header Authorization Bearer actif » est
+-- applicative (service), pas en contrainte SQL : elle doit lire `enabled` et
+-- le préfixe `value_prefix`, deux colonnes de `automation_header` — une
+-- contrainte CHECK ne peut pas traverser une table liée.
+--
+-- Rejouable : `add column if not exists` est sans effet si la colonne est là.
+-- =====================================================================
+
+alter table automation add column if not exists force_obo boolean not null default false;
