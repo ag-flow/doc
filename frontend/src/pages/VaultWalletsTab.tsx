@@ -62,6 +62,17 @@ export function VaultWalletsTab() {
     onError: (err: Error) => setFormError(err.message),
   })
 
+  // Parcours alternatif à la saisie manuelle : le backend connaît déjà l'alias
+  // et l'URL (requis pour le PAR Harpocrate), la redirection quitte l'app —
+  // d'où une navigation pleine page plutôt qu'un onSuccess de mutation React.
+  const connectMutation = useMutation({
+    mutationFn: () =>
+      vaultApi.connectStart({ name, url, description: description.trim() || undefined }),
+    onSuccess: (res) => window.location.assign(res.browser_url),
+  })
+
+  const canConnect = Boolean(name.trim() && url.trim())
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => vaultApi.deleteWallet(id),
     onSuccess: () => {
@@ -221,6 +232,23 @@ export function VaultWalletsTab() {
               </select>
             )}
           </Field>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!canConnect || connectMutation.isPending}
+              onClick={() => connectMutation.mutate()}
+              data-testid="vault-connect-btn"
+            >
+              {connectMutation.isPending ? t('common.loading') : t('vault.connect')}
+            </Button>
+            {connectMutation.isError && (
+              <p className="field-error m-0" data-testid="vault-connect-error">
+                {(connectMutation.error as Error).message}
+              </p>
+            )}
+          </div>
           <Field label={t('vault.walletDescription')} htmlFor="wallet-desc"
             hint={t('vault.walletDescriptionHint')}>
             <Input

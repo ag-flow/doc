@@ -1037,6 +1037,10 @@ export const vaultApi = {
   checkWallet: (id: string) =>
     api.post<WalletCheckOut>(`/admin/vault/wallets/${id}/check`, {}),
   deleteWallet: (id: string) => api.delete(`/admin/vault/wallets/${id}`),
+  /** Démarre le parcours de connexion OAuth-like avec Harpocrate : le backend
+   *  rend une URL de navigateur à ouvrir en pleine page (jamais un jeton). */
+  connectStart: (body: { name: string; url: string; description?: string }) =>
+    api.post<{ browser_url: string }>('/admin/vault/connect/start', body),
 }
 
 export const secretsApi = {
