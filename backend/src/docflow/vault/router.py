@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 
 from docflow.auth.deps import require_authenticated
+from docflow.config.base_url import effective_base_url
 from docflow.schemas.auth import AuthUser
 from docflow.schemas.vault import (
     HmacSecretCreate,
@@ -17,9 +21,23 @@ from docflow.schemas.vault import (
     VaultWalletOut,
     WalletCheckOut,
 )
+from docflow.vault import connect as vault_connect
 from docflow.vault import service
 
 router = APIRouter(tags=["vault"])
+
+
+class VaultConnectStart(BaseModel):
+    """Corps de `POST /admin/vault/connect/start` : alias + URL du coffre à
+    connecter. Mêmes contraintes que `VaultWalletCreate` (le wallet créé au
+    retour porte exactement ces champs)."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    url: str = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=500)
+
 
 _Auth = Depends(require_authenticated)
 
@@ -65,13 +83,59 @@ async def check_wallet(
     )
 
 
+# ── Parcours « Connecter à Harpocrate » (PAR OAuth-like, cf. vault/connect.py) ─
+
+
+@router.post("/admin/vault/connect/start")
+async def start_vault_connect(
+    body: VaultConnectStart, request: Request, user: AuthUser = _Auth
+) -> dict[str, str]:
+    settings = request.app.state.settings
+    # Chemin FIXE : c'est exactement l'URL vers laquelle Harpocrate renverra le
+    # navigateur — toute divergence avec la route @router.get ci-dessous romprait
+    # le parcours (state_mismatch côté SDK).
+    redirect_uri = f"{effective_base_url(settings)}/api/admin/vault/connect/callback"
+    browser_url = await vault_connect.start_connect(
+        request.app.state.pool,
+        user=user,
+        name=body.name,
+        url=body.url,
+        description=body.description,
+        redirect_uri=redirect_uri,
+        client_id=settings.harpocrate_connect_client_id,
+        enc_key=_key(request),
+        now=datetime.now(UTC),
+    )
+    return {"browser_url": browser_url}
+
+
+@router.get("/admin/vault/connect/callback")
+async def vault_connect_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    user: AuthUser = _Auth,
+) -> RedirectResponse:
+    outcome = await vault_connect.finish_connect(
+        request.app.state.pool,
+        user=user,
+        state=state,
+        code=code,
+        error=error,
+        enc_key=_key(request),
+        now=datetime.now(UTC),
+    )
+    # Jamais de token ni de détail d'erreur sensible dans l'URL : un statut
+    # littéral seulement (ConnectOutcome), lu par le front pour son message.
+    return RedirectResponse(url=f"/admin/vault?connect={outcome}", status_code=302)
+
+
 @router.get("/admin/secrets", response_model=list[VaultSecretOut])
 async def list_secrets(
     request: Request, secret_type: str | None = None, user: AuthUser = _Auth
 ) -> list[VaultSecretOut]:
-    return await service.list_secrets(
-        request.app.state.pool, user.id, _key(request), secret_type
-    )
+    return await service.list_secrets(request.app.state.pool, user.id, _key(request), secret_type)
 
 
 @router.post("/admin/secrets", response_model=VaultSecretOut, status_code=201)

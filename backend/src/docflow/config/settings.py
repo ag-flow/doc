@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # Annoncé dans les métadonnées de ressource protégée (RFC 9728).
     oauth2_audience: str = "docflow-mcp"
     harpocrate_url: str | None = None
+    # client_id annoncé au parcours « Connecter à Harpocrate » (PAR OAuth-like) :
+    # identifie CETTE instance docflow auprès du coffre, indépendant de l'owner.
+    harpocrate_connect_client_id: str = "docflow"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Clé Fernet 32 octets base64-urlsafe pour chiffrer les headers webhook.
     # Requise pour créer des webhooks avec headers ; absence = headers interdits.

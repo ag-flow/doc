@@ -55,6 +55,41 @@ async def list_wallets(pool: asyncpg.Pool, owner_id: uuid.UUID) -> list[VaultWal
     return out
 
 
+async def _insert_vault_wallet(
+    conn: asyncpg.Connection,
+    *,
+    owner_id: uuid.UUID,
+    name: str,
+    url: str,
+    description: str | None,
+    api_key_secret_ref: uuid.UUID,
+) -> VaultWalletOut:
+    """INSERT nu, composable dans la transaction de l'appelant (`conn`, jamais `pool`).
+
+    Extrait de `create_wallet` pour que le parcours « Connecter à Harpocrate »
+    (vault/connect.py) crée secret + wallet dans UNE transaction : les deux ou
+    aucun. Relit le libellé du secret référencé par la MÊME connexion — visible
+    même si le secret vient d'être inséré, non encore committé, dans cette
+    transaction (lecture intra-transaction).
+    """
+    row = await conn.fetchrow(
+        """
+        INSERT INTO vault_wallet (name, owner_ref, url, description, api_key_secret_ref)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, name, url, description,
+                  api_key_secret_ref AS api_key_secret_id, created_at, updated_at
+        """,
+        name,
+        owner_id,
+        url,
+        description,
+        api_key_secret_ref,
+    )
+    assert row is not None
+    label = await conn.fetchval("SELECT label FROM user_secret WHERE id = $1", api_key_secret_ref)
+    return VaultWalletOut(**dict(row), api_key_secret_label=label)
+
+
 async def create_wallet(
     pool: asyncpg.Pool, owner_id: uuid.UUID, body: VaultWalletCreate
 ) -> VaultWalletOut:
@@ -62,7 +97,7 @@ async def create_wallet(
     propriétaire. Le token n'est jamais saisi ici : seule sa référence l'est."""
     async with pool.acquire() as conn:
         sec = await conn.fetchrow(
-            "SELECT label, secret_type FROM user_secret WHERE id = $1 AND owner_ref = $2",
+            "SELECT secret_type FROM user_secret WHERE id = $1 AND owner_ref = $2",
             body.api_key_secret_id,
             owner_id,
         )
@@ -75,23 +110,16 @@ async def create_wallet(
                 422, "La clé d'API référencée doit être un secret de type HARPOCRATE_API_KEY."
             )
         try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO vault_wallet (name, owner_ref, url, description, api_key_secret_ref)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, name, url, description,
-                          api_key_secret_ref AS api_key_secret_id, created_at, updated_at
-                """,
-                body.name,
-                owner_id,
-                body.url,
-                body.description,
-                body.api_key_secret_id,
+            return await _insert_vault_wallet(
+                conn,
+                owner_id=owner_id,
+                name=body.name,
+                url=body.url,
+                description=body.description,
+                api_key_secret_ref=body.api_key_secret_id,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(409, f"Un endpoint nommé « {body.name} » existe déjà.") from exc
-    assert row is not None
-    return VaultWalletOut(**dict(row), api_key_secret_label=sec["label"])
 
 
 async def delete_wallet(pool: asyncpg.Pool, owner_id: uuid.UUID, wallet_id: uuid.UUID) -> None:

@@ -42,6 +42,39 @@ async def list_secrets(
     return out
 
 
+async def _insert_user_secret(
+    conn: asyncpg.Connection,
+    *,
+    owner_id: uuid.UUID,
+    slug: str,
+    label: str,
+    value_enc: str,
+    secret_type: str,
+) -> uuid.UUID:
+    """INSERT nu d'un secret LOCAL, composable dans la transaction de l'appelant.
+
+    Extrait de `create_secret` (branche locale uniquement — le stockage vault
+    garde son propre INSERT, aux champs différents) pour que le parcours
+    « Connecter à Harpocrate » (vault/connect.py) puisse créer secret + wallet
+    dans UNE transaction (`conn`, jamais `pool`) : les deux ou aucun.
+    `storage_type='local'` est fixé ici (jamais 'vault' pour ce chemin).
+    """
+    row = await conn.fetchrow(
+        """
+        INSERT INTO user_secret (owner_ref, slug, label, value_enc, secret_type, storage_type)
+        VALUES ($1, $2, $3, $4, $5, 'local')
+        RETURNING id
+        """,
+        owner_id,
+        slug,
+        label,
+        value_enc,
+        secret_type,
+    )
+    assert row is not None
+    return uuid.UUID(str(row["id"]))
+
+
 async def create_secret(
     pool: asyncpg.Pool,
     user_id: uuid.UUID,
@@ -56,9 +89,25 @@ async def create_secret(
                 raise HTTPException(422, "Valeur requise pour un secret local.")
             if body.vault_identifier or body.vault_path:
                 raise HTTPException(422, "Champs vault interdits pour un stockage local.")
-            value_enc: str | None = encrypt_str(enc_key, body.value)
-            vault_identifier: str | None = None
-            vault_path: str | None = None
+            try:
+                secret_id = await _insert_user_secret(
+                    conn,
+                    owner_id=user_id,
+                    slug=body.slug,
+                    label=body.label,
+                    value_enc=encrypt_str(enc_key, body.value),
+                    secret_type=body.secret_type,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
+            row = await conn.fetchrow(
+                """
+                SELECT id, slug, label, secret_type, storage_type,
+                       vault_identifier, vault_path, created_at, updated_at
+                FROM user_secret WHERE id = $1
+                """,
+                secret_id,
+            )
         else:  # vault — aucun repli automatique (fail closed)
             if body.value:
                 raise HTTPException(
@@ -75,30 +124,25 @@ async def create_secret(
                 raise HTTPException(
                     422, f"Endpoint vault « {body.vault_identifier} » inexistant : aucun repli."
                 )
-            value_enc = None
-            vault_identifier = body.vault_identifier
-            vault_path = body.vault_path
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO user_secret
-                    (owner_ref, slug, label, value_enc, secret_type,
-                     storage_type, vault_identifier, vault_path)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                RETURNING id, slug, label, secret_type, storage_type,
-                          vault_identifier, vault_path, created_at, updated_at
-                """,
-                user_id,
-                body.slug,
-                body.label,
-                value_enc,
-                body.secret_type,
-                body.storage_type,
-                vault_identifier,
-                vault_path,
-            )
-        except asyncpg.UniqueViolationError as exc:
-            raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO user_secret
+                        (owner_ref, slug, label, value_enc, secret_type,
+                         storage_type, vault_identifier, vault_path)
+                    VALUES ($1, $2, $3, NULL, $4, 'vault', $5, $6)
+                    RETURNING id, slug, label, secret_type, storage_type,
+                              vault_identifier, vault_path, created_at, updated_at
+                    """,
+                    user_id,
+                    body.slug,
+                    body.label,
+                    body.secret_type,
+                    body.vault_identifier,
+                    body.vault_path,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise HTTPException(409, f"Un secret nommé « {body.slug} » existe déjà.") from exc
     assert row is not None
     return VaultSecretOut(**dict(row))
 
