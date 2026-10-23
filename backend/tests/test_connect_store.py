@@ -14,11 +14,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
+from cryptography.fernet import Fernet
 
 from docflow.crypto import encrypt_str
 from docflow.vault import connect_store
 
-_FERNET_KEY = "doDf_wYBxnndJetzCFFXmE7i5IhkgcZH0BsELUHCuGU="  # clé Fernet valide (32o b64url)
+_FERNET_KEY = Fernet.generate_key().decode()  # clé de test générée à la volée
 
 
 async def _make_user(pool: asyncpg.Pool, email: str) -> uuid.UUID:

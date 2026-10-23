@@ -17,12 +17,11 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime
-from typing import TypeAlias
 
 import asyncpg
 
 #: Connexion directe ou pool — les deux exposent la même API fetchrow/execute.
-Connectable: TypeAlias = asyncpg.Pool | asyncpg.Connection
+type Connectable = asyncpg.Pool | asyncpg.Connection
 
 
 def _hash_state(state: str) -> str:
