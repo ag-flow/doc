@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -120,16 +121,22 @@ async def test_finish_connect_nominal_creates_secret_and_wallet(
     await _start(monkeypatch, db_pool, user=user, state="state-ok", name="corp-ok")
 
     monkeypatch.setattr(harpocrate_connect, "finish", _fake_finish_ok("hrpv_1_simtoken"))
-    outcome = await vault_connect.finish_connect(
-        db_pool,
-        user=user,
-        state="state-ok",
-        code="the-code",
-        error=None,
-        enc_key=_ENC,
-        now=_NOW,
-    )
+    # Anti-régression (durcissement #4) : le chemin succès n'émet aucun log
+    # aujourd'hui ; on capture quand même pour qu'un log ajouté plus tard qui
+    # laisserait fuiter le token soit détecté immédiatement.
+    with capture_logs() as cap:
+        outcome = await vault_connect.finish_connect(
+            db_pool,
+            user=user,
+            state="state-ok",
+            code="the-code",
+            error=None,
+            enc_key=_ENC,
+            now=_NOW,
+        )
     assert outcome == "ok"
+    for record in cap:
+        assert "hrpv_1_simtoken" not in repr(record), f"token fuité dans un log : {record!r}"
 
     resolved = await vault_svc.get_api_key(db_pool, "corp-ok", _ENC)
     assert resolved is not None
@@ -314,6 +321,102 @@ async def test_finish_connect_sdk_error_creates_nothing(
     assert await vault_svc.list_wallets(db_pool, owner) == []
     assert await vault_svc.list_secrets(db_pool, owner, _ENC) == []
     await db_pool.execute("DELETE FROM app_user WHERE id = $1", owner)
+
+
+async def test_finish_connect_transport_failure_rendered_as_error(
+    db_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Harpocrate injoignable : le SDK lève une exception de TRANSPORT httpx
+    (pas un ConnectError). Elle doit être rendue en `error` (jamais un 500 brut),
+    le flux consommé (code à usage unique), et rien n'être créé."""
+    owner = await _owner(db_pool, "connect-transport@example.com")
+    user = _user(owner, "connect-transport@example.com")
+    await _start(monkeypatch, db_pool, user=user, state="state-transport", name="corp-transport")
+
+    def _raise_transport(
+        pending: harpocrate_connect.ConnectState, *, code: str, state: str
+    ) -> harpocrate_connect.ConnectResult:
+        raise httpx.ConnectError("Connection refused to vault.example.com:443")
+
+    monkeypatch.setattr(harpocrate_connect, "finish", _raise_transport)
+    outcome = await vault_connect.finish_connect(
+        db_pool,
+        user=user,
+        state="state-transport",
+        code="the-code",
+        error=None,
+        enc_key=_ENC,
+        now=_NOW,
+    )
+    assert outcome == "error"
+    assert await vault_svc.list_wallets(db_pool, owner) == []
+    assert await vault_svc.list_secrets(db_pool, owner, _ENC) == []
+
+    # Flux consommé : un rejeu ne relance pas d'échange (take_active ne rend rien).
+    monkeypatch.setattr(harpocrate_connect, "finish", _unreachable_finish)
+    replay = await vault_connect.finish_connect(
+        db_pool,
+        user=user,
+        state="state-transport",
+        code="the-code",
+        error=None,
+        enc_key=_ENC,
+        now=_NOW,
+    )
+    assert replay in ("already", "invalid_state")
+    await db_pool.execute("DELETE FROM app_user WHERE id = $1", owner)
+
+
+def test_connect_callback_transport_failure_http_302_error(
+    monkeypatch: pytest.MonkeyPatch, test_schema_url: str, clean_admin_users: None
+) -> None:
+    """Round-trip HTTP : une panne de transport au callback renvoie 302
+    `?connect=error`, jamais un 500 opaque (critère 6, raison lisible)."""
+    with _client(monkeypatch, test_schema_url) as client:
+        _auth(client)
+
+        def _start(
+            base_url: str,
+            client_id: str,
+            redirect_uri: str,
+            permissions: int,
+            ttl_days: int | None,
+        ) -> tuple[str, harpocrate_connect.ConnectState]:
+            pending = harpocrate_connect.ConnectState(
+                base_url=base_url,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                state="http-transport-1",
+                code_verifier="cv",
+                private_jwk={"kty": "EC"},
+            )
+            return f"{base_url}/connect?state=http-transport-1", pending
+
+        monkeypatch.setattr(harpocrate_connect, "start", _start)
+        r = client.post(
+            "/api/admin/vault/connect/start",
+            json={
+                "name": "http-transport",
+                "url": "https://vault.http.example",
+                "description": None,
+            },
+        )
+        assert r.status_code == 200, r.text
+
+        def _raise_transport(
+            pending: harpocrate_connect.ConnectState, *, code: str, state: str
+        ) -> harpocrate_connect.ConnectResult:
+            raise httpx.TimeoutException("timed out")
+
+        monkeypatch.setattr(harpocrate_connect, "finish", _raise_transport)
+        r = client.get(
+            "/api/admin/vault/connect/callback",
+            params={"code": "http-code", "state": "http-transport-1"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        assert r.headers["location"] == "/admin/vault?connect=error"
+        assert client.get("/api/admin/vault/wallets").json() == []
 
 
 # ── 6. Atomicité secret + wallet ─────────────────────────────────────────────

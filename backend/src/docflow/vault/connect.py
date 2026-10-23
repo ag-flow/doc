@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 import asyncpg
+import httpx
 import structlog
 from harpocrate import connect as harpocrate_connect
 from harpocrate.exceptions import ConnectError
@@ -175,6 +176,18 @@ async def finish_connect(
     except ConnectError as exc:
         # Seul error_code est journalisé — jamais le code, le token ou le scellé.
         log.warning("harpocrate_connect_finish_failed", error_code=exc.error_code)
+        async with pool.acquire() as conn:
+            await connect_store.mark_consumed(conn, state=state, now=now)
+        return "error"
+    except httpx.HTTPError as exc:
+        # Harpocrate injoignable (timeout, connexion refusée, erreur de requête) :
+        # httpx.HTTPError couvre ConnectError/TimeoutException/RequestError du SDK.
+        # SANS ce cas, la panne remonterait en 500 brut — pas de redirection, donc
+        # pas de raison lisible pour l'utilisateur (critère 6). On consomme quand
+        # même : le code OAuth est à usage unique et à durée très courte, garder le
+        # flux local ne permettrait aucun rejeu utile. On ne journalise QUE le type
+        # d'exception (le message httpx porte l'hôte) — jamais token/code/jwe/dkey.
+        log.warning("harpocrate_connect_transport_failed", error_type=type(exc).__name__)
         async with pool.acquire() as conn:
             await connect_store.mark_consumed(conn, state=state, now=now)
         return "error"
